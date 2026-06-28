@@ -884,7 +884,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.formsActions && /forms\/\d+\/actions$/.test(url) && method === 'GET') {
+		if (routes.actions?.formsActions && /forms\/[^/]+\/actions$/.test(url) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -894,7 +894,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 		if (
 			routes.actions?.formFields &&
-			/forms\/\d+\/actions\/fields$/.test(url) &&
+			/forms\/[^/]+\/actions\/fields$/.test(url) &&
 			method === 'GET'
 		) {
 			return route.fulfill({
@@ -904,7 +904,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/fields$/.test(url) && method === 'GET') {
+		if (/forms\/[^/]+\/actions\/fields$/.test(url) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -912,7 +912,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/disable$/.test(urlWithoutQuery) && method === 'GET') {
+		if (/forms\/[^/]+\/actions\/disable$/.test(urlWithoutQuery) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -920,7 +920,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/disable$/.test(urlWithoutQuery) && method === 'PUT') {
+		if (/forms\/[^/]+\/actions\/disable$/.test(urlWithoutQuery) && method === 'PUT') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			disableState.sf_disabled = Boolean(payload.sf_disabled);
 			disableState.effective_disabled = Boolean(
@@ -933,7 +933,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/workflow-plan$/.test(urlWithoutQuery) && method === 'GET') {
+		if (/forms\/[^/]+\/actions\/workflow-plan$/.test(urlWithoutQuery) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -954,7 +954,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/request-trace$/.test(url) && method === 'POST') {
+		if (/forms\/[^/]+\/actions\/request-trace$/.test(url) && method === 'POST') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const manualValues =
 				payload.entry_values && typeof payload.entry_values === 'object'
@@ -994,7 +994,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.formsActions && /forms\/\d+\/actions$/.test(url) && method === 'POST') {
+		if (routes.actions?.formsActions && /forms\/[^/]+\/actions$/.test(url) && method === 'POST') {
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const newLinkage =
 				routes.actions.createResponse?.(body) ??
@@ -1086,7 +1086,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 		if (
 			routes.actions?.formsActions &&
-			/forms\/\d+\/actions\/[^/]+\/duplicate$/.test(url) &&
+			/forms\/[^/]+\/actions\/[^/]+\/duplicate$/.test(url) &&
 			method === 'POST'
 		) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
@@ -1270,7 +1270,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 		if (
 			routes.actions?.formsActions &&
-			/forms\/\d+\/actions\/[^/]+$/.test(url) &&
+			/forms\/[^/]+\/actions\/[^/]+$/.test(url) &&
 			method === 'PUT'
 		) {
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};

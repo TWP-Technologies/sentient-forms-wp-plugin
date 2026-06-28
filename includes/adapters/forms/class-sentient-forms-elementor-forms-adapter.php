@@ -23,6 +23,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private ?Sentient_Forms_Submission_Ledger_Capture_Service $submission_ledger_capture_service = null;
 
+    /**
+     * @var array<int, array<string, mixed>>|null
+     */
+    private ?array $discovered_elementor_forms = null;
+
     public function __construct( Sentient_Forms_Plugin $plugin )
     {
         $this->plugin = $plugin;
@@ -208,6 +213,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         }
 
         return $forms;
+    }
+
+    public function reset_discovery_cache(): void
+    {
+        $this->discovered_elementor_forms = null;
     }
 
     public function get_form_fields( $form_id ): array
@@ -402,7 +412,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
      */
     public function get_form_settings( mixed $form_id ): array
     {
-        $settings = get_option( $this->get_form_actions_option_key( $form_id ), [] );
+        $settings = $this->get_form_actions_option( $form_id );
         if ( ! is_array( $settings ) )
         {
             return [];
@@ -473,6 +483,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         );
         $form  = $this->form_snapshot( $form_id );
         $entry = $this->ledger_entry_snapshot( $captured, $submission_uuid );
+        $mapping_outcomes      = [];
+        $execution_request_ids = [];
 
         foreach ( $plan['order'] as $mapping_id )
         {
@@ -502,24 +514,115 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 continue;
             }
 
-            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+                $central_action_id,
+                $form,
+                $entry,
+                [
+                    'hook'      => self::NATIVE_AFTER_SUBMISSION_HOOK,
+                    'action_id' => (string) $mapping_id,
+                ],
+            );
+        }
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
             {
                 continue;
             }
 
+            if (
+                empty( $node['enabled'] )
+                || empty( $node['hook_enabled'] )
+                || $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION )
+            )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            $action_settings = $this->filter_option_backed_runtime_settings_for_native_capabilities( $node['mapping'] );
+            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+
+            $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
+                ? sanitize_key( (string) $action_settings['central_action_id'] )
+                : '';
+            if ( '' === $central_action_id )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'failed';
+                continue;
+            }
+
+            $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes );
+            if ( null !== $blocked_by_dependency )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            $dependency_initial_outcomes      = [];
+            $dependency_execution_request_ids = [];
+            foreach ( $dependency_ids as $dependency_id )
+            {
+                if ( ! is_scalar( $dependency_id ) )
+                {
+                    continue;
+                }
+
+                $dependency_id = sanitize_text_field( (string) $dependency_id );
+                if ( '' === $dependency_id )
+                {
+                    continue;
+                }
+
+                if ( isset( $mapping_outcomes[ $dependency_id ] ) )
+                {
+                    $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
+                }
+
+                if ( isset( $execution_request_ids[ $dependency_id ] ) )
+                {
+                    $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
+                }
+            }
+
+            $dependency_context = [
+                'execution_request_id'             => $execution_request_ids[ (string) $mapping_id ] ?? null,
+                'dependency_mapping_ids'           => $dependency_ids,
+                'dependency_execution_request_ids' => $dependency_execution_request_ids,
+                'dependency_initial_outcomes'      => $dependency_initial_outcomes,
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => max(
+                    30,
+                    (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
+                ),
+                'dependency_wait_poll_seconds'     => 10,
+            ];
+
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
-                $this->schedule_local_first_after_submission_mapping(
+                $scheduled = $this->schedule_local_first_after_submission_mapping(
                     $form,
                     $entry,
                     (string) $mapping_id,
                     $action_settings,
-                    $submission_uuid
+                    $submission_uuid,
+                    $dependency_context
                 );
+                $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
                 continue;
             }
 
-            $this->plugin->process_action_async(
+            $scheduled = $this->plugin->process_action_async(
                 $central_action_id,
                 [
                     'hook'        => self::NATIVE_AFTER_SUBMISSION_HOOK,
@@ -539,21 +642,36 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                     'submission_uuid'   => $submission_uuid,
                     'central_action_id' => $central_action_id,
                     'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
-                ]
+                ] + $dependency_context
             );
+            $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
         }
     }
 
     private function get_form_actions_option_key( mixed $form_id ): string
     {
-        $form_id = is_scalar( $form_id ) ? sanitize_text_field( (string) $form_id ) : '';
-        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $form_id ) ?: '';
-        if ( '' === $form_key )
+        return self::FORM_ACTIONS_OPTION_BASE . $this->get_id() . '_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_form_actions_option( mixed $form_id ): array
+    {
+        $settings = get_option( $this->get_form_actions_option_key( $form_id ), null );
+        if ( null === $settings )
         {
-            $form_key = md5( $form_id );
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $this->get_id(), $form_id ) as $suffix )
+            {
+                $settings = get_option( self::FORM_ACTIONS_OPTION_BASE . $this->get_id() . '_' . $suffix, null );
+                if ( null !== $settings )
+                {
+                    break;
+                }
+            }
         }
 
-        return self::FORM_ACTIONS_OPTION_BASE . $this->get_id() . '_' . $form_key;
+        return is_array( $settings ) ? $settings : [];
     }
 
     /**
@@ -823,10 +941,27 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
         if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
         {
+            $skip_downstream_on_spam = null;
+            if (
+                isset( $effect_mapping['spam'] )
+                && is_array( $effect_mapping['spam'] )
+                && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
+            )
+            {
+                $skip_downstream_on_spam = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
+            }
+
             unset(
                 $effect_mapping['spam'],
                 $effect_mapping['mark_as_spam']
             );
+
+            if ( null !== $skip_downstream_on_spam )
+            {
+                $effect_mapping['spam'] = [
+                    'skip_downstream_on_spam' => $skip_downstream_on_spam,
+                ];
+            }
         }
         elseif ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
         {
@@ -985,7 +1120,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         array $entry,
         string $mapping_id,
         array $action_settings,
-        string $submission_uuid
+        string $submission_uuid,
+        array $async_context = []
     ): bool
     {
         $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
@@ -1012,8 +1148,39 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                     ? $action_settings['settings']
                     : [],
-            ]
+            ] + $async_context
         );
+    }
+
+    /**
+     * Resolve whether a mapping should be blocked by prerequisite outcomes.
+     *
+     * @param array<int, mixed>    $dependency_ids   Dependency mapping IDs.
+     * @param array<string,string> $mapping_outcomes Known outcomes keyed by mapping ID.
+     */
+    private function resolve_dependency_blocking_mapping( array $dependency_ids, array $mapping_outcomes ): ?string
+    {
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            if ( ! is_scalar( $dependency_id ) )
+            {
+                continue;
+            }
+
+            $dependency_id = sanitize_text_field( (string) $dependency_id );
+            if ( '' === $dependency_id )
+            {
+                continue;
+            }
+
+            $outcome = $mapping_outcomes[ $dependency_id ] ?? null;
+            if ( null === $outcome || 'failed' === $outcome || 'skipped' === $outcome )
+            {
+                return $dependency_id;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1158,6 +1325,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
      */
     private function discover_elementor_forms(): array
     {
+        if ( null !== $this->discovered_elementor_forms )
+        {
+            return $this->discovered_elementor_forms;
+        }
+
         $forms = [];
 
         foreach ( $this->find_posts_with_elementor_data() as $post_id )
@@ -1174,7 +1346,9 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             }
         }
 
-        return $forms;
+        $this->discovered_elementor_forms = $forms;
+
+        return $this->discovered_elementor_forms;
     }
 
     private function resolve_form_id_from_record( mixed $record, mixed $handler ): string
@@ -1191,6 +1365,13 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
         $form_name = $this->record_form_setting( $record, 'form_name' );
         $form_name = is_scalar( $form_name ) ? sanitize_text_field( (string) $form_name ) : '';
+
+        $widget_match = $this->resolve_form_id_from_record_widget_id( $record, $form_name );
+        if ( '' !== $widget_match )
+        {
+            return $widget_match;
+        }
+
         if ( '' === $form_name )
         {
             return '';
@@ -1210,6 +1391,40 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 {
                     $matches[] = $this->format_form_id( $post_id, $widget_id );
                 }
+            }
+        }
+
+        return 1 === count( $matches ) ? $matches[0] : '';
+    }
+
+    private function resolve_form_id_from_record_widget_id( mixed $record, string $form_name = '' ): string
+    {
+        $widget_id = $this->record_widget_id( $record );
+        if ( '' === $widget_id )
+        {
+            return '';
+        }
+
+        $matches = [];
+        foreach ( $this->discover_elementor_forms() as $form )
+        {
+            $form_widget_id = isset( $form['widget_id'] ) && is_scalar( $form['widget_id'] )
+                ? sanitize_key( (string) $form['widget_id'] )
+                : '';
+            if ( $widget_id !== $form_widget_id )
+            {
+                continue;
+            }
+
+            if ( '' !== $form_name && $form_name !== $this->form_title( $form ) )
+            {
+                continue;
+            }
+
+            $post_id = absint( $form['post_id'] ?? 0 );
+            if ( $post_id > 0 )
+            {
+                $matches[] = $this->format_form_id( $post_id, $widget_id );
             }
         }
 
@@ -1268,20 +1483,27 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
      */
     private function find_posts_with_elementor_data(): array
     {
+        $post_limit = absint( apply_filters( 'sentient_forms_elementor_discovery_post_limit', 500, $this ) );
+        $post_limit = min( 1000, max( 1, $post_limit ) );
+
         $post_ids = get_posts(
             [
-                'fields'         => 'ids',
-                'meta_query'     => [
+                'fields'                 => 'ids',
+                'meta_query'             => [
                     [
                         'key'     => '_elementor_data',
                         'compare' => 'EXISTS',
                     ],
                 ],
-                'order'          => 'ASC',
-                'orderby'        => 'ID',
-                'post_status'    => 'any',
-                'post_type'      => 'any',
-                'posts_per_page' => -1,
+                'order'                  => 'ASC',
+                'orderby'                => 'ID',
+                'post_status'            => 'any',
+                'post_type'              => 'any',
+                'posts_per_page'         => $post_limit,
+                'numberposts'            => $post_limit,
+                'no_found_rows'          => true,
+                'update_post_meta_cache' => false,
+                'update_post_term_cache' => false,
             ]
         );
 
@@ -1767,6 +1989,45 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         if ( is_array( $record ) && isset( $record['settings'] ) && is_array( $record['settings'] ) )
         {
             return $record['settings'][ $key ] ?? null;
+        }
+
+        return null;
+    }
+
+    private function record_widget_id( mixed $record ): string
+    {
+        foreach ( [ 'elementor_widget_id', '_elementor_widget_id', '_elementor_form_id', 'element_id' ] as $candidate_id )
+        {
+            $value = $this->record_field_value_by_id( $record, $candidate_id );
+            if ( is_scalar( $value ) )
+            {
+                $widget_id = sanitize_key( (string) $value );
+                if ( '' !== $widget_id )
+                {
+                    return $widget_id;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function record_field_value_by_id( mixed $record, string $target_field_id ): mixed
+    {
+        $target_field_id = sanitize_key( $target_field_id );
+        if ( '' === $target_field_id )
+        {
+            return null;
+        }
+
+        foreach ( $this->record_fields( $record ) as $field_key => $field )
+        {
+            if ( $target_field_id !== $this->record_field_id( $field_key, $field ) )
+            {
+                continue;
+            }
+
+            return $this->record_field_value( $field );
         }
 
         return null;

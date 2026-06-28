@@ -755,6 +755,19 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
     }
 
     /**
+     * @return string[]
+     */
+    private function get_legacy_option_keys( string $form_source, mixed $form_id ): array
+    {
+        $source = sanitize_key( $form_source );
+
+        return array_map(
+            static fn ( string $suffix ): string => self::OPTION_PREFIX . $source . '_' . $suffix,
+            Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id )
+        );
+    }
+
+    /**
      * Sanitizes provider-native form identifiers for REST route params.
      *
      * @param mixed $value Raw route parameter value.
@@ -775,7 +788,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
     {
-        if ( '' !== $this->normalize_provider_form_id( $value ) )
+        if ( Sentient_Forms_Provider_Form_Id_Keys::is_valid( $value ) )
         {
             return true;
         }
@@ -794,20 +807,12 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
 
     private function normalize_provider_form_id( mixed $value ): string
     {
-        if ( ! is_scalar( $value ) )
-        {
-            return '';
-        }
-
-        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+        return Sentient_Forms_Provider_Form_Id_Keys::normalize( $value );
     }
 
     private function normalize_form_id_option_suffix( mixed $form_id ): string
     {
-        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $this->normalize_provider_form_id( $form_id ) );
-        $form_key = is_string( $form_key ) ? trim( $form_key, '_' ) : '';
-
-        return '' !== $form_key ? $form_key : '0';
+        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
     }
 
     private function is_positive_integer_form_id( string $form_id ): bool
@@ -835,7 +840,19 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
     private function get_all_configs( string $form_source, mixed $form_id ): array
     {
         $option_key = $this->get_option_key( $form_source, $form_id );
-        $configs    = get_option( $option_key, [] );
+        $configs    = get_option( $option_key, null );
+
+        if ( null === $configs )
+        {
+            foreach ( $this->get_legacy_option_keys( $form_source, $form_id ) as $legacy_option_key )
+            {
+                $configs = get_option( $legacy_option_key, null );
+                if ( null !== $configs )
+                {
+                    break;
+                }
+            }
+        }
 
         return is_array( $configs ) ? $configs : [];
     }
@@ -855,7 +872,13 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
         // If empty, delete the option
         if ( empty( $configs ) )
         {
-            return delete_option( $option_key );
+            $deleted = delete_option( $option_key );
+            foreach ( $this->get_legacy_option_keys( $form_source, $form_id ) as $legacy_option_key )
+            {
+                $deleted = delete_option( $legacy_option_key ) || $deleted;
+            }
+
+            return $deleted;
         }
 
         return update_option( $option_key, $configs, false );

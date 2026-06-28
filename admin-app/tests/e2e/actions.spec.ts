@@ -2236,7 +2236,10 @@ test.describe('Actions admin flows', () => {
 			'Lead Scoring is not available for Elementor Forms yet.'
 		);
 		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toContainText(
-			'Elementor Form Submissions APIs are unavailable'
+			'Lead Scoring needs reliable native entry search, corrections, and notes before staff can safely grade Elementor leads.'
+		);
+		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).not.toContainText(
+			/APIs|fixture|Advanced Solo/i
 		);
 		await expect(page.getByRole('link', { name: 'Back to form actions' })).toHaveAttribute(
 			'href',
@@ -3038,6 +3041,17 @@ test.describe('Actions admin flows', () => {
 		const addActionButtons = page.getByRole('button', { name: 'Add action' });
 		await expect(addActionButtons.first()).toBeDisabled();
 		await expect(page.getByTestId('link-action-form')).toHaveCount(0);
+		await expect(page.locator('header').getByRole('switch').first()).toBeDisabled();
+
+		await page.getByTestId('action-definitions-card').getByText('Action defaults and library').click();
+		const defaultButtons = page.getByTestId('action-definitions-card').getByRole('button', {
+			name: 'Defaults'
+		});
+		const defaultButtonCount = await defaultButtons.count();
+		expect(defaultButtonCount).toBeGreaterThan(0);
+		for (let index = 0; index < defaultButtonCount; index += 1) {
+			await expect(defaultButtons.nth(index)).toBeDisabled();
+		}
 	});
 
 	test('shows Elementor Pro Forms native-submission limitations without blocking after-submission setup', async ({
@@ -3114,9 +3128,10 @@ test.describe('Actions admin flows', () => {
 		await page.getByText('Execution status and Sentient Forms log lookup').click();
 		await expect(
 			page.getByText(
-				'Use a Sentient Forms Action Log entry ID for this Elementor Forms form. Native provider submission IDs are not used for this check.'
+				'Native entry status lookup is unavailable for Elementor Forms. Use the Submission Ledger and Action Log list for submitted Elementor records.'
 			)
 		).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Check log entry' })).toHaveCount(0);
 		await expect(page.getByText('this Gravity Forms form')).toHaveCount(0);
 
 		const table = await openLinkedActionsTable(page);
@@ -3125,9 +3140,13 @@ test.describe('Actions admin flows', () => {
 		await expect(modal.getByText('Configure Action Mapping')).toBeVisible();
 		await modal.getByTestId('mapping-section-toggle-attachment_mapping').click();
 		const sourceModeSelect = modal.getByLabel('Source mode');
-		await expect(sourceModeSelect).toContainText('Elementor Forms uploads');
-		await expect(sourceModeSelect).toContainText('Mixed (Elementor Forms uploads + media)');
+		await expect(sourceModeSelect).toContainText('Media library');
+		await expect(sourceModeSelect).not.toContainText('Elementor Forms uploads');
+		await expect(sourceModeSelect).not.toContainText('Mixed (Elementor Forms uploads + media)');
 		await expect(sourceModeSelect).not.toContainText('Gravity Forms uploads');
+		await expect(modal).toContainText(
+			'Elementor Forms upload fields are stored as ledger file references only.'
+		);
 		await modal.locator('footer').getByRole('button', { name: 'Close' }).click();
 		await expect(modal).toHaveCount(0);
 
@@ -3138,6 +3157,73 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
 		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
 		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+	});
+
+	test('links Elementor actions through provider-native mock routes', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: baseFormFields,
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				ledgerSettings: {
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint:
+						`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+					record_count: 0
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}`, {
+			waitUntil: 'networkidle'
+		});
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await drawer.getByRole('radio', { name: /Summarize/i }).check();
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+
+		const createReq = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				request.url().includes(`/elementor_forms/forms/${encodedElementorFormId}/actions`)
+		);
+		await drawer.getByRole('button', { name: 'Link action' }).click();
+		const request = await createReq;
+		expect(request.postDataJSON()).toMatchObject({
+			central_action_id: 'summarize',
+			trigger_hooks: ['after_submission']
+		});
+		await expect(drawer).toBeHidden({ timeout: 15_000 });
+
+		const table = await openLinkedActionsTable(page);
+		await expect(table.getByText('Summarize')).toBeVisible();
 	});
 
 	test('keeps Elementor direct submission review unavailable while ledger storage is disabled', async ({
@@ -3348,6 +3434,109 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(page.getByTestId('submission-ledger-native-limit')).toContainText(
 			'paid but insufficient for native submission-link parity'
+		);
+	});
+
+	test('renders Elementor ledger submissions when action runs are null', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor }
+			}
+		});
+		const envelope = (data: unknown) => ({
+			success: true,
+			data
+		});
+
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/ledger-settings`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							enabled: true,
+							enabled_at: '2026-06-24T22:40:00Z',
+							enabled_by_user_id: 1,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint:
+								`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+							record_count: 1
+						})
+					)
+				})
+		);
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions**`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							submissions: [
+								{
+									id: 13,
+									submission_uuid: '77777777-8888-4999-aaaa-bbbbbbbbbbbb',
+									form_source: 'elementor_forms',
+									form_id: elementorFormId,
+									native_entry_id: null,
+									native_entry_url: null,
+									source_submitted_at: null,
+									captured_at: '2026-06-24T22:42:00Z',
+									logical_fields: {
+										email: 'nullable-runs@example.test'
+									},
+									provider_metadata: {
+										form_name: 'Elementor Ledger Form'
+									},
+									file_refs: [],
+									redaction_summary: {
+										redacted_keys: []
+									},
+									action_runs: null,
+									expires_at: null,
+									detail_endpoint: `/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions/77777777-8888-4999-aaaa-bbbbbbbbbbbb`
+								}
+							],
+							count: 1,
+							per_page: 50,
+							offset: 0
+						})
+					)
+				})
+		);
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}/submissions`, {
+			waitUntil: 'networkidle'
+		});
+
+		const row = page.getByTestId('submission-ledger-row');
+		await expect(row).toContainText('77777777-8888-4999-aaaa-bbbbbbbbbbbb');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText('0 action runs');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText(
+			'No action output recorded yet.'
 		);
 	});
 

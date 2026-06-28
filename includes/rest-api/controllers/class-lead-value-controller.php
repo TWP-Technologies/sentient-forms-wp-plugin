@@ -1879,7 +1879,19 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
     private function build_spam_guidance_snapshot( string $form_source, string $form_id ): array
     {
-        $form_configs  = get_option( 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . absint( $form_id ), [] );
+        $form_configs  = get_option( $this->form_config_option_key( $form_source, $form_id ), null );
+        if ( null === $form_configs )
+        {
+            foreach ( $this->legacy_form_config_option_keys( $form_source, $form_id ) as $legacy_key )
+            {
+                $form_configs = get_option( $legacy_key, null );
+                if ( null !== $form_configs )
+                {
+                    break;
+                }
+            }
+        }
+
         $form_config   = is_array( $form_configs ) && is_array( $form_configs['spam_detection_v1'] ?? null ) ? $form_configs['spam_detection_v1'] : [];
         $global_config = get_option( 'sentient_forms_action_defaults_spam_detection_v1', [] );
         $global_config = is_array( $global_config ) ? $global_config : [];
@@ -1908,6 +1920,25 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 ],
             ],
         ];
+    }
+
+    private function form_config_option_key( string $form_source, string $form_id ): string
+    {
+        return 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function legacy_form_config_option_keys( string $form_source, string $form_id ): array
+    {
+        $keys = [];
+        foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $form_source, $form_id ) as $suffix )
+        {
+            $keys[] = 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . $suffix;
+        }
+
+        return $keys;
     }
 
     private function normalize_guidance_examples( mixed $examples ): array

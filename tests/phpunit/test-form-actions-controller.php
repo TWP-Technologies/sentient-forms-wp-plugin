@@ -239,6 +239,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 		public function get_forms(): array {
 			return [
 				[ 'id' => '42:form-alpha_2026', 'name' => 'Alpha 2026' ],
+				[ 'id' => '42_form-alpha_2026', 'name' => 'Underscore Alpha 2026' ],
+				[ 'id' => '42.form-alpha_2026', 'name' => 'Dotted Alpha 2026' ],
 			];
 		}
 
@@ -246,7 +248,7 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 			$form_id             = (string) $form_id;
 			$this->field_calls[] = $form_id;
 
-			if ( '42:form-alpha_2026' !== $form_id ) {
+			if ( ! in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true ) ) {
 				return [];
 			}
 
@@ -294,7 +296,7 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 			$form_id                   = (string) $form_id;
 			$this->form_exists_calls[] = $form_id;
 
-			return '42:form-alpha_2026' === $form_id;
+			return in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true );
 		}
 	}
 }
@@ -302,6 +304,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     private Sentient_Forms_Form_Actions_Controller $controller;
     private ?Sentient_Forms_Test_Opaque_Form_Source_Adapter $opaque_form_adapter = null;
+    /** @var string[] */
+    private array $dynamic_action_option_keys = [];
 
     protected function setUp(): void {
         parent::setUp();
@@ -315,6 +319,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_form_status_gravity_forms_42' );
         delete_option( 'sentient_forms_actions_gravity_forms_1' );
         delete_option( 'sentient_forms_actions_gravity_forms_2' );
+        $this->dynamic_action_option_keys = [];
+        $elementor_adapter = Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->get_adapter_by_id( 'elementor_forms' );
+        if ( $elementor_adapter && method_exists( $elementor_adapter, 'reset_discovery_cache' ) )
+        {
+            $elementor_adapter->reset_discovery_cache();
+        }
     }
 
     protected function tearDown(): void {
@@ -330,6 +340,10 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
         Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->unregister_adapter( 'opaque_forms' );
         $this->opaque_form_adapter = null;
+        foreach ( $this->dynamic_action_option_keys as $option_key )
+        {
+            delete_option( $option_key );
+        }
         parent::tearDown();
     }
 
@@ -740,7 +754,10 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'store_result', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'meta', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'entry_note', $stored[0]['effect_mapping_json'] ?? [] );
-        $this->assertArrayNotHasKey( 'spam', $stored[0]['effect_mapping_json'] ?? [] );
+        $this->assertSame(
+            [ 'skip_downstream_on_spam' => true ],
+            $stored[0]['effect_mapping_json']['spam'] ?? null
+        );
     }
 
     public function test_elementor_actions_reject_free_elementor_requires_pro_state_before_form_lookup(): void
@@ -786,7 +803,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 201, $create_response->get_status() );
         $this->assertSame( [ 'after_submission' ], $created['trigger_hooks'] ?? null );
 
-        $stored = get_option( 'sentient_forms_actions_opaque_forms_42_form-alpha_2026', [] );
+        $stored = get_option( 'sentient_forms_actions_opaque_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ), [] );
         $this->assertIsArray( $stored );
         $this->assertArrayHasKey( $created['local_mapping_id'], $stored );
 
@@ -809,8 +826,54 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 200, $disable_response->get_status() );
         $this->assertTrue( $disable_data['sf_disabled'] ?? false );
 
-        $stored = get_option( 'sentient_forms_actions_opaque_forms_42_form-alpha_2026', [] );
+        $stored = get_option( 'sentient_forms_actions_opaque_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ), [] );
         $this->assertTrue( $stored['sf_disabled'] ?? false );
+    }
+
+    public function test_form_action_option_keys_do_not_collide_for_provider_native_ids(): void
+    {
+        $this->register_opaque_form_source_adapter();
+
+        $form_ids = [
+            '42:form-alpha_2026',
+            '42_form-alpha_2026',
+            '42.form-alpha_2026',
+        ];
+        $created_ids = [];
+
+        foreach ( $form_ids as $form_id )
+        {
+            $create_request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/opaque_forms/forms/' . rawurlencode( $form_id ) . '/actions' ) );
+            $create_request->set_param( 'central_action_id', 'remote_summary_v1' );
+            $create_request->set_param( 'action_type_indicator', 'master' );
+            $create_request->set_param( 'trigger_hooks', [ 'after_submission' ] );
+
+            $create_response = $this->dispatch_form_actions_request( $create_request );
+            $created         = $create_response->get_data();
+
+            $this->assertSame( 201, $create_response->get_status() );
+            $created_ids[ $form_id ] = $created['local_mapping_id'] ?? null;
+        }
+
+        global $wpdb;
+        $this->dynamic_action_option_keys = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $wpdb->esc_like( 'sentient_forms_actions_opaque_forms_' ) . '%'
+            )
+        );
+
+        foreach ( $form_ids as $form_id )
+        {
+            $bootstrap_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/opaque_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' ) );
+            $bootstrap_response = $this->dispatch_form_actions_request( $bootstrap_request );
+            $bootstrap          = $bootstrap_response->get_data();
+
+            $this->assertSame( 200, $bootstrap_response->get_status() );
+            $this->assertSame( $form_id, $bootstrap['form_id'] ?? null );
+            $this->assertCount( 1, $bootstrap['actions'] ?? [] );
+            $this->assertSame( $created_ids[ $form_id ], $bootstrap['actions'][0]['local_mapping_id'] ?? null );
+        }
     }
 
     public function test_get_submission_ledger_list_returns_captured_form_submissions(): void
@@ -859,6 +922,43 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'Ada Lovelace', $data['submissions'][0]['logical_fields']['name'] ?? null );
         $this->assertSame( 'gravity_forms', $data['form_source'] ?? null );
         $this->assertSame( '1', $data['form_id'] ?? null );
+    }
+
+    public function test_submission_ledger_list_normalizes_empty_native_entry_fields_to_null(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsArray( $settings->set_enabled( 'gravity_forms', '1', true, 1 ) );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'  => '44444444-5555-4666-8777-999999999999',
+                    'form_source'      => 'gravity_forms',
+                    'form_id'          => '1',
+                    'native_entry_id'  => '',
+                    'native_entry_url' => '',
+                    'logical_fields_json' => [
+                        'name' => 'Empty native fields',
+                    ],
+                ]
+            )
+        );
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertArrayHasKey( 'native_entry_id', $data['submissions'][0] ?? [] );
+        $this->assertArrayHasKey( 'native_entry_url', $data['submissions'][0] ?? [] );
+        $this->assertNull( $data['submissions'][0]['native_entry_id'] );
+        $this->assertNull( $data['submissions'][0]['native_entry_url'] );
     }
 
     public function test_get_submission_ledger_detail_returns_scoped_submission(): void
@@ -4062,9 +4162,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'store_result', $data[0]['settings']['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'meta', $data[0]['settings']['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'entry_note', $data[0]['settings']['effect_mapping_json'] ?? [] );
-        $this->assertArrayNotHasKey( 'spam', $data[0]['settings']['effect_mapping_json'] ?? [] );
+        $this->assertSame(
+            [ 'skip_downstream_on_spam' => true ],
+            $data[0]['settings']['effect_mapping_json']['spam'] ?? null
+        );
         $this->assertArrayNotHasKey( 'suppress_notifications_on_spam', $data[0]['settings'] ?? [] );
         $this->assertArrayNotHasKey( 'suppress_webhooks_on_spam', $data[0]['settings'] ?? [] );
+        $this->assertTrue( $data[0]['settings']['skip_downstream_on_spam'] ?? false );
         $this->assertArrayNotHasKey( 'spam_confidence_threshold', $data[0]['settings'] ?? [] );
         $this->assertArrayNotHasKey( 'spam_result_display_mode', $data[0]['settings'] ?? [] );
         $this->assertArrayNotHasKey( 'spam_indicators_display', $data[0]['settings'] ?? [] );

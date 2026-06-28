@@ -820,6 +820,60 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( 'B', $corrected['dashboard']['entries'][0]['grade'] );
     }
 
+    public function test_provider_native_readiness_uses_canonical_form_config_key(): void
+    {
+        $this->seed_ready_site_context();
+
+        $positive = [
+            [ 'text' => 'I need help pricing a complex website automation project.', 'rationale' => 'Real buying-stage inquiry.' ],
+            [ 'text' => 'Can your team rebuild our intake workflow this quarter?', 'rationale' => 'Clear service fit.' ],
+            [ 'text' => 'We want a quote for form routing and CRM handoff.', 'rationale' => 'Relevant project request.' ],
+        ];
+        $negative = [
+            [ 'text' => 'Buy cheap backlinks for your domain now.', 'rationale' => 'Spam solicitation.' ],
+            [ 'text' => 'Guaranteed crypto returns with no risk.', 'rationale' => 'Unrelated scam.' ],
+            [ 'text' => 'asdf qwer http://spam.example', 'rationale' => 'Low-effort suspicious entry.' ],
+        ];
+
+        update_option(
+            'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ),
+            [
+                'spam_detection_v1' => [
+                    'spam_positive_examples' => $positive,
+                    'spam_negative_examples' => $negative,
+                ],
+            ],
+            false
+        );
+
+        $controller = new Sentient_Forms_Lead_Value_Controller();
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile' );
+        $request->set_param( 'form_source', 'elementor_forms' );
+        $request->set_param( 'form_id', '91:formabc' );
+        $request->set_param( 'lead_profile_consent', true );
+        $request->set_param(
+            'good_lead_criteria',
+            [
+                'summary_text' => 'A good lead has a real business need, reachable contact details, service-area fit, urgency, and enough project context for follow-up.',
+            ]
+        );
+        $request->set_param(
+            'bad_lead_criteria',
+            [
+                'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or requests unrelated promotions.',
+            ]
+        );
+
+        $response = $controller->save_profile_for_form( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( '91:formabc', $data['profile']['form_id'] ?? null );
+        $this->assertSame( 3, $data['readiness']['spam_guidance']['sources']['form_config']['positive_count'] ?? null );
+        $this->assertSame( 3, $data['readiness']['spam_guidance']['sources']['form_config']['negative_count'] ?? null );
+    }
+
     public function test_dashboards_hydrate_missing_entry_preview_from_gravity_forms(): void
     {
         global $wpdb;
@@ -985,6 +1039,14 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_site_context' );
         delete_option( 'sentient_forms_site_context_settings' );
         delete_option( 'sentient_forms_form_config_gravity_forms_7' );
+
+        global $wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $wpdb->esc_like( 'sentient_forms_form_config_elementor_forms_' ) . '%'
+            )
+        );
     }
 
     private function record_managed_proxy_consent( string $action = 'setup_managed_proxy' ): void

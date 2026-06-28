@@ -2316,6 +2316,74 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		}
 	}
 
+	public function test_process_action_resolves_controller_saved_form_level_customization_for_provider_native_form_id(): void
+	{
+		update_option(
+			'sentient_forms_action_defaults_entry_summary_v1',
+			[
+				'action_customization' => 'Action-level Elementor summary customization.',
+			]
+		);
+
+		$config_controller = new Sentient_Forms_Form_Action_Config_Controller();
+		$config_request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_forms/91%3Aformabc/action-config/entry_summary_v1' );
+		$config_request->set_param( 'form_source', 'elementor_forms' );
+		$config_request->set_param( 'form_id', '91:formabc' );
+		$config_request->set_param( 'action_id', 'entry_summary_v1' );
+		$config_request->set_param( 'action_customization', 'Controller-saved Elementor form-level customization.' );
+
+		$config_response = $config_controller->update_action_config( $config_request );
+		$this->assertNotWPError( $config_response );
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => '91:formabc', 'title' => 'Elementor lead form' ],
+			'entry' => [ 'id' => 'submission-uuid-456', 'field_1' => 'summarize me' ],
+		];
+		$context = [
+			'form_source' => 'elementor_forms',
+			'form_id'     => '91:formabc',
+			'entry_id'    => 'submission-uuid-456',
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'entry_summary_v1',
+		];
+
+		try
+		{
+			$handler = $this->plugin->get_async_handler();
+			$handler->process_action(
+				'entry_summary_v1',
+				$data,
+				[
+					'central_action_id'     => 'entry_summary_v1',
+					'action_type_indicator' => 'master',
+				],
+				null,
+				$context
+			);
+
+			$captured_settings = $executor->captured['context']['settings'] ?? [];
+			$this->assertSame(
+				'Controller-saved Elementor form-level customization.',
+				$captured_settings['action_customization'] ?? null
+			);
+		}
+		finally
+		{
+			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+			foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( 'elementor_forms', '91:formabc' ) as $suffix )
+			{
+				delete_option( 'sentient_forms_form_config_elementor_forms_' . $suffix );
+			}
+			delete_option( 'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ) );
+		}
+	}
+
 	public function test_process_action_form_level_spam_policies_override_action_defaults(): void
 	{
 		update_option(

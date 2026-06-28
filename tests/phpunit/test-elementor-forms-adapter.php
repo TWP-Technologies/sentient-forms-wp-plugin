@@ -8,6 +8,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
         remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        remove_all_filters( 'sentient_forms_elementor_discovery_post_limit' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
 
         global $wpdb;
@@ -48,6 +49,51 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $forms[0]['provider_is_active'] );
         $this->assertStringContainsString( 'post=' . $page_id, $forms[0]['provider_edit_url'] );
         $this->assertStringContainsString( 'action=elementor', $forms[0]['provider_edit_url'] );
+    }
+
+    public function test_get_forms_memoizes_elementor_discovery_per_adapter_instance(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = $this->create_elementor_form_page();
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+
+        $discovery_calls = 0;
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static function () use ( &$discovery_calls, $page_id ): array {
+                $discovery_calls++;
+                return [ $page_id ];
+            }
+        );
+
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+
+        $this->assertCount( 1, $adapter->get_forms() );
+        $this->assertCount( 1, $adapter->get_forms() );
+        $this->assertSame( 1, $discovery_calls );
+
+        $adapter->reset_discovery_cache();
+
+        $this->assertCount( 1, $adapter->get_forms() );
+        $this->assertSame( 2, $discovery_calls );
+    }
+
+    public function test_elementor_discovery_post_query_is_bounded_by_filterable_limit(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $this->create_elementor_form_page( null, 'formone', 'First Quote Request' );
+        $this->create_elementor_form_page( null, 'formtwo', 'Second Quote Request' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter( 'sentient_forms_elementor_discovery_post_limit', static fn() => 1 );
+
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $forms   = $adapter->get_forms();
+
+        $this->assertCount( 1, $forms );
     }
 
     public function test_elementor_pro_form_field_manifest_marks_logical_hidden_file_and_security_fields(): void
@@ -1184,6 +1230,55 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'formabc', $metadata_json );
     }
 
+    public function test_new_record_resolves_duplicate_form_names_by_submitted_widget_id(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $first_page_id  = $this->create_elementor_form_page( null, 'formabc', 'Quote Request' );
+        $second_page_id = $this->create_elementor_form_page( null, 'targetform', 'Quote Request' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static fn() => [ $first_page_id, $second_page_id ]
+        );
+
+        $form_id         = $second_page_id . ':targetform';
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_new_record(
+            $this->elementor_submission_record(
+                [
+                    'full_name'           => [
+                        'id'    => 'full_name',
+                        'title' => 'Full name',
+                        'type'  => 'text',
+                        'value' => 'Ada Lovelace',
+                    ],
+                    'elementor_widget_id' => [
+                        'id'    => 'elementor_widget_id',
+                        'title' => 'Elementor widget ID',
+                        'type'  => 'hidden',
+                        'value' => 'targetform',
+                    ],
+                ]
+            ),
+            null
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( $form_id, $stored['form_id'] ?? null );
+        $this->assertSame( 'Ada Lovelace', $stored['logical_fields_json']['full_name'] ?? null );
+        $this->assertArrayNotHasKey( 'elementor_widget_id', $stored['logical_fields_json'] ?? [] );
+    }
+
     public function test_new_record_schedules_after_submission_action_only_after_ledger_capture(): void
     {
         global $wpdb;
@@ -1260,6 +1355,125 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
         $this->assertSame( 'resume', $job_entry['file_refs'][0]['field_id'] ?? null );
         $this->assertArrayNotHasKey( 'captcha', $job_entry );
+    }
+
+    public function test_new_record_passes_dependency_metadata_to_elementor_async_jobs(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id         = $this->create_elementor_form_page();
+        $form_id         = $page_id . ':formabc';
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $this->assertTrue(
+            $adapter->update_form_settings(
+                $form_id,
+                [
+                    'map_first'  => [
+                        'local_mapping_id'           => 'map_first',
+                        'central_action_id'          => 'entry_evaluation',
+                        'action_name_label'          => 'First Elementor async action',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'settings'                   => [
+                            'async' => true,
+                        ],
+                    ],
+                    'map_second' => [
+                        'local_mapping_id'           => 'map_second',
+                        'central_action_id'          => 'entry_evaluation',
+                        'action_name_label'          => 'Dependent Elementor async action',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'settings'                   => [
+                            'async'           => true,
+                            'trigger_sources' => [
+                                'after_submission' => [
+                                    'type'       => 'mapping',
+                                    'mapping_id' => 'map_first',
+                                ],
+                            ],
+                            'batch_settings'   => [
+                                'max_wait_seconds' => 45,
+                            ],
+                        ],
+                    ],
+                ]
+            )
+        );
+
+        $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 2, $scheduled_jobs );
+
+        $contexts = [];
+        foreach ( $scheduled_jobs as $job )
+        {
+            $context = $job['args']['context'] ?? [];
+            if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
+            {
+                $contexts[ $context['local_mapping_id'] ] = $context;
+            }
+        }
+
+        $this->assertArrayHasKey( 'map_first', $contexts );
+        $this->assertArrayHasKey( 'map_second', $contexts );
+        $this->assertSame( [ 'map_first' ], $contexts['map_second']['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts['map_second']['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertSame(
+            $contexts['map_first']['execution_request_id'] ?? null,
+            $contexts['map_second']['dependency_execution_request_ids']['map_first'] ?? null
+        );
+        $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
+        $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
+    }
+
+    public function test_get_form_settings_reads_controller_saved_provider_native_action_key(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = $this->create_elementor_form_page();
+        $form_id = $page_id . ':formabc';
+
+        $controller = new Sentient_Forms_Form_Actions_Controller();
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'central_action_id', 'remote_summary_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
+
+        $response = $controller->add_form_action( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $created = $response->get_data();
+
+        $adapter       = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $form_settings = $adapter->get_form_settings( $form_id );
+
+        $this->assertArrayHasKey( $created['local_mapping_id'], $form_settings );
+        $this->assertSame( 'remote_summary_v1', $form_settings[ $created['local_mapping_id'] ]['central_action_id'] ?? null );
     }
 
     public function test_new_record_schedules_action_with_elementor_field_manifest_context(): void
@@ -1382,12 +1596,14 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                                     'note'                           => [ 'template' => 'Spam: {{classification}}' ],
                                     'suppress_notifications_on_spam' => true,
                                     'suppress_webhooks_on_spam'      => true,
+                                    'skip_downstream_on_spam'        => true,
                                 ],
                                 'suppress_notifications_on_spam' => true,
                                 'suppress_webhooks_on_spam'      => true,
                             ],
                             'suppress_notifications_on_spam' => true,
                             'suppress_webhooks_on_spam'      => true,
+                            'skip_downstream_on_spam'        => true,
                             'spam_confidence_threshold'      => 0.8,
                             'spam_result_display_mode'       => 'all_results',
                             'spam_indicators_display'        => 'detailed',
@@ -1412,12 +1628,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'store_result_meta', $scheduled_map );
         $this->assertArrayNotHasKey( 'meta', $scheduled_map );
         $this->assertArrayNotHasKey( 'entry_note', $scheduled_map );
-        $this->assertArrayNotHasKey( 'spam', $scheduled_map );
+        $this->assertSame( [ 'skip_downstream_on_spam' => true ], $scheduled_map['spam'] ?? null );
         $this->assertArrayNotHasKey( 'mark_as_spam', $scheduled_map );
         $this->assertArrayNotHasKey( 'suppress_notifications_on_spam', $scheduled_map );
         $this->assertArrayNotHasKey( 'suppress_webhooks_on_spam', $scheduled_map );
         $this->assertArrayNotHasKey( 'suppress_notifications_on_spam', $scheduled_settings );
         $this->assertArrayNotHasKey( 'suppress_webhooks_on_spam', $scheduled_settings );
+        $this->assertTrue( $scheduled_settings['skip_downstream_on_spam'] ?? false );
         $this->assertArrayNotHasKey( 'spam_confidence_threshold', $scheduled_settings );
         $this->assertArrayNotHasKey( 'spam_result_display_mode', $scheduled_settings );
         $this->assertArrayNotHasKey( 'spam_indicators_display', $scheduled_settings );
@@ -1646,7 +1863,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'spam_indicators_display', $scheduled_conf );
     }
 
-    private function create_elementor_form_page( ?array $form_fields = null ): int
+    private function create_elementor_form_page( ?array $form_fields = null, string $widget_id = 'formabc', string $form_name = 'Quote Request' ): int
     {
         $page_id = self::factory()->post->create(
             [
@@ -1656,7 +1873,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             ]
         );
 
-        update_post_meta( $page_id, '_elementor_data', wp_slash( wp_json_encode( $this->elementor_form_tree( $form_fields ) ) ) );
+        update_post_meta( $page_id, '_elementor_data', wp_slash( wp_json_encode( $this->elementor_form_tree( $form_fields, $widget_id, $form_name ) ) ) );
         add_filter( 'sentient_forms_elementor_posts_with_data', static fn() => [ $page_id ] );
 
         return $page_id;
@@ -1729,7 +1946,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function elementor_form_tree( ?array $form_fields = null ): array
+    private function elementor_form_tree( ?array $form_fields = null, string $widget_id = 'formabc', string $form_name = 'Quote Request' ): array
     {
         $form_fields ??= [
             [
@@ -1767,11 +1984,11 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                 'settings' => [],
                 'elements' => [
                     [
-                        'id'         => 'formabc',
+                        'id'         => $widget_id,
                         'elType'     => 'widget',
                         'widgetType' => 'form',
                         'settings'   => [
-                            'form_name'   => 'Quote Request',
+                            'form_name'   => $form_name,
                             'form_fields' => $form_fields,
                         ],
                         'elements'   => [],

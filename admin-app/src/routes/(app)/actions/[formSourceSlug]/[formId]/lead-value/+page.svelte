@@ -882,9 +882,9 @@
 						Lead Scoring is not available for Elementor Forms yet.
 					</p>
 					<p class="sf:mt-2 sf:max-w-3xl sf:text-sm sf:text-slate-600">
-						Elementor Form Submissions APIs are unavailable in the current supported fixture, so
-						Lead Scoring stays disabled until an Elementor Pro Advanced Solo-or-higher fixture proves
-						native entry search, correction, and note behavior.
+						Elementor submissions can be captured for ledger and action automation, but Lead
+						Scoring needs reliable native entry search, corrections, and notes before staff can
+						safely grade Elementor leads.
 					</p>
 				</div>
 				<ButtonLink

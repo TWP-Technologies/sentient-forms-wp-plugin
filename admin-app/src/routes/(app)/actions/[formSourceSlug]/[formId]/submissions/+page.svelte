@@ -95,13 +95,17 @@
 		void loadLedgerSubmissions();
 	});
 
+	function actionRunsFor(record: SubmissionLedgerRecord) {
+		return Array.isArray(record.action_runs) ? record.action_runs : [];
+	}
+
 	function actionRunCountLabel(record: SubmissionLedgerRecord) {
-		const count = record.action_runs.length;
+		const count = actionRunsFor(record).length;
 		return `${count.toLocaleString()} action ${count === 1 ? 'run' : 'runs'}`;
 	}
 
 	function latestActionRunSummary(record: SubmissionLedgerRecord) {
-		const latest = record.action_runs[0];
+		const latest = actionRunsFor(record)[0];
 		if (!latest) {
 			return 'No action output recorded yet.';
 		}

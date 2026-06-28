@@ -256,7 +256,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
     public function test_migrate_apply_preserves_elementor_provider_native_form_id(): void
     {
-        $option_key           = 'sentient_forms_actions_elementor_forms_91_formabc';
+        $option_key           = 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' );
         $this->option_keys[] = $option_key;
         update_option(
             $option_key,
@@ -524,6 +524,53 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
         $this->assertSame( '91:form-alpha_2026', $result['forms'][0]['form_id'] ?? null );
         $this->assertSame( $option_key, $result['forms'][0]['option_key'] ?? null );
         $this->assertSame( 1, $result['totals']['create'] ?? -1 );
+    }
+
+    public function test_migrate_all_scope_decodes_canonical_provider_native_option_keys(): void
+    {
+        $form_ids = [
+            '91:formabc',
+            '91_formabc',
+            '91.formabc',
+        ];
+
+        foreach ( $form_ids as $form_id )
+        {
+            $option_key           = 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+            $this->option_keys[] = $option_key;
+            update_option(
+                $option_key,
+                [
+                    'map_' . md5( $form_id ) => $this->build_master_mapping( 'map_' . md5( $form_id ), 'entry_summary_v1' ),
+                ],
+                false
+            );
+        }
+
+        $client  = new Sentient_Forms_Test_Mappings_Migration_Api_Client();
+        $service = new Sentient_Forms_Mappings_Migration_Service(
+            $client,
+            'proxy-migrate-test',
+            '11111111-2222-4333-8444-555555555555'
+        );
+
+        $result = $service->migrate(
+            [
+                'apply'            => false,
+                'include_disabled' => true,
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 3, count( $result['forms'] ) );
+        $this->assertEqualsCanonicalizing(
+            $form_ids,
+            array_map(
+                static fn ( array $form ): string => (string) ( $form['form_id'] ?? '' ),
+                $result['forms']
+            )
+        );
+        $this->assertSame( 3, $result['totals']['create'] ?? -1 );
     }
 
     public function test_migrate_apply_supports_legacy_actions_wrapper_and_hooks_alias(): void

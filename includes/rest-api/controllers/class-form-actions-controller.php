@@ -191,6 +191,40 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return self::FORM_ACTIONS_OPTION_BASE . sanitize_key( $form_source_slug ) . '_' . $this->normalize_form_id_option_suffix( $form_id );
     }
 
+    /**
+     * @return string[]
+     */
+    private function get_legacy_actions_option_keys( string $form_source_slug, mixed $form_id ): array
+    {
+        $source = sanitize_key( $form_source_slug );
+
+        return array_map(
+            static fn ( string $suffix ): string => self::FORM_ACTIONS_OPTION_BASE . $source . '_' . $suffix,
+            Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id )
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_actions_option( string $form_source_slug, mixed $form_id ): array
+    {
+        $actions = get_option( $this->get_actions_option_key( $form_source_slug, $form_id ), null );
+        if ( null === $actions )
+        {
+            foreach ( $this->get_legacy_actions_option_keys( $form_source_slug, $form_id ) as $legacy_option_key )
+            {
+                $actions = get_option( $legacy_option_key, null );
+                if ( null !== $actions )
+                {
+                    break;
+                }
+            }
+        }
+
+        return is_array( $actions ) ? $actions : [];
+    }
+
     public function sanitize_form_id_param( mixed $value ): string
     {
         return $this->normalize_provider_form_id( $value );
@@ -203,20 +237,12 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     private function normalize_provider_form_id( mixed $value ): string
     {
-        if ( ! is_scalar( $value ) )
-        {
-            return '';
-        }
-
-        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+        return Sentient_Forms_Provider_Form_Id_Keys::normalize( $value );
     }
 
     private function normalize_form_id_option_suffix( mixed $form_id ): string
     {
-        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $this->normalize_provider_form_id( $form_id ) );
-        $form_key = is_string( $form_key ) ? trim( $form_key, '_' ) : '';
-
-        return '' !== $form_key ? $form_key : '0';
+        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
     }
 
     private function is_positive_integer_form_id( string $form_id ): bool
@@ -573,12 +599,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function option_backed_dependency_actions_for_form( string $form_source_slug, string $form_id ): array
     {
-        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $stored     = get_option( $option_key, [] );
-        if ( ! is_array( $stored ) )
-        {
-            return [];
-        }
+        $stored = $this->get_actions_option( $form_source_slug, $form_id );
 
         return $this->normalize_local_action_mappings(
             $this->extract_action_linkages_from_option( $stored )
@@ -1457,12 +1478,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return true;
         }
 
-        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), $this->get_request_form_id( $request ) );
-        $actions    = get_option( $option_key, [] );
-        if ( !is_array( $actions ) )
-        {
-            $actions = [];
-        }
+        $actions = $this->get_actions_option( $request->get_param( 'form_source_slug' ), $this->get_request_form_id( $request ) );
 
         if (
             in_array( $request->get_method(), [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) &&
@@ -1907,6 +1923,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $native_entry    = $this->native_entry_capability_for_form_source( $form_source );
         $native_entry_id = isset( $row['native_entry_id'] ) ? sanitize_text_field( (string) $row['native_entry_id'] ) : null;
         $native_entry_url = isset( $row['native_entry_url'] ) ? esc_url_raw( (string) $row['native_entry_url'] ) : null;
+        $native_entry_id = '' === $native_entry_id ? null : $native_entry_id;
+        $native_entry_url = '' === $native_entry_url ? null : $native_entry_url;
 
         if ( is_array( $native_entry ) )
         {
@@ -2074,6 +2092,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             if ( '' !== $form_id )
             {
                 $option_keys[] = $this->get_actions_option_key( $form_source_slug, $form_id );
+                $option_keys   = array_merge( $option_keys, $this->get_legacy_actions_option_keys( $form_source_slug, $form_id ) );
             }
         }
 
@@ -2521,7 +2540,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     {
         // Get local WP linkages
         $local_actions = null === $stored_actions
-            ? get_option( $this->get_actions_option_key( $form_source_slug, $form_id ), [] )
+            ? $this->get_actions_option( $form_source_slug, $form_id )
             : $stored_actions;
         if ( ! is_array( $local_actions ) ) {
             $local_actions = [];
@@ -2573,12 +2592,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_id          = $this->get_request_form_id( $request );
         $hook_scope       = $this->sanitize_lifecycle_scope( $request->get_param( 'hook_scope' ) );
 
-        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $local_actions = get_option( $option_key, [] );
-        if ( ! is_array( $local_actions ) )
-        {
-            $local_actions = [];
-        }
+        $local_actions = $this->get_actions_option( $form_source_slug, $form_id );
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
         $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
@@ -2971,12 +2985,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function normalize_trace_actions_for_form( string $form_source_slug, string $form_id ): array
     {
-        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $local_actions = get_option( $option_key, [] );
-        if ( ! is_array( $local_actions ) )
-        {
-            $local_actions = [];
-        }
+        $local_actions = $this->get_actions_option( $form_source_slug, $form_id );
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
         $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
@@ -3317,10 +3326,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function build_form_disabled_state( string $form_source_slug, string $form_id ): array
     {
-        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $options    = get_option( $option_key, [] );
+        $options = $this->get_actions_option( $form_source_slug, $form_id );
 
-        $sf_disabled = is_array( $options ) && ! empty( $options['sf_disabled'] );
+        $sf_disabled = ! empty( $options['sf_disabled'] );
         $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
         $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
 
@@ -3349,12 +3357,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $sf_disabled      = (bool) $request->get_param( 'sf_disabled' );
 
         $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $options    = get_option( $option_key, [] );
-
-        if ( ! is_array( $options ) )
-        {
-            $options = [];
-        }
+        $options    = $this->get_actions_option( $form_source_slug, $form_id );
 
         $options['sf_disabled'] = $sf_disabled;
         update_option( $option_key, $options, false );
@@ -3783,11 +3786,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );
         $option_key       = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $actions          = get_option( $option_key, [] );
-        if ( !is_array( $actions ) )
-        {
-            $actions = [];
-        }
+        $actions          = $this->get_actions_option( $form_source_slug, $form_id );
 
         $new_id = uniqid( 'map_', false );
         while ( isset( $actions[ $new_id ] ) )
@@ -4595,10 +4594,27 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
         {
+            $skip_downstream_on_spam = null;
+            if (
+                isset( $effect_mapping['spam'] )
+                && is_array( $effect_mapping['spam'] )
+                && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
+            )
+            {
+                $skip_downstream_on_spam = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
+            }
+
             unset(
                 $effect_mapping['spam'],
                 $effect_mapping['mark_as_spam']
             );
+
+            if ( null !== $skip_downstream_on_spam )
+            {
+                $effect_mapping['spam'] = [
+                    'skip_downstream_on_spam' => $skip_downstream_on_spam,
+                ];
+            }
         }
         elseif ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
         {
@@ -4816,9 +4832,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     public function get_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), $this->get_request_form_id( $request ) );
-        $actions    = get_option( $option_key, [] );
-        $id         = $request->get_param( 'local_mapping_id' );
+        $actions = $this->get_actions_option( $request->get_param( 'form_source_slug' ), $this->get_request_form_id( $request ) );
+        $id      = $request->get_param( 'local_mapping_id' );
         if ( isset( $actions[ $id ] ) )
         {
             return $this->prepare_item_for_response( $actions[ $id ] );
@@ -4845,9 +4860,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );
         $option_key       = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $actions    = get_option( $option_key, [] );
-        $id         = $request->get_param( 'local_mapping_id' );
-        $option_linkage = $this->get_option_backed_action_linkage( is_array( $actions ) ? $actions : [], (string) $id );
+        $actions          = $this->get_actions_option( $form_source_slug, $form_id );
+        $id               = $request->get_param( 'local_mapping_id' );
+        $option_linkage   = $this->get_option_backed_action_linkage( $actions, (string) $id );
         if ( null === $option_linkage )
         {
             $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
@@ -5172,11 +5187,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );
         $option_key       = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $actions    = get_option( $option_key, [] );
-        if ( ! is_array( $actions ) )
-        {
-            $actions = [];
-        }
+        $actions          = $this->get_actions_option( $form_source_slug, $form_id );
 
         $source_id = sanitize_text_field( (string) $request->get_param( 'local_mapping_id' ) );
         if ( '' === $source_id || ! isset( $actions[ $source_id ] ) || ! is_array( $actions[ $source_id ] ) )
@@ -5578,8 +5589,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );
         $option_key       = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $actions    = get_option( $option_key, [] );
-        $id         = $request->get_param( 'local_mapping_id' );
+        $actions          = $this->get_actions_option( $form_source_slug, $form_id );
+        $id               = $request->get_param( 'local_mapping_id' );
         if ( !isset( $actions[ $id ] ) )
         {
             $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
@@ -5592,11 +5603,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     return $this->prepare_error_response( 'rest_action_delete_failed', __( 'Action linkage could not be deleted.', 'sentient-forms' ), 500 );
                 }
 
-                if ( is_array( $actions ) )
-                {
-                    $actions = $this->remove_dependency_references_from_actions( $actions, sanitize_text_field( (string) $id ) );
-                    update_option( $option_key, $actions, false );
-                }
+                $actions = $this->remove_dependency_references_from_actions( $actions, sanitize_text_field( (string) $id ) );
+                update_option( $option_key, $actions, false );
 
                 $local_rewire = $this->remove_dependency_references_from_local_first_mappings(
                     sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),

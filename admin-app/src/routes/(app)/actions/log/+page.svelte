@@ -524,7 +524,7 @@
 				>
 				<Input
 					id="filter-form-id"
-					type="number"
+					type="text"
 					bind:value={draftFilters.formId}
 					placeholder="All forms"
 				/>

@@ -663,10 +663,7 @@ class Sentient_Forms_Async_Handler
      */
     private function get_form_action_config( string $form_source, string $form_id, string $action_id ): array
     {
-        $configs = get_option(
-            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $this->normalize_form_id_option_suffix( $form_id ),
-            []
-        );
+        $configs = $this->get_form_action_config_options( $form_source, $form_id );
 
         if ( ! is_array( $configs ) )
         {
@@ -678,27 +675,64 @@ class Sentient_Forms_Async_Handler
 
     private function normalize_provider_form_id( mixed $form_id ): string
     {
-        if ( ! is_scalar( $form_id ) )
-        {
-            return '';
-        }
-
-        return trim( sanitize_text_field( rawurldecode( (string) $form_id ) ) );
+        return Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
     }
 
     private function normalize_form_id_option_suffix( mixed $form_id ): string
     {
-        $normalized = $this->normalize_provider_form_id( $form_id );
-        $suffix     = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $normalized );
+        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+    }
 
-        if ( ! is_string( $suffix ) )
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_form_action_config_options( string $form_source, mixed $form_id ): array
+    {
+        $source  = sanitize_key( $form_source );
+        $configs = get_option(
+            self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
+            null
+        );
+
+        if ( null === $configs )
         {
-            return '0';
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
+            {
+                $configs = get_option( self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $suffix, null );
+                if ( null !== $configs )
+                {
+                    break;
+                }
+            }
         }
 
-        $suffix = trim( $suffix, '_' );
+        return is_array( $configs ) ? $configs : [];
+    }
 
-        return '' !== $suffix ? $suffix : '0';
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_form_actions_option( string $form_source, mixed $form_id ): array
+    {
+        $source  = sanitize_key( $form_source );
+        $actions = get_option(
+            'sentient_forms_actions_' . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
+            null
+        );
+
+        if ( null === $actions )
+        {
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
+            {
+                $actions = get_option( 'sentient_forms_actions_' . $source . '_' . $suffix, null );
+                if ( null !== $actions )
+                {
+                    break;
+                }
+            }
+        }
+
+        return is_array( $actions ) ? $actions : [];
     }
 
     /**
@@ -2362,14 +2396,7 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $form_settings = get_option(
-            sprintf(
-                'sentient_forms_actions_%s_%s',
-                $form_source,
-                $this->normalize_form_id_option_suffix( $form_id )
-            ),
-            []
-        );
+        $form_settings = $this->get_form_actions_option( $form_source, $form_id );
         if ( ! is_array( $form_settings ) || ! isset( $form_settings[ $dependency_id ] ) || ! is_array( $form_settings[ $dependency_id ] ) )
         {
             return false;

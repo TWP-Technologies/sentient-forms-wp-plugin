@@ -927,54 +927,22 @@ class Sentient_Forms_Mappings_Migration_Service
 
     private function normalize_provider_form_id( mixed $value ): string
     {
-        if ( ! is_scalar( $value ) )
-        {
-            return '';
-        }
-
-        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+        return Sentient_Forms_Provider_Form_Id_Keys::normalize( $value );
     }
 
     private function normalize_form_id_option_suffix( mixed $form_id ): string
     {
-        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $this->normalize_provider_form_id( $form_id ) );
-        $form_key = is_string( $form_key ) ? trim( $form_key, '_' ) : '';
-
-        return '' !== $form_key ? $form_key : '0';
+        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
     }
 
     private function decode_option_suffix_form_id( string $form_source, string $suffix ): string
     {
-        $suffix = trim( $suffix, '_' );
-        if ( '' === $suffix )
-        {
-            return '';
-        }
-
-        if (
-            Sentient_Forms_Form_Sources::ELEMENTOR_FORMS === sanitize_key( $form_source )
-            && 1 === preg_match( '/^([1-9][0-9]*)_(.+)$/', $suffix, $matches )
-        )
-        {
-            return sanitize_text_field( $matches[1] . ':' . $matches[2] );
-        }
-
-        return sanitize_text_field( $suffix );
+        return Sentient_Forms_Provider_Form_Id_Keys::decode_option_suffix( $form_source, $suffix );
     }
 
     private function is_valid_provider_form_id( string $form_id ): bool
     {
-        if ( '' === $form_id )
-        {
-            return false;
-        }
-
-        if ( ctype_digit( $form_id ) )
-        {
-            return absint( $form_id ) > 0;
-        }
-
-        return '0' !== $this->normalize_form_id_option_suffix( $form_id );
+        return Sentient_Forms_Provider_Form_Id_Keys::is_valid( $form_id );
     }
 
     private function response_form_id( string $form_source, string $form_id ): int | string

@@ -476,6 +476,11 @@
 		formSourceDescriptor?.native_enrichment?.notes === true ||
 			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
 	);
+	const supportsNativeEntryLookup = $derived(
+		formSourceDescriptor?.native_entry?.read === true ||
+			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
+	);
+	const supportsProviderUploadSourceMode = $derived(data.formSourceSlug === 'gravity_forms');
 	const supportsSpamNoteControls = $derived(supportsNativeSpamEffects && supportsNativeNotes);
 	const localBuilderSupportsSync = $derived.by(() => {
 		if (formSourceDescriptor) {
@@ -1029,6 +1034,13 @@
 		options: { openModal?: boolean; force?: boolean } = {}
 	): Promise<FormActionConfig> {
 		const shouldOpenModal = options.openModal ?? true;
+		if (!canConfigureFormSource) {
+			if (shouldOpenModal) {
+				notifications.warning(formSourceAvailabilityMessage);
+			}
+			return createBlankFormActionConfig();
+		}
+
 		const shouldForce = options.force ?? shouldOpenModal;
 		formLevelConfigLoading = true;
 		formLevelConfig = createBlankFormActionConfig();
@@ -1128,7 +1140,7 @@
 	}
 
 	async function saveFormLevelConfig() {
-		if (!configuringActionId) return;
+		if (!configuringActionId || !canConfigureFormSource) return;
 		formLevelConfigSaving = true;
 		try {
 			const client = createClientFromConfig();
@@ -1390,6 +1402,19 @@
 		};
 	}
 
+	function normalizeAttachmentMappingForCurrentSource(raw: unknown): AttachmentMapping {
+		const mapping = normalizeAttachmentMapping(raw);
+		if (supportsProviderUploadSourceMode || !['gf_upload', 'mixed'].includes(mapping.mode)) {
+			return mapping;
+		}
+
+		return {
+			...mapping,
+			mode: mapping.mode === 'mixed' && mapping.media_ids.length > 0 ? 'media_library' : 'none',
+			gf_upload_field_ids: []
+		};
+	}
+
 	function parseMediaIdsInput(value: string): number[] {
 		return Array.from(
 			new Set(
@@ -1402,7 +1427,7 @@
 	}
 
 	function updateAttachmentMapping(next: Partial<AttachmentMapping>) {
-		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		const current = normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping);
 		draftSettings = {
 			...draftSettings,
 			attachment_mapping: {
@@ -1413,7 +1438,8 @@
 	}
 
 	function toggleAttachmentUploadField(fieldId: string) {
-		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		if (!supportsProviderUploadSourceMode) return;
+		const current = normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping);
 		const next = new Set(current.gf_upload_field_ids ?? []);
 		if (next.has(fieldId)) {
 			next.delete(fieldId);
@@ -1754,8 +1780,11 @@
 	const attachmentUploadFields = $derived(
 		formFields.filter((field) => ['fileupload', 'post_image'].includes(field.type.toLowerCase()))
 	);
+	const currentAttachmentMapping = $derived.by(() =>
+		normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping)
+	);
 	const attachmentMappingSummary = $derived.by(() => {
-		const mapping = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		const mapping = currentAttachmentMapping;
 		if (mapping.mode === 'none') return 'Disabled';
 		const uploadCount = Array.isArray(mapping.gf_upload_field_ids)
 			? mapping.gf_upload_field_ids.length
@@ -1914,6 +1943,9 @@
 			? 'Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not the Gravity Forms submission ID.'
 			: `Use a Sentient Forms Action Log entry ID for this ${currentFormAdapterLabel} form. Native provider submission IDs are not used for this check.`
 	);
+	const entryLookupUnavailableText = $derived(
+		`Native entry status lookup is unavailable for ${currentFormAdapterLabel}. Use the Submission Ledger and Action Log list for submitted ${currentFormAdapterLabel.replace(/\s+Forms$/i, '')} records.`
+	);
 	const uploadSourceModeLabel = $derived(
 		data.formSourceSlug === 'gravity_forms'
 			? 'Gravity Forms uploads'
@@ -1923,6 +1955,9 @@
 		data.formSourceSlug === 'gravity_forms'
 			? 'Mixed (uploads + media)'
 			: `Mixed (${currentFormAdapterLabel} uploads + media)`
+	);
+	const providerUploadUnavailableText = $derived(
+		`${currentFormAdapterLabel} upload fields are stored as ledger file references only. Use Media library attachments until native upload content mapping is supported.`
 	);
 	const selectedCreateActionLabel = $derived.by(() => {
 		if (createKind === 'template') {
@@ -3693,6 +3728,11 @@
 			dependency_ids: normalizedDependencyIds,
 			trigger_sources: persistableTriggerSources
 		};
+		if (typeof draftSettings.attachment_mapping !== 'undefined') {
+			nextSettings.attachment_mapping = normalizeAttachmentMappingForCurrentSource(
+				draftSettings.attachment_mapping
+			);
+		}
 		if (executionMode === 'real_time') {
 			nextSettings.realtime_settings = normalizeRealtimeSettings(draftSettings.realtime_settings);
 		} else {
@@ -4268,7 +4308,7 @@
 					<Button variant="secondary" onclick={cancelFormLevelConfig}>Cancel</Button>
 					<Button
 						onclick={saveFormLevelConfig}
-						disabled={formLevelConfigSaving || formLevelConfigLoading}
+						disabled={formLevelConfigSaving || formLevelConfigLoading || !canConfigureFormSource}
 					>
 						{formLevelConfigSaving ? 'Saving...' : 'Save Defaults'}
 					</Button>
@@ -4299,12 +4339,15 @@
 				{/if}
 				<Toggle
 					checked={!actionsState.sfDisabled}
-					onchange={() =>
+					disabled={!canConfigureFormSource}
+					onchange={() => {
+						if (!canConfigureFormSource) return;
 						formActionsStore.toggleFormDisabled(
 							data.formSourceSlug,
 							data.formId,
 							!actionsState.sfDisabled
-						)}
+						);
+					}}
 				/>
 			</div>
 			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
@@ -4587,7 +4630,7 @@
 											size="sm"
 											variant="ghost"
 											onclick={() => loadFormLevelConfig(definition.id)}
-											disabled={formLevelConfigLoading}
+											disabled={formLevelConfigLoading || !canConfigureFormSource}
 										>
 											Defaults
 										</Button>
@@ -4632,7 +4675,7 @@
 												size="sm"
 												variant="ghost"
 												onclick={() => loadFormLevelConfig(action.code)}
-												disabled={formLevelConfigLoading}
+												disabled={formLevelConfigLoading || !canConfigureFormSource}
 											>
 												Defaults
 											</Button>
@@ -4759,7 +4802,7 @@
 										size="sm"
 										variant="ghost"
 										onclick={() => loadFormLevelConfig(definition.id)}
-										disabled={formLevelConfigLoading}
+										disabled={formLevelConfigLoading || !canConfigureFormSource}
 									>
 										Defaults
 									</Button>
@@ -4804,7 +4847,7 @@
 										size="sm"
 										variant="ghost"
 										onclick={() => loadFormLevelConfig(action.code)}
-										disabled={formLevelConfigLoading}
+										disabled={formLevelConfigLoading || !canConfigureFormSource}
 									>
 										Defaults
 									</Button>
@@ -5058,20 +5101,26 @@
 					</div>
 
 					<div class="sf:space-y-3">
-						<form class="sf:space-y-2" onsubmit={checkEntryStatus}>
-							<InputField
-								id="entry-id-input"
-								label="Check Sentient Forms Action Log entry"
-								placeholder="Action Log entry ID from this form"
-								bind:value={entryLookupId}
-							/>
-							<p class="sf:text-xs sf:text-slate-500">
-								{entryLookupHelpText}
-							</p>
-							<div class="sf:flex sf:justify-end">
-								<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
-							</div>
-						</form>
+						{#if supportsNativeEntryLookup}
+							<form class="sf:space-y-2" onsubmit={checkEntryStatus}>
+								<InputField
+									id="entry-id-input"
+									label="Check Sentient Forms Action Log entry"
+									placeholder="Action Log entry ID from this form"
+									bind:value={entryLookupId}
+								/>
+								<p class="sf:text-xs sf:text-slate-500">
+									{entryLookupHelpText}
+								</p>
+								<div class="sf:flex sf:justify-end">
+									<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
+								</div>
+							</form>
+						{:else}
+							<Alert variant="warning">
+								{entryLookupUnavailableText}
+							</Alert>
+						{/if}
 
 						{#if checkedEntryStatus}
 							<div
@@ -5670,21 +5719,31 @@
 										>
 										<select
 											class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											value={normalizeAttachmentMapping(draftSettings.attachment_mapping).mode}
+											value={currentAttachmentMapping.mode}
 											onchange={(event) =>
 												updateAttachmentMapping({
 													mode: (event.currentTarget as HTMLSelectElement)
 														.value as AttachmentMapping['mode']
-												})}
+											})}
 										>
 											<option value="none">Disabled</option>
-											<option value="gf_upload">{uploadSourceModeLabel}</option>
+											{#if supportsProviderUploadSourceMode}
+												<option value="gf_upload">{uploadSourceModeLabel}</option>
+											{/if}
 											<option value="media_library">Media library</option>
-											<option value="mixed">{mixedUploadSourceModeLabel}</option>
+											{#if supportsProviderUploadSourceMode}
+												<option value="mixed">{mixedUploadSourceModeLabel}</option>
+											{/if}
 										</select>
 									</label>
 
-									{#if ['gf_upload', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+									{#if !supportsProviderUploadSourceMode}
+										<Alert variant="warning">
+											{providerUploadUnavailableText}
+										</Alert>
+									{/if}
+
+									{#if supportsProviderUploadSourceMode && ['gf_upload', 'mixed'].includes(currentAttachmentMapping.mode)}
 										<div class="sf:grid sf:gap-2">
 											<span
 												class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
@@ -5703,9 +5762,9 @@
 															<input
 																type="checkbox"
 																class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-																checked={normalizeAttachmentMapping(
-																	draftSettings.attachment_mapping
-																).gf_upload_field_ids?.includes(field.id)}
+																checked={currentAttachmentMapping.gf_upload_field_ids?.includes(
+																	field.id
+																)}
 																onchange={() => toggleAttachmentUploadField(field.id)}
 															/>
 															<span class="sf:text-sm sf:text-slate-700"
@@ -5718,7 +5777,7 @@
 										</div>
 									{/if}
 
-									{#if ['media_library', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+									{#if ['media_library', 'mixed'].includes(currentAttachmentMapping.mode)}
 										<label class="sf:flex sf:flex-col sf:gap-1">
 											<span
 												class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
@@ -5728,10 +5787,7 @@
 												type="text"
 												class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												placeholder="12, 45, 98"
-												value={(
-													normalizeAttachmentMapping(draftSettings.attachment_mapping).media_ids ??
-													[]
-												).join(', ')}
+												value={(currentAttachmentMapping.media_ids ?? []).join(', ')}
 												oninput={(event) =>
 													updateAttachmentMapping({
 														media_ids: parseMediaIdsInput(
@@ -5755,8 +5811,7 @@
 											min="1"
 											max="20"
 											class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											value={normalizeAttachmentMapping(draftSettings.attachment_mapping)
-												.max_files ?? 5}
+											value={currentAttachmentMapping.max_files ?? 5}
 											oninput={(event) =>
 												updateAttachmentMapping({
 													max_files: Math.max(
