@@ -90,9 +90,34 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
         add_filter( 'sentient_forms_elementor_discovery_post_limit', static fn() => 1 );
 
+        $observed_query_vars = null;
+        $capture_query       = static function ( $query ) use ( &$observed_query_vars ): void {
+            if (
+                'ids' !== $query->get( 'fields' )
+                || 'any' !== $query->get( 'post_status' )
+                || 'any' !== $query->get( 'post_type' )
+            )
+            {
+                return;
+            }
+
+            $observed_query_vars = [
+                'meta_key'       => $query->get( 'meta_key' ),
+                'meta_query'     => $query->get( 'meta_query' ),
+                'posts_per_page' => $query->get( 'posts_per_page' ),
+            ];
+        };
+        add_action( 'pre_get_posts', $capture_query );
+
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $forms   = $adapter->get_forms();
 
+        remove_action( 'pre_get_posts', $capture_query );
+
+        $this->assertIsArray( $observed_query_vars );
+        $this->assertSame( '_elementor_data', $observed_query_vars['meta_key'] );
+        $this->assertEmpty( $observed_query_vars['meta_query'] );
+        $this->assertSame( 1, $observed_query_vars['posts_per_page'] );
         $this->assertCount( 1, $forms );
     }
 

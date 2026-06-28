@@ -1489,12 +1489,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         $post_ids = get_posts(
             [
                 'fields'                 => 'ids',
-                'meta_query'             => [
-                    [
-                        'key'     => '_elementor_data',
-                        'compare' => 'EXISTS',
-                    ],
-                ],
+                'meta_key'               => '_elementor_data',
                 'order'                  => 'ASC',
                 'orderby'                => 'ID',
                 'post_status'            => 'any',
