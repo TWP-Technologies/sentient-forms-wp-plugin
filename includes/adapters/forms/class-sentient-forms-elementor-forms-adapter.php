@@ -2149,9 +2149,9 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             }
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Elementor Pro validates the submission before this hook; the posted id is only used to locate the submitted Elementor document.
-        $posted_post_id = $_POST['post_id'] ?? null;
-        return is_scalar( $posted_post_id ) ? absint( wp_unslash( $posted_post_id ) ) : 0;
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Elementor Pro validates the submission before this hook; the posted id is unslashed here, then absint-sanitized below before use as a document id.
+        $posted_post_id = isset( $_POST['post_id'] ) ? wp_unslash( $_POST['post_id'] ) : null;
+        return is_scalar( $posted_post_id ) ? absint( $posted_post_id ) : 0;
     }
 
     private function record_field_value_by_id( mixed $record, string $target_field_id ): mixed
