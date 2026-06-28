@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.7.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.1...v0.7.0) (2026-06-28)
+
+
+### Features
+
+* **forms:** add ledger parity for cf7 and wpforms ([4a18432](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4a1843230b8562258d621c822fee236d57f22480))
+* **forms:** add ledger parity for cf7 and wpforms ([1363d2f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1363d2f1cc1b46eec41214f587755623cc59d658))
+
+
+### Bug Fixes
+
+* **admin:** avoid CSS health import crash ([dbf1d7e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/dbf1d7e64e2965e97b551b7042ed51d6eb23c395))
+* **admin:** harden card chrome against host resets ([be72fcf](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/be72fcf5351faa54b4f654cf1fe226ecfe308e89))
+* **admin:** harden CSS against host resets ([be096a2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/be096a2a3814265163c2386b78e623323cd8f3ff))
+* **admin:** harden CSS against host resets ([997505a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/997505ad3252f0bab712de9c8a78baea1e7e9e0c))
+* **admin:** make CSS health probe retry async targets ([7903eb7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7903eb7cc9f8833585f49d2661738c40a1898630))
+* **forms:** address final pr review findings ([535a538](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/535a53887852010367178d974df9425ab38720db))
+* **forms:** address parity pr review feedback ([2f86b16](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2f86b16a096805c70b45dd48cc4c51e49939d890))
+* **forms:** close managed parity review gaps ([978c9b4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/978c9b42f8d16aef6d2c94831c82b29f63fca3f4))
+* **forms:** close parity bot review loop ([5b6160e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/5b6160e89109a9bafd40d7d04dfff0a57fb65307))
+* **forms:** close parity review findings ([2430c47](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2430c47e80342902a7299e80a0d8b46e3a0ffad9))
+
 ## [0.6.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.0...v0.6.1) (2026-06-25)
 
 
