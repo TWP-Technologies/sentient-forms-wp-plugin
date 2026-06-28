@@ -727,6 +727,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_managed', $entry['usage_cost']['route'] );
         $this->assertSame( 'sentient_forms_managed_action', $entry['action_code'] );
         $this->assertSame( 'Sentient Forms managed action', $entry['action_label'] );
+        $this->assertSame( 2, $entry['credits_used'] );
         $this->assertSame( 2, $entry['usage_cost']['credits'] );
         $this->assertArrayNotHasKey( 'amount_usd', $entry['usage_cost'] );
         $this->assertArrayNotHasKey( 'provider_cost', $entry['pricing'] );

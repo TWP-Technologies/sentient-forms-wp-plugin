@@ -1379,6 +1379,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'debited_credits'            => $debited_credits,
             ];
         }
+        $credits_used = 'sentient_managed' === $provider ? absint( $pricing['debited_credits'] ?? 0 ) : 0;
 
         if ( ! empty( $cost ) && 'sentient_managed' !== $provider )
         {
@@ -1409,7 +1410,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'status'                  => $status,
             'result_summary'          => $this->extract_local_result_summary( $result_json, $result_data ),
             'classification'          => $this->extract_local_result_classification( $result_json, $result_data ),
-            'credits_used'            => 0,
+            'credits_used'            => $credits_used,
             'error_code'              => isset( $event['error_code'] ) ? sanitize_text_field( (string) $event['error_code'] ) : null,
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,

@@ -265,8 +265,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_async_runtime_tables();
 		delete_option( 'sentient_forms_async_settings' );
-        GFAPI::$entries = [];
-        GFAPI::$forms = [];
+        GFAPI::$entries         = [];
+        GFAPI::$forms           = [];
+        GFAPI::$get_entry_calls = 0;
+        GFAPI::$get_form_calls  = 0;
 
         if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
         {
@@ -290,8 +292,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->truncate_async_runtime_tables();
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
         $GLOBALS['__sentient_forms_http_calls'] = [];
-        GFAPI::$entries = [];
-        GFAPI::$forms = [];
+        GFAPI::$entries         = [];
+        GFAPI::$forms           = [];
+        GFAPI::$get_entry_calls = 0;
+        GFAPI::$get_form_calls  = 0;
         remove_all_filters( 'pre_http_request' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
@@ -1301,6 +1305,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertIsArray( $legacy_entries );
         $this->assertCount( 1, $legacy_entries );
         $this->assertSame( $job['args']['execution_request_id'], $legacy_entries[0]['execution_request_id'] ?? null );
+        delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_cps_managed_non_gravity_terminal_failure_records_execution_event(): void
