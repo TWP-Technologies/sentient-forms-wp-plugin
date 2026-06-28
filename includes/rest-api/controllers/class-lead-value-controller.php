@@ -1465,6 +1465,15 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             );
         }
 
+        if ( ! $this->is_gravity_forms_source( (string) $run['form_source'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_historical_non_gravity_unsupported',
+                __( 'Historical scoring execution currently requires Gravity Forms entries.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
         {
             return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms is unavailable for historical scoring.', 'sentient-forms' ), [ 'status' => 503 ] );
@@ -3428,8 +3437,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     {
         if ( ! $this->is_gravity_forms_source( $form_source ) )
         {
-            $ledger = $this->submission_ledger_repository();
-            return null === $ledger ? 0 : $ledger->count_for_form( $form_source, $form_id );
+            return 0;
         }
 
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'count_entries' ] ) )

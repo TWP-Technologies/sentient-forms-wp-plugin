@@ -253,7 +253,7 @@ class Sentient_Forms_Local_Result_Applier
                 $action,
                 $post_execution_actions
             );
-            if ( $entry_id > 0 )
+            if ( $is_gravity_forms && $entry_id > 0 )
             {
                 $this->record_post_execution_action_results( $entry_id, $post_execution_results );
             }

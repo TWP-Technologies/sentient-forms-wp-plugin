@@ -123,6 +123,10 @@ if ( ! function_exists( 'gform_update_meta' ) )
 class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
 {
     public array $captured = [];
+    public array $response = [
+        'result_data' => [],
+        'meta'        => [],
+    ];
 
     public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
     {
@@ -133,10 +137,7 @@ class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
             'context'           => $context,
         ];
 
-        return [
-            'result_data' => [],
-            'meta'        => [],
-        ];
+        return $this->response;
     }
 }
 
@@ -1099,6 +1100,117 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'skipped', $metadata['status'] ?? null );
 
         $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+    }
+
+    public function test_cps_managed_non_gravity_spam_success_records_event_for_downstream_skip(): void
+    {
+        global $wpdb;
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->response = [
+            'result_data' => [
+                'classification' => 'spam',
+                'confidence'     => 0.98,
+            ],
+            'meta'        => [],
+        ];
+        $this->set_action_executor( $executor );
+
+        $submission_uuid = '33333333-4444-4555-8666-777777777777';
+        $scheduled       = $this->plugin->process_action_async(
+            'nonexistent_spam_master',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'spammy upstream content',
+                ],
+            ],
+            [
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+            ],
+            [
+                'hook'             => 'wpcf7_mail_sent',
+                'form_source'      => 'contact_form_7',
+                'form_id'          => 42,
+                'submission_uuid'  => $submission_uuid,
+                'action_id'        => 'map_prereq',
+                'local_mapping_id' => 'map_prereq',
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $upstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler      = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $upstream_job['args']['action_id'],
+            $upstream_job['args']['data'],
+            $upstream_job['args']['settings'],
+            $upstream_job['args']['execution_request_id'],
+            $upstream_job['args']['context'],
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $upstream_job['args']['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] );
+        $this->assertSame( 'spam', $event['result_json']['result_data']['classification'] ?? null );
+
+        $executor->captured = [];
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'skip me',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                             => 'wpcf7_mail_sent',
+                'form_source'                      => 'contact_form_7',
+                'form_id'                          => 42,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'map_summary_cf7',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'map_summary_cf7',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $upstream_job['args']['execution_request_id'] ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $downstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler->process_action(
+            $downstream_job['args']['action_id'],
+            $downstream_job['args']['data'],
+            $downstream_job['args']['settings'],
+            $downstream_job['args']['execution_request_id'],
+            $downstream_job['args']['context'],
+        );
+
+        $row = $request_store->get( $downstream_job['args']['execution_request_id'], 'job' );
         $this->assertSame( 'skipped', $row['status'] ?? null );
         $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
         $this->assertSame( [], $executor->captured );

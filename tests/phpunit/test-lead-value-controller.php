@@ -562,6 +562,108 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $started['run']['progress']['processed'] );
     }
 
+    public function test_non_gravity_historical_preview_does_not_estimate_ledger_runs_as_executable(): void
+    {
+        global $wpdb;
+
+        $ledger  = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created = $ledger->create(
+            [
+                'submission_uuid'     => '33333333-4444-4555-8666-777777777777',
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'logical_fields_json' => [
+                    'name' => [
+                        'label' => 'Name',
+                        'value' => 'Ada Buyer',
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $run = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/contact_form_7/42/historical-runs',
+            [
+                'action_code' => 'lead_grading_v1',
+                'dry_run'     => true,
+            ],
+            201
+        );
+
+        $this->assertSame( 'preview_ready', $run['run']['status'] );
+        $this->assertSame( 0, $run['run']['estimated_entry_count'] );
+        $this->assertSame( 0, $run['run']['estimated_managed_credits'] );
+    }
+
+    public function test_non_gravity_historical_execution_is_rejected_before_gf_entry_lookup(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'lead_grading_v1',
+                'display_name'    => 'Lead Scoring',
+                'definition_json' => [
+                    'template_code' => 'lead_grading_v1',
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        GFAPI::$forms = [
+            42 => [
+                'id'    => 42,
+                'title' => 'Wrong Provider GF Form',
+            ],
+        ];
+        GFAPI::$entries = [
+            1001 => [
+                'id'      => 1001,
+                'form_id' => 42,
+                '1'       => 'Gravity overlap',
+            ],
+        ];
+
+        $run = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/contact_form_7/42/historical-runs',
+            [
+                'action_code' => 'lead_grading_v1',
+                'entry_ids'   => [ 1001 ],
+                'dry_run'     => false,
+            ],
+            201
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/historical-runs/' . $run['run']['id'] . '/start' );
+        $request->set_param( 'id', (int) $run['run']['id'] );
+        $request->set_param( 'confirm_costs', true );
+
+        $controller = new Sentient_Forms_Lead_Value_Controller();
+        $response   = $controller->start_historical_run( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'sentient_forms_historical_non_gravity_unsupported', $response->get_error_code() );
+    }
+
     public function test_historical_confirmed_run_executes_entries_once_and_completed_start_is_idempotent(): void
     {
         global $wpdb;

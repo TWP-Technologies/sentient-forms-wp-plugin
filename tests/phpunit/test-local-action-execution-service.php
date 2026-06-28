@@ -2737,6 +2737,57 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'all', $skipped );
     }
 
+    public function test_non_gravity_post_execution_actions_do_not_write_gravity_entry_meta(): void
+    {
+        $hook_calls = 0;
+        $hook       = static function () use ( &$hook_calls ): void {
+            ++$hook_calls;
+        };
+
+        add_action( 'sentient_forms_non_gravity_post_execution_test', $hook, 10, 4 );
+
+        try
+        {
+            $applier = new Sentient_Forms_Local_Result_Applier();
+            $effects = $applier->apply(
+                [
+                    'form_source'         => 'wpforms',
+                    'form_id'             => '77',
+                    'effect_mapping_json' => [
+                        'post_execution_actions' => [
+                            [
+                                'type'      => 'wp_hook',
+                                'hook_name' => 'sentient_forms_non_gravity_post_execution_test',
+                            ],
+                        ],
+                    ],
+                ],
+                [ 'id' => '77', 'title' => 'WPForms Contact' ],
+                [
+                    'id'              => 501,
+                    'submission_uuid' => '33333333-4444-4555-8666-777777777777',
+                ],
+                [
+                    'execution_request_id' => 'wpforms-post-execution-audit',
+                    'status'               => 'succeeded',
+                    'result'               => [
+                        'structured' => [
+                            'summary' => 'Provider-neutral post action.',
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_non_gravity_post_execution_test', $hook, 10 );
+        }
+
+        $this->assertContains( 'post_execution:wp_hook', $effects['applied'] );
+        $this->assertSame( 1, $hook_calls );
+        $this->assertNull( gform_get_meta( 501, 'sentient_forms_post_execution_actions' ) );
+    }
+
     public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

@@ -195,6 +195,7 @@ class Sentient_Forms_Async_Handler
 		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
 		$this->notify_adapter_success( $context_with_settings, $result );
 		$this->emit_async_event( 'success', $job['context'], $result );
+		$this->record_managed_execution_event( $job, $result );
 		$this->maybe_schedule_evaluation_jobs( $job, $result );
 		$this->get_metadata_store()->update_status(
 			$job['context']['job_id'] ?? null,
@@ -1558,9 +1559,107 @@ class Sentient_Forms_Async_Handler
         $this->get_execution_events_repository()->record( $event );
     }
 
+    private function record_managed_execution_event( array $job, array $result ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return;
+        }
+
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $execution_request_id = sanitize_text_field(
+            (string) ( $job['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+        if ( '' === $execution_request_id )
+        {
+            return;
+        }
+
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+        $provider = sanitize_key( (string) ( $result['provider'] ?? $context['provider'] ?? 'sentient_managed' ) );
+        $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
+            array_merge(
+                [
+                    'provider' => $provider,
+                ],
+                $result
+            )
+        );
+
+        $event = [
+            'execution_request_id' => $execution_request_id,
+            'mapping_id'           => absint( $context['local_form_mapping_id'] ?? $context['local_mapping_id'] ?? 0 ),
+            'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
+            'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
+            'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
+            'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
+            'provider'             => $provider,
+            'model'                => $result['model'] ?? $context['model'] ?? null,
+            'status'               => sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) ),
+            'result_json'          => $stored_result,
+            'payload_digest'       => $this->managed_execution_payload_digest( $job ),
+        ];
+
+        $token_usage = $this->managed_execution_token_usage( $result );
+        if ( null !== $token_usage )
+        {
+            $event['token_usage_json'] = $token_usage;
+        }
+
+        $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function managed_execution_payload_digest( array $job ): string
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+
+        return hash(
+            'sha256',
+            wp_json_encode(
+                [
+                    'execution_request_id' => $job['execution_request_id'] ?? $context['execution_request_id'] ?? null,
+                    'action_id'            => $job['action_id'] ?? $context['action_id'] ?? null,
+                    'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? null,
+                    'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
+                    'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
+                    'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
+                ]
+            )
+        );
+    }
+
+    private function managed_execution_token_usage( array $result ): ?array
+    {
+        foreach (
+            [
+                $result['usage'] ?? null,
+                $result['token_usage'] ?? null,
+                $result['result']['usage'] ?? null,
+                $result['result_data']['usage'] ?? null,
+                $result['meta']['usage'] ?? null,
+            ] as $candidate
+        )
+        {
+            if ( is_array( $candidate ) )
+            {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
     private function resolve_submission_uuid( array $payload, array $context ): ?string
     {
-        foreach ( [ $payload['submission_uuid'] ?? null, $context['submission_uuid'] ?? null ] as $candidate )
+        foreach (
+            [
+                $payload['submission_uuid'] ?? null,
+                $payload['entry']['submission_uuid'] ?? null,
+                $payload['data']['entry']['submission_uuid'] ?? null,
+                $context['submission_uuid'] ?? null,
+            ] as $candidate
+        )
         {
             if ( ! is_scalar( $candidate ) )
             {
@@ -2396,6 +2495,10 @@ class Sentient_Forms_Async_Handler
         $candidates = [
             $result['structured']['classification'] ?? null,
             $result['result']['structured']['classification'] ?? null,
+            $result['result_data']['structured_output']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output']['classification'] ?? null,
+            $result['result_data']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['classification'] ?? null,
             $result['classification'] ?? null,
             $result['result']['classification'] ?? null,
         ];
@@ -2415,6 +2518,10 @@ class Sentient_Forms_Async_Handler
         $is_spam_candidates = [
             $result['structured']['is_spam'] ?? null,
             $result['result']['structured']['is_spam'] ?? null,
+            $result['result_data']['structured_output']['is_spam'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output']['is_spam'] ?? null,
+            $result['result_data']['is_spam'] ?? null,
+            $result['evaluation_payload']['result_data']['is_spam'] ?? null,
             $result['is_spam'] ?? null,
             $result['result']['is_spam'] ?? null,
         ];
