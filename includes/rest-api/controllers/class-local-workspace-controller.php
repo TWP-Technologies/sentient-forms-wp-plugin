@@ -659,7 +659,7 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
 
         if ( null !== $form_source )
         {
-            $native_entry = $this->native_entry_capability_for_form_source( $form_source );
+            $native_entry = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source );
             if ( is_array( $native_entry ) && array_key_exists( 'id', $native_entry ) && ! $native_entry['id'] )
             {
                 return null;
@@ -669,29 +669,4 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
         return $entry_id;
     }
 
-    /**
-     * @return array<string, bool>|null
-     */
-    private function native_entry_capability_for_form_source( string $form_source_slug ): ?array
-    {
-        $plugin = Sentient_Forms_Plugin::instance();
-        if ( ! method_exists( $plugin, 'get_form_adapter_registry' ) )
-        {
-            return null;
-        }
-
-        $registry = $plugin->get_form_adapter_registry();
-        if ( ! $registry || ! method_exists( $registry, 'get_capability_descriptor' ) )
-        {
-            return null;
-        }
-
-        $descriptor = $registry->get_capability_descriptor( $form_source_slug );
-        if ( ! is_array( $descriptor ) || ! isset( $descriptor['native_entry'] ) || ! is_array( $descriptor['native_entry'] ) )
-        {
-            return null;
-        }
-
-        return $descriptor['native_entry'];
-    }
 }

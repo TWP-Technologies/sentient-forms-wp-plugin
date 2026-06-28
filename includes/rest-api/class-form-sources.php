@@ -102,6 +102,45 @@ final class Sentient_Forms_Form_Sources
     }
 
     /**
+     * Retrieve normalized native entry capabilities for a form source.
+     *
+     * @param string                                      $form_source_slug The form source slug.
+     * @param Sentient_Forms_Form_Adapter_Registry|null $registry Optional adapter registry for tests or scoped callers.
+     *
+     * @return array<string, bool>|null Native entry capabilities, or null when unavailable.
+     * @since 0.5.1
+     */
+    public static function native_entry_capability_for_form_source(
+        string $form_source_slug,
+        ?Sentient_Forms_Form_Adapter_Registry $registry = null
+    ): ?array
+    {
+        if ( null === $registry )
+        {
+            $plugin = Sentient_Forms_Plugin::instance();
+            if ( ! method_exists( $plugin, 'get_form_adapter_registry' ) )
+            {
+                return null;
+            }
+
+            $registry = $plugin->get_form_adapter_registry();
+        }
+
+        if ( ! $registry || ! method_exists( $registry, 'get_capability_descriptor' ) )
+        {
+            return null;
+        }
+
+        $descriptor = $registry->get_capability_descriptor( $form_source_slug );
+        if ( ! is_array( $descriptor ) || ! isset( $descriptor['native_entry'] ) || ! is_array( $descriptor['native_entry'] ) )
+        {
+            return null;
+        }
+
+        return $descriptor['native_entry'];
+    }
+
+    /**
      * Validates a form source slug parameter for REST API arguments.
      * To be used as a 'validate_callback'.
      *

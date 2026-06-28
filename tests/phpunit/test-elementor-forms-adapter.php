@@ -133,7 +133,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $security['file_reference_eligible'] );
     }
 
-    public function test_elementor_pro_form_field_manifest_marks_duplicate_field_ids_ambiguous(): void
+    public function test_elementor_pro_form_field_list_omits_duplicate_field_ids(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
@@ -157,18 +157,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $page_id . ':formabc' );
 
-        $this->assertCount( 2, $fields );
-        $this->assertSame( [ 'Primary contact', 'Billing contact' ], array_column( $fields, 'label' ) );
-
-        foreach ( $fields as $field )
-        {
-            $this->assertSame( 'contact_name', $field['id'] ?? null );
-            $this->assertTrue( $field['field_id_ambiguous'] ?? false );
-            $this->assertSame( 'elementor_form', $field['field_id_scope'] ?? null );
-            $this->assertSame( 'duplicate_field_id', $field['field_id_ambiguity_reason'] ?? null );
-            $this->assertFalse( $field['storage_eligible'] ?? true );
-            $this->assertFalse( $field['file_reference_eligible'] ?? true );
-        }
+        $this->assertSame( [], array_column( $fields, 'id' ) );
     }
 
     public function test_new_record_does_not_store_logical_fields_when_ledger_is_disabled(): void
@@ -1277,6 +1266,38 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( $form_id, $stored['form_id'] ?? null );
         $this->assertSame( 'Ada Lovelace', $stored['logical_fields_json']['full_name'] ?? null );
         $this->assertArrayNotHasKey( 'elementor_widget_id', $stored['logical_fields_json'] ?? [] );
+    }
+
+    public function test_new_record_emits_resolution_failure_action_for_ambiguous_form_name_without_widget_id(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $first_page_id  = $this->create_elementor_form_page( null, 'formabc', 'Quote Request' );
+        $second_page_id = $this->create_elementor_form_page( null, 'targetform', 'Quote Request' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static fn() => [ $first_page_id, $second_page_id ]
+        );
+
+        $events = [];
+        add_action(
+            'sentient_forms_elementor_form_resolution_failed',
+            static function ( array $context ) use ( &$events ): void {
+                $events[] = $context;
+            }
+        );
+
+        $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
+
+        $this->assertNull( $submission_uuid );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'ambiguous_or_missing_form_id', $events[0]['reason'] ?? null );
+        $this->assertSame( 'elementor_forms', $events[0]['form_source'] ?? null );
+        $this->assertSame( 'Quote Request', $events[0]['form_name'] ?? null );
+        $this->assertSame( '', $events[0]['widget_id'] ?? null );
     }
 
     public function test_new_record_schedules_after_submission_action_only_after_ledger_capture(): void

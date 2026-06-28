@@ -241,6 +241,18 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $descriptor['ledger']['enabled'] );
     }
 
+    public function test_form_sources_native_entry_capability_uses_adapter_registry_descriptor(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $capability = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( 'contact_form_7', $registry );
+
+        $this->assertIsArray( $capability );
+        $this->assertFalse( $capability['id'] );
+        $this->assertFalse( $capability['link'] );
+        $this->assertFalse( $capability['read'] );
+        $this->assertFalse( $capability['write'] );
+    }
+
     public function test_elementor_forms_absent_descriptor_is_visible_and_unavailable(): void
     {
         $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );

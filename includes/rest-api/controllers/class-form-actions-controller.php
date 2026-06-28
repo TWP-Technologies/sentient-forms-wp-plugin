@@ -1920,7 +1920,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $submission_uuid = sanitize_text_field( (string) ( $row['submission_uuid'] ?? '' ) );
         $form_source     = sanitize_key( (string) ( $row['form_source'] ?? '' ) );
         $form_id         = sanitize_text_field( (string) ( $row['form_id'] ?? '' ) );
-        $native_entry    = $this->native_entry_capability_for_form_source( $form_source );
+        $native_entry    = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source );
         $native_entry_id = isset( $row['native_entry_id'] ) ? sanitize_text_field( (string) $row['native_entry_id'] ) : null;
         $native_entry_url = isset( $row['native_entry_url'] ) ? esc_url_raw( (string) $row['native_entry_url'] ) : null;
         $native_entry_id = '' === $native_entry_id ? null : $native_entry_id;
@@ -1962,20 +1962,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 rawurlencode( $submission_uuid )
             ),
         ];
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function native_entry_capability_for_form_source( string $form_source_slug ): ?array
-    {
-        $descriptor = $this->get_form_source_descriptor( $form_source_slug );
-        if ( ! is_array( $descriptor ) || ! isset( $descriptor['native_entry'] ) || ! is_array( $descriptor['native_entry'] ) )
-        {
-            return null;
-        }
-
-        return $descriptor['native_entry'];
     }
 
     /**
@@ -5763,7 +5749,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return null;
         }
 
-        $native_entry = $this->native_entry_capability_for_form_source( $form_source_slug );
+        $native_entry = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source_slug );
         if ( is_array( $native_entry ) && array_key_exists( 'id', $native_entry ) && ! $native_entry['id'] )
         {
             return null;

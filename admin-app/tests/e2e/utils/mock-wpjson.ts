@@ -73,6 +73,36 @@ function routeFormId(segment: string): string | number {
 	return /^\d+$/.test(decoded) ? Number(decoded) : decoded;
 }
 
+function formActionConfigKey(
+	sourceSlug: string,
+	formId: string | number,
+	actionId: string
+): string {
+	return JSON.stringify([sourceSlug, String(formId), actionId]);
+}
+
+function parseFormActionConfigKey(
+	key: string
+): { sourceSlug: string; formId: string; actionId: string } | null {
+	try {
+		const parts = JSON.parse(key);
+		if (
+			!Array.isArray(parts) ||
+			parts.length !== 3 ||
+			parts.some((part) => typeof part !== 'string')
+		) {
+			return null;
+		}
+		return {
+			sourceSlug: parts[0],
+			formId: parts[1],
+			actionId: parts[2]
+		};
+	} catch {
+		return null;
+	}
+}
+
 const defaultModelCatalog = {
 	models: [
 		{
@@ -190,6 +220,36 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	};
 	const formActionConfigState: Record<string, Record<string, unknown>> = {
 		...(routes.actions?.formActionConfigById ?? {})
+	};
+	const formActionConfigFor = (
+		sourceSlug: string,
+		currentFormId: string | number,
+		actionId: string
+	): Record<string, unknown> =>
+		formActionConfigState[formActionConfigKey(sourceSlug, currentFormId, actionId)] ??
+		formActionConfigState[actionId] ??
+		{};
+	const formActionConfigsFor = (
+		sourceSlug: string,
+		currentFormId: string | number
+	): Record<string, Record<string, unknown>> => {
+		const configs: Record<string, Record<string, unknown>> = {};
+		for (const [key, config] of Object.entries(formActionConfigState)) {
+			if (parseFormActionConfigKey(key) === null) {
+				configs[key] = config;
+			}
+		}
+		for (const [key, config] of Object.entries(formActionConfigState)) {
+			const parsed = parseFormActionConfigKey(key);
+			if (
+				parsed !== null &&
+				parsed.sourceSlug === sourceSlug &&
+				parsed.formId === String(currentFormId)
+			) {
+				configs[parsed.actionId] = config;
+			}
+		}
+		return configs;
 	};
 	const disableState: Record<string, boolean> = {
 		sf_disabled: false,
@@ -861,7 +921,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					definitions,
 					custom_actions: customActionsPayload,
 					provider_credentials: routes.localProviders?.credentials ?? [],
-					form_action_configs: formActionConfigState,
+					form_action_configs: formActionConfigsFor(sourceSlug, currentFormId),
 					form_fields: routes.actions?.formFields ?? [],
 					action_defaults: Object.fromEntries(
 						defaultIds.map((id) => [id, actionDefaultsState[id] ?? {}])
@@ -1030,7 +1090,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					data: {
 						form_source: sourceSlug,
 						form_id: currentFormId,
-						configs: formActionConfigState
+						configs: formActionConfigsFor(sourceSlug, currentFormId)
 					}
 				})
 			});
@@ -1053,7 +1113,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						form_source: sourceSlug,
 						form_id: currentFormId,
 						action_id: actionId,
-						config: formActionConfigState[actionId] ?? {}
+						config: formActionConfigFor(sourceSlug, currentFormId, actionId)
 					}
 				})
 			});
@@ -1064,8 +1124,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const currentFormId = routeFormId(actionConfigMatch[2]);
 			const actionId = decodeURIComponent(actionConfigMatch[3]);
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-			formActionConfigState[actionId] = {
-				...(formActionConfigState[actionId] ?? {}),
+			const configKey = formActionConfigKey(sourceSlug, currentFormId, actionId);
+			formActionConfigState[configKey] = {
+				...formActionConfigFor(sourceSlug, currentFormId, actionId),
 				...body
 			};
 			return route.fulfill({
@@ -1078,7 +1139,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						form_source: sourceSlug,
 						form_id: currentFormId,
 						action_id: actionId,
-						config: formActionConfigState[actionId]
+						config: formActionConfigState[configKey]
 					}
 				})
 			});

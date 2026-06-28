@@ -2045,6 +2045,11 @@ test.describe('Actions admin flows', () => {
 	test('loads form-level defaults for provider-native Elementor form IDs', async ({ page }) => {
 		const elementorFormId = '91:formabc';
 		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+		const scopedElementorConfigKey = JSON.stringify([
+			'elementor_forms',
+			elementorFormId,
+			'entry_summary_v1'
+		]);
 
 		await mockWpJson(page, {
 			actions: {
@@ -2074,6 +2079,9 @@ test.describe('Actions admin flows', () => {
 				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
 				formActionConfigById: {
 					entry_summary_v1: {
+						action_customization: 'Wrong form summary default.'
+					},
+					[scopedElementorConfigKey]: {
 						action_customization: 'Elementor form summary default.'
 					}
 				},

@@ -117,7 +117,7 @@ class Sentient_Forms_Local_Support_Bundle_Service
 
         if ( is_string( $form_source ) )
         {
-            $native_entry = $this->native_entry_capability_for_form_source( $form_source );
+            $native_entry = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source );
             if ( is_array( $native_entry ) && empty( $native_entry['id'] ) )
             {
                 $native_entry_id = null;
@@ -137,32 +137,6 @@ class Sentient_Forms_Local_Support_Bundle_Service
             'captured_at'        => $row['captured_at'] ?? null,
             'expires_at'         => $row['expires_at'] ?? null,
         ];
-    }
-
-    /**
-     * @return array<string, bool>|null
-     */
-    private function native_entry_capability_for_form_source( string $form_source_slug ): ?array
-    {
-        $plugin = Sentient_Forms_Plugin::instance();
-        if ( ! method_exists( $plugin, 'get_form_adapter_registry' ) )
-        {
-            return null;
-        }
-
-        $registry = $plugin->get_form_adapter_registry();
-        if ( ! $registry || ! method_exists( $registry, 'get_capability_descriptor' ) )
-        {
-            return null;
-        }
-
-        $descriptor = $registry->get_capability_descriptor( $form_source_slug );
-        if ( ! is_array( $descriptor ) || ! isset( $descriptor['native_entry'] ) || ! is_array( $descriptor['native_entry'] ) )
-        {
-            return null;
-        }
-
-        return $descriptor['native_entry'];
     }
 
     /**
@@ -309,7 +283,7 @@ class Sentient_Forms_Local_Support_Bundle_Service
 
         if ( is_string( $form_source ) )
         {
-            $native_entry = $this->native_entry_capability_for_form_source( $form_source );
+            $native_entry = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source );
             if ( is_array( $native_entry ) && empty( $native_entry['id'] ) )
             {
                 $entry_id = null;

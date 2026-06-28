@@ -233,25 +233,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return [];
         }
 
-        $settings = isset( $form['settings'] ) && is_array( $form['settings'] )
-            ? $form['settings']
-            : [];
-
-        $form_fields = isset( $settings['form_fields'] ) && is_array( $settings['form_fields'] )
-            ? $settings['form_fields']
-            : [];
-
-        $fields = [];
-        foreach ( $form_fields as $field )
-        {
-            $normalized = $this->normalize_elementor_field( $field );
-            if ( null !== $normalized )
-            {
-                $fields[] = $normalized;
-            }
-        }
-
-        return $this->mark_ambiguous_field_ids( $fields );
+        return $this->public_form_fields( $this->normalized_form_fields_for_form( $form ) );
     }
 
     /**
@@ -327,6 +309,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         $form_id = $this->resolve_form_id_from_record( $record, $handler );
         if ( '' === $form_id )
         {
+            $this->emit_form_resolution_failure( $record );
+
             return null;
         }
 
@@ -1397,6 +1381,22 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return 1 === count( $matches ) ? $matches[0] : '';
     }
 
+    private function emit_form_resolution_failure( mixed $record ): void
+    {
+        $form_name = $this->record_form_setting( $record, 'form_name' );
+        $form_name = is_scalar( $form_name ) ? sanitize_text_field( (string) $form_name ) : '';
+
+        do_action(
+            'sentient_forms_elementor_form_resolution_failed',
+            [
+                'reason'      => 'ambiguous_or_missing_form_id',
+                'form_source' => $this->get_id(),
+                'form_name'   => $form_name,
+                'widget_id'   => $this->record_widget_id( $record ),
+            ]
+        );
+    }
+
     private function resolve_form_id_from_record_widget_id( mixed $record, string $form_name = '' ): string
     {
         $widget_id = $this->record_widget_id( $record );
@@ -1622,6 +1622,61 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     }
 
     /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalized_form_fields( string $form_id ): array
+    {
+        $form = $this->find_form_by_id( $form_id );
+        if ( null === $form )
+        {
+            return [];
+        }
+
+        return $this->normalized_form_fields_for_form( $form );
+    }
+
+    /**
+     * @param array<string, mixed> $form
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalized_form_fields_for_form( array $form ): array
+    {
+        $settings = isset( $form['settings'] ) && is_array( $form['settings'] )
+            ? $form['settings']
+            : [];
+
+        $form_fields = isset( $settings['form_fields'] ) && is_array( $settings['form_fields'] )
+            ? $settings['form_fields']
+            : [];
+
+        $fields = [];
+        foreach ( $form_fields as $field )
+        {
+            $normalized = $this->normalize_elementor_field( $field );
+            if ( null !== $normalized )
+            {
+                $fields[] = $normalized;
+            }
+        }
+
+        return $this->mark_ambiguous_field_ids( $fields );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $fields
+     * @return array<int, array<string, mixed>>
+     */
+    private function public_form_fields( array $fields ): array
+    {
+        return array_values(
+            array_filter(
+                $fields,
+                static fn( array $field ): bool => empty( $field['field_id_ambiguous'] )
+            )
+        );
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function logical_fields_from_record( mixed $record, string $form_id ): array
@@ -1825,7 +1880,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     {
         $metadata = [];
 
-        foreach ( $this->get_form_fields( $form_id ) as $field )
+        foreach ( $this->normalized_form_fields( $form_id ) as $field )
         {
             if ( ! is_array( $field ) || ! isset( $field['id'] ) || ! is_scalar( $field['id'] ) )
             {
@@ -1891,7 +1946,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     private function field_manifest_by_id( string $form_id ): array
     {
         $fields = [];
-        foreach ( $this->get_form_fields( $form_id ) as $field )
+        foreach ( $this->normalized_form_fields( $form_id ) as $field )
         {
             if ( ! is_array( $field ) || ! isset( $field['id'] ) || ! is_scalar( $field['id'] ) )
             {
