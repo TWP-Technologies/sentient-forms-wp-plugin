@@ -841,9 +841,69 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( $refresh_consent_id, $data['refresh_consent']['consent_id'] ?? null );
         $this->assertNotEmpty( $consent_queries );
 
-        $latest_refresh_consent_query = implode( "\n", $consent_queries );
-        $this->assertStringContainsString( 'metadata_json LIKE', $latest_refresh_consent_query );
-        $this->assertStringContainsString( 'LIMIT 1', $latest_refresh_consent_query );
+        $latest_refresh_consent_query = current(
+            array_filter(
+                $consent_queries,
+                static fn ( string $query ): bool => str_contains( $query, 'metadata_json LIKE' )
+            )
+        ) ?: '';
+
+        $this->assertNotSame( '', $latest_refresh_consent_query );
+        $this->assertStringContainsString( 'LIMIT 25', $latest_refresh_consent_query );
+    }
+
+    public function test_list_openrouter_models_ignores_nested_refresh_action_when_finding_latest_top_level_refresh_consent(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openai/gpt-oss-20b:free',
+                [
+                    'id'     => 'openai/gpt-oss-20b:free',
+                    'name'   => 'OpenAI: GPT OSS 20B',
+                    'free'   => true,
+                    'pricing' => [
+                        'prompt'     => '0',
+                        'completion' => '0',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $refresh_consent_id = $consents->record(
+            'openrouter',
+            '2026-04-18',
+            self::$admin_id,
+            [
+                'action' => 'refresh_models',
+            ]
+        );
+        $this->assertIsInt( $refresh_consent_id );
+
+        $shadow_consent_id = $consents->record(
+            'openrouter',
+            '2026-04-19',
+            self::$admin_id,
+            [
+                'context' => [
+                    'action' => 'refresh_models',
+                ],
+                'action'  => 'validate_key',
+            ]
+        );
+        $this->assertIsInt( $shadow_consent_id );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/openrouter/models' );
+        $response = rest_get_server()->dispatch( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'accepted', $data['refresh_consent']['state'] ?? null );
+        $this->assertSame( $refresh_consent_id, $data['refresh_consent']['consent_id'] ?? null );
     }
 
     public function test_refresh_openrouter_models_schedules_one_daily_catalog_refresh_after_consent(): void

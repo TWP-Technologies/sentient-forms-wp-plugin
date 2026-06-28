@@ -85,28 +85,29 @@ class Sentient_Forms_External_Service_Consent_Repository extends Sentient_Forms_
         }
 
         $action_like = '%"action":"' . $wpdb->esc_like( $action ) . '"%';
-        $row         = $wpdb->get_row(
+        $rows        = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM %i WHERE provider = %s AND metadata_json LIKE %s ORDER BY accepted_at DESC, id DESC LIMIT 1',
+                'SELECT * FROM %i WHERE provider = %s AND metadata_json LIKE %s ORDER BY accepted_at DESC, id DESC LIMIT %d',
                 $this->table_name(),
                 $provider,
-                $action_like
+                $action_like,
+                25
             ),
             ARRAY_A
         );
 
-        if ( ! $row )
+        foreach ( is_array( $rows ) ? $rows : [] as $row )
         {
-            return null;
+            $metadata = $this->decode_json_field( $row['metadata_json'] ?? null );
+            if ( ! is_array( $metadata ) || $action !== (string) ( $metadata['action'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $row['metadata_json'] = $metadata;
+            return $row;
         }
 
-        $metadata = $this->decode_json_field( $row['metadata_json'] ?? null );
-        if ( ! is_array( $metadata ) || $action !== (string) ( $metadata['action'] ?? '' ) )
-        {
-            return null;
-        }
-
-        $row['metadata_json'] = $metadata;
-        return $row;
+        return null;
     }
 }
