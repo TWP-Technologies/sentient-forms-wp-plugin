@@ -1969,42 +1969,207 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function format_submission_ledger_action_runs( string $submission_uuid, string $form_source, string $form_id ): array
     {
-        if ( null === $this->local_execution_events || '' === $submission_uuid )
+        if ( '' === $submission_uuid )
         {
             return [];
         }
 
         $runs = [];
-        foreach ( $this->local_execution_events->list_for_submission_uuid( $submission_uuid ) as $event )
+        $seen_request_ids = [];
+
+        if ( null !== $this->local_execution_events )
         {
-            if (
-                sanitize_key( (string) ( $event['form_source'] ?? '' ) ) !== $form_source
-                || sanitize_text_field( (string) ( $event['form_id'] ?? '' ) ) !== $form_id
-            )
+            foreach ( $this->local_execution_events->list_for_submission_uuid( $submission_uuid ) as $event )
+            {
+                if (
+                    sanitize_key( (string) ( $event['form_source'] ?? '' ) ) !== $form_source
+                    || sanitize_text_field( (string) ( $event['form_id'] ?? '' ) ) !== $form_id
+                )
+                {
+                    continue;
+                }
+
+                $execution_request_id = sanitize_text_field( (string) ( $event['execution_request_id'] ?? '' ) );
+                if ( '' !== $execution_request_id )
+                {
+                    $seen_request_ids[ $execution_request_id ] = true;
+                }
+
+                $status = sanitize_key( (string) ( $event['status'] ?? 'unknown' ) );
+                $runs[] = [
+                    'execution_request_id' => $execution_request_id,
+                    'mapping_id'           => isset( $event['mapping_id'] ) ? absint( $event['mapping_id'] ) : null,
+                    'status'               => $this->normalize_submission_ledger_action_run_status( $status ),
+                    'provider'             => isset( $event['provider'] ) ? sanitize_key( (string) $event['provider'] ) : null,
+                    'model'                => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
+                    'last_result'          => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null,
+                    'last_error_code'      => isset( $event['error_code'] ) ? sanitize_key( (string) $event['error_code'] ) : null,
+                    'last_error_message'   => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
+                    'created_at'           => $event['created_at'] ?? null,
+                    'updated_at'           => $event['updated_at'] ?? null,
+                ];
+            }
+        }
+
+        return array_merge(
+            $runs,
+            $this->format_submission_ledger_action_log_runs( $submission_uuid, $form_source, $form_id, $seen_request_ids )
+        );
+    }
+
+    /**
+     * @param array<string, bool> $seen_request_ids
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function format_submission_ledger_action_log_runs( string $submission_uuid, string $form_source, string $form_id, array $seen_request_ids ): array
+    {
+        $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
+        if ( ! is_array( $entries ) )
+        {
+            return [];
+        }
+
+        $runs = [];
+        foreach ( $entries as $entry )
+        {
+            if ( ! is_array( $entry ) )
             {
                 continue;
             }
 
-            $status = sanitize_key( (string) ( $event['status'] ?? 'unknown' ) );
+            if ( sanitize_key( (string) ( $entry['form_source'] ?? '' ) ) !== $form_source )
+            {
+                continue;
+            }
+
+            if ( ! $this->action_log_form_id_matches( $entry['form_id'] ?? null, $form_source, $form_id ) )
+            {
+                continue;
+            }
+
+            if ( $this->action_log_submission_uuid( $entry ) !== $submission_uuid )
+            {
+                continue;
+            }
+
+            $execution_request_id = $this->action_log_execution_request_id( $entry );
+            if ( '' !== $execution_request_id && isset( $seen_request_ids[ $execution_request_id ] ) )
+            {
+                continue;
+            }
+
             $runs[] = [
-                'execution_request_id' => sanitize_text_field( (string) ( $event['execution_request_id'] ?? '' ) ),
-                'mapping_id'           => isset( $event['mapping_id'] ) ? absint( $event['mapping_id'] ) : null,
-                'status'               => match ( $status ) {
-                    'succeeded', 'success' => 'success',
-                    'failed', 'error'      => 'error',
-                    default                => $status,
-                },
-                'provider'             => isset( $event['provider'] ) ? sanitize_key( (string) $event['provider'] ) : null,
-                'model'                => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
-                'last_result'          => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null,
-                'last_error_code'      => isset( $event['error_code'] ) ? sanitize_key( (string) $event['error_code'] ) : null,
-                'last_error_message'   => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
-                'created_at'           => $event['created_at'] ?? null,
-                'updated_at'           => $event['updated_at'] ?? null,
+                'execution_request_id' => $execution_request_id,
+                'mapping_id'           => $this->action_log_mapping_id( $entry ),
+                'status'               => $this->normalize_submission_ledger_action_run_status(
+                    sanitize_key( (string) ( $entry['status'] ?? 'unknown' ) )
+                ),
+                'provider'             => isset( $entry['provider'] ) && is_scalar( $entry['provider'] ) ? sanitize_key( (string) $entry['provider'] ) : null,
+                'model'                => isset( $entry['model'] ) && is_scalar( $entry['model'] ) ? sanitize_text_field( (string) $entry['model'] ) : null,
+                'last_result'          => $this->action_log_last_result( $entry ),
+                'last_error_code'      => isset( $entry['error_code'] ) && is_scalar( $entry['error_code'] ) ? sanitize_key( (string) $entry['error_code'] ) : null,
+                'last_error_message'   => isset( $entry['error_message'] ) && is_scalar( $entry['error_message'] ) ? sanitize_textarea_field( (string) $entry['error_message'] ) : null,
+                'created_at'           => isset( $entry['created_at'] ) && is_scalar( $entry['created_at'] ) ? sanitize_text_field( (string) $entry['created_at'] ) : null,
+                'updated_at'           => isset( $entry['updated_at'] ) && is_scalar( $entry['updated_at'] )
+                    ? sanitize_text_field( (string) $entry['updated_at'] )
+                    : ( isset( $entry['created_at'] ) && is_scalar( $entry['created_at'] ) ? sanitize_text_field( (string) $entry['created_at'] ) : null ),
             ];
         }
 
         return $runs;
+    }
+
+    private function normalize_submission_ledger_action_run_status( string $status ): string
+    {
+        return match ( $status ) {
+            'succeeded', 'success' => 'success',
+            'failed', 'error'      => 'error',
+            default                => $status,
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function action_log_submission_uuid( array $entry ): string
+    {
+        if ( ! isset( $entry['submission_uuid'] ) || ! is_scalar( $entry['submission_uuid'] ) )
+        {
+            return '';
+        }
+
+        return sanitize_text_field( (string) $entry['submission_uuid'] );
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function action_log_execution_request_id( array $entry ): string
+    {
+        if ( isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] ) )
+        {
+            return sanitize_text_field( (string) $entry['execution_request_id'] );
+        }
+
+        $details = $entry['details'] ?? null;
+        if ( is_array( $details ) && isset( $details['meta'] ) && is_array( $details['meta'] ) )
+        {
+            $execution_request_id = $details['meta']['execution_request_id'] ?? null;
+            if ( is_scalar( $execution_request_id ) )
+            {
+                return sanitize_text_field( (string) $execution_request_id );
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function action_log_mapping_id( array $entry ): ?int
+    {
+        $mapping_id = $entry['mapping_id'] ?? null;
+        if ( ! is_scalar( $mapping_id ) )
+        {
+            return null;
+        }
+
+        $mapping_id = sanitize_text_field( (string) $mapping_id );
+        if ( ctype_digit( $mapping_id ) )
+        {
+            return absint( $mapping_id );
+        }
+
+        if ( str_starts_with( $mapping_id, 'local_first_' ) )
+        {
+            $local_mapping_id = substr( $mapping_id, strlen( 'local_first_' ) );
+            return ctype_digit( $local_mapping_id ) ? absint( $local_mapping_id ) : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     *
+     * @return array<string, mixed>|null
+     */
+    private function action_log_last_result( array $entry ): ?array
+    {
+        if ( is_array( $entry['details'] ?? null ) )
+        {
+            return $entry['details'];
+        }
+
+        if ( isset( $entry['result_summary'] ) && is_scalar( $entry['result_summary'] ) )
+        {
+            $summary = sanitize_text_field( (string) $entry['result_summary'] );
+            return '' !== $summary ? [ 'summary' => $summary ] : null;
+        }
+
+        return null;
     }
 
     /**

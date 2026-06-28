@@ -2043,6 +2043,16 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private function record_widget_id( mixed $record ): string
     {
+        $settings_id = $this->record_form_setting( $record, 'id' );
+        if ( is_scalar( $settings_id ) )
+        {
+            $widget_id = sanitize_key( (string) $settings_id );
+            if ( '' !== $widget_id )
+            {
+                return $widget_id;
+            }
+        }
+
         foreach ( [ 'elementor_widget_id', '_elementor_widget_id', '_elementor_form_id', 'element_id' ] as $candidate_id )
         {
             $value = $this->record_field_value_by_id( $record, $candidate_id );

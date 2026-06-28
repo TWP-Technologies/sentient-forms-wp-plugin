@@ -1342,6 +1342,49 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'elementor_widget_id', $stored['logical_fields_json'] ?? [] );
     }
 
+    public function test_new_record_resolves_duplicate_form_names_by_elementor_form_settings_id(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $first_page_id  = $this->create_elementor_form_page( null, 'formabc', 'Quote Request' );
+        $second_page_id = $this->create_elementor_form_page( null, 'targetform', 'Quote Request' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static fn() => [ $first_page_id, $second_page_id ]
+        );
+
+        $form_id         = $second_page_id . ':targetform';
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_new_record(
+            $this->elementor_submission_record(
+                [
+                    'full_name' => [
+                        'id'    => 'full_name',
+                        'title' => 'Full name',
+                        'type'  => 'text',
+                        'value' => 'Ada Lovelace',
+                    ],
+                ],
+                [ 'id' => 'targetform' ]
+            ),
+            null
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( $form_id, $stored['form_id'] ?? null );
+        $this->assertSame( 'Ada Lovelace', $stored['logical_fields_json']['full_name'] ?? null );
+    }
+
     public function test_new_record_emits_resolution_failure_action_for_ambiguous_form_name_without_widget_id(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
@@ -1981,10 +2024,10 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         return $page_id;
     }
 
-    private function elementor_submission_record( ?array $fields = null ): object
+    private function elementor_submission_record( ?array $fields = null, array $settings = [] ): object
     {
-        return new class( $fields ) {
-            public function __construct( private ?array $fields )
+        return new class( $fields, $settings ) {
+            public function __construct( private ?array $fields, private array $settings )
             {
             }
 
@@ -2036,9 +2079,12 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
             public function get_form_settings( ?string $key = null ): mixed
             {
-                $settings = [
-                    'form_name' => 'Quote Request',
-                ];
+                $settings = array_merge(
+                    [
+                        'form_name' => 'Quote Request',
+                    ],
+                    $this->settings
+                );
 
                 return null === $key ? $settings : ( $settings[ $key ] ?? null );
             }

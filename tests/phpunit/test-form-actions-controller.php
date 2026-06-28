@@ -1116,6 +1116,127 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
     }
 
+    public function test_elementor_submission_ledger_list_includes_central_action_log_runs(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = self::factory()->post->create(
+            [
+                'post_type'   => 'page',
+                'post_status' => 'publish',
+                'post_title'  => 'Elementor Central Ledger Page',
+            ]
+        );
+        update_post_meta(
+            $page_id,
+            '_elementor_data',
+            wp_slash(
+                wp_json_encode(
+                    [
+                        [
+                            'id'       => 'container1',
+                            'elType'   => 'container',
+                            'settings' => [],
+                            'elements' => [
+                                [
+                                    'id'         => 'formabc',
+                                    'elType'     => 'widget',
+                                    'widgetType' => 'form',
+                                    'settings'   => [ 'form_name' => 'Elementor Central Ledger Form' ],
+                                    'elements'   => [],
+                                ],
+                            ],
+                        ],
+                    ]
+                )
+            )
+        );
+        add_filter( 'sentient_forms_elementor_posts_with_data', static fn(): array => [ $page_id ] );
+
+        $form_id         = $page_id . ':formabc';
+        $submission_uuid = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
+
+        global $wpdb;
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'        => $submission_uuid,
+                    'form_source'            => 'elementor_forms',
+                    'form_id'                => $form_id,
+                    'native_entry_id'        => null,
+                    'logical_fields_json'    => [
+                        'email' => 'central-lead@example.test',
+                    ],
+                    'provider_metadata_json' => [
+                        'form_name' => 'Elementor Central Ledger Form',
+                    ],
+                    'file_refs_json'         => [],
+                    'redaction_summary_json' => [
+                        'redacted_keys' => [],
+                    ],
+                ]
+            )
+        );
+
+        update_option(
+            'sentient_forms_action_log',
+            [
+                [
+                    'form_source'          => 'elementor_forms',
+                    'form_id'              => $form_id,
+                    'submission_uuid'      => $submission_uuid,
+                    'execution_request_id' => 'req-elementor-central-run',
+                    'action_code'          => 'entry_summary_v1',
+                    'action_label'         => 'Entry Summary',
+                    'status'               => 'success',
+                    'provider'             => 'openrouter',
+                    'model'                => 'openrouter/auto',
+                    'result_summary'       => 'Central Elementor action completed.',
+                    'created_at'           => '2026-06-27T22:00:00+00:00',
+                    'details'              => [
+                        'structured' => [
+                            'summary' => 'Central Elementor action completed.',
+                        ],
+                    ],
+                ],
+                [
+                    'form_source'          => 'elementor_forms',
+                    'form_id'              => $form_id,
+                    'submission_uuid'      => '77777777-8888-4999-aaaa-bbbbbbbbbbbb',
+                    'execution_request_id' => 'req-other-elementor-central-run',
+                    'action_code'          => 'entry_summary_v1',
+                    'action_label'         => 'Entry Summary',
+                    'status'               => 'success',
+                    'result_summary'       => 'Wrong Elementor submission completed.',
+                    'created_at'           => '2026-06-27T22:01:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( $submission_uuid, $data['submissions'][0]['submission_uuid'] ?? null );
+        $this->assertCount( 1, $data['submissions'][0]['action_runs'] ?? [] );
+        $this->assertSame( 'req-elementor-central-run', $data['submissions'][0]['action_runs'][0]['execution_request_id'] ?? null );
+        $this->assertNull( $data['submissions'][0]['action_runs'][0]['mapping_id'] ?? null );
+        $this->assertSame( 'success', $data['submissions'][0]['action_runs'][0]['status'] ?? null );
+        $this->assertSame( 'openrouter', $data['submissions'][0]['action_runs'][0]['provider'] ?? null );
+        $this->assertSame( 'openrouter/auto', $data['submissions'][0]['action_runs'][0]['model'] ?? null );
+        $this->assertSame(
+            'Central Elementor action completed.',
+            $data['submissions'][0]['action_runs'][0]['last_result']['structured']['summary'] ?? null
+        );
+    }
+
     public function test_elementor_submission_ledger_records_require_enabled_ledger_settings(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
