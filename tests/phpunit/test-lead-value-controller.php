@@ -651,6 +651,115 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertCount( 2, $local_execution->calls );
     }
 
+    public function test_search_entries_returns_submission_ledger_rows_for_non_gravity_sources(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-555555555555';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'logical_fields_json' => [
+                    'your_name'  => 'Ada Buyer',
+                    'your_email' => 'ada@example.test',
+                    'message'    => 'Pricing request for automation.',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/entries/search' );
+        $request->set_param( 'form_source', 'contact_form_7' );
+        $request->set_param( 'form_id', 42 );
+        $request->set_param( 'q', 'pricing' );
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+
+        $this->assertSame( 'contact_form_7', $data['form_source'] );
+        $this->assertSame( 42, $data['form_id'] );
+        $this->assertSame( $submission_uuid, $data['entries'][0]['id'] ?? null );
+        $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
+        $this->assertSame( 'Ada Buyer', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
+    public function test_manual_suggested_reply_accepts_ledger_submission_uuid_for_non_gravity_sources(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '22222222-3333-4444-8555-666666666666';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'logical_fields_json' => [
+                    'your_name' => 'Grace Buyer',
+                    'message'   => 'Can you help with a multi-location intake workflow?',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'suggested_reply_v1',
+                'display_name'    => 'Suggested Reply',
+                'definition_json' => [
+                    'template_code' => 'suggested_reply_v1',
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mappings   = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $local_execution = new Sentient_Forms_Lead_Value_Test_Local_Action_Execution_Service();
+        $controller      = new Sentient_Forms_Lead_Value_Controller(
+            null,
+            null,
+            $mappings,
+            $custom_actions,
+            null,
+            $local_execution
+        );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/entries/' . $submission_uuid . '/suggested-reply' );
+        $request->set_param( 'form_source', 'contact_form_7' );
+        $request->set_param( 'form_id', 42 );
+        $request->set_param( 'entry_id', $submission_uuid );
+
+        $response = $controller->generate_entry_suggested_reply( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 202, $response->get_status() );
+        $this->assertSame( $mapping_id, $local_execution->calls[0]['mapping_id'] ?? null );
+        $this->assertSame( $submission_uuid, $local_execution->calls[0]['entry']['submission_uuid'] ?? null );
+        $this->assertSame( $submission_uuid, $local_execution->calls[0]['context']['submission_uuid'] ?? null );
+        $this->assertSame( 'manual:suggested_reply_v1:contact_form_7:42:' . $submission_uuid, $data['execution']['execution_request_id'] ?? null );
+    }
+
     public function test_dashboard_counts_grades_from_execution_events(): void
     {
         global $wpdb;
@@ -924,6 +1033,8 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
                 'sentient_historical_analysis_runs',
                 'sentient_migration_runs',
                 'sentient_model_cache',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
             ] as $table
         )
         {

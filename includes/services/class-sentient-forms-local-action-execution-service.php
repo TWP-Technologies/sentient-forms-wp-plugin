@@ -469,12 +469,18 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $lead_profile = is_array( $context['lead_profile'] ?? null ) ? $context['lead_profile'] : [];
+        $entry_id       = $this->lead_scoring_entry_identifier( $entry, $context );
+        if ( '' === $entry_id )
+        {
+            return;
+        }
+
         $entry_snapshot = $this->lead_scoring_entry_snapshot( $form, $entry );
         $payload = [
             'form_source'             => $mapping['form_source'] ?? 'gravity_forms',
             'form_id'                 => $mapping['form_id'] ?? ( $form['id'] ?? '' ),
             'form_title'              => $form['title'] ?? '',
-            'entry_id'                => $entry['id'] ?? '',
+            'entry_id'                => $entry_id,
             'action_code'             => $action_code,
             'execution_request_id'    => $execution_result['execution_request_id'] ?? '',
             'historical_run_id'       => $context['historical_run_id'] ?? null,
@@ -506,6 +512,19 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
     }
 
+    private function lead_scoring_entry_identifier( array $entry, array $context ): string
+    {
+        foreach ( [ $entry['id'] ?? null, $context['submission_uuid'] ?? null, $entry['submission_uuid'] ?? null, $context['entry_id'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) && '0' !== trim( (string) $candidate ) )
+            {
+                return sanitize_text_field( (string) $candidate );
+            }
+        }
+
+        return '';
+    }
+
     private function lead_scoring_entry_snapshot( array $form, array $entry ): array
     {
         $fields = [];
@@ -518,7 +537,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
 
             $label = is_object( $field ) && isset( $field->label ) ? (string) $field->label : ( is_array( $field ) ? (string) ( $field['label'] ?? $id ) : $id );
-            $value = $entry[ $id ] ?? '';
+            $normalized_id = sanitize_key( str_replace( [ '.', '-' ], '_', $id ) );
+            $value = $entry[ $id ] ?? ( $entry[ $normalized_id ] ?? '' );
             if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
             {
                 continue;
@@ -534,6 +554,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         return [
             'date_created'  => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] ) ? sanitize_text_field( (string) $entry['date_created'] ) : null,
             'status'        => isset( $entry['status'] ) && is_scalar( $entry['status'] ) ? sanitize_text_field( (string) $entry['status'] ) : null,
+            'submission_uuid' => isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) ? sanitize_text_field( (string) $entry['submission_uuid'] ) : null,
             'field_summary' => array_slice( $fields, 0, 12 ),
         ];
     }

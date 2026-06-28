@@ -1014,6 +1014,187 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_process_action_marks_non_gravity_dependent_job_skipped_from_upstream_spam_event(): void
+    {
+        global $wpdb;
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $submission_uuid       = '11111111-2222-4333-8444-555555555555';
+        $dependency_request_id = 'cf7_dep_req_spam_event';
+
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.91,
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'skip me',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                           => 'wpcf7_mail_sent',
+                'form_source'                    => 'contact_form_7',
+                'form_id'                        => 42,
+                'submission_uuid'                => $submission_uuid,
+                'action_id'                      => 'map_summary_cf7',
+                'action_name_label'              => 'Entry Summary',
+                'local_mapping_id'               => 'map_summary_cf7',
+                'dependency_mapping_ids'         => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $dependency_request_id ],
+                'dependency_wait_started_at'     => time(),
+                'dependency_wait_max_seconds'    => 120,
+                'dependency_wait_poll_seconds'   => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+    }
+
+    public function test_process_local_mapping_marks_non_gravity_dependent_job_skipped_from_upstream_spam_event(): void
+    {
+        global $wpdb;
+
+        $request_store         = $this->plugin->get_async_request_store();
+        $submission_uuid       = '22222222-3333-4444-8555-666666666666';
+        $dependency_request_id = 'cf7_local_dep_req_spam_event';
+
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => 'local_mapping_100',
+            ]
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.97,
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            321,
+            [ 'id' => 42, 'title' => 'CF7 Local Dependency Gate' ],
+            [
+                'id'              => null,
+                'submission_uuid' => $submission_uuid,
+                'message'         => 'skip local-first downstream work',
+            ],
+            [
+                'hook'                             => 'wpcf7_mail_sent',
+                'form_source'                      => 'contact_form_7',
+                'form_id'                          => 42,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'local_first_321',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'local_first_321',
+                'dependency_mapping_ids'           => [ 'local_first_100' ],
+                'dependency_execution_request_ids' => [ 'local_first_100' => $dependency_request_id ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+                'settings'                         => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $this->assertIsArray( $payload );
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_local_mapping( $payload );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $payload['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+
+        $local_events = array_values(
+            array_filter(
+                $events->list_recent( 10 ),
+                static fn( array $event ): bool => (string) ( $event['execution_request_id'] ?? '' ) === (string) $payload['execution_request_id']
+            )
+        );
+        $this->assertNotEmpty( $local_events );
+        $this->assertSame( 'skipped', $local_events[0]['status'] ?? null );
+    }
+
     public function test_process_action_continues_when_upstream_spam_classification_is_ham(): void
     {
         $request_store = $this->plugin->get_async_request_store();

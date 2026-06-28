@@ -2545,6 +2545,63 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'mark_as_spam', $event['result_json']['effects']['applied'] );
     }
 
+    public function test_non_gravity_result_effects_use_sentient_surface_and_skip_native_effects_specifically(): void
+    {
+        $applier = new Sentient_Forms_Local_Result_Applier();
+
+        $effects = $applier->apply(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'entry_note'   => [
+                        'path' => 'structured.summary',
+                    ],
+                    'meta'         => [
+                        'sentient_forms_summary' => 'structured.summary',
+                    ],
+                    'spam'         => [
+                        'enabled'             => true,
+                        'classification_path' => 'structured.classification',
+                        'confidence_path'     => 'structured.confidence',
+                        'min_confidence'      => 0.8,
+                    ],
+                ],
+            ],
+            [ 'id' => '42', 'title' => 'Contact Form 7' ],
+            [
+                'id'              => null,
+                'submission_uuid' => '11111111-2222-4333-8444-555555555555',
+            ],
+            [
+                'execution_request_id' => 'cf7-provider-neutral-result',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.92,
+                        'summary'        => 'Suspicious submission.',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertContains( 'store_result', $effects['applied'] );
+        $this->assertContains( 'spam_classification', $effects['applied'] );
+
+        $skipped = [];
+        foreach ( $effects['skipped'] as $skip )
+        {
+            $skipped[ $skip['effect'] ] = $skip['reason'];
+        }
+
+        $this->assertSame( 'native_meta_unsupported', $skipped['meta:sentient_forms_summary'] ?? null );
+        $this->assertSame( 'native_note_unsupported', $skipped['entry_note'] ?? null );
+        $this->assertSame( 'native_spam_status_unsupported', $skipped['mark_as_spam'] ?? null );
+        $this->assertArrayNotHasKey( 'all', $skipped );
+    }
+
     public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

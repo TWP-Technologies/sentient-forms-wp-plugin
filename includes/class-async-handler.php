@@ -1079,12 +1079,16 @@ class Sentient_Forms_Async_Handler
             ? sanitize_text_field( (string) $payload['execution_request_id'] )
             : sanitize_text_field( (string) ( $context['execution_request_id'] ?? '' ) );
 
+        $job_settings = isset( $context['settings'] ) && is_array( $context['settings'] )
+            ? $context['settings']
+            : [];
+
         $job = [
             'action_id'            => 'sentient_forms_local_mapping',
             'data'                 => [
                 'entry' => [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? null ],
             ],
-            'settings'             => [],
+            'settings'             => $job_settings,
             'execution_request_id' => $execution_request_id,
             'context'              => $context,
         ];
@@ -2217,7 +2221,7 @@ class Sentient_Forms_Async_Handler
             return null;
         }
 
-        $classification = $this->get_upstream_spam_classification( $job );
+        $classification = $this->get_upstream_spam_classification( $job, $dependency_id );
         if ( null === $classification || ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
             return null;
@@ -2318,9 +2322,15 @@ class Sentient_Forms_Async_Handler
      *
      * @return string|null
      */
-    private function get_upstream_spam_classification( array $job ): ?string
+    private function get_upstream_spam_classification( array $job, string $dependency_id = '' ): ?string
     {
-        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $context        = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $event_result   = $this->get_upstream_spam_classification_from_execution_event( $job, $dependency_id );
+        if ( null !== $event_result )
+        {
+            return $event_result;
+        }
+
         $entry_id = isset( $job['data']['entry']['id'] ) ? (int) $job['data']['entry']['id'] : (int) ( $context['entry_id'] ?? 0 );
 
         if ( $entry_id <= 0 )
@@ -2348,6 +2358,67 @@ class Sentient_Forms_Async_Handler
 
         $normalized = sanitize_key( (string) $classification );
         return '' === $normalized ? null : $normalized;
+    }
+
+    private function get_upstream_spam_classification_from_execution_event( array $job, string $dependency_id ): ?string
+    {
+        if ( '' === $dependency_id || ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return null;
+        }
+
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $request_ids = isset( $context['dependency_execution_request_ids'] ) && is_array( $context['dependency_execution_request_ids'] )
+            ? $context['dependency_execution_request_ids']
+            : [];
+        $request_id = isset( $request_ids[ $dependency_id ] ) && is_scalar( $request_ids[ $dependency_id ] )
+            ? sanitize_text_field( (string) $request_ids[ $dependency_id ] )
+            : '';
+        if ( '' === $request_id )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $request_id );
+        if ( ! is_array( $event ) )
+        {
+            return null;
+        }
+
+        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        return $this->extract_spam_classification_from_result( $result );
+    }
+
+    private function extract_spam_classification_from_result( array $result ): ?string
+    {
+        $candidates = [
+            $result['structured']['classification'] ?? null,
+            $result['result']['structured']['classification'] ?? null,
+            $result['classification'] ?? null,
+            $result['result']['classification'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $classification = sanitize_key( (string) $candidate );
+                if ( '' !== $classification )
+                {
+                    return $classification;
+                }
+            }
+        }
+
+        $is_spam = $result['structured']['is_spam'] ?? $result['result']['structured']['is_spam'] ?? null;
+        if ( true === $is_spam || 'true' === strtolower( (string) $is_spam ) )
+        {
+            return 'spam';
+        }
+
+        return null;
     }
 
     /**

@@ -293,7 +293,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $payload         = [
             'form_source'    => $this->get_id(),
             'form_id'        => (string) $form_id,
-            'logical_fields' => $this->logical_fields_from_process_fields( $fields ),
+            'logical_fields' => $this->logical_fields_from_process_fields( $fields, $form_data ),
             'files'          => $this->file_references_from_process_fields( $fields ),
         ];
         $native_entry_id = absint( $entry_id );
@@ -1538,7 +1538,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     /**
      * @return array<string, mixed>
      */
-    private function logical_fields_from_process_fields( mixed $fields ): array
+    private function logical_fields_from_process_fields( mixed $fields, mixed $form_data = null ): array
     {
         if ( ! is_array( $fields ) )
         {
@@ -1548,7 +1548,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $logical_fields = [];
         foreach ( $fields as $field_key => $field )
         {
-            if ( ! is_array( $field ) || $this->is_storage_ineligible_process_field( $field ) )
+            if ( ! is_array( $field ) || $this->is_storage_ineligible_process_field( $field, $form_data, $field_key ) )
             {
                 continue;
             }
@@ -1623,13 +1623,97 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         return 'file-upload' === $type;
     }
 
-    private function is_storage_ineligible_process_field( array $field ): bool
+    private function is_storage_ineligible_process_field( array $field, mixed $form_data = null, mixed $field_key = null ): bool
     {
         $type = isset( $field['type'] ) && is_scalar( $field['type'] )
             ? sanitize_key( (string) $field['type'] )
             : '';
 
-        return 'hidden' === $type || $this->is_file_upload_process_field( $field );
+        if ( $this->is_file_upload_process_field( $field ) )
+        {
+            return true;
+        }
+
+        if ( 'hidden' !== $type )
+        {
+            return false;
+        }
+
+        $field_id = $this->process_field_id( $field, $field_key );
+        return ! $this->wpforms_hidden_field_storage_allowed( $field, $field_id, $form_data );
+    }
+
+    private function wpforms_hidden_field_storage_allowed( array $field, string $field_id, mixed $form_data ): bool
+    {
+        $allowlist = [];
+        if ( is_array( $form_data ) )
+        {
+            $settings = is_array( $form_data['settings'] ?? null ) ? $form_data['settings'] : [];
+            foreach ( [ 'sentient_forms_hidden_field_allowlist', 'hidden_field_storage_allowlist', 'sentient_forms_hidden_fields' ] as $settings_key )
+            {
+                if ( isset( $settings[ $settings_key ] ) )
+                {
+                    $allowlist = array_merge( $allowlist, $this->normalize_hidden_field_storage_allowlist( $settings[ $settings_key ] ) );
+                }
+            }
+        }
+
+        $allowlist = apply_filters(
+            'sentient_forms_wpforms_hidden_field_storage_allowlist',
+            $allowlist,
+            $field,
+            $form_data,
+            $this
+        );
+        $allowlist = $this->normalize_hidden_field_storage_allowlist( $allowlist );
+        if ( [] === $allowlist )
+        {
+            return false;
+        }
+
+        $ledger_key = $this->submission_ledger_field_key( $field, $field_id );
+        $candidates = array_filter(
+            [
+                sanitize_key( str_replace( [ '.', '-' ], '_', $field_id ) ),
+                sanitize_key( $field_id ),
+                $ledger_key,
+            ]
+        );
+
+        return [] !== array_intersect( $allowlist, array_values( array_unique( $candidates ) ) );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function normalize_hidden_field_storage_allowlist( mixed $allowlist ): array
+    {
+        if ( is_string( $allowlist ) )
+        {
+            $allowlist = array_filter( array_map( 'trim', explode( ',', $allowlist ) ) );
+        }
+
+        if ( ! is_array( $allowlist ) )
+        {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ( $allowlist as $item )
+        {
+            if ( ! is_scalar( $item ) )
+            {
+                continue;
+            }
+
+            $key = sanitize_key( str_replace( [ ' ', '.', '-' ], '_', strtolower( trim( (string) $item ) ) ) );
+            if ( '' !== $key )
+            {
+                $normalized[] = $key;
+            }
+        }
+
+        return array_values( array_unique( $normalized ) );
     }
 
     private function process_field_id( array $field, mixed $field_key ): string

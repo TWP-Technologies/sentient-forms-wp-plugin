@@ -323,6 +323,69 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'contract.pdf', wp_json_encode( $data['fields'] ) );
     }
 
+    public function test_entry_preview_endpoint_returns_ledger_snapshot_for_non_gravity_sources(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-555555555555';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $ledger_id       = $ledger->create(
+            [
+                'submission_uuid'        => $submission_uuid,
+                'form_source'            => 'contact_form_7',
+                'form_id'                => '42',
+                'logical_fields_json'    => [
+                    'your_name'  => 'Ada Buyer',
+                    'your_email' => 'ada@example.test',
+                    'message'    => 'I need pricing help.',
+                ],
+                'provider_metadata_json' => [
+                    'source' => 'contact_form_7',
+                ],
+                'file_refs_json'         => [
+                    [
+                        'field_id' => 'attachment',
+                        'filename' => 'private.pdf',
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $ledger_id );
+
+        $events   = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'cf7-ledger-preview',
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'summary' => 'Pricing request.',
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $event_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log/local-event-' . $event_id . '/entry-preview' );
+        $request->set_param( 'log_id', 'local-event-' . $event_id );
+
+        $response = $this->controller->get_entry_preview( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'ledger', $data['preview_source'] );
+        $this->assertSame( $submission_uuid, $data['submission_uuid'] );
+        $this->assertSame( 'Contact Form 7', $data['provider_label'] );
+        $this->assertNull( $data['entry_id'] );
+        $this->assertSame( 'Ada Buyer', $data['fields'][0]['value'] );
+        $this->assertStringNotContainsString( 'private.pdf', wp_json_encode( $data['fields'] ) );
+        $this->assertFalse( $data['capabilities']['native_entry']['id'] );
+    }
+
     /**
      * Test static log_execution handles errors correctly.
      */
@@ -960,6 +1023,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
             ] as $table
         )
         {

@@ -8,6 +8,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     {
         remove_all_filters( 'sentient_forms_wpforms_is_active' );
         remove_all_filters( 'sentient_forms_wpforms_native_entry_available' );
+        remove_all_filters( 'sentient_forms_wpforms_hidden_field_storage_allowlist' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
 
         foreach ( [ 44, 48, 49, 50 ] as $form_id )
@@ -405,6 +406,59 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'https://example.test/uploads/resume.pdf', $stored['file_refs_json'][0]['url'] ?? null );
         $this->assertArrayNotHasKey( 'contents', $stored['file_refs_json'][0] ?? [] );
         $this->assertContains( 'captcha_token', $stored['redaction_summary_json']['redacted_fields'] ?? [] );
+    }
+
+    public function test_process_complete_stores_allowlisted_hidden_fields_when_ledger_is_enabled(): void
+    {
+        global $wpdb;
+
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger   = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $settings->set_enabled( 'wpforms', '47', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_wpforms_hidden_field_storage_allowlist',
+            static fn (): array => [ 'utm_source' ]
+        );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'type'  => 'name',
+                    'value' => 'Katherine Johnson',
+                ],
+                2 => [
+                    'id'    => 2,
+                    'name'  => 'UTM Source',
+                    'type'  => 'hidden',
+                    'value' => 'partner-newsletter',
+                ],
+                3 => [
+                    'id'    => 3,
+                    'name'  => 'Internal Token',
+                    'type'  => 'hidden',
+                    'value' => 'do-not-store',
+                ],
+            ],
+            [],
+            [
+                'id'       => 47,
+                'settings' => [
+                    'form_title' => 'WPForms Hidden Allowlist',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( 'partner-newsletter', $stored['logical_fields_json']['utm_source'] ?? null );
+        $this->assertArrayNotHasKey( 'internal_token', $stored['logical_fields_json'] ?? [] );
     }
 
     public function test_process_complete_does_not_store_or_schedule_when_ledger_is_disabled(): void
