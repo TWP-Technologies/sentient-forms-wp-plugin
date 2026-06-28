@@ -1157,19 +1157,8 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
 
     private function format_openrouter_model_refresh_consent(): array
     {
-        $latest = $this->consents->latest_for_provider( 'openrouter' );
+        $latest = $this->consents->latest_for_provider_action( 'openrouter', 'refresh_models' );
         if ( ! is_array( $latest ) )
-        {
-            return [
-                'state'              => 'missing',
-                'disclosure_version' => null,
-                'consent_id'         => null,
-                'accepted_at'        => null,
-            ];
-        }
-
-        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
-        if ( 'refresh_models' !== (string) ( $metadata['action'] ?? '' ) )
         {
             return [
                 'state'              => 'missing',

@@ -63,6 +63,7 @@ test.describe('Submission Ledger admin view', () => {
 				const matchingRecords = q
 					? [
 							record(77, {
+								captured_at: '2030-01-05T10:17:00Z',
 								native_entry_id: 'needle-entry-77',
 								logical_fields: {
 									name: 'Needle Prospect',
@@ -104,5 +105,77 @@ test.describe('Submission Ledger admin view', () => {
 		);
 		await expect(page.getByText('needle-entry-77')).toBeVisible();
 		expect(seenSubmissionQueries.some((query) => query.includes('q=needle+prospect'))).toBe(true);
+	});
+
+	test('keeps newer filtered results when an older ledger request resolves later', async ({ page }) => {
+		let firstSubmissionRequest: (() => void) | null = null;
+		const releaseFirstSubmissionRequest = new Promise<void>((resolve) => {
+			firstSubmissionRequest = resolve;
+		});
+
+		await page.context().route('**/wp-json/sentient-forms/v1/**', async (route) => {
+			const requestUrl = new URL(route.request().url());
+			const path = requestUrl.pathname;
+
+			if (path.endsWith('/gravity_forms/forms/42/ledger-settings')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ success: true, data: ledgerSettings })
+				});
+			}
+
+			if (path.endsWith('/gravity_forms/forms/42/submissions')) {
+				const q = requestUrl.searchParams.get('q') ?? '';
+				const offset = Number(requestUrl.searchParams.get('offset') ?? '0');
+				const perPage = Number(requestUrl.searchParams.get('per_page') ?? '10');
+
+				if (!q) {
+					await releaseFirstSubmissionRequest;
+				}
+
+				const matchingRecords = q
+					? [
+							record(77, {
+								captured_at: '2030-01-05T10:17:00Z',
+								native_entry_id: 'needle-entry-77',
+								logical_fields: {
+									name: 'Needle Prospect',
+									message: 'needle prospect asks about a custom integration.'
+								}
+							})
+						]
+					: Array.from({ length: perPage }, (_, index) => record(offset + index + 1));
+
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							form_source: 'gravity_forms',
+							form_id: '42',
+							submissions: matchingRecords,
+							total: q ? 1 : 61,
+							count: matchingRecords.length,
+							per_page: perPage,
+							offset
+						}
+					})
+				});
+			}
+
+			return route.continue();
+		});
+
+		await page.goto('/#/actions/gravity_forms/42/submissions');
+		await page.getByTestId('submission-ledger-search').fill('needle prospect');
+		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText('Showing 1 of 1');
+
+		firstSubmissionRequest?.();
+
+		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText('Showing 1 of 1');
+		await expect(page.getByText('needle-entry-77')).toBeVisible();
+		await expect(page.getByText('Lead 1')).toHaveCount(0);
 	});
 });

@@ -63,6 +63,7 @@
 	let perPage = $state('10');
 	let offset = $state(0);
 	let filterTimer: ReturnType<typeof setTimeout> | null = null;
+	let ledgerRequestSequence = 0;
 
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
@@ -88,6 +89,7 @@
 	);
 
 	async function loadLedgerSubmissions() {
+		const requestSequence = ++ledgerRequestSequence;
 		loading = true;
 		error = null;
 
@@ -109,15 +111,21 @@
 				})
 			]);
 
+			if (requestSequence !== ledgerRequestSequence) return;
+
 			settings = nextSettings;
 			records = Array.isArray(nextRecords.records) ? nextRecords.records : [];
 			total = Number.isFinite(nextRecords.total) ? nextRecords.total : records.length;
 		} catch (caught) {
+			if (requestSequence !== ledgerRequestSequence) return;
+
 			error = caught instanceof Error ? caught.message : 'Unable to load submission ledger.';
 			records = [];
 			total = 0;
 		} finally {
-			loading = false;
+			if (requestSequence === ledgerRequestSequence) {
+				loading = false;
+			}
 		}
 	}
 
@@ -169,6 +177,7 @@
 
 	onDestroy(() => {
 		clearFilterTimer();
+		ledgerRequestSequence += 1;
 	});
 </script>
 

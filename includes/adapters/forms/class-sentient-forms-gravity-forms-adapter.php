@@ -5439,7 +5439,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $output['virtual_questions'] ?? [],
             $timing
         );
-        $decisions = $this->normalize_realtime_clarification_decisions( $output['conditional_decisions'] ?? [] );
+        $has_decisions = array_key_exists( 'conditional_decisions', $output );
+        $decisions     = $has_decisions
+            ? $this->normalize_realtime_clarification_decisions( $output['conditional_decisions'] )
+            : [];
         if ( [] === $questions && [] === $decisions )
         {
             return;
@@ -5464,10 +5467,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'central_action_id' => self::REALTIME_ACTION_ID,
                 'action_name_label' => $this->resolve_realtime_action_label( $context ),
                 'questions'         => $questions,
-                'conditional_decisions' => $decisions,
             ],
             $timing
         );
+        if ( $has_decisions )
+        {
+            $mapping['conditional_decisions'] = $decisions;
+        }
 
         $payload = $this->merge_realtime_qna_mapping(
             $existing_payload,
@@ -5886,25 +5892,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private function resolve_realtime_qna_storage_field_id( array $entry, array $context ): string
     {
-        $candidates = [
-            $context['storage_target_field_id'] ?? null,
-            $context['realtime_settings']['storage_target_field_id'] ?? null,
-            $context['settings']['realtime_settings']['storage_target_field_id'] ?? null,
-            $context['suggestion_context']['storage_target_field_id'] ?? null,
-        ];
-
-        foreach ( $candidates as $candidate )
-        {
-            if ( is_scalar( $candidate ) )
-            {
-                $field_id = sanitize_text_field( (string) $candidate );
-                if ( '' !== $field_id )
-                {
-                    return $field_id;
-                }
-            }
-        }
-
         $form_id = isset( $entry['form_id'] ) ? absint( $entry['form_id'] ) : 0;
         if ( $form_id <= 0 || ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) )
         {
@@ -5917,7 +5904,51 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return '';
         }
 
+        $candidates = [
+            $context['storage_target_field_id'] ?? null,
+            $context['realtime_settings']['storage_target_field_id'] ?? null,
+            $context['settings']['realtime_settings']['storage_target_field_id'] ?? null,
+            $context['suggestion_context']['storage_target_field_id'] ?? null,
+        ];
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_text_field( (string) $candidate );
+            if ( '' !== $field_id && $this->form_has_realtime_qna_storage_target( $form, $field_id ) )
+            {
+                return $field_id;
+            }
+        }
+
         return $this->find_realtime_storage_field_id( $form );
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     */
+    private function form_has_realtime_qna_storage_target( array $form, string $field_id ): bool
+    {
+        if ( '' === trim( $field_id ) )
+        {
+            return false;
+        }
+
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            if ( $field_id !== $this->extract_gravity_field_property( $field, 'id' ) )
+            {
+                continue;
+            }
+
+            return $this->is_realtime_storage_field( $field );
+        }
+
+        return false;
     }
 
     /**

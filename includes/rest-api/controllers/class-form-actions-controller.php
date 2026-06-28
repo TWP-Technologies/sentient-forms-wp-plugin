@@ -1690,8 +1690,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $filters     = [
             'q'             => sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ),
             'native_entry'  => sanitize_text_field( (string) ( $request->get_param( 'native_entry' ) ?? '' ) ),
-            'captured_from' => sanitize_text_field( (string) ( $request->get_param( 'captured_from' ) ?? '' ) ),
-            'captured_to'   => sanitize_text_field( (string) ( $request->get_param( 'captured_to' ) ?? '' ) ),
+            'captured_from' => $this->normalize_submission_ledger_captured_bound( $request->get_param( 'captured_from' ) ),
+            'captured_to'   => $this->normalize_submission_ledger_captured_bound( $request->get_param( 'captured_to' ) ),
             'has_files'     => null !== $request->get_param( 'has_files' )
                 ? rest_sanitize_boolean( $request->get_param( 'has_files' ) )
                 : null,
@@ -1781,6 +1781,33 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 rawurlencode( $form_id )
             ),
         ];
+    }
+
+    private function normalize_submission_ledger_captured_bound( mixed $value ): string
+    {
+        if ( null === $value || ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $raw = sanitize_text_field( (string) $value );
+        if ( '' === $raw )
+        {
+            return '';
+        }
+
+        $normalized = str_replace( 'T', ' ', $raw );
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized . ':00';
+        }
+
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized;
+        }
+
+        return '';
     }
 
     /**

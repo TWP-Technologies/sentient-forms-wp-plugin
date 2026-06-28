@@ -132,7 +132,16 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Refresh bundled OpenRouter model snapshot
-        run: composer openrouter-model-snapshot
+        run: |
+          for attempt in 1 2 3; do
+            if composer openrouter-model-snapshot; then
+              exit 0
+            fi
+
+            sleep "$(( attempt * 10 ))"
+          done
+
+          echo "::warning::OpenRouter model snapshot refresh failed after retries; continuing with the committed bundled snapshot."
 
       - name: Build WordPress admin assets
         working-directory: admin-app
