@@ -1024,6 +1024,49 @@ test.describe('Actions admin flows', () => {
 		await expect(providerStatus).not.toContainText('Running');
 	});
 
+	test('shows missing Elementor as not installed on the actions overview', async ({ page }) => {
+		const elementorFormsMissingDescriptor = {
+			...elementorFormsFreeDescriptor,
+			availability: 'not_installed',
+			availability_message: 'Install Elementor and Elementor Pro to enable Elementor Forms.'
+		};
+
+		await seedRuntimeConfig(page, {
+			formSources: [
+				{
+					slug: 'elementor_forms',
+					label: 'Elementor Forms',
+					isActive: false,
+					availability: 'not_installed',
+					availabilityMessage: 'Install Elementor and Elementor Pro to enable Elementor Forms.',
+					requiresPro: true,
+					descriptor: elementorFormsMissingDescriptor
+				}
+			]
+		});
+		await mockWpJson(page, {
+			actions: {
+				forms: { elementor_forms: [] },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsMissingDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const providerLabel = page.getByText('Elementor Forms', { exact: true });
+		await expect(providerLabel).toBeVisible();
+		const providerStatus = providerLabel.locator('../..');
+		await expect(providerStatus).toContainText('Not installed');
+		await expect(providerStatus).toContainText('Install Elementor and Elementor Pro to enable Elementor Forms.');
+		await expect(providerStatus).not.toContainText('Requires Pro');
+		await expect(providerStatus).not.toContainText('Running');
+	});
+
 	test('hash navigation opens the form actions editor', async ({ page }) => {
 		await mockWpJson(page, {
 			actions: {

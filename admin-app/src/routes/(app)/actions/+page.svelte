@@ -122,12 +122,12 @@
 	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
 
 	function formSourceAvailabilityLabel(source: FormSourceSummary): string {
-		if (source.availability === 'requires_pro' || (source.requiresPro && !source.isActive)) {
-			return 'Requires Pro';
-		}
-
 		if (source.availability === 'not_installed') {
 			return 'Not installed';
+		}
+
+		if (source.availability === 'requires_pro' || (source.requiresPro && !source.isActive)) {
+			return 'Requires Pro';
 		}
 
 		return source.isActive ? 'Plugin active' : 'Inactive';
