@@ -2243,7 +2243,7 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(page.getByRole('link', { name: 'Back to form actions' })).toHaveAttribute(
 			'href',
-			new RegExp(`/actions/elementor_forms/${encodedElementorFormId}$`)
+			`/actions/elementor_forms/${encodedElementorFormId}`
 		);
 		expect(leadValueRequests).toBe(0);
 	});
