@@ -56,7 +56,20 @@ test.describe('Custom actions admin view', () => {
 		await page.goto('/#/actions/custom/new');
 		await expect(page.getByTestId('custom-action-form')).toBeVisible();
 
+		const body = page.getByTestId('custom-action-form-body');
 		const footer = page.getByTestId('custom-action-form-footer');
+		const scrollMetrics = await body.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			scrollHeight: element.scrollHeight
+		}));
+
+		expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight + 24);
+		await body.evaluate((element) => {
+			element.scrollTop = element.scrollHeight;
+		});
+		await expect
+			.poll(() => body.evaluate((element) => element.scrollTop))
+			.toBeGreaterThan(0);
 		await expect(footer).toBeVisible();
 		await expect(footer).toHaveCSS('position', 'sticky');
 		await expect(footer.getByRole('button', { name: 'Create Action' })).toBeInViewport();

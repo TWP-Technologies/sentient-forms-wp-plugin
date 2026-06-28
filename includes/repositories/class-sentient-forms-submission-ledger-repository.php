@@ -131,53 +131,24 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
      */
     public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0, array $filters = [] ): array
     {
-        $args  = array_merge(
+        $args = array_merge(
             [ $this->table_name() ],
             $this->build_form_filter_values( $form_source, $form_id, $filters ),
-            $this->build_order_values( (string) ( $filters['sort'] ?? '' ) ),
             [
                 max( 1, min( 100, $limit ) ),
                 max( 0, $offset ),
             ]
         );
 
-        $rows = $this->wpdb->get_results(
-            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters and sort modes are represented by repeated scalar placeholders.
-            $this->wpdb->prepare(
-                "SELECT * FROM %i
-                WHERE form_source = %s
-                AND form_id = %s
-                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
-                AND (%s = '' OR native_entry_id = %s)
-                AND (%s = '' OR captured_at >= %s)
-                AND (%s = '' OR captured_at <= %s)
-                AND (
-                    %s = ''
-                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
-                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
-                )
-                ORDER BY
-                    CASE WHEN %s = 'captured_asc' THEN captured_at END ASC,
-                    CASE WHEN %s = 'captured_asc' THEN id END ASC,
-                    CASE WHEN %s = 'submitted_desc' THEN source_submitted_at END DESC,
-                    CASE WHEN %s = 'submitted_desc' THEN captured_at END DESC,
-                    CASE WHEN %s = 'submitted_desc' THEN id END DESC,
-                    CASE WHEN %s = 'submitted_asc' THEN source_submitted_at END ASC,
-                    CASE WHEN %s = 'submitted_asc' THEN captured_at END ASC,
-                    CASE WHEN %s = 'submitted_asc' THEN id END ASC,
-                    CASE WHEN %s = 'native_entry_asc' THEN native_entry_id END ASC,
-                    CASE WHEN %s = 'native_entry_asc' THEN captured_at END DESC,
-                    CASE WHEN %s = 'native_entry_asc' THEN id END DESC,
-                    CASE WHEN %s = 'native_entry_desc' THEN native_entry_id END DESC,
-                    CASE WHEN %s = 'native_entry_desc' THEN captured_at END DESC,
-                    CASE WHEN %s = 'native_entry_desc' THEN id END DESC,
-                    CASE WHEN %s NOT IN ('captured_asc', 'submitted_desc', 'submitted_asc', 'native_entry_asc', 'native_entry_desc') THEN captured_at END DESC,
-                    CASE WHEN %s NOT IN ('captured_asc', 'submitted_desc', 'submitted_asc', 'native_entry_asc', 'native_entry_desc') THEN id END DESC
-                LIMIT %d OFFSET %d",
-                ...$args
-            ),
-            ARRAY_A
-        ) ?: [];
+        $rows = match ( sanitize_key( (string) ( $filters['sort'] ?? '' ) ) )
+        {
+            'captured_asc' => $this->list_for_form_ordered_by_captured_asc( $args ),
+            'submitted_desc' => $this->list_for_form_ordered_by_submitted_desc( $args ),
+            'submitted_asc' => $this->list_for_form_ordered_by_submitted_asc( $args ),
+            'native_entry_asc' => $this->list_for_form_ordered_by_native_entry_asc( $args ),
+            'native_entry_desc' => $this->list_for_form_ordered_by_native_entry_desc( $args ),
+            default => $this->list_for_form_ordered_by_captured_desc( $args ),
+        };
 
         return array_map( [ $this, 'decode_row' ], $rows );
     }
@@ -297,6 +268,186 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         return $values;
     }
 
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_captured_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_captured_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY captured_at ASC, id ASC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_submitted_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY source_submitted_at DESC, captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_submitted_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY source_submitted_at ASC, captured_at ASC, id ASC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_native_entry_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY native_entry_id ASC, captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_native_entry_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY native_entry_id DESC, captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
     private function normalize_captured_filter_datetime( mixed $value ): string
     {
         if ( null === $value || ! is_scalar( $value ) )
@@ -322,13 +473,5 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         }
 
         return $raw;
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function build_order_values( string $sort ): array
-    {
-        return array_fill( 0, 16, sanitize_key( $sort ) );
     }
 }

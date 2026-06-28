@@ -407,7 +407,10 @@
 		data-testid="custom-action-form"
 		onsubmit={handleSubmit}
 	>
-		<div class="sf:flex-1 sf:space-y-5 sf:overflow-y-auto sf:pb-4 sf:pr-1">
+		<div
+			class="sf:flex-1 sf:space-y-5 sf:overflow-y-auto sf:pb-4 sf:pr-1"
+			data-testid="custom-action-form-body"
+		>
 			{#if baseTemplateUnavailable}
 				<Alert variant="warning">
 					Built-in action template IDs are not available in the current definitions response. You

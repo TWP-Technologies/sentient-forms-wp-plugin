@@ -258,6 +258,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             3
         );
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        remove_all_actions( 'sentient_forms_async_job_scheduled' );
         add_action(
             'sentient_forms_async_job_scheduled',
             static function ( $hook, $args, $group, $action_id, $run_at ) {
@@ -308,6 +309,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         GFAPI::$get_entry_calls = 0;
         GFAPI::$get_form_calls  = 0;
         remove_all_filters( 'pre_http_request' );
+        remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
         parent::tearDown();
