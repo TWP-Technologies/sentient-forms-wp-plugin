@@ -727,6 +727,35 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'invalid-date-survivor', $data['submissions'][0]['native_entry_id'] ?? null );
     }
 
+    public function test_submission_ledger_repository_ignores_invalid_captured_datetime_filters(): void
+    {
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '45454545-6767-489a-8abc-454545454545',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'repository-invalid-date-survivor',
+                    'captured_at'         => '2026-06-28 13:00:00',
+                    'logical_fields_json' => [
+                        'name' => 'Repository Invalid Date Survivor',
+                    ],
+                ]
+            )
+        );
+
+        $filters = [
+            'captured_from' => 'not-a-date',
+            'captured_to'   => 'also-not-a-date',
+        ];
+        $records = $ledger->list_for_form( 'gravity_forms', '1', 10, 0, $filters );
+
+        $this->assertSame( 1, $ledger->count_for_form( 'gravity_forms', '1', $filters ) );
+        $this->assertCount( 1, $records );
+        $this->assertSame( 'repository-invalid-date-survivor', $records[0]['native_entry_id'] ?? null );
+    }
+
     public function test_get_submission_ledger_detail_returns_scoped_submission(): void
     {
         GFAPI::$forms[1] = [

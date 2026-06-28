@@ -472,6 +472,6 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             return $normalized;
         }
 
-        return $raw;
+        return '';
     }
 }
