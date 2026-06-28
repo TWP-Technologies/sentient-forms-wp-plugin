@@ -142,14 +142,14 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             ]
         );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE and ORDER fragments are built from fixed internal clauses; values remain bound through prepare().
-        $query = $this->wpdb->prepare(
-            'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
-            ...$args
-        );
-
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier, filter, limit, and offset placeholders.
-        $rows = $this->wpdb->get_results( $query, ARRAY_A ) ?: [];
+        $rows = $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE and ORDER fragments are built from fixed internal clauses; values remain bound through prepare().
+            $this->wpdb->prepare(
+                'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
 
         return array_map( [ $this, 'decode_row' ], $rows );
     }
@@ -169,14 +169,13 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
         $args  = array_merge( [ $this->table_name() ], $where['values'] );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE fragment is built from fixed internal clauses; values remain bound through prepare().
-        $query = $this->wpdb->prepare(
-            'SELECT COUNT(*) FROM %i ' . $where['sql'],
-            ...$args
+        return (int) $this->wpdb->get_var(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE fragment is built from fixed internal clauses; values remain bound through prepare().
+            $this->wpdb->prepare(
+                'SELECT COUNT(*) FROM %i ' . $where['sql'],
+                ...$args
+            )
         );
-
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and filter placeholders.
-        return (int) $this->wpdb->get_var( $query );
     }
 
     /**
