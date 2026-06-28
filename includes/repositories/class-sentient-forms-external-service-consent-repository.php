@@ -78,7 +78,7 @@ class Sentient_Forms_External_Service_Consent_Repository extends Sentient_Forms_
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM %i WHERE provider = %s ORDER BY accepted_at DESC, id DESC LIMIT 25',
+                'SELECT * FROM %i WHERE provider = %s ORDER BY accepted_at DESC, id DESC',
                 $this->table_name(),
                 sanitize_key( $provider )
             ),

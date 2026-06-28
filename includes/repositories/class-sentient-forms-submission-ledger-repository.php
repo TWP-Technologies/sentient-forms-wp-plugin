@@ -410,7 +410,12 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
                     OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
                     OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
                 )
-                ORDER BY native_entry_id ASC, captured_at DESC, id DESC
+                ORDER BY
+                    CASE WHEN native_entry_id REGEXP '^[0-9]+$' THEN 0 ELSE 1 END ASC,
+                    CAST(native_entry_id AS UNSIGNED) ASC,
+                    native_entry_id ASC,
+                    captured_at DESC,
+                    id DESC
                 LIMIT %d OFFSET %d",
                 ...$args
             ),
@@ -440,7 +445,12 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
                     OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
                     OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
                 )
-                ORDER BY native_entry_id DESC, captured_at DESC, id DESC
+                ORDER BY
+                    CASE WHEN native_entry_id REGEXP '^[0-9]+$' THEN 0 ELSE 1 END ASC,
+                    CAST(native_entry_id AS UNSIGNED) DESC,
+                    native_entry_id DESC,
+                    captured_at DESC,
+                    id DESC
                 LIMIT %d OFFSET %d",
                 ...$args
             ),
