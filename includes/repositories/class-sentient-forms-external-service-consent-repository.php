@@ -75,28 +75,38 @@ class Sentient_Forms_External_Service_Consent_Repository extends Sentient_Forms_
 
     public function latest_for_provider_action( string $provider, string $action ): ?array
     {
-        $wpdb = $this->wpdb;
-        $rows = $wpdb->get_results(
+        $wpdb    = $this->wpdb;
+        $provider = sanitize_key( $provider );
+        $action   = sanitize_key( $action );
+
+        if ( '' === $provider || '' === $action )
+        {
+            return null;
+        }
+
+        $action_like = '%"action":"' . $wpdb->esc_like( $action ) . '"%';
+        $row         = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM %i WHERE provider = %s ORDER BY accepted_at DESC, id DESC',
+                'SELECT * FROM %i WHERE provider = %s AND metadata_json LIKE %s ORDER BY accepted_at DESC, id DESC LIMIT 1',
                 $this->table_name(),
-                sanitize_key( $provider )
+                $provider,
+                $action_like
             ),
             ARRAY_A
         );
 
-        foreach ( is_array( $rows ) ? $rows : [] as $row )
+        if ( ! $row )
         {
-            $metadata = $this->decode_json_field( $row['metadata_json'] ?? null );
-            if ( ! is_array( $metadata ) || $action !== (string) ( $metadata['action'] ?? '' ) )
-            {
-                continue;
-            }
-
-            $row['metadata_json'] = $metadata;
-            return $row;
+            return null;
         }
 
-        return null;
+        $metadata = $this->decode_json_field( $row['metadata_json'] ?? null );
+        if ( ! is_array( $metadata ) || $action !== (string) ( $metadata['action'] ?? '' ) )
+        {
+            return null;
+        }
+
+        $row['metadata_json'] = $metadata;
+        return $row;
     }
 }

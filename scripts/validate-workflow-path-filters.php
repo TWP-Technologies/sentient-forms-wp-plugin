@@ -20,7 +20,7 @@ if ( ! file_exists( $workflow ) )
 }
 else
 {
-    $paths = workflow_push_paths( $workflow );
+    $paths = sentient_forms_workflow_push_paths( $workflow );
     if ( [] === $paths )
     {
         $issues[] = 'release-please.yml push trigger must declare paths for release-relevant files.';
@@ -64,7 +64,7 @@ else
 
         foreach ( $scenarios as $label => $scenario )
         {
-            $runs = workflow_paths_match_any( $paths, $scenario['files'] );
+            $runs = sentient_forms_workflow_paths_match_any( $paths, $scenario['files'] );
             if ( $runs !== $scenario['runs'] )
             {
                 $expectation = $scenario['runs'] ? 'run' : 'skip';
@@ -91,16 +91,16 @@ echo "Sentient Forms workflow path filter validation passed.\n";
  *
  * @return array<int,string>
  */
-function workflow_push_paths( string $workflow ): array
+function sentient_forms_workflow_push_paths( string $workflow ): array
 {
     $lines     = file( $workflow, FILE_IGNORE_NEW_LINES );
-    $push_body = indented_child_block( is_array( $lines ) ? $lines : [], 2, 'push' );
+    $push_body = sentient_forms_indented_child_block( is_array( $lines ) ? $lines : [], 2, 'push' );
     if ( [] === $push_body )
     {
         return [];
     }
 
-    $paths_body = indented_child_block( $push_body, 4, 'paths' );
+    $paths_body = sentient_forms_indented_child_block( $push_body, 4, 'paths' );
     if ( [] === $paths_body )
     {
         return [];
@@ -127,7 +127,7 @@ function workflow_push_paths( string $workflow ): array
  *
  * @return array<int,string>
  */
-function indented_child_block( array $lines, int $indent, string $key ): array
+function sentient_forms_indented_child_block( array $lines, int $indent, string $key ): array
 {
     $start = null;
     $key_pattern = '/^\s{' . $indent . '}' . preg_quote( $key, '/' ) . ':\s*$/';
@@ -166,13 +166,13 @@ function indented_child_block( array $lines, int $indent, string $key ): array
  * @param array<int,string> $patterns
  * @param array<int,string> $files
  */
-function workflow_paths_match_any( array $patterns, array $files ): bool
+function sentient_forms_workflow_paths_match_any( array $patterns, array $files ): bool
 {
     foreach ( $files as $file )
     {
         foreach ( $patterns as $pattern )
         {
-            if ( workflow_path_matches( $pattern, $file ) )
+            if ( sentient_forms_workflow_path_matches( $pattern, $file ) )
             {
                 return true;
             }
@@ -182,7 +182,7 @@ function workflow_paths_match_any( array $patterns, array $files ): bool
     return false;
 }
 
-function workflow_path_matches( string $pattern, string $file ): bool
+function sentient_forms_workflow_path_matches( string $pattern, string $file ): bool
 {
     $pattern = trim( $pattern );
     if ( '' === $pattern || str_starts_with( $pattern, '!' ) )

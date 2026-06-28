@@ -765,7 +765,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( $refresh_consent_id, $data['refresh_consent']['consent_id'] ?? null );
     }
 
-    public function test_list_openrouter_models_reports_refresh_consent_beyond_recent_provider_rows(): void
+    public function test_list_openrouter_models_reports_refresh_consent_beyond_recent_provider_rows_with_bounded_lookup(): void
     {
         $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
         $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
@@ -812,13 +812,38 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
             );
         }
 
-        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/openrouter/models' );
-        $response = rest_get_server()->dispatch( $request );
-        $data     = $response->get_data();
+        $consent_queries = [];
+        $query_logger    = static function ( string $query ) use ( &$consent_queries ): string {
+            if ( str_starts_with( ltrim( $query ), 'SELECT' ) && str_contains( $query, 'sentient_external_service_consents' ) )
+            {
+                $consent_queries[] = $query;
+            }
+
+            return $query;
+        };
+
+        add_filter( 'query', $query_logger );
+
+        try
+        {
+            $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/openrouter/models' );
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'query', $query_logger );
+        }
+
+        $data = $response->get_data();
 
         $this->assertSame( 200, $response->get_status() );
         $this->assertSame( 'accepted', $data['refresh_consent']['state'] ?? null );
         $this->assertSame( $refresh_consent_id, $data['refresh_consent']['consent_id'] ?? null );
+        $this->assertNotEmpty( $consent_queries );
+
+        $latest_refresh_consent_query = implode( "\n", $consent_queries );
+        $this->assertStringContainsString( 'metadata_json LIKE', $latest_refresh_consent_query );
+        $this->assertStringContainsString( 'LIMIT 1', $latest_refresh_consent_query );
     }
 
     public function test_refresh_openrouter_models_schedules_one_daily_catalog_refresh_after_consent(): void
