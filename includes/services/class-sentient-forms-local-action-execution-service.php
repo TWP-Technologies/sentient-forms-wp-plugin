@@ -469,7 +469,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $lead_profile = is_array( $context['lead_profile'] ?? null ) ? $context['lead_profile'] : [];
-        $entry_id       = $this->lead_scoring_entry_identifier( $entry, $context );
+        $form_source  = sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) );
+        $entry_id     = $this->lead_scoring_entry_identifier( $entry, $context, $form_source );
         if ( '' === $entry_id )
         {
             return;
@@ -477,7 +478,7 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $entry_snapshot = $this->lead_scoring_entry_snapshot( $form, $entry );
         $payload = [
-            'form_source'             => $mapping['form_source'] ?? 'gravity_forms',
+            'form_source'             => $form_source,
             'form_id'                 => $mapping['form_id'] ?? ( $form['id'] ?? '' ),
             'form_title'              => $form['title'] ?? '',
             'entry_id'                => $entry_id,
@@ -512,9 +513,24 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
     }
 
-    private function lead_scoring_entry_identifier( array $entry, array $context ): string
+    private function lead_scoring_entry_identifier( array $entry, array $context, string $form_source ): string
     {
-        foreach ( [ $entry['id'] ?? null, $context['submission_uuid'] ?? null, $entry['submission_uuid'] ?? null, $context['entry_id'] ?? null ] as $candidate )
+        $submission_uuid = $this->first_non_empty_identifier( [ $context['submission_uuid'] ?? null, $entry['submission_uuid'] ?? null ] );
+        $native_entry_id = $this->first_non_empty_identifier( [ $entry['id'] ?? null, $context['entry_id'] ?? null ] );
+
+        $candidates = 'gravity_forms' === sanitize_key( $form_source )
+            ? [ $native_entry_id, $submission_uuid ]
+            : [ $submission_uuid, $native_entry_id ];
+
+        return $this->first_non_empty_identifier( $candidates );
+    }
+
+    /**
+     * @param array<int, mixed> $candidates
+     */
+    private function first_non_empty_identifier( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
         {
             if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) && '0' !== trim( (string) $candidate ) )
             {
@@ -722,7 +738,7 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $form_source = sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) );
         $form_id     = sanitize_text_field( (string) ( $mapping['form_id'] ?? '' ) );
-        $entry_id    = sanitize_text_field( (string) ( $entry['id'] ?? '' ) );
+        $entry_id    = $this->lead_scoring_entry_identifier( $entry, $context, $form_source );
         if ( '' === $form_source || '' === $form_id || '' === $entry_id )
         {
             return false;

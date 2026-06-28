@@ -674,11 +674,20 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms is unavailable for manual suggested replies.', 'sentient-forms' ), [ 'status' => 503 ] );
             }
 
-            $form  = GFAPI::get_form( absint( $form_id ) );
+            $form = GFAPI::get_form( absint( $form_id ) );
+            if ( ! is_array( $form ) )
+            {
+                return new WP_Error( 'sentient_forms_gf_form_missing', __( 'Gravity Forms form could not be loaded for manual suggested replies.', 'sentient-forms' ), [ 'status' => 404 ] );
+            }
+
             $entry = GFAPI::get_entry( $entry_id );
             if ( is_wp_error( $entry ) )
             {
                 return $entry;
+            }
+            if ( ! is_array( $entry ) || absint( $entry['form_id'] ?? 0 ) !== absint( $form_id ) )
+            {
+                return new WP_Error( 'sentient_forms_gf_entry_form_mismatch', __( 'The selected entry does not belong to the requested form.', 'sentient-forms' ), [ 'status' => 409 ] );
             }
 
             $context = [
@@ -1206,47 +1215,57 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             return new WP_Error( 'sentient_forms_submission_ledger_unavailable', __( 'Submission ledger entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
         }
 
-        $results = [];
-        foreach ( $ledger->list_for_form( $form_source, $form_id, max( 50, $limit ) ) as $record )
+        $results   = [];
+        $page_size = 100;
+        $offset    = 0;
+
+        do
         {
-            $summary = $this->summarize_submission_ledger_fields( $record );
-            if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $summary ) ?: '' ), $query ) )
+            $records = $ledger->list_for_form( $form_source, $form_id, $page_size, $offset );
+            foreach ( $records as $record )
             {
-                continue;
+                $summary = $this->summarize_submission_ledger_fields( $record );
+                if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $summary ) ?: '' ), $query ) )
+                {
+                    continue;
+                }
+
+                $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
+                    ? sanitize_text_field( (string) $record['submission_uuid'] )
+                    : '';
+                if ( '' === $submission_uuid )
+                {
+                    continue;
+                }
+
+                $native_entry_id = isset( $record['native_entry_id'] ) && is_scalar( $record['native_entry_id'] ) && '' !== trim( (string) $record['native_entry_id'] )
+                    ? sanitize_text_field( (string) $record['native_entry_id'] )
+                    : null;
+                $native_entry_url = isset( $record['native_entry_url'] ) && is_scalar( $record['native_entry_url'] ) && '' !== trim( (string) $record['native_entry_url'] )
+                    ? esc_url_raw( (string) $record['native_entry_url'] )
+                    : null;
+
+                $results[] = [
+                    'id'               => $submission_uuid,
+                    'submission_uuid'  => $submission_uuid,
+                    'native_entry_id'  => $native_entry_id,
+                    'native_entry_url' => $native_entry_url,
+                    'date_created'     => isset( $record['source_submitted_at'] ) && is_scalar( $record['source_submitted_at'] ) && '' !== trim( (string) $record['source_submitted_at'] )
+                        ? sanitize_text_field( (string) $record['source_submitted_at'] )
+                        : ( isset( $record['captured_at'] ) && is_scalar( $record['captured_at'] ) ? sanitize_text_field( (string) $record['captured_at'] ) : null ),
+                    'status'           => null,
+                    'field_summary'    => $summary,
+                ];
+
+                if ( count( $results ) >= $limit )
+                {
+                    break 2;
+                }
             }
 
-            $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
-                ? sanitize_text_field( (string) $record['submission_uuid'] )
-                : '';
-            if ( '' === $submission_uuid )
-            {
-                continue;
-            }
-
-            $native_entry_id = isset( $record['native_entry_id'] ) && is_scalar( $record['native_entry_id'] ) && '' !== trim( (string) $record['native_entry_id'] )
-                ? sanitize_text_field( (string) $record['native_entry_id'] )
-                : null;
-            $native_entry_url = isset( $record['native_entry_url'] ) && is_scalar( $record['native_entry_url'] ) && '' !== trim( (string) $record['native_entry_url'] )
-                ? esc_url_raw( (string) $record['native_entry_url'] )
-                : null;
-
-            $results[] = [
-                'id'               => $submission_uuid,
-                'submission_uuid'  => $submission_uuid,
-                'native_entry_id'  => $native_entry_id,
-                'native_entry_url' => $native_entry_url,
-                'date_created'     => isset( $record['source_submitted_at'] ) && is_scalar( $record['source_submitted_at'] ) && '' !== trim( (string) $record['source_submitted_at'] )
-                    ? sanitize_text_field( (string) $record['source_submitted_at'] )
-                    : ( isset( $record['captured_at'] ) && is_scalar( $record['captured_at'] ) ? sanitize_text_field( (string) $record['captured_at'] ) : null ),
-                'status'           => null,
-                'field_summary'    => $summary,
-            ];
-
-            if ( count( $results ) >= $limit )
-            {
-                break;
-            }
+            $offset += $page_size;
         }
+        while ( count( $records ) === $page_size );
 
         return $this->prepare_item_for_response(
             [
@@ -3049,7 +3068,12 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
     private function lead_result_entry_identifier_from_event( array $event ): string
     {
-        foreach ( [ $event['entry_id'] ?? null, $event['submission_uuid'] ?? null ] as $candidate )
+        $form_source = sanitize_key( (string) ( $event['form_source'] ?? 'gravity_forms' ) );
+        $candidates  = 'gravity_forms' === $form_source
+            ? [ $event['entry_id'] ?? null, $event['submission_uuid'] ?? null ]
+            : [ $event['submission_uuid'] ?? null, $event['entry_id'] ?? null ];
+
+        foreach ( $candidates as $candidate )
         {
             if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) && '0' !== trim( (string) $candidate ) )
             {

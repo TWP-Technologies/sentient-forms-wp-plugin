@@ -2412,10 +2412,24 @@ class Sentient_Forms_Async_Handler
             }
         }
 
-        $is_spam = $result['structured']['is_spam'] ?? $result['result']['structured']['is_spam'] ?? null;
-        if ( true === $is_spam || 'true' === strtolower( (string) $is_spam ) )
+        $is_spam_candidates = [
+            $result['structured']['is_spam'] ?? null,
+            $result['result']['structured']['is_spam'] ?? null,
+            $result['is_spam'] ?? null,
+            $result['result']['is_spam'] ?? null,
+        ];
+
+        foreach ( $is_spam_candidates as $is_spam )
         {
-            return 'spam';
+            if ( true === $is_spam )
+            {
+                return 'spam';
+            }
+
+            if ( is_scalar( $is_spam ) && in_array( strtolower( trim( (string) $is_spam ) ), [ '1', 'true', 'yes', 'on' ], true ) )
+            {
+                return 'spam';
+            }
         }
 
         return null;

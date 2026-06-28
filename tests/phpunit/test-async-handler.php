@@ -1044,10 +1044,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'model'                => 'openrouter/auto',
                 'status'               => 'succeeded',
                 'result_json'          => [
-                    'structured' => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.91,
-                    ],
+                    'is_spam' => '1',
                 ],
             ]
         );
