@@ -192,7 +192,10 @@ class Sentient_Forms_Async_Handler
 			$job['settings'] ?? []
 		);
 
-		$this->record_local_execution_event( $job, 'success', $result );
+		if ( $this->should_record_provider_execution_event( $job ) )
+		{
+			$this->record_local_execution_event( $job, 'success', $result );
+		}
 
 		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
 		$this->notify_adapter_success( $context_with_settings, $result );
@@ -254,6 +257,10 @@ class Sentient_Forms_Async_Handler
         $this->log_error( $error->get_error_message() );
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
+		if ( $this->should_record_provider_execution_event( $job ) )
+		{
+			$this->record_local_execution_event( $job, 'failed', null, $error );
+		}
         $this->emit_async_event(
             'failed',
             $context,
@@ -272,6 +279,46 @@ class Sentient_Forms_Async_Handler
 			$this->get_request_store()->mark_status( $job['execution_request_id'], 'failed', $error->get_error_message() );
 		}
     }
+
+	private function should_record_provider_execution_event( array $job ): bool
+	{
+		$context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+		$data    = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+
+		$form_source = isset( $context['form_source'] ) && is_scalar( $context['form_source'] )
+			? sanitize_key( (string) $context['form_source'] )
+			: sanitize_key( (string) ( $data['form_source'] ?? '' ) );
+		if ( Sentient_Forms_Form_Sources::ELEMENTOR_FORMS !== $form_source )
+		{
+			return false;
+		}
+
+		$job_type = isset( $context['job_type'] ) && is_scalar( $context['job_type'] )
+			? sanitize_key( (string) $context['job_type'] )
+			: 'execution';
+		if ( in_array( $job_type, [ 'local_mapping', 'evaluation' ], true ) )
+		{
+			return false;
+		}
+
+		$execution_request_id = isset( $job['execution_request_id'] ) && is_scalar( $job['execution_request_id'] )
+			? sanitize_text_field( (string) $job['execution_request_id'] )
+			: sanitize_text_field( (string) ( $context['execution_request_id'] ?? '' ) );
+		if ( '' === $execution_request_id )
+		{
+			return false;
+		}
+
+		$form_id = isset( $context['form_id'] ) && is_scalar( $context['form_id'] )
+			? sanitize_text_field( (string) $context['form_id'] )
+			: '';
+		if ( '' === $form_id && isset( $data['form'] ) && is_array( $data['form'] ) && isset( $data['form']['id'] ) && is_scalar( $data['form']['id'] ) )
+		{
+			$form_id = sanitize_text_field( (string) $data['form']['id'] );
+		}
+
+		return '' !== $form_id;
+	}
 
     private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
     {

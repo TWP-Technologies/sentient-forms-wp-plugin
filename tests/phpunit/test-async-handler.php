@@ -261,6 +261,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade();
         global $wpdb;
         $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_async_requests' );
+        $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_execution_events' );
 		delete_option( 'sentient_forms_async_settings' );
         GFAPI::$entries = [];
         GFAPI::$forms = [];
@@ -1386,6 +1387,113 @@ class AsyncHandlerTest extends WP_UnitTestCase
         {
             delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
         }
+    }
+
+    public function test_process_action_does_not_record_gravity_cps_success_as_local_execution_event(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->result = [
+            'result'   => [
+                'summary' => 'Gravity CPS action completed.',
+            ],
+            'provider' => 'openrouter',
+            'model'    => 'openrouter/auto',
+        ];
+        $this->set_action_executor( $executor );
+
+        $request_id = 'gravity-cps-success-no-local-event';
+        $handler    = $this->plugin->get_async_handler();
+        $handler->process_action(
+            'remote_gravity_summary',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 227, 'title' => 'Gravity CPS Success' ],
+                'entry' => [ 'id' => 927, 'field_1' => 'summary me' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [],
+            ],
+            $request_id,
+            [
+                'hook'                  => 'gform_after_submission',
+                'form_source'           => 'gravity_forms',
+                'form_id'               => 227,
+                'entry_id'              => 927,
+                'action_id'             => 'map_summary',
+                'action_name_label'     => 'Entry Summary',
+                'local_mapping_id'      => 'map_summary',
+                'attempt'               => 1,
+                'max_attempts'          => 1,
+            ]
+        );
+
+        $this->assertSame( 'entry_summary_v1', $executor->captured['central_action_id'] ?? null );
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $this->assertNull( $events->get_by_request_id( $request_id ) );
+    }
+
+    public function test_process_action_records_elementor_cps_failure_event(): void
+    {
+        $executor = new class( $this->plugin ) extends Sentient_Forms_Action_Executor {
+            public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
+            {
+                return new WP_Error( 'elementor_cps_failed', 'Elementor CPS execution failed.' );
+            }
+        };
+        $this->set_action_executor( $executor );
+
+        $form_id         = '91:formabc';
+        $submission_uuid = '11111111-1111-4111-8111-333333333333';
+        $request_id      = 'elementor-cps-failure-event';
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            'remote_elementor_spam',
+            [
+                'hook'        => 'elementor_pro/forms/new_record',
+                'form_source' => 'elementor_forms',
+                'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
+                'entry'       => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'full_name'       => 'Ada Lovelace',
+                ],
+            ],
+            [
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [],
+            ],
+            $request_id,
+            [
+                'hook'                  => 'elementor_pro/forms/new_record',
+                'form_source'           => 'elementor_forms',
+                'form_id'               => $form_id,
+                'entry_id'              => null,
+                'submission_uuid'       => $submission_uuid,
+                'action_id'             => 'map_prereq',
+                'action_name_label'     => 'Spam Detection',
+                'local_mapping_id'      => 'map_prereq',
+                'attempt'               => 1,
+                'max_attempts'          => 1,
+            ]
+        );
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $request_id );
+
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'elementor_cps_failed', $event['error_code'] ?? null );
+        $this->assertSame( 'Elementor CPS execution failed.', $event['error_message'] ?? null );
+        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( $form_id, $event['form_id'] ?? null );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
     }
 
     public function test_process_action_skips_elementor_submission_when_upstream_event_classifies_spam(): void
