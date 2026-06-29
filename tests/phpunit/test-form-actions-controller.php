@@ -1477,6 +1477,71 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
     }
 
+    public function test_elementor_submission_ledger_list_includes_more_than_default_execution_event_page(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id         = $this->create_elementor_form_page_for_controller();
+        $form_id         = $page_id . ':formabc';
+        $submission_uuid = '66666666-7777-4888-9999-bbbbbbbbbbbb';
+
+        global $wpdb;
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'        => $submission_uuid,
+                    'form_source'            => 'elementor_forms',
+                    'form_id'                => $form_id,
+                    'native_entry_id'        => null,
+                    'logical_fields_json'    => [
+                        'email' => 'many-actions@example.test',
+                    ],
+                    'provider_metadata_json' => [
+                        'form_name' => 'Known Elementor Form',
+                    ],
+                    'file_refs_json'         => [],
+                    'redaction_summary_json' => [
+                        'redacted_keys' => [],
+                    ],
+                ]
+            )
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        for ( $i = 0; $i < 25; $i++ )
+        {
+            $events->record(
+                [
+                    'execution_request_id' => sprintf( 'req-ledger-many-%02d', $i ),
+                    'mapping_id'           => 900 + $i,
+                    'form_source'          => 'elementor_forms',
+                    'form_id'              => $form_id,
+                    'submission_uuid'      => $submission_uuid,
+                    'provider'             => 'openrouter',
+                    'model'                => 'openrouter/auto',
+                    'status'               => 'succeeded',
+                ]
+            );
+        }
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $runs        = $data['submissions'][0]['action_runs'] ?? [];
+        $request_ids = array_column( $runs, 'execution_request_id' );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 25, $runs );
+        $this->assertContains( 'req-ledger-many-00', $request_ids );
+        $this->assertContains( 'req-ledger-many-24', $request_ids );
+    }
+
     public function test_elementor_submission_ledger_list_includes_central_action_log_runs(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );

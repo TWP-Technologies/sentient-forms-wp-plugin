@@ -117,6 +117,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     /** Provider-native form identifiers accepted by submission ledger routes. */
     private const SUBMISSION_LEDGER_FORM_ID_PATTERN = '[A-Za-z0-9._:%-]+';
 
+    /** Maximum local execution-event rows grouped into one ledger submission response. */
+    private const SUBMISSION_LEDGER_ACTION_RUN_LIMIT = 100;
+
     public function __construct()
     {
         parent::__construct();
@@ -2055,7 +2058,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( null !== $this->local_execution_events )
         {
-            foreach ( $this->local_execution_events->list_for_submission_uuid( $submission_uuid ) as $event )
+            foreach ( $this->local_execution_events->list_for_submission_uuid( $submission_uuid, self::SUBMISSION_LEDGER_ACTION_RUN_LIMIT ) as $event )
             {
                 if (
                     sanitize_key( (string) ( $event['form_source'] ?? '' ) ) !== $form_source
