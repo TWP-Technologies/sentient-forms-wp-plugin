@@ -22,6 +22,8 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
 {
     use Sentient_Forms_Permission_Utils_Trait;
 
+    private const FORM_ID_PATTERN = '[A-Za-z0-9._:%-]+';
+
     /**
      * The base of this controller's routes.
 	 * Example: /sentient-forms/v1/gravity_forms/forms
@@ -92,7 +94,7 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/(?P<form_id>\\d+)',
+            '/' . $this->rest_base . '/(?P<form_id>' . self::FORM_ID_PATTERN . ')',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
@@ -144,9 +146,10 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
             [
                 'form_id' => [
                     'validate_callback' => [ $this, 'validate_form_id_param' ],
+                    'sanitize_callback' => [ $this, 'sanitize_form_id_param' ],
                     'required'          => true,
-                    'type'              => 'integer',
-                    'description'       => __( 'ID of the form.', 'sentient-forms' ),
+                    'type'              => 'string',
+                    'description'       => __( 'Provider-native form ID.', 'sentient-forms' ),
                 ],
             ],
         );
@@ -196,14 +199,30 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      */
     public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): bool | WP_Error
     {
-        if ( !is_numeric( $value ) || intval( $value ) <= 0 )
+        $form_id = $this->normalize_provider_form_id( $value );
+        if ( '' === $form_id || strlen( $form_id ) > 100 || ! preg_match( '/^' . self::FORM_ID_PATTERN . '$/', $form_id ) )
         {
-            return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
+            return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a valid provider-native identifier.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        $source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $gravity_forms_slug = class_exists( 'Sentient_Forms_Form_Sources' )
+            ? Sentient_Forms_Form_Sources::GRAVITY_FORMS
+            : 'gravity_forms';
+
+        if ( $gravity_forms_slug === $source && ! $this->is_positive_integer_form_id( $form_id ) )
+        {
+            return new WP_Error( 'rest_invalid_param', __( 'Gravity Forms form ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
         }
 
         // gx todo: verify form exists for the given source
 
         return true;
+    }
+
+    public function sanitize_form_id_param( mixed $value ): string
+    {
+        return $this->normalize_provider_form_id( $value );
     }
 
     /**
@@ -236,7 +255,7 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
     public function endpoint_get_form_settings( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $slug     = $request->get_param( 'form_source_slug' );
-        $form_id  = (int)$request->get_param( 'form_id' );
+        $form_id  = $this->get_request_form_id( $request );
         $settings = $this->adapter_get_form_settings( $slug, $form_id );
 
         if ( is_wp_error( $settings ) )
@@ -259,7 +278,7 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
     public function endpoint_update_form_settings( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $slug            = $request->get_param( 'form_source_slug' );
-        $form_id         = (int)$request->get_param( 'form_id' );
+        $form_id         = $this->get_request_form_id( $request );
         $settings_update = [];
 
         if ( $request->has_param( 'enabled' ) )
@@ -300,6 +319,12 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      */
     private function adapter_get_forms( string $form_source_slug ): WP_Error | array
     {
+        $availability_error = $this->elementor_forms_source_unavailable_error( $form_source_slug );
+        if ( null !== $availability_error )
+        {
+            return $availability_error;
+        }
+
         $adapter = $this->get_adapter( $form_source_slug );
 
         if ( !$adapter )
@@ -319,13 +344,19 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      * Retrieves the form settings for a specified form source and form ID.
      *
      * @param string $form_source_slug The slug of the form source to locate the corresponding adapter.
-     * @param int    $form_id          The ID of the form whose settings need to be retrieved.
+     * @param string $form_id          The ID of the form whose settings need to be retrieved.
      *
      * @return WP_Error|array Returns an array of form settings if the adapter and method exist.
      *                        Returns a WP_Error if the adapter is invalid or the method is not implemented.
      */
-    private function adapter_get_form_settings( string $form_source_slug, int $form_id ): WP_Error | array
+    private function adapter_get_form_settings( string $form_source_slug, string $form_id ): WP_Error | array
     {
+        $availability_error = $this->elementor_forms_source_unavailable_error( $form_source_slug );
+        if ( null !== $availability_error )
+        {
+            return $availability_error;
+        }
+
         $adapter = $this->get_adapter( $form_source_slug );
 
         if ( !$adapter )
@@ -345,14 +376,20 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      * Updates the form settings for a specified form source and form ID.
      *
      * @param string $form_source_slug The slug of the form source to locate the corresponding adapter.
-     * @param int    $form_id          The ID of the form whose settings need to be updated.
+     * @param string $form_id          The ID of the form whose settings need to be updated.
      * @param array  $settings         An associative array of settings to merge with the existing form settings.
      *
      * @return WP_Error|array Returns an array containing the success status and updated settings if the update is successful.
      *                        Returns a WP_Error if the adapter is invalid or the required methods are not implemented.
      */
-    private function adapter_update_form_settings( string $form_source_slug, int $form_id, array $settings ): WP_Error | array
+    private function adapter_update_form_settings( string $form_source_slug, string $form_id, array $settings ): WP_Error | array
     {
+        $availability_error = $this->elementor_forms_source_unavailable_error( $form_source_slug );
+        if ( null !== $availability_error )
+        {
+            return $availability_error;
+        }
+
         $adapter = $this->get_adapter( $form_source_slug );
 
         if ( !$adapter )
@@ -374,5 +411,71 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
         $success          = $adapter->update_form_settings( $form_id, $new_settings );
 
         return [ 'success' => $success, 'settings' => $new_settings ];
+    }
+
+    private function get_request_form_id( WP_REST_Request $request ): string
+    {
+        return $this->normalize_provider_form_id( $request->get_param( 'form_id' ) );
+    }
+
+    private function normalize_provider_form_id( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+    }
+
+    private function is_positive_integer_form_id( string $form_id ): bool
+    {
+        return ctype_digit( $form_id ) && absint( $form_id ) > 0;
+    }
+
+    private function elementor_forms_source_unavailable_error( string $form_source_slug ): ?WP_Error
+    {
+        $elementor_slug = class_exists( 'Sentient_Forms_Form_Sources' )
+            ? Sentient_Forms_Form_Sources::ELEMENTOR_FORMS
+            : 'elementor_forms';
+
+        if ( $elementor_slug !== sanitize_key( $form_source_slug ) )
+        {
+            return null;
+        }
+
+        if ( ! method_exists( $this->adapter_registry, 'get_capability_descriptor' ) )
+        {
+            return null;
+        }
+
+        $descriptor = $this->adapter_registry->get_capability_descriptor( $elementor_slug );
+        if ( ! is_array( $descriptor ) )
+        {
+            return null;
+        }
+
+        $availability = isset( $descriptor['availability'] ) && is_scalar( $descriptor['availability'] )
+            ? sanitize_key( (string) $descriptor['availability'] )
+            : '';
+        $is_active    = array_key_exists( 'is_active', $descriptor ) ? (bool) $descriptor['is_active'] : true;
+        if ( $is_active && 'available' === $availability )
+        {
+            return null;
+        }
+
+        $message = isset( $descriptor['availability_message'] ) && is_scalar( $descriptor['availability_message'] )
+            ? sanitize_text_field( (string) $descriptor['availability_message'] )
+            : '';
+        if ( '' === $message )
+        {
+            $message = __( 'Elementor Forms support is unavailable until Elementor Pro Forms APIs are available.', 'sentient-forms' );
+        }
+
+        return $this->prepare_error_response(
+            'rest_form_source_unavailable',
+            $message,
+            400
+        );
     }
 }

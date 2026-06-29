@@ -77,19 +77,19 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     {
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/profile',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/profile',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => $this->form_args(),
+                    'args'                => $this->provider_form_args(),
                 ],
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'save_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->profile_write_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->profile_write_args() ),
                 ],
             ]
         );
@@ -181,14 +181,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/search',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/search',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'search_entries' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         [
                             'q'     => [
                                 'type'              => 'string',
@@ -207,14 +207,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/(?P<entry_id>[^/]+)/correction',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/correction',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'correct_entry_grade' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         $this->entry_args(),
                         [
                             'grade' => [
@@ -235,32 +235,32 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'generate_entry_suggested_reply' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->entry_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->entry_args() ),
                 ],
             ]
         );
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/historical-runs',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/historical-runs',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'list_historical_runs' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => $this->form_args(),
+                    'args'                => $this->provider_form_args(),
                 ],
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'create_historical_run' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->historical_run_write_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->historical_run_write_args() ),
                 ],
             ]
         );
@@ -301,13 +301,13 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/dashboard',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/dashboard',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_dashboard' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->dashboard_query_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->dashboard_query_args() ),
                 ],
             ]
         );
@@ -327,14 +327,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/profile/import',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/profile/import',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'import_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         [
                             'source_profile_id' => [
                                 'type'              => 'integer',
@@ -1143,24 +1143,34 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     public function search_entries( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $form_source = sanitize_key( (string) $request['form_source'] );
-        $form_id     = absint( $request['form_id'] );
+        $form_id     = sanitize_text_field( (string) $request['form_id'] );
         $query = strtolower( trim( sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ) ) );
         $limit = max( 1, min( 50, absint( $request->get_param( 'limit' ) ?: 10 ) ) );
 
         if ( ! $this->is_gravity_forms_source( $form_source ) )
         {
-            return $this->search_submission_ledger_entries( $form_source, (string) $form_id, $query, $limit );
+            return $this->search_submission_ledger_entries( $form_source, $form_id, $query, $limit );
         }
 
+        if ( '' === $form_id || ! ctype_digit( $form_id ) )
+        {
+            return new WP_Error(
+                'sentient_forms_gf_form_invalid',
+                __( 'Gravity Forms form IDs must be numeric.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $numeric_form_id = (int) $form_id;
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_entries' ] ) )
         {
             return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
         }
 
-        $form  = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $form_id ) : null;
+        $form  = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $numeric_form_id ) : null;
 
         $entries = GFAPI::get_entries(
-            $form_id,
+            $numeric_form_id,
             [ 'status' => 'active' ],
             [ 'key' => 'date_created', 'direction' => 'DESC' ],
             [ 'offset' => 0, 'page_size' => max( 50, $limit ) ]
@@ -1202,7 +1212,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             [
                 'entries'     => $results,
                 'form_source' => $form_source,
-                'form_id'     => $form_id,
+                'form_id'     => $numeric_form_id,
             ]
         );
     }
@@ -1271,7 +1281,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             [
                 'entries'     => $results,
                 'form_source' => sanitize_key( $form_source ),
-                'form_id'     => absint( $form_id ),
+                'form_id'     => $form_id,
             ]
         );
     }
@@ -1705,6 +1715,22 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         ];
     }
 
+    private function provider_form_args(): array
+    {
+        return [
+            'form_source' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_key',
+            ],
+            'form_id' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => static fn ( mixed $value ): string => sanitize_text_field( rawurldecode( (string) $value ) ),
+            ],
+        ];
+    }
+
     private function id_args(): array
     {
         return [
@@ -2029,7 +2055,19 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
     private function build_spam_guidance_snapshot( string $form_source, string $form_id ): array
     {
-        $form_configs  = get_option( 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . absint( $form_id ), [] );
+        $form_configs  = get_option( $this->form_config_option_key( $form_source, $form_id ), null );
+        if ( null === $form_configs )
+        {
+            foreach ( $this->legacy_form_config_option_keys( $form_source, $form_id ) as $legacy_key )
+            {
+                $form_configs = get_option( $legacy_key, null );
+                if ( null !== $form_configs )
+                {
+                    break;
+                }
+            }
+        }
+
         $form_config   = is_array( $form_configs ) && is_array( $form_configs['spam_detection_v1'] ?? null ) ? $form_configs['spam_detection_v1'] : [];
         $global_config = get_option( 'sentient_forms_action_defaults_spam_detection_v1', [] );
         $global_config = is_array( $global_config ) ? $global_config : [];
@@ -2058,6 +2096,25 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 ],
             ],
         ];
+    }
+
+    private function form_config_option_key( string $form_source, string $form_id ): string
+    {
+        return 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function legacy_form_config_option_keys( string $form_source, string $form_id ): array
+    {
+        $keys = [];
+        foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $form_source, $form_id ) as $suffix )
+        {
+            $keys[] = 'sentient_forms_form_config_' . sanitize_key( $form_source ) . '_' . $suffix;
+        }
+
+        return $keys;
     }
 
     private function normalize_guidance_examples( mixed $examples ): array

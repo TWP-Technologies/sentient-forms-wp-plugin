@@ -162,6 +162,19 @@ const nullableScalarStringSchema = z
 const jsonRecordSchema = z.record(z.string(), z.unknown());
 const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? {});
 const nullishJsonRecordArraySchema = z.array(jsonRecordSchema).nullish().transform((value) => value ?? []);
+const nullableJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? null);
+const submissionLedgerActionRunSchema = z.object({
+	execution_request_id: z.string(),
+	mapping_id: z.coerce.number().int().nullable().optional().transform((value) => value ?? null),
+	status: z.string(),
+	provider: nullableScalarStringSchema,
+	model: nullableScalarStringSchema,
+	last_result: nullableJsonRecordSchema,
+	last_error_code: nullableScalarStringSchema,
+	last_error_message: nullableScalarStringSchema,
+	created_at: z.string().nullable().optional().transform((value) => value ?? null),
+	updated_at: z.string().nullable().optional().transform((value) => value ?? null)
+});
 const submissionLedgerRecordSchema = z.object({
 	id: z.coerce.number().int(),
 	submission_uuid: z.string(),
@@ -175,6 +188,7 @@ const submissionLedgerRecordSchema = z.object({
 	provider_metadata: nullishJsonRecordSchema,
 	file_refs: nullishJsonRecordArraySchema,
 	redaction_summary: nullishJsonRecordSchema,
+	action_runs: z.array(submissionLedgerActionRunSchema).nullish().transform((value) => value ?? []),
 	expires_at: z.string().nullable(),
 	detail_endpoint: z.string()
 });
@@ -2548,12 +2562,15 @@ export function createClientFromConfig(
 	overrides: Partial<ClientConfig> = {}
 ): SentientFormsApiClient {
 	const config = resolveRuntimeConfig();
+	const getNonce = overrides.getNonce ?? (() => resolveRuntimeConfig().restNonce);
+	const cacheContext =
+		overrides.cacheContext ?? (() => buildRuntimeCacheContext(resolveRuntimeConfig()));
 
 	return new SentientFormsApiClient({
 		baseUrl: config.apiBaseUrl,
-		getNonce: () => config.restNonce,
-		cacheContext: () => buildRuntimeCacheContext(config),
-		...overrides
+		...overrides,
+		getNonce,
+		cacheContext
 	});
 }
 

@@ -10,6 +10,9 @@
 class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 	private Sentient_Forms_Form_Action_Config_Controller $controller;
 	private string $option_key = 'sentient_forms_form_config_gravity_forms_999';
+	private string $elementor_opaque_option_key = 'sentient_forms_form_config_elementor_forms_123_formabc';
+	/** @var string[] */
+	private array $dynamic_option_keys = [];
 	private string $action_defaults_option_key = 'sentient_forms_action_defaults_spam_detection_v1';
 
 	protected function setUp(): void {
@@ -18,12 +21,19 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 
 		// Clean up any existing form config.
 		delete_option( $this->option_key );
+		delete_option( $this->elementor_opaque_option_key );
+		$this->dynamic_option_keys = [];
 	}
 
 	protected function tearDown(): void {
 		delete_option( $this->option_key );
+		delete_option( $this->elementor_opaque_option_key );
+		foreach ( $this->dynamic_option_keys as $option_key ) {
+			delete_option( $option_key );
+		}
 		delete_option( $this->action_defaults_option_key );
 		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+		wp_set_current_user( 0 );
 		parent::tearDown();
 	}
 
@@ -114,6 +124,75 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 
 		$this->assertSame( [], $data['config']['spam_positive_examples'] ?? null );
 		$this->assertSame( [], $data['config']['spam_negative_examples'] ?? null );
+	}
+
+	public function test_get_action_config_route_preserves_elementor_opaque_form_id(): void {
+		update_option(
+			$this->elementor_opaque_option_key,
+			[
+				'entry_summary_v1' => [
+					'action_customization' => 'Summarize Elementor project goals.',
+				],
+			],
+			false
+		);
+
+		wp_set_current_user( self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+		do_action( 'rest_api_init' );
+		$this->controller->register_routes();
+
+		$request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/forms/elementor_forms/123%3Aformabc/action-config/entry_summary_v1' );
+		$response = rest_do_request( $request );
+		$data     = $response->get_data();
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 'elementor_forms', $data['form_source'] ?? null );
+		$this->assertSame( '123:formabc', $data['form_id'] ?? null );
+		$this->assertSame( 'entry_summary_v1', $data['action_id'] ?? null );
+		$this->assertSame(
+			'Summarize Elementor project goals.',
+			$data['config']['action_customization'] ?? null
+		);
+	}
+
+	public function test_elementor_provider_native_form_config_keys_do_not_collide(): void {
+		$form_configs = [
+			'123:abc' => 'Summarize colon-delimited Elementor submissions.',
+			'123_abc' => 'Summarize underscore-delimited Elementor submissions.',
+			'123.abc' => 'Summarize dotted Elementor submissions.',
+		];
+
+		foreach ( $form_configs as $form_id => $customization ) {
+			$request = new WP_REST_Request( 'POST', sprintf( '/sentient-forms/v1/forms/elementor_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
+			$request->set_param( 'form_source', 'elementor_forms' );
+			$request->set_param( 'form_id', $form_id );
+			$request->set_param( 'action_id', 'entry_summary_v1' );
+			$request->set_param( 'action_customization', $customization );
+
+			$response = $this->controller->update_action_config( $request );
+
+			$this->assertNotWPError( $response );
+		}
+
+		global $wpdb;
+		$this->dynamic_option_keys = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+				$wpdb->esc_like( 'sentient_forms_form_config_elementor_forms_' ) . '%'
+			)
+		);
+
+		foreach ( $form_configs as $form_id => $customization ) {
+			$request = new WP_REST_Request( 'GET', sprintf( '/sentient-forms/v1/forms/elementor_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
+			$request->set_param( 'form_source', 'elementor_forms' );
+			$request->set_param( 'form_id', $form_id );
+			$request->set_param( 'action_id', 'entry_summary_v1' );
+
+			$response = $this->controller->get_action_config( $request );
+			$data     = $response->get_data();
+
+			$this->assertSame( $customization, $data['config']['action_customization'] ?? null );
+		}
 	}
 
 	public function test_update_action_config_rejects_missing_spam_example_rationale(): void {

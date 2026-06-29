@@ -138,6 +138,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         delete_option( self::OPTION_KEY );
         GFAPI::$entries = [];
         GFAPI::$forms   = [];
+        $this->reset_gfapi_stub_state();
         Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Action_Log_Controller();
     }
@@ -148,9 +149,20 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->truncate_local_workspace_tables();
         GFAPI::$entries = [];
         GFAPI::$forms   = [];
+        $this->reset_gfapi_stub_state();
         Sentient_Forms_Plugin::instance()->clear_license_data();
         remove_all_filters( 'pre_http_request' );
+        remove_all_filters( 'sentient_forms_elementor_is_active' );
+        remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
+        remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         parent::tearDown();
+    }
+
+    private function reset_gfapi_stub_state(): void
+    {
+        GFAPI::$get_entry_calls                        = 0;
+        GFAPI::$get_form_calls                         = 0;
+        GFAPI::$skip_field_values_on_full_entry_update = false;
     }
 
     /**
@@ -174,6 +186,27 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             $routes,
             'Action log entry preview route should be registered'
         );
+    }
+
+    public function test_gfapi_stub_state_reset_fixture_sets_dirty_state(): void
+    {
+        GFAPI::$get_entry_calls                        = 7;
+        GFAPI::$get_form_calls                         = 9;
+        GFAPI::$skip_field_values_on_full_entry_update = true;
+
+        $this->assertSame( 7, GFAPI::$get_entry_calls );
+        $this->assertSame( 9, GFAPI::$get_form_calls );
+        $this->assertTrue( GFAPI::$skip_field_values_on_full_entry_update );
+    }
+
+    /**
+     * @depends test_gfapi_stub_state_reset_fixture_sets_dirty_state
+     */
+    public function test_gfapi_stub_state_is_reset_between_action_log_tests(): void
+    {
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertFalse( GFAPI::$skip_field_values_on_full_entry_update );
     }
 
     /**
@@ -618,6 +651,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_prefers_provider_native_event_identity_for_elementor_cps_events(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-elementor-provider-native-log',
+                'mapping_id'           => 0,
+                'mapping_key'          => 'map_summary',
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '4:formabc',
+                'entry_id'             => null,
+                'submission_uuid'      => '44444444-5555-4666-8777-888888888888',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'success',
+                'result_json'          => [
+                    'content' => 'Summary stored for Elementor.',
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'map_summary', $data['entries'][0]['mapping_id'] );
+        $this->assertSame( '44444444-5555-4666-8777-888888888888', $data['entries'][0]['submission_uuid'] );
+    }
+
     public function test_get_log_entries_includes_submission_uuid_for_grouped_local_events(): void
     {
         global $wpdb;
@@ -647,6 +716,115 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $this->assertSame( 'req-ledger-grouped-log-1', $data['entries'][0]['execution_request_id'] );
         $this->assertSame( '55555555-5555-4555-8555-555555555555', $data['entries'][0]['submission_uuid'] );
+    }
+
+    public function test_get_log_entries_preserves_elementor_opaque_form_ids_for_grouped_local_events(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-elementor-grouped-log-1',
+                'submission_uuid'      => '66666666-7777-4888-9999-aaaaaaaaaaaa',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '123:formabc',
+                'entry_id'             => null,
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'content' => 'Lead summary ready.',
+                ],
+            ]
+        );
+
+        wp_set_current_user( self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        do_action( 'rest_api_init' );
+        $this->controller->register_routes();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '123:formabc' );
+        $response = rest_do_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'req-elementor-grouped-log-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'elementor_forms', $data['entries'][0]['form_source'] );
+        $this->assertSame( '123:formabc', $data['entries'][0]['form_id'] );
+        $this->assertSame( '66666666-7777-4888-9999-aaaaaaaaaaaa', $data['entries'][0]['submission_uuid'] );
+        $this->assertSame( 'Elementor Forms', $data['entries'][0]['form_context']['provider_label'] );
+        $this->assertSame( '123:formabc', $data['entries'][0]['form_context']['form_id'] );
+        $this->assertSame( 'Form 123:formabc', $data['entries'][0]['form_context']['form_name'] );
+        $this->assertFalse( $data['entries'][0]['form_context']['entry_preview_available'] );
+        $this->assertNull( $data['entries'][0]['form_context']['links']['entry_admin_url'] );
+    }
+
+    public function test_get_log_entries_suppresses_elementor_entry_ids_when_form_submissions_are_unavailable(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => 'req-elementor-stale-native-entry-log',
+                'submission_uuid'      => '77777777-7777-4777-8777-777777777777',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '123:formabc',
+                'entry_id'             => '123',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'content' => 'Lead summary ready.',
+                ],
+            ]
+        );
+
+        wp_set_current_user( self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        do_action( 'rest_api_init' );
+        $this->controller->register_routes();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '123:formabc' );
+        $response = rest_do_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'elementor_forms', $data['entries'][0]['form_source'] );
+        $this->assertNull( $data['entries'][0]['entry_id'] );
+        $this->assertNull( $data['entries'][0]['form_context']['entry_id'] );
+        $this->assertFalse( $data['entries'][0]['form_context']['entry_preview_available'] );
+        $this->assertNull( $data['entries'][0]['form_context']['links']['entry_admin_url'] );
+    }
+
+    public function test_create_log_entry_suppresses_elementor_entry_id_response_when_form_submissions_are_unavailable(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_source', 'elementor_forms' );
+        $request->set_param( 'form_id', '123:formabc' );
+        $request->set_param( 'entry_id', 123 );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+        $request->set_param( 'action_label', 'Entry Summary' );
+        $request->set_param( 'status', 'success' );
+
+        $response = $this->controller->create_log_entry( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 201, $response->get_status() );
+        $this->assertSame( 'elementor_forms', $data['form_source'] );
+        $this->assertSame( '123:formabc', $data['form_id'] );
+        $this->assertNull( $data['entry_id'] );
     }
 
     public function test_get_log_entries_normalizes_submission_uuid_for_option_and_local_event_rows(): void

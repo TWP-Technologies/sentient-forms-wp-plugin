@@ -191,7 +191,12 @@ class Sentient_Forms_Async_Handler
 			$job['context'] ?? [],
 			$job['settings'] ?? []
 		);
-		
+
+		if ( $this->should_record_provider_execution_event( $job ) )
+		{
+			$this->record_local_execution_event( $job, 'success', $result );
+		}
+
 		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
 		$this->notify_adapter_success( $context_with_settings, $result );
 		$this->emit_async_event( 'success', $job['context'], $result );
@@ -253,6 +258,10 @@ class Sentient_Forms_Async_Handler
         $this->log_error( $error->get_error_message() );
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
+		if ( $this->should_record_provider_execution_event( $job ) )
+		{
+			$this->record_local_execution_event( $job, 'failed', null, $error );
+		}
         $this->emit_async_event(
             'failed',
             $context,
@@ -272,6 +281,46 @@ class Sentient_Forms_Async_Handler
 		}
         $this->record_managed_execution_failure_event( $job, $error );
     }
+
+	private function should_record_provider_execution_event( array $job ): bool
+	{
+		$context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+		$data    = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+
+		$form_source = isset( $context['form_source'] ) && is_scalar( $context['form_source'] )
+			? sanitize_key( (string) $context['form_source'] )
+			: sanitize_key( (string) ( $data['form_source'] ?? '' ) );
+		if ( Sentient_Forms_Form_Sources::ELEMENTOR_FORMS !== $form_source )
+		{
+			return false;
+		}
+
+		$job_type = isset( $context['job_type'] ) && is_scalar( $context['job_type'] )
+			? sanitize_key( (string) $context['job_type'] )
+			: 'execution';
+		if ( in_array( $job_type, [ 'local_mapping', 'evaluation' ], true ) )
+		{
+			return false;
+		}
+
+		$execution_request_id = isset( $job['execution_request_id'] ) && is_scalar( $job['execution_request_id'] )
+			? sanitize_text_field( (string) $job['execution_request_id'] )
+			: sanitize_text_field( (string) ( $context['execution_request_id'] ?? '' ) );
+		if ( '' === $execution_request_id )
+		{
+			return false;
+		}
+
+		$form_id = isset( $context['form_id'] ) && is_scalar( $context['form_id'] )
+			? sanitize_text_field( (string) $context['form_id'] )
+			: '';
+		if ( '' === $form_id && isset( $data['form'] ) && is_array( $data['form'] ) && isset( $data['form']['id'] ) && is_scalar( $data['form']['id'] ) )
+		{
+			$form_id = sanitize_text_field( (string) $data['form']['id'] );
+		}
+
+		return '' !== $form_id;
+	}
 
     private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
     {
@@ -611,11 +660,11 @@ class Sentient_Forms_Async_Handler
         }
 
         $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = absint( $context['form_id'] ?? 0 );
+        $form_id     = $this->normalize_provider_form_id( $context['form_id'] ?? '' );
         $resolved    = $settings;
 
         $action_defaults = $this->get_action_defaults_config( $action_id );
-        $form_config     = $form_id > 0
+        $form_config     = '' !== $form_id
             ? $this->get_form_action_config( $form_source, $form_id, $action_id )
             : [];
 
@@ -658,17 +707,14 @@ class Sentient_Forms_Async_Handler
      * Load and normalize form-level action config for a specific action.
      *
      * @param string $form_source Form source id.
-     * @param int    $form_id     Form id.
+     * @param string $form_id     Provider-native form id.
      * @param string $action_id   Action id.
      *
      * @return array<string, mixed>
      */
-    private function get_form_action_config( string $form_source, int $form_id, string $action_id ): array
+    private function get_form_action_config( string $form_source, string $form_id, string $action_id ): array
     {
-        $configs = get_option(
-            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $form_id,
-            []
-        );
+        $configs = $this->get_form_action_config_options( $form_source, $form_id );
 
         if ( ! is_array( $configs ) )
         {
@@ -676,6 +722,68 @@ class Sentient_Forms_Async_Handler
         }
 
         return $this->normalize_action_config_payload( $configs[ $action_id ] ?? [] );
+    }
+
+    private function normalize_provider_form_id( mixed $form_id ): string
+    {
+        return Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
+    }
+
+    private function normalize_form_id_option_suffix( mixed $form_id ): string
+    {
+        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_form_action_config_options( string $form_source, mixed $form_id ): array
+    {
+        $source  = sanitize_key( $form_source );
+        $configs = get_option(
+            self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
+            null
+        );
+
+        if ( null === $configs )
+        {
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
+            {
+                $configs = get_option( self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $suffix, null );
+                if ( null !== $configs )
+                {
+                    break;
+                }
+            }
+        }
+
+        return is_array( $configs ) ? $configs : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_form_actions_option( string $form_source, mixed $form_id ): array
+    {
+        $source  = sanitize_key( $form_source );
+        $actions = get_option(
+            'sentient_forms_actions_' . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
+            null
+        );
+
+        if ( null === $actions )
+        {
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
+            {
+                $actions = get_option( 'sentient_forms_actions_' . $source . '_' . $suffix, null );
+                if ( null !== $actions )
+                {
+                    break;
+                }
+            }
+        }
+
+        return is_array( $actions ) ? $actions : [];
     }
 
     /**
@@ -1530,6 +1638,9 @@ class Sentient_Forms_Async_Handler
         $event = [
             'execution_request_id' => $execution_request_id,
             'mapping_id'           => absint( $payload['local_mapping_id'] ?? $context['local_form_mapping_id'] ?? 0 ),
+            'mapping_key'          => $this->resolve_event_mapping_key( $payload, $context ),
+            'action_code'          => $this->resolve_event_action_code( $payload, $context ),
+            'action_label'         => $this->resolve_event_action_label( $payload, $context ),
             'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
             'form_id'              => $payload['form_id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry_id'] ?? $context['entry_id'] ?? null,
@@ -1585,12 +1696,23 @@ class Sentient_Forms_Async_Handler
         $provider = sanitize_key( (string) ( $result['provider'] ?? $context['provider'] ?? 'sentient_managed' ) );
         $status   = $error ? 'failed' : sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) );
         $identity = $this->managed_execution_action_identity( $job );
+        $identity_payload = array_merge(
+            $payload,
+            [
+                'central_action_id'  => $identity['central_action_id'] ?? null,
+                'action_id'          => $identity['action_id'] ?? null,
+                'action_name_label'  => $identity['action_name_label'] ?? null,
+            ]
+        );
         if ( $error )
         {
             $result['status']        = 'failed';
             $result['error_code']    = $error->get_error_code();
             $result['error_message'] = $error->get_error_message();
         }
+        $result_payload = isset( $result['result'] ) && is_array( $result['result'] )
+            ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result['result'], $provider )
+            : [];
         $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
             array_merge(
                 [
@@ -1598,13 +1720,17 @@ class Sentient_Forms_Async_Handler
                     'status'   => $status,
                 ],
                 $result,
-                $identity
+                $identity,
+                $result_payload
             )
         );
 
         $event = [
             'execution_request_id' => $execution_request_id,
             'mapping_id'           => $this->managed_execution_numeric_mapping_id( $job ),
+            'mapping_key'          => $this->resolve_event_mapping_key( $payload, $context ),
+            'action_code'          => $this->resolve_event_action_code( $identity_payload, $context ),
+            'action_label'         => $this->resolve_event_action_label( $identity_payload, $context ),
             'form_source'          => $this->managed_execution_form_source( $job ),
             'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
@@ -1782,6 +1908,53 @@ class Sentient_Forms_Async_Handler
         return '';
     }
 
+    private function resolve_event_mapping_key( array $payload, array $context ): ?string
+    {
+        foreach ( [ $payload['local_mapping_id'] ?? null, $context['local_mapping_id'] ?? null, $context['mapping_id'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $mapping_key = sanitize_text_field( (string) $candidate );
+            if ( '' === $mapping_key || ( ctype_digit( $mapping_key ) && absint( $mapping_key ) > 0 ) )
+            {
+                continue;
+            }
+
+            return $mapping_key;
+        }
+
+        return null;
+    }
+
+    private function resolve_event_action_code( array $payload, array $context ): ?string
+    {
+        $action_code = $this->first_sanitized_key(
+            [
+                $payload['central_action_id'] ?? null,
+                $context['central_action_id'] ?? null,
+                $payload['action_id'] ?? null,
+                $context['action_id'] ?? null,
+            ]
+        );
+
+        return '' !== $action_code ? $action_code : null;
+    }
+
+    private function resolve_event_action_label( array $payload, array $context ): ?string
+    {
+        $action_label = $this->first_sanitized_text(
+            [
+                $payload['action_name_label'] ?? null,
+                $context['action_name_label'] ?? null,
+            ]
+        );
+
+        return '' !== $action_label ? $action_label : null;
+    }
+
     private function managed_execution_payload_digest( array $job ): string
     {
         $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
@@ -1897,6 +2070,12 @@ class Sentient_Forms_Async_Handler
             {
                 $form['title'] = sanitize_text_field( (string) $data['form']['title'] );
             }
+
+            $fields = $this->sanitize_job_form_fields( $data['form']['fields'] ?? [] );
+            if ( [] !== $fields )
+            {
+                $form['fields'] = $fields;
+            }
         }
 
         $entry = [];
@@ -1938,6 +2117,60 @@ class Sentient_Forms_Async_Handler
         }
 
         return $payload;
+    }
+
+    /**
+     * @param mixed $fields Raw form-source field manifest rows.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function sanitize_job_form_fields( mixed $fields ): array
+    {
+        if ( ! is_array( $fields ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $fields as $field )
+        {
+            if ( ! is_array( $field ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] )
+                ? sanitize_text_field( (string) $field['id'] )
+                : '';
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $row = [
+                'id' => $field_id,
+            ];
+
+            foreach ( [ 'label', 'adminLabel', 'type', 'visibility', 'field_id_scope', 'field_id_ambiguity_reason' ] as $key )
+            {
+                if ( isset( $field[ $key ] ) && is_scalar( $field[ $key ] ) )
+                {
+                    $row[ $key ] = sanitize_text_field( (string) $field[ $key ] );
+                }
+            }
+
+            foreach ( [ 'storage_eligible', 'file_reference_eligible', 'required', 'field_id_ambiguous' ] as $key )
+            {
+                if ( array_key_exists( $key, $field ) )
+                {
+                    $row[ $key ] = (bool) $field[ $key ];
+                }
+            }
+
+            $sanitized[] = $row;
+        }
+
+        return $sanitized;
     }
 
     private function sanitize_job_data_value( mixed $value ): mixed
@@ -2451,6 +2684,16 @@ class Sentient_Forms_Async_Handler
             $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
         }
 
+        if ( $this->should_record_provider_execution_event( $job ) )
+        {
+            $this->record_local_execution_event(
+                $job,
+                'skipped',
+                null,
+                new WP_Error( 'sentient_forms_local_mapping_dependency_skipped', $reason )
+            );
+        }
+
         $this->record_managed_execution_skip_event( $job, $reason, $reason_code );
 
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )
@@ -2546,29 +2789,38 @@ class Sentient_Forms_Async_Handler
      */
     private function upstream_mapping_skips_downstream_on_spam( array $job, string $dependency_id ): bool
     {
-        $context    = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $context     = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
         $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = absint( $context['form_id'] ?? 0 );
+        $form_id     = $this->normalize_provider_form_id( $context['form_id'] ?? '' );
 
-        if ( '' === $form_source || $form_id <= 0 )
+        if ( '' === $form_source || '' === $form_id )
         {
             return false;
         }
 
-        $form_settings = get_option( sprintf( 'sentient_forms_actions_%s_%d', $form_source, $form_id ), [] );
-        if ( ! is_array( $form_settings ) || ! isset( $form_settings[ $dependency_id ] ) || ! is_array( $form_settings[ $dependency_id ] ) )
+        $form_settings      = $this->get_form_actions_option( $form_source, $form_id );
+        $dependency_mapping = null;
+        if ( is_array( $form_settings ) && isset( $form_settings[ $dependency_id ] ) && is_array( $form_settings[ $dependency_id ] ) )
+        {
+            $dependency_mapping = $this->resolve_hierarchical_settings(
+                $form_settings[ $dependency_id ],
+                [
+                    'form_source' => $form_source,
+                    'form_id'     => $form_id,
+                    'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
+                ]
+            );
+        }
+        else
+        {
+            $dependency_mapping = $this->resolve_local_first_dependency_mapping( $form_source, $form_id, $dependency_id );
+        }
+
+        if ( ! is_array( $dependency_mapping ) )
         {
             return false;
         }
 
-        $dependency_mapping = $this->resolve_hierarchical_settings(
-            $form_settings[ $dependency_id ],
-            [
-                'form_source' => $form_source,
-                'form_id'     => $form_id,
-                'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
-            ]
-        );
         $dependency_action_id = isset( $dependency_mapping['central_action_id'] ) && is_scalar( $dependency_mapping['central_action_id'] )
             ? sanitize_key( (string) $dependency_mapping['central_action_id'] )
             : '';
@@ -2590,16 +2842,125 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
+     * Resolve an upstream local-first dependency row for spam skip policy checks.
+     *
+     * @param string $form_source   Current form source.
+     * @param string $form_id       Current provider-native form id.
+     * @param string $dependency_id Upstream mapping id.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function resolve_local_first_dependency_mapping( string $form_source, string $form_id, string $dependency_id ): ?array
+    {
+        if ( ! str_starts_with( $dependency_id, 'local_first_' ) || ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            return null;
+        }
+
+        $mapping_id = absint( substr( $dependency_id, strlen( 'local_first_' ) ) );
+        if ( $mapping_id <= 0 )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $row        = $repository->get( $mapping_id );
+        if ( ! is_array( $row ) || empty( $row['enabled'] ) )
+        {
+            return null;
+        }
+
+        $row_form_source = sanitize_key( (string) ( $row['form_source'] ?? '' ) );
+        $row_form_id     = $this->normalize_provider_form_id( $row['form_id'] ?? '' );
+        if ( $row_form_source !== $form_source || $row_form_id !== $this->normalize_provider_form_id( $form_id ) )
+        {
+            return null;
+        }
+
+        $action_code = $this->resolve_local_first_dependency_action_code( $row );
+        if ( '' === $action_code )
+        {
+            return null;
+        }
+
+        $settings = isset( $row['settings_json'] ) && is_array( $row['settings_json'] )
+            ? $row['settings_json']
+            : [];
+
+        $effect_mapping = isset( $row['effect_mapping_json'] ) && is_array( $row['effect_mapping_json'] )
+            ? $row['effect_mapping_json']
+            : [];
+        if (
+            ! array_key_exists( 'skip_downstream_on_spam', $settings )
+            && isset( $effect_mapping['spam'] )
+            && is_array( $effect_mapping['spam'] )
+            && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
+        )
+        {
+            $settings['skip_downstream_on_spam'] = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
+        }
+
+        return [
+            'central_action_id' => $action_code,
+            'settings'          => $settings,
+        ];
+    }
+
+    /**
+     * Resolve the action code represented by a local-first mapping row.
+     *
+     * @param array<string, mixed> $mapping Local-first mapping row.
+     *
+     * @return string
+     */
+    private function resolve_local_first_dependency_action_code( array $mapping ): string
+    {
+        if ( 'custom_action' !== sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            return '';
+        }
+
+        $action_id = absint( $mapping['action_id'] ?? 0 );
+        if ( $action_id <= 0 )
+        {
+            return '';
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action     = $repository->get( $action_id );
+        if ( ! is_array( $action ) )
+        {
+            return '';
+        }
+
+        $action_code = isset( $action['code'] ) && is_scalar( $action['code'] )
+            ? sanitize_key( (string) $action['code'] )
+            : '';
+        if ( '' === $action_code )
+        {
+            return '';
+        }
+
+        $template_code = class_exists( 'Sentient_Forms_Bundled_Action_Templates' )
+            ? Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $action_code )
+            : '';
+
+        return '' !== $template_code ? $template_code : $action_code;
+    }
+
+    /**
      * Resolve the stored upstream spam classification for a dependent job.
      *
      * @param array<string, mixed> $job Job payload.
      *
      * @return string|null
      */
-    private function get_upstream_spam_classification( array $job, string $dependency_id = '' ): ?string
+    private function get_upstream_spam_classification( array $job, ?string $dependency_id = null ): ?string
     {
-        $context        = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $event_result   = $this->get_upstream_spam_classification_from_execution_event( $job, $dependency_id );
+        $context      = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $event_result = $this->get_upstream_spam_classification_from_event( $context, $dependency_id );
         if ( null !== $event_result )
         {
             return $event_result;
@@ -2632,37 +2993,6 @@ class Sentient_Forms_Async_Handler
 
         $normalized = sanitize_key( (string) $classification );
         return '' === $normalized ? null : $normalized;
-    }
-
-    private function get_upstream_spam_classification_from_execution_event( array $job, string $dependency_id ): ?string
-    {
-        if ( '' === $dependency_id || ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
-        {
-            return null;
-        }
-
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $request_ids = isset( $context['dependency_execution_request_ids'] ) && is_array( $context['dependency_execution_request_ids'] )
-            ? $context['dependency_execution_request_ids']
-            : [];
-        $request_id = isset( $request_ids[ $dependency_id ] ) && is_scalar( $request_ids[ $dependency_id ] )
-            ? sanitize_text_field( (string) $request_ids[ $dependency_id ] )
-            : '';
-        if ( '' === $request_id )
-        {
-            return null;
-        }
-
-        global $wpdb;
-        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
-        $event  = $events->get_by_request_id( $request_id );
-        if ( ! is_array( $event ) )
-        {
-            return null;
-        }
-
-        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
-        return $this->extract_spam_classification_from_result( $result );
     }
 
     private function extract_spam_classification_from_result( array $result ): ?string
@@ -2727,6 +3057,78 @@ class Sentient_Forms_Async_Handler
         $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $candidate ) ) );
 
         return sanitize_key( (string) ( $normalized ?? '' ) );
+    }
+
+    /**
+     * Resolve an upstream spam classification from the persisted execution event.
+     *
+     * @param array<string, mixed> $context       Current job context.
+     * @param string|null          $dependency_id Upstream mapping id.
+     *
+     * @return string|null
+     */
+    private function get_upstream_spam_classification_from_event( array $context, ?string $dependency_id ): ?string
+    {
+        $dependency_id = is_scalar( $dependency_id ) ? sanitize_text_field( (string) $dependency_id ) : '';
+        if ( '' === $dependency_id )
+        {
+            return null;
+        }
+
+        $dependency_request_ids = isset( $context['dependency_execution_request_ids'] ) && is_array( $context['dependency_execution_request_ids'] )
+            ? $context['dependency_execution_request_ids']
+            : [];
+        $execution_request_id = isset( $dependency_request_ids[ $dependency_id ] ) && is_scalar( $dependency_request_ids[ $dependency_id ] )
+            ? sanitize_text_field( (string) $dependency_request_ids[ $dependency_id ] )
+            : '';
+        if ( '' === $execution_request_id )
+        {
+            return null;
+        }
+
+        $event = $this->get_execution_events_repository()->get_by_request_id( $execution_request_id );
+        if ( ! is_array( $event ) || ! $this->execution_event_matches_context( $event, $context ) )
+        {
+            return null;
+        }
+
+        $result = isset( $event['result_json'] ) && is_array( $event['result_json'] )
+            ? $event['result_json']
+            : [];
+        if ( [] === $result )
+        {
+            return null;
+        }
+
+        return $this->extract_spam_classification_from_result( $result );
+    }
+
+    /**
+     * Prevent a stale event with the same request id from influencing another form/submission.
+     *
+     * @param array<string, mixed> $event   Persisted execution event.
+     * @param array<string, mixed> $context Current job context.
+     *
+     * @return bool
+     */
+    private function execution_event_matches_context( array $event, array $context ): bool
+    {
+        foreach ( [ 'form_source', 'form_id', 'submission_uuid' ] as $field )
+        {
+            $expected = isset( $context[ $field ] ) && is_scalar( $context[ $field ] )
+                ? sanitize_text_field( (string) $context[ $field ] )
+                : '';
+            $actual = isset( $event[ $field ] ) && is_scalar( $event[ $field ] )
+                ? sanitize_text_field( (string) $event[ $field ] )
+                : '';
+
+            if ( '' !== $expected && '' !== $actual && $expected !== $actual )
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

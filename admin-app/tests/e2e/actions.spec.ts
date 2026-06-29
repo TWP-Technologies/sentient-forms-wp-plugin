@@ -208,6 +208,97 @@ const wpformsPaidLikeFormSourceDescriptor = {
 	}
 };
 
+const elementorFormsFreeDescriptor = {
+	slug: 'elementor_forms',
+	label: 'Elementor Forms',
+	is_active: false,
+	availability: 'requires_pro',
+	availability_message: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+	requires_pro: true,
+	lifecycles: {
+		validation: {
+			supported: false,
+			label: 'Validation',
+			native_hook: null,
+			execution_mode: 'blocking',
+			requires_ledger: false,
+			unsupported_reason: 'Elementor Forms validation blocking is not supported.'
+		},
+		after_submission: {
+			supported: false,
+			label: 'After submission',
+			native_hook: null,
+			execution_mode: 'async',
+			requires_ledger: true,
+			unsupported_reason: 'Elementor Forms support requires Elementor Pro Forms APIs.'
+		},
+		real_time: {
+			supported: false,
+			label: 'Realtime',
+			native_hook: null,
+			execution_mode: 'real_time',
+			requires_ledger: false,
+			unsupported_reason: 'Realtime Elementor Forms support is not available.'
+		}
+	},
+	native_entry: {
+		id: false,
+		link: false,
+		read: false,
+		write: false
+	},
+	native_enrichment: {
+		notes: false,
+		status: false,
+		spam: false,
+		notification_controls: false,
+		webhook_controls: false
+	},
+	ledger: {
+		required_for_parity: true,
+		enabled: false,
+		settings_source: 'sentient_submission_ledger_settings',
+		unavailable_reason:
+			'Enable Elementor Pro Forms before configuring Sentient Forms ledger storage.'
+	}
+};
+
+const elementorFormsProLimitedDescriptor = {
+	...elementorFormsFreeDescriptor,
+	is_active: true,
+	availability: 'available',
+	availability_message:
+		'Elementor Pro Forms APIs are available. Sentient Forms can run after-submission actions after ledger opt-in.',
+	requires_pro: true,
+	lifecycles: {
+		...elementorFormsFreeDescriptor.lifecycles,
+		after_submission: {
+			supported: true,
+			label: 'After submission',
+			native_hook: 'elementor_pro/forms/new_record',
+			execution_mode: 'async',
+			requires_ledger: true,
+			unsupported_reason: null
+		}
+	},
+	ledger: {
+		...elementorFormsFreeDescriptor.ledger,
+		unavailable_reason:
+			'Enable the Sentient Forms Submission Ledger before reviewing Elementor Forms submissions in Sentient Forms.'
+	},
+	requirements: {
+		requires_pro: true,
+		is_elementor_active: true,
+		is_pro_forms_api_available: true,
+		is_form_submissions_api_available: false,
+		native_submission_parity: 'unavailable',
+		native_submission_parity_reason:
+			'Elementor Pro Forms APIs are available, but Elementor Form Submissions APIs are unavailable. Treat this as paid but insufficient for native submission-link parity.',
+		minimum_native_submission_plan: 'elementor_pro_advanced_solo_or_higher',
+		native_submission_fixture_required: true
+	}
+};
+
 const baseLinkages = [
 	{
 		local_mapping_id: 'map-1',
@@ -892,6 +983,88 @@ test.describe('Actions admin flows', () => {
 		expect(legacyDefaultsRequests).toBe(0);
 		expect(legacyActionsRequests).toBe(0);
 		expect(legacyStatusRequests).toBe(0);
+	});
+
+	test('shows free Elementor as requiring Pro on the actions overview', async ({ page }) => {
+		await seedRuntimeConfig(page, {
+			formSources: [
+				{
+					slug: 'elementor_forms',
+					label: 'Elementor Forms',
+					isActive: false,
+					availability: 'requires_pro',
+					availabilityMessage: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+					requiresPro: true,
+					descriptor: elementorFormsFreeDescriptor
+				}
+			]
+		});
+		await mockWpJson(page, {
+			actions: {
+				forms: { elementor_forms: [] },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsFreeDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const providerLabel = page.getByText('Elementor Forms', { exact: true });
+		await expect(providerLabel).toBeVisible();
+		const providerStatus = providerLabel.locator('../..');
+		await expect(providerStatus).toContainText('Requires Pro');
+		await expect(providerStatus).toContainText(
+			'Elementor Forms support requires Elementor Pro Forms APIs.'
+		);
+		await expect(providerStatus).not.toContainText('Inactive');
+		await expect(providerStatus).not.toContainText('Running');
+	});
+
+	test('shows missing Elementor as not installed on the actions overview', async ({ page }) => {
+		const elementorFormsMissingDescriptor = {
+			...elementorFormsFreeDescriptor,
+			availability: 'not_installed',
+			availability_message: 'Install Elementor and Elementor Pro to enable Elementor Forms.'
+		};
+
+		await seedRuntimeConfig(page, {
+			formSources: [
+				{
+					slug: 'elementor_forms',
+					label: 'Elementor Forms',
+					isActive: false,
+					availability: 'not_installed',
+					availabilityMessage: 'Install Elementor and Elementor Pro to enable Elementor Forms.',
+					requiresPro: true,
+					descriptor: elementorFormsMissingDescriptor
+				}
+			]
+		});
+		await mockWpJson(page, {
+			actions: {
+				forms: { elementor_forms: [] },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsMissingDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const providerLabel = page.getByText('Elementor Forms', { exact: true });
+		await expect(providerLabel).toBeVisible();
+		const providerStatus = providerLabel.locator('../..');
+		await expect(providerStatus).toContainText('Not installed');
+		await expect(providerStatus).toContainText('Install Elementor and Elementor Pro to enable Elementor Forms.');
+		await expect(providerStatus).not.toContainText('Requires Pro');
+		await expect(providerStatus).not.toContainText('Running');
 	});
 
 	test('hash navigation opens the form actions editor', async ({ page }) => {
@@ -1912,6 +2085,220 @@ test.describe('Actions admin flows', () => {
 		expect(payload.action_customization).toBe('Form summary rule: include budget before urgency.');
 	});
 
+	test('loads form-level defaults for provider-native Elementor form IDs', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+		const scopedElementorConfigKey = JSON.stringify([
+			'elementor_forms',
+			elementorFormId,
+			'entry_summary_v1'
+		]);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: [
+					{
+						id: 'entry_summary_v1',
+						label: 'Entry Summary',
+						source: 'bundled',
+						hooks: ['after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				formsActions: [],
+				status: statusUnknown,
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				formActionConfigById: {
+					entry_summary_v1: {
+						action_customization: 'Wrong form summary default.'
+					},
+					[scopedElementorConfigKey]: {
+						action_customization: 'Elementor form summary default.'
+					}
+				},
+				actionDefaultsById: {
+					entry_summary_v1: {
+						action_customization: 'Global Elementor fallback.'
+					}
+				},
+				ledgerSettings: {
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint:
+						`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+					record_count: 0
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}`, {
+			waitUntil: 'networkidle'
+		});
+		await page.getByText('Action defaults and library').click();
+		const configRequestPromise = page.waitForRequest(
+			(request) =>
+				request.method() === 'GET' &&
+				request
+					.url()
+					.includes(
+						`/forms/elementor_forms/${encodedElementorFormId}/action-config/entry_summary_v1`
+					)
+		);
+		await page
+			.getByRole('listitem')
+			.filter({ hasText: /Entry Summary/ })
+			.getByRole('button', { name: 'Defaults' })
+			.click();
+		await configRequestPromise;
+
+		const modal = page.getByTestId('form-defaults-modal');
+		await expect(modal).toBeVisible();
+		await expect(modal.locator('#form-level-customization')).toHaveValue(
+			'Elementor form summary default.'
+		);
+	});
+
+	test('does not expose Lead Scoring for Elementor Forms while native submission parity is unproven', async ({
+		page
+	}) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor lead form',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: [
+					{
+						id: 'lead_grading_v1',
+						label: 'Lead Scoring',
+						source: 'bundled',
+						hooks: ['after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				formsActions: [],
+				status: statusUnknown,
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				ledgerSettings: {
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint:
+						`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+					record_count: 0
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}`, {
+			waitUntil: 'networkidle'
+		});
+
+		await expect(
+			page.getByText(
+				'Elementor Pro Forms APIs are available, but Elementor Form Submissions APIs are unavailable.'
+			)
+		).toBeVisible();
+		await expect(page.locator('header').getByRole('link', { name: 'Lead Scoring' })).toHaveCount(
+			0
+		);
+	});
+
+	test('blocks direct Elementor Lead Scoring route while native submission parity is unproven', async ({
+		page
+	}) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+		let leadValueRequests = 0;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor lead form',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				creditBalance
+			}
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/lead-value/**', async (route) => {
+			leadValueRequests += 1;
+			await route.fulfill({
+				status: 500,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					code: 'unexpected_elementor_lead_value_call',
+					message: 'Elementor Lead Scoring should be blocked before API calls.'
+				})
+			});
+		});
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}/lead-value`, {
+			waitUntil: 'networkidle'
+		});
+
+		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toContainText(
+			'Lead Scoring is not available for Elementor Forms yet.'
+		);
+		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toContainText(
+			'Lead Scoring needs reliable native entry search, corrections, and notes before staff can safely grade Elementor leads.'
+		);
+		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).not.toContainText(
+			/APIs|fixture|Advanced Solo/i
+		);
+		await expect(page.getByRole('link', { name: 'Back to form actions' })).toHaveAttribute(
+			'href',
+			`/actions/elementor_forms/${encodedElementorFormId}`
+		);
+		expect(leadValueRequests).toBe(0);
+	});
+
 	test('creates a built-in action mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {
@@ -2665,6 +3052,607 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(page.getByTestId('submission-ledger-provider-note')).not.toContainText(
 			'Lite/no-native-entry'
+		);
+	});
+
+	test('keeps free Elementor-only Forms unavailable instead of exposing configuration', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: 91,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsFreeDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/elementor_forms/91', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('form-context-band')).toContainText('Elementor Forms');
+		await expect(page.getByTestId('form-source-availability-alert')).toContainText(
+			'Elementor Forms support requires Elementor Pro Forms APIs.'
+		);
+		await expect(page.getByTestId('submission-ledger-toggle')).toBeDisabled();
+
+		const addActionButtons = page.getByRole('button', { name: 'Add action' });
+		await expect(addActionButtons.first()).toBeDisabled();
+		await expect(page.getByTestId('link-action-form')).toHaveCount(0);
+		await expect(page.locator('header').getByRole('switch').first()).toBeDisabled();
+
+		await page.getByTestId('action-definitions-card').getByText('Action defaults and library').click();
+		const defaultButtons = page.getByTestId('action-definitions-card').getByRole('button', {
+			name: 'Defaults'
+		});
+		const defaultButtonCount = await defaultButtons.count();
+		expect(defaultButtonCount).toBeGreaterThan(0);
+		for (let index = 0; index < defaultButtonCount; index += 1) {
+			await expect(defaultButtons.nth(index)).toBeDisabled();
+		}
+	});
+
+	test('keeps direct free Elementor route unavailable when bootstrap returns requires_pro', async ({
+		page
+	}) => {
+		await seedRuntimeConfig(page, {
+			formSources: [
+				{
+					slug: 'elementor_forms',
+					label: 'Elementor Forms',
+					isActive: false,
+					availability: 'requires_pro',
+					availabilityMessage: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+					requiresPro: true,
+					descriptor: elementorFormsFreeDescriptor
+				}
+			]
+		});
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: '656:sfdogfood1',
+							title: 'Elementor local dogfood',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsFreeDescriptor },
+				bootstrapError: {
+					status: 404,
+					body: {
+						code: 'rest_form_source_unavailable',
+						message: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+						data: { status: 404 }
+					}
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/elementor_forms/656%3Asfdogfood1', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('form-source-availability-alert')).toContainText(
+			'Elementor Forms support requires Elementor Pro Forms APIs.'
+		);
+		await expect(page.getByTestId('submission-ledger-toggle')).toBeDisabled();
+		await expect(page.getByRole('button', { name: 'Check Sentient Forms log entry' })).toHaveCount(
+			0
+		);
+		await expect(page.getByTestId('form-actions-error-state')).toHaveCount(0);
+
+		const addActionButtons = page.getByRole('button', { name: 'Add action' });
+		await expect(addActionButtons.first()).toBeDisabled();
+	});
+
+	test('shows Elementor Pro Forms native-submission limitations without blocking after-submission setup', async ({
+		page
+	}) => {
+		const elementorLinkages = [
+			{
+				local_mapping_id: 'elementor-after-submission',
+				form_id: '91',
+				central_action_id: 'summarize',
+				action_name_label: 'Summarize lead',
+				action_type_indicator: 'master',
+				action_status: 'active',
+				trigger_hooks: ['elementor_pro/forms/new_record'],
+				created_at: '2026-06-25T02:45:00Z',
+				updated_at: '2026-06-25T02:45:00Z',
+				is_action_enabled_for_form: true,
+				last_run_status: 'unknown',
+				settings: {
+					trigger_sources: {
+						after_submission: { type: 'hook_root' }
+					}
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: 91,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: elementorLinkages,
+				formFields: [...baseFormFields, { id: '4', label: 'Project files', type: 'fileupload' }],
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				ledgerSettings: {
+					form_source: 'elementor_forms',
+					form_id: '91',
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint: '/wp-json/sentient-forms/v1/elementor_forms/forms/91/submissions',
+					record_count: 0
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/elementor_forms/91', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('form-source-availability-alert')).toHaveCount(0);
+		await expect(page.getByTestId('form-source-limitations-alert')).toContainText(
+			'Validation blocking and realtime assistance are not supported'
+		);
+		await expect(page.getByTestId('form-source-limitations-alert')).toContainText(
+			'Elementor Form Submissions APIs are unavailable'
+		);
+		await expect(page.getByTestId('form-source-limitations-alert')).toContainText(
+			'Native result writing and spam status updates stay disabled'
+		);
+		await page.getByText('Execution status and Sentient Forms log lookup').click();
+		await expect(
+			page.getByText(
+				'Native entry status lookup is unavailable for Elementor Forms. Use the Submission Ledger and Action Log list for submitted Elementor records.'
+			)
+		).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Check Sentient Forms log entry' })).toHaveCount(
+			0
+		);
+		await expect(page.getByRole('button', { name: 'Check log entry' })).toHaveCount(0);
+		await expect(page.getByText('this Gravity Forms form')).toHaveCount(0);
+
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByText('Configure Action Mapping')).toBeVisible();
+		await modal.getByTestId('mapping-section-toggle-attachment_mapping').click();
+		const sourceModeSelect = modal.getByLabel('Source mode');
+		await expect(sourceModeSelect).toContainText('Media library');
+		await expect(sourceModeSelect).not.toContainText('Elementor Forms uploads');
+		await expect(sourceModeSelect).not.toContainText('Mixed (Elementor Forms uploads + media)');
+		await expect(sourceModeSelect).not.toContainText('Gravity Forms uploads');
+		await expect(modal).toContainText(
+			'Elementor Forms upload fields are stored as ledger file references only.'
+		);
+		await modal.locator('footer').getByRole('button', { name: 'Close' }).click();
+		await expect(modal).toHaveCount(0);
+
+		await expect(page.locator('header').getByRole('button', { name: 'Add action' })).toBeEnabled();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+	});
+
+	test('links Elementor actions through provider-native mock routes', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: baseFormFields,
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor },
+				ledgerSettings: {
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint:
+						`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+					record_count: 0
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}`, {
+			waitUntil: 'networkidle'
+		});
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await drawer.getByRole('radio', { name: /Summarize/i }).check();
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+
+		const createReq = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				request.url().includes(`/elementor_forms/forms/${encodedElementorFormId}/actions`)
+		);
+		await drawer.getByRole('button', { name: 'Link action' }).click();
+		const request = await createReq;
+		expect(request.postDataJSON()).toMatchObject({
+			central_action_id: 'summarize',
+			trigger_hooks: ['after_submission']
+		});
+		await expect(drawer).toBeHidden({ timeout: 15_000 });
+
+		const table = await openLinkedActionsTable(page);
+		await expect(table.getByText('Summarize')).toBeVisible();
+	});
+
+	test('keeps Elementor direct submission review unavailable while ledger storage is disabled', async ({
+		page
+	}) => {
+		await mockWpJson(page, {});
+		const envelope = (data: unknown) => ({
+			success: true,
+			data
+		});
+		let submissionRecordRequests = 0;
+
+		await page.route(
+			'**/wp-json/sentient-forms/v1/elementor_forms/forms/91/ledger-settings',
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: '91',
+							enabled: false,
+							enabled_at: null,
+							enabled_by_user_id: null,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint:
+								'/wp-json/sentient-forms/v1/elementor_forms/forms/91/submissions',
+							record_count: 1
+						})
+					)
+				})
+		);
+		await page.route('**/wp-json/sentient-forms/v1/elementor_forms/forms/91/submissions**', (route) => {
+			submissionRecordRequests += 1;
+
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(
+					envelope({
+						form_source: 'elementor_forms',
+						form_id: '91',
+						submissions: [
+							{
+								id: 12,
+								submission_uuid: '66666666-7777-4888-9999-aaaaaaaaaaaa',
+								form_source: 'elementor_forms',
+								form_id: '91',
+								native_entry_id: null,
+								native_entry_url: null,
+								source_submitted_at: null,
+								captured_at: '2026-06-24T22:41:00Z',
+								logical_fields: {
+									email: 'lead@example.test'
+								},
+								provider_metadata: {},
+								file_refs: [],
+								redaction_summary: {
+									redacted_keys: []
+								},
+								action_runs: [],
+								expires_at: null,
+								detail_endpoint:
+									'/wp-json/sentient-forms/v1/elementor_forms/forms/91/submissions/66666666-7777-4888-9999-aaaaaaaaaaaa'
+							}
+						],
+						count: 1,
+						per_page: 50,
+						offset: 0
+					})
+				)
+			});
+		});
+
+		await page.goto('/actions/elementor_forms/91/submissions', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('submission-ledger-status-card')).toContainText('Off');
+		await expect(page.getByTestId('submission-ledger-empty')).toContainText(
+			'New submitted forms will appear here after ledger storage is enabled and a form is submitted.'
+		);
+		await expect(page.getByTestId('submission-ledger-table')).toHaveCount(0);
+		expect(submissionRecordRequests).toBe(0);
+	});
+
+	test('shows grouped Elementor action runs on the submission ledger page', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor }
+			}
+		});
+		const envelope = (data: unknown) => ({
+			success: true,
+			data
+		});
+
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/ledger-settings`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							enabled: true,
+							enabled_at: '2026-06-24T22:40:00Z',
+							enabled_by_user_id: 1,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint:
+								`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+							record_count: 1
+						})
+					)
+				})
+		);
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions**`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							submissions: [
+								{
+									id: 12,
+									submission_uuid: '66666666-7777-4888-9999-aaaaaaaaaaaa',
+									form_source: 'elementor_forms',
+									form_id: elementorFormId,
+									native_entry_id: null,
+									native_entry_url: null,
+									source_submitted_at: null,
+									captured_at: '2026-06-24T22:41:00Z',
+									logical_fields: {
+										email: 'lead@example.test'
+									},
+									provider_metadata: {
+										form_name: 'Elementor Ledger Form'
+									},
+									file_refs: [],
+									redaction_summary: {
+										redacted_keys: []
+									},
+									action_runs: [
+										{
+											execution_request_id: 'req-elementor-ledger-run',
+											mapping_id: 987,
+											status: 'success',
+											provider: 'openrouter',
+											model: 'openrouter/auto',
+											last_result: {
+												structured: {
+													summary: 'Elementor action result is grouped.'
+												}
+											},
+											last_error_code: null,
+											last_error_message: null,
+											created_at: '2026-06-24T22:41:10Z',
+											updated_at: '2026-06-24T22:41:20Z'
+										}
+									],
+									expires_at: null,
+									detail_endpoint: `/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions/66666666-7777-4888-9999-aaaaaaaaaaaa`
+								}
+							],
+							count: 1,
+							per_page: 50,
+							offset: 0
+						})
+					)
+				})
+		);
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}/submissions`, {
+			waitUntil: 'networkidle'
+		});
+
+		const row = page.getByTestId('submission-ledger-row');
+		await expect(row).toContainText('66666666-7777-4888-9999-aaaaaaaaaaaa');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText('1 action run');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText(
+			'Elementor action result is grouped.'
+		);
+		await expect(page.getByTestId('submission-ledger-native-limit')).toContainText(
+			'Elementor Form Submissions APIs are unavailable'
+		);
+		await expect(page.getByTestId('submission-ledger-native-limit')).toContainText(
+			'paid but insufficient for native submission-link parity'
+		);
+	});
+
+	test('renders Elementor ledger submissions when action runs are null', async ({ page }) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: elementorFormId,
+							title: 'Elementor contact page',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				formSourceDescriptors: { elementor_forms: elementorFormsProLimitedDescriptor }
+			}
+		});
+		const envelope = (data: unknown) => ({
+			success: true,
+			data
+		});
+
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/ledger-settings`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							enabled: true,
+							enabled_at: '2026-06-24T22:40:00Z',
+							enabled_by_user_id: 1,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint:
+								`/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions`,
+							record_count: 1
+						})
+					)
+				})
+		);
+		await page.route(
+			`**/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions**`,
+			(route) =>
+				route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						envelope({
+							form_source: 'elementor_forms',
+							form_id: elementorFormId,
+							submissions: [
+								{
+									id: 13,
+									submission_uuid: '77777777-8888-4999-aaaa-bbbbbbbbbbbb',
+									form_source: 'elementor_forms',
+									form_id: elementorFormId,
+									native_entry_id: null,
+									native_entry_url: null,
+									source_submitted_at: null,
+									captured_at: '2026-06-24T22:42:00Z',
+									logical_fields: {
+										email: 'nullable-runs@example.test'
+									},
+									provider_metadata: {
+										form_name: 'Elementor Ledger Form'
+									},
+									file_refs: [],
+									redaction_summary: {
+										redacted_keys: []
+									},
+									action_runs: null,
+									expires_at: null,
+									detail_endpoint: `/wp-json/sentient-forms/v1/elementor_forms/forms/${encodedElementorFormId}/submissions/77777777-8888-4999-aaaa-bbbbbbbbbbbb`
+								}
+							],
+							count: 1,
+							per_page: 50,
+							offset: 0
+						})
+					)
+				})
+		);
+
+		await page.goto(`/actions/elementor_forms/${encodedElementorFormId}/submissions`, {
+			waitUntil: 'networkidle'
+		});
+
+		const row = page.getByTestId('submission-ledger-row');
+		await expect(row).toContainText('77777777-8888-4999-aaaa-bbbbbbbbbbbb');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText('0 action runs');
+		await expect(row.getByTestId('submission-ledger-action-runs')).toContainText(
+			'No action output recorded yet.'
 		);
 	});
 

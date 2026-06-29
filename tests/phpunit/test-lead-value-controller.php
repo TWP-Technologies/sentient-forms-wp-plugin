@@ -825,10 +825,74 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertIsArray( $data );
 
         $this->assertSame( 'contact_form_7', $data['form_source'] );
-        $this->assertSame( 42, $data['form_id'] );
+        $this->assertSame( '42', $data['form_id'] );
         $this->assertSame( $submission_uuid, $data['entries'][0]['id'] ?? null );
         $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
         $this->assertSame( 'Ada Buyer', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
+    public function test_search_entries_preserves_provider_native_submission_ledger_form_ids(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-555555555556';
+        $form_id         = '91:formabc';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'elementor_forms',
+                'form_id'             => $form_id,
+                'logical_fields_json' => [
+                    'full_name'       => 'Ada Elementor',
+                    'project_summary' => 'Opaque provider form search needle.',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/search' );
+        $request->set_param( 'q', 'search needle' );
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+
+        $this->assertSame( 'elementor_forms', $data['form_source'] );
+        $this->assertSame( $form_id, $data['form_id'] );
+        $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
+    }
+
+    public function test_search_entries_rejects_malformed_gravity_form_ids(): void
+    {
+        GFAPI::$forms = [
+            7 => [
+                'id'    => 7,
+                'title' => 'Lead intake',
+            ],
+        ];
+        GFAPI::$entries = [
+            1001 => [
+                'id'           => 1001,
+                'form_id'      => 7,
+                'date_created' => '2026-05-13 08:15:00',
+                'status'       => 'active',
+                '1'            => 'Ada Buyer',
+            ],
+        ];
+        $this->reset_gfapi_lookup_counters();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/gravity_forms/7junk/entries/search' );
+        $request->set_param( 'q', 'Ada' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status(), wp_json_encode( $response->get_data() ) );
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( 'sentient_forms_gf_form_invalid', $data['code'] ?? null );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
     }
 
     public function test_search_entries_scans_past_first_submission_ledger_page(): void
@@ -994,6 +1058,16 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $local_execution->calls[0]['entry']['submission_uuid'] ?? null );
         $this->assertSame( $submission_uuid, $local_execution->calls[0]['context']['submission_uuid'] ?? null );
         $this->assertSame( 'manual:suggested_reply_v1:contact_form_7:42:' . $submission_uuid, $data['execution']['execution_request_id'] ?? null );
+    }
+
+    public function test_manual_suggested_reply_route_accepts_provider_native_form_ids(): void
+    {
+        $routes = rest_get_server()->get_routes();
+
+        $this->assertArrayHasKey(
+            '/sentient-forms/v1/lead-value/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
+            $routes
+        );
     }
 
     public function test_manual_suggested_reply_rejects_invalid_gravity_form_entry_pair(): void
@@ -1244,6 +1318,178 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertContains( '99', $form_ids );
     }
 
+    public function test_elementor_provider_native_lead_grade_correction_uses_stored_result(): void
+    {
+        global $wpdb;
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $grade_id = $results->upsert_from_execution(
+            [
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '91:formabc',
+                'form_title'           => 'Elementor lead form',
+                'entry_id'             => 'sf-ledger-1',
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'lead-grading:elementor:sf-ledger-1',
+                'profile_version'      => 2,
+                'grade'                => 'C',
+                'justification'        => 'The model was unsure about fit.',
+                'entry_snapshot'       => [
+                    'field_summary' => [
+                        [
+                            'field_id' => 'name',
+                            'label'    => 'Name',
+                            'value'    => 'Ada Buyer',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $grade_id );
+
+        $corrected = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/sf-ledger-1/correction',
+            [
+                'grade'         => 'B',
+                'justification' => 'Human review found a likely fit.',
+            ]
+        );
+
+        $this->assertSame( 'elementor_forms', $corrected['entry']['form_source'] );
+        $this->assertSame( '91:formabc', $corrected['entry']['form_id'] );
+        $this->assertSame( 'sf-ledger-1', $corrected['entry']['entry_id'] );
+        $this->assertSame( 'B', $corrected['entry']['grade'] );
+        $this->assertSame( 'C', $corrected['entry']['correction']['original_grade'] );
+        $this->assertSame( 'Human review found a likely fit.', $corrected['entry']['correction']['justification'] );
+        $this->assertSame( '91:formabc', $corrected['dashboard']['form_id'] );
+        $this->assertSame( 'B', $corrected['dashboard']['entries'][0]['grade'] );
+    }
+
+    public function test_provider_native_readiness_uses_canonical_form_config_key(): void
+    {
+        $this->seed_ready_site_context();
+
+        $positive = [
+            [ 'text' => 'I need help pricing a complex website automation project.', 'rationale' => 'Real buying-stage inquiry.' ],
+            [ 'text' => 'Can your team rebuild our intake workflow this quarter?', 'rationale' => 'Clear service fit.' ],
+            [ 'text' => 'We want a quote for form routing and CRM handoff.', 'rationale' => 'Relevant project request.' ],
+        ];
+        $negative = [
+            [ 'text' => 'Buy cheap backlinks for your domain now.', 'rationale' => 'Spam solicitation.' ],
+            [ 'text' => 'Guaranteed crypto returns with no risk.', 'rationale' => 'Unrelated scam.' ],
+            [ 'text' => 'asdf qwer http://spam.example', 'rationale' => 'Low-effort suspicious entry.' ],
+        ];
+
+        update_option(
+            'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ),
+            [
+                'spam_detection_v1' => [
+                    'spam_positive_examples' => $positive,
+                    'spam_negative_examples' => $negative,
+                ],
+            ],
+            false
+        );
+
+        $controller = new Sentient_Forms_Lead_Value_Controller();
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile' );
+        $request->set_param( 'form_source', 'elementor_forms' );
+        $request->set_param( 'form_id', '91:formabc' );
+        $request->set_param( 'lead_profile_consent', true );
+        $request->set_param(
+            'good_lead_criteria',
+            [
+                'summary_text' => 'A good lead has a real business need, reachable contact details, service-area fit, urgency, and enough project context for follow-up.',
+            ]
+        );
+        $request->set_param(
+            'bad_lead_criteria',
+            [
+                'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or requests unrelated promotions.',
+            ]
+        );
+
+        $response = $controller->save_profile_for_form( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( '91:formabc', $data['profile']['form_id'] ?? null );
+        $this->assertSame( 3, $data['readiness']['spam_guidance']['sources']['form_config']['positive_count'] ?? null );
+        $this->assertSame( 3, $data['readiness']['spam_guidance']['sources']['form_config']['negative_count'] ?? null );
+    }
+
+    public function test_provider_native_lead_value_routes_accept_encoded_form_ids(): void
+    {
+        $this->seed_ready_site_context();
+
+        $form_id = '91:formabc';
+        update_option(
+            'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ),
+            [
+                'spam_detection_v1' => [
+                    'spam_positive_examples' => [
+                        [ 'text' => 'I need help pricing a complex website automation project.', 'rationale' => 'Real buying-stage inquiry.' ],
+                        [ 'text' => 'Can your team rebuild our intake workflow this quarter?', 'rationale' => 'Clear service fit.' ],
+                        [ 'text' => 'We want a quote for form routing and CRM handoff.', 'rationale' => 'Relevant project request.' ],
+                    ],
+                    'spam_negative_examples' => [
+                        [ 'text' => 'Buy cheap backlinks for your domain now.', 'rationale' => 'Spam solicitation.' ],
+                        [ 'text' => 'Guaranteed crypto returns with no risk.', 'rationale' => 'Unrelated scam.' ],
+                        [ 'text' => 'asdf qwer http://spam.example', 'rationale' => 'Low-effort suspicious entry.' ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $created = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile',
+            [
+                'lead_profile_consent' => true,
+                'good_lead_criteria'   => [
+                    'summary_text' => 'A good lead has a real business need, reachable contact details, service-area fit, urgency, and enough project context for follow-up.',
+                ],
+                'bad_lead_criteria'    => [
+                    'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or requests unrelated promotions.',
+                ],
+            ],
+            201
+        );
+        $this->assertSame( $form_id, $created['profile']['form_id'] ?? null );
+        $this->assertSame( 3, $created['readiness']['spam_guidance']['sources']['form_config']['positive_count'] ?? null );
+
+        $profile = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile' );
+        $this->assertSame( $form_id, $profile['profile']['form_id'] ?? null );
+
+        $dashboard = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/dashboard' );
+        $this->assertSame( $form_id, $dashboard['form_id'] ?? null );
+
+        $run = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/historical-runs',
+            [
+                'action_code' => 'lead_grading_v1',
+                'dry_run'     => true,
+            ],
+            201
+        );
+        $this->assertSame( $form_id, $run['run']['form_id'] ?? null );
+
+        $imported = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile/import',
+            [
+                'source_profile_id' => $created['profile']['id'],
+                'include_examples'  => true,
+            ],
+            201
+        );
+        $this->assertSame( $form_id, $imported['profile']['form_id'] ?? null );
+    }
+
     public function test_dashboards_hydrate_missing_entry_preview_from_gravity_forms(): void
     {
         global $wpdb;
@@ -1420,6 +1666,14 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_site_context' );
         delete_option( 'sentient_forms_site_context_settings' );
         delete_option( 'sentient_forms_form_config_gravity_forms_7' );
+
+        global $wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $wpdb->esc_like( 'sentient_forms_form_config_elementor_forms_' ) . '%'
+            )
+        );
     }
 
     private function record_managed_proxy_consent( string $action = 'setup_managed_proxy' ): void

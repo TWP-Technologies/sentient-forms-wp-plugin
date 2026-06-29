@@ -13,6 +13,7 @@
 	} from '$lib/components/ui';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type {
+		FormSourceDescriptor,
 		SubmissionLedgerRecord,
 		SubmissionLedgerSettingsResponse
 	} from '$lib/api/types';
@@ -52,6 +53,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let settings = $state<SubmissionLedgerSettingsResponse | null>(null);
+	let formSourceDescriptor = $state<FormSourceDescriptor | null>(null);
 	let records = $state<SubmissionLedgerRecord[]>([]);
 	let total = $state(0);
 	let query = $state('');
@@ -69,6 +71,9 @@
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const formDetailHref = $derived(appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`));
 	const formLabel = $derived(`${data.formSourceSlug.replaceAll('_', ' ')} #${data.formId}`);
+	const nativeSubmissionLimitation = $derived(
+		descriptorRequirementString(formSourceDescriptor?.requirements, 'native_submission_parity_reason')
+	);
 	const pageSize = $derived(Math.max(1, Number(perPage) || 10));
 	const resultStart = $derived(total > 0 && records.length > 0 ? offset + 1 : 0);
 	const resultEnd = $derived(total > 0 ? Math.min(offset + records.length, total) : 0);
@@ -88,32 +93,62 @@
 			sort !== 'captured_desc'
 	);
 
+	function descriptorRequirementString(
+		requirements: FormSourceDescriptor['requirements'] | undefined,
+		key: string
+	): string {
+		const value = requirements?.[key];
+		return typeof value === 'string' ? value.trim() : '';
+	}
+
 	async function loadLedgerSubmissions() {
 		const requestSequence = ++ledgerRequestSequence;
 		loading = true;
 		error = null;
 
 		try {
-			const [nextSettings, nextRecords] = await Promise.all([
-				client.getSubmissionLedgerSettings(data.formSourceSlug, data.formId, {
+			const [bootstrapResult, settingsResult] = await Promise.allSettled([
+				client.getFormActionsBootstrap(data.formSourceSlug, data.formId, {
 					showNotifications: false
 				}),
-				client.getSubmissionLedgerRecords(data.formSourceSlug, data.formId, {
-					perPage: pageSize,
-					offset,
-					q: query,
-					nativeEntry,
-					capturedFrom,
-					capturedTo,
-					hasFiles: hasFiles === 'all' ? null : hasFiles === 'yes',
-					sort,
+				client.getSubmissionLedgerSettings(data.formSourceSlug, data.formId, {
 					showNotifications: false
 				})
 			]);
 
+			formSourceDescriptor =
+				bootstrapResult.status === 'fulfilled'
+					? (bootstrapResult.value.form_source_descriptor ?? null)
+					: null;
+
+			if (settingsResult.status === 'rejected') {
+				throw settingsResult.reason;
+			}
+
+			const nextSettings = settingsResult.value;
 			if (requestSequence !== ledgerRequestSequence) return;
 
 			settings = nextSettings;
+
+			if (!nextSettings.enabled) {
+				records = [];
+				total = 0;
+				return;
+			}
+
+			const nextRecords = await client.getSubmissionLedgerRecords(data.formSourceSlug, data.formId, {
+				perPage: pageSize,
+				offset,
+				q: query,
+				nativeEntry,
+				capturedFrom,
+				capturedTo,
+				hasFiles: hasFiles === 'all' ? null : hasFiles === 'yes',
+				sort,
+				showNotifications: false
+			});
+			if (requestSequence !== ledgerRequestSequence) return;
+
 			records = Array.isArray(nextRecords.records) ? nextRecords.records : [];
 			total = Number.isFinite(nextRecords.total) ? nextRecords.total : records.length;
 		} catch (caught) {
@@ -175,6 +210,44 @@
 		void loadLedgerSubmissions();
 	});
 
+	function actionRunsFor(record: SubmissionLedgerRecord) {
+		return Array.isArray(record.action_runs) ? record.action_runs : [];
+	}
+
+	function actionRunCountLabel(record: SubmissionLedgerRecord) {
+		const count = actionRunsFor(record).length;
+		return `${count.toLocaleString()} action ${count === 1 ? 'run' : 'runs'}`;
+	}
+
+	function latestActionRunSummary(record: SubmissionLedgerRecord) {
+		const latest = actionRunsFor(record)[0];
+		if (!latest) {
+			return 'No action output recorded yet.';
+		}
+
+		const result = latest.last_result;
+		if (result && typeof result === 'object' && !Array.isArray(result)) {
+			const structured = result.structured;
+			if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+				const summary = (structured as Record<string, unknown>).summary;
+				if (typeof summary === 'string' && summary.trim()) {
+					return summary;
+				}
+			}
+
+			const summary = result.summary;
+			if (typeof summary === 'string' && summary.trim()) {
+				return summary;
+			}
+		}
+
+		if (latest.last_error_message) {
+			return latest.last_error_message;
+		}
+
+		return latest.status;
+	}
+
 	onDestroy(() => {
 		clearFilterTimer();
 		ledgerRequestSequence += 1;
@@ -202,6 +275,11 @@
 						? 'Logical field snapshots are enabled for this form.'
 						: 'Logical field snapshots are not stored while this is off.'}
 				</p>
+				{#if nativeSubmissionLimitation}
+					<p class="sf:mt-2 sf:text-xs sf:text-amber-700" data-testid="submission-ledger-native-limit">
+						{nativeSubmissionLimitation}
+					</p>
+				{/if}
 			</div>
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 				<Badge variant={settings?.enabled ? 'success' : 'neutral'}>
@@ -338,6 +416,7 @@
 							<th class="sf:px-4 sf:py-3">Submission</th>
 							<th class="sf:px-4 sf:py-3">Captured</th>
 							<th class="sf:px-4 sf:py-3">Fields</th>
+							<th class="sf:px-4 sf:py-3">Action runs</th>
 							<th class="sf:px-4 sf:py-3 sf:text-right">Native entry</th>
 						</tr>
 					</thead>
@@ -364,6 +443,14 @@
 								<td class="sf:max-w-md sf:px-4 sf:py-3">
 									<p class="sf:line-clamp-2 sf:text-slate-700">
 										{formatSubmissionLedgerFieldPreview(record)}
+									</p>
+								</td>
+								<td class="sf:max-w-sm sf:px-4 sf:py-3" data-testid="submission-ledger-action-runs">
+									<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+										{actionRunCountLabel(record)}
+									</p>
+									<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-600">
+										{latestActionRunSummary(record)}
 									</p>
 								</td>
 								<td class="sf:px-4 sf:py-3 sf:text-right">

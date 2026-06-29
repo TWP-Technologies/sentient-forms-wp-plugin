@@ -339,4 +339,38 @@ describe('apiFetch', () => {
 			})
 		);
 	});
+
+	it('uses the latest WordPress REST nonce when runtime config is injected after client creation', async () => {
+		Reflect.deleteProperty(window, 'sentientFormsConfig');
+		window.history.replaceState({}, '', '/wp-admin/admin.php?page=sentient-forms');
+
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ success: true, data: { ok: true } }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+
+		const client = createClientFromConfig({
+			fetchImpl: fetchMock,
+			notifyErrors: false
+		});
+
+		window.sentientFormsConfig = {
+			apiBaseUrl: 'http://localhost:3000/wp-json/sentient-forms/v1/',
+			restNonce: 'late-rest-nonce',
+			siteUrl: 'http://localhost:3000'
+		};
+
+		await client.request('settings');
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://localhost:3000/wp-json/sentient-forms/v1/settings',
+			expect.objectContaining({
+				headers: expect.objectContaining({
+					'X-WP-Nonce': 'late-rest-nonce'
+				})
+			})
+		);
+	});
 });

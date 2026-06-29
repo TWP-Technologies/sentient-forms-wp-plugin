@@ -10,11 +10,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract_Base_Controller {
-	protected string $rest_base = '(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>\\d+)/actions';
+	protected string $rest_base = '(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>[A-Za-z0-9._:%-]+)/actions';
 
 	private const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
 	private const DEFAULT_RUNTIME_CONFIG_RATE_LIMIT_PER_MINUTE = 300;
 	private const DEFAULT_MAX_PAYLOAD_BYTES = 32768;
+	private const FORM_ID_PATTERN = '[A-Za-z0-9._:%-]+';
 	private const RUNTIME_CONFIG_TOKEN_HEADER = 'X-Sentient-Forms-Runtime-Config-Token';
 	private const HIDDEN_FIELD_EXPOSURE_MODES = [
 		'omit_hidden',
@@ -69,9 +70,9 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 						],
 						'form_id' => [
 							'required'          => true,
-							'type'              => 'integer',
-							'sanitize_callback' => 'absint',
-							'validate_callback' => static fn( mixed $value ): bool => is_numeric( $value ) && (int) $value > 0,
+							'type'              => 'string',
+							'sanitize_callback' => [ $this, 'sanitize_form_id_param' ],
+							'validate_callback' => [ $this, 'validate_form_id_param' ],
 						],
 					],
 				],
@@ -94,8 +95,9 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 						],
 						'form_id' => [
 							'required'          => true,
-							'type'              => 'integer',
-							'sanitize_callback' => 'absint',
+							'type'              => 'string',
+							'sanitize_callback' => [ $this, 'sanitize_form_id_param' ],
+							'validate_callback' => [ $this, 'validate_form_id_param' ],
 						],
 						'mapping_id' => [
 							'required'          => true,
@@ -144,9 +146,38 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 		);
 	}
 
+	public function sanitize_form_id_param( mixed $value ): string {
+		return $this->normalize_provider_form_id( $value );
+	}
+
+	public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): bool | WP_Error {
+		$form_id = $this->normalize_provider_form_id( $value );
+		if ( '' === $form_id || strlen( $form_id ) > 100 || ! preg_match( '/^' . self::FORM_ID_PATTERN . '$/', $form_id ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a valid provider-native identifier.', 'sentient-forms' ), [ 'status' => 400 ] );
+		}
+
+		if ( 'gravity_forms' === sanitize_key( (string) $request->get_param( 'form_source_slug' ) ) && ! $this->is_positive_integer_form_id( $form_id ) ) {
+			return new WP_Error( 'rest_invalid_param', __( 'Gravity Forms form ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
+		}
+
+		return true;
+	}
+
+	private function normalize_provider_form_id( mixed $value ): string {
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+
+		return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+	}
+
+	private function is_positive_integer_form_id( string $form_id ): bool {
+		return ctype_digit( $form_id ) && absint( $form_id ) > 0;
+	}
+
 	public function get_runtime_config( WP_REST_Request $request ): WP_REST_Response | WP_Error {
 		$form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
-		$form_id = absint( $request->get_param( 'form_id' ) );
+		$form_id = $this->normalize_provider_form_id( $request->get_param( 'form_id' ) );
 
 		if ( 'gravity_forms' !== $form_source_slug ) {
 			return $this->prepare_error_response(
@@ -156,7 +187,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			);
 		}
 
-		if ( $form_id <= 0 ) {
+		if ( ! $this->is_positive_integer_form_id( $form_id ) ) {
 			return $this->prepare_error_response(
 				'rest_invalid_form_id',
 				__( 'Invalid form ID provided.', 'sentient-forms' ),
@@ -164,7 +195,9 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			);
 		}
 
-		if ( ! $this->has_valid_runtime_config_token( $request, $form_source_slug, $form_id ) ) {
+		$numeric_form_id = absint( $form_id );
+
+		if ( ! $this->has_valid_runtime_config_token( $request, $form_source_slug, $numeric_form_id ) ) {
 			return $this->prepare_error_response(
 				'rest_invalid_runtime_config_token',
 				__( 'Runtime config token is invalid or missing. Reload this page before trying again.', 'sentient-forms' ),
@@ -172,7 +205,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			);
 		}
 
-		$rate_limit_result = $this->enforce_rate_limit( $form_id, 'runtime_config' );
+		$rate_limit_result = $this->enforce_rate_limit( $numeric_form_id, 'runtime_config' );
 		if ( is_wp_error( $rate_limit_result ) ) {
 			return $rate_limit_result;
 		}
@@ -186,7 +219,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			);
 		}
 
-		$runtime_config = $adapter->get_realtime_runtime_config( $form_id );
+		$runtime_config = $adapter->get_realtime_runtime_config( $numeric_form_id );
 		if ( null === $runtime_config ) {
 			return $this->prepare_error_response(
 				'rest_realtime_runtime_config_not_found',
@@ -218,7 +251,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 	private function is_runtime_config_request( WP_REST_Request $request ): bool {
 		$route = $request->get_route();
 		return 1 === preg_match(
-			'#^/' . preg_quote( $this->namespace, '#' ) . '/[a-z0-9_]+/forms/[0-9]+/actions/runtime-config$#',
+			'#^/' . preg_quote( $this->namespace, '#' ) . '/[a-z0-9_]+/forms/' . self::FORM_ID_PATTERN . '/actions/runtime-config$#',
 			$route
 		);
 	}
@@ -246,8 +279,13 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 	 * Public permission callback guarded by a form-scoped nonce.
 	 */
 	public function permission_callback_public_nonce( WP_REST_Request $request ): bool {
-		$form_id = absint( $request->get_param( 'form_id' ) );
-		if ( $form_id <= 0 ) {
+		$form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+		if ( '' !== $form_source_slug && 'gravity_forms' !== $form_source_slug ) {
+			return true;
+		}
+
+		$form_id = $this->normalize_provider_form_id( $request->get_param( 'form_id' ) );
+		if ( ! $this->is_positive_integer_form_id( $form_id ) ) {
 			return false;
 		}
 
@@ -260,7 +298,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			return false;
 		}
 
-		$expected_action = 'sentient_forms_realtime_suggest_' . $form_id;
+		$expected_action = 'sentient_forms_realtime_suggest_' . absint( $form_id );
 		return (bool) wp_verify_nonce( $nonce, $expected_action );
 	}
 

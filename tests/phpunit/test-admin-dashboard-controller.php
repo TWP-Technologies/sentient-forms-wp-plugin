@@ -43,6 +43,9 @@ class Tests_Admin_Dashboard_Controller extends WP_UnitTestCase
         }
 
         Sentient_Forms_Plugin::instance()->clear_license_data();
+        remove_all_filters( 'sentient_forms_elementor_is_active' );
+        remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
+        remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         parent::tearDown();
     }
 
@@ -168,6 +171,41 @@ class Tests_Admin_Dashboard_Controller extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'currency', $data['recent_events'][0]['cost_json'] ?? [] );
         $this->assertArrayNotHasKey( 'currency', $data['recent_events'][0]['result_json']['usage_cost'] ?? [] );
         $this->assertArrayNotHasKey( 'async_health', $data );
+    }
+
+    public function test_dashboard_summary_suppresses_elementor_entry_ids_when_form_submissions_are_unavailable(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'req-dashboard-elementor-entry',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '91:formabc',
+                'entry_id'             => 'elementor-submission-123',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ]
+        );
+        $this->assertIsInt( $event_id );
+
+        $controller = new Sentient_Forms_Admin_Dashboard_Controller();
+        $response   = $controller->get_summary( new WP_REST_Request( 'GET', '/sentient-forms/v1/admin/dashboard-summary' ) );
+        $data       = $response->get_data();
+        $event      = $data['recent_events'][0] ?? [];
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( '91:formabc', $event['form_id'] ?? null );
+        $this->assertArrayHasKey( 'entry_id', $event );
+        $this->assertNull( $event['entry_id'] );
+        $this->assertStringNotContainsString( 'elementor-submission-123', wp_json_encode( $data ) );
     }
 
     public function test_dashboard_summary_requires_admin_permission(): void

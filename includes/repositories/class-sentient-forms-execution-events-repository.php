@@ -60,6 +60,9 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $row = [
             'execution_request_id' => $execution_request_id,
             'mapping_id'           => isset( $data['mapping_id'] ) ? (int) $data['mapping_id'] : null,
+            'mapping_key'          => isset( $data['mapping_key'] ) ? sanitize_text_field( (string) $data['mapping_key'] ) : null,
+            'action_code'          => isset( $data['action_code'] ) ? sanitize_text_field( (string) $data['action_code'] ) : null,
+            'action_label'         => isset( $data['action_label'] ) ? sanitize_text_field( (string) $data['action_label'] ) : null,
             'form_source'          => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : null,
             'form_id'              => isset( $data['form_id'] ) ? sanitize_text_field( (string) $data['form_id'] ) : null,
             'entry_id'             => isset( $data['entry_id'] ) ? sanitize_text_field( (string) $data['entry_id'] ) : null,
@@ -86,7 +89,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                 $this->table_name(),
                 $row,
                 [ 'execution_request_id' => $execution_request_id ],
-                [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                $this->record_row_formats( $row ),
                 [ '%s' ]
             );
 
@@ -101,7 +104,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $inserted = $this->wpdb->insert(
             $this->table_name(),
             $row,
-            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            $this->record_row_formats( $row )
         );
 
         if ( false === $inserted )
@@ -144,6 +147,31 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             ARRAY_A
         );
         return $row ? $this->decode_row( $row ) : null;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function list_for_submission_uuid( string $submission_uuid, int $limit = 20 ): array
+    {
+        $submission_uuid = sanitize_text_field( $submission_uuid );
+        if ( '' === $submission_uuid )
+        {
+            return [];
+        }
+
+        $wpdb = $this->wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE submission_uuid = %s ORDER BY created_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
+                $submission_uuid,
+                max( 1, min( 100, $limit ) )
+            ),
+            ARRAY_A
+        ) ?: [];
+
+        return array_map( [ $this, 'decode_row' ], $rows );
     }
 
     public function list_recent( int $limit = 50 ): array
@@ -193,7 +221,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     AND (%s = '' OR created_at <= %s)
                     ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
                 $this->table_name(),
-                $filter_values['form_id'],
+                $filter_values['has_form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
                 $filter_values['status'],
@@ -230,7 +258,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     AND (%s = '' OR created_at >= %s)
                     AND (%s = '' OR created_at <= %s)",
                 $this->table_name(),
-                $filter_values['form_id'],
+                $filter_values['has_form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
                 $filter_values['status'],
@@ -245,15 +273,21 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         );
     }
 
-    public function get_latest_for_form( string $form_source, int $form_id ): ?array
+    public function get_latest_for_form( string $form_source, int|string $form_id ): ?array
     {
+        $normalized_form_id = sanitize_text_field( (string) $form_id );
+        if ( '' === $normalized_form_id )
+        {
+            return null;
+        }
+
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
                 'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
                 $this->table_name(),
                 sanitize_key( $form_source ),
-                (string) $form_id
+                $normalized_form_id
             ),
             ARRAY_A
         );
@@ -393,16 +427,36 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return $row;
     }
 
+    /**
+     * @return array<int, string>
+     */
+    private function record_row_formats( array $row ): array
+    {
+        $formats = [];
+        foreach ( array_keys( $row ) as $field )
+        {
+            $formats[] = 'mapping_id' === $field ? '%d' : '%s';
+        }
+
+        return $formats;
+    }
+
     private function action_log_filter_values( array $filters ): array
     {
-        $form_id   = absint( $filters['form_id'] ?? 0 );
+        $form_id   = isset( $filters['form_id'] ) && is_scalar( $filters['form_id'] )
+            ? sanitize_text_field( trim( (string) $filters['form_id'] ) )
+            : '';
+        if ( '0' === $form_id )
+        {
+            $form_id = '';
+        }
         $status    = sanitize_key( (string) ( $filters['status'] ?? '' ) );
         $date_from = isset( $filters['date_from'] ) ? sanitize_text_field( (string) $filters['date_from'] ) : '';
         $date_to   = isset( $filters['date_to'] ) ? sanitize_text_field( (string) $filters['date_to'] ) : '';
 
         return [
-            'form_id'      => $form_id,
-            'form_id_text' => (string) $form_id,
+            'has_form_id'  => '' !== $form_id ? 1 : 0,
+            'form_id_text' => $form_id,
             'status'       => $status,
             'date_from'    => $date_from,
             'date_to'      => $date_to,

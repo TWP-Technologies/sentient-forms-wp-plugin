@@ -156,6 +156,7 @@ class Sentient_Forms_Form_Adapter_Registry
         $this->register_adapter( new Sentient_Forms_Gravity_Forms_Adapter( $this->plugin ) );
         $this->register_adapter( new Sentient_Forms_Contact_Form_7_Adapter( $this->plugin ) );
         $this->register_adapter( new Sentient_Forms_WPForms_Adapter( $this->plugin ) );
+        $this->register_adapter( new Sentient_Forms_Elementor_Forms_Adapter( $this->plugin ) );
 
         /**
          * Action hook to allow other plugins/themes to register their own adapters.
@@ -257,7 +258,7 @@ class Sentient_Forms_Form_Adapter_Registry
             $normalized[ $lifecycle_id ] = [
                 'supported'          => (bool) ( $descriptor['supported'] ?? false ),
                 'label'              => sanitize_text_field( (string) ( $descriptor['label'] ?? ucwords( str_replace( '_', ' ', $lifecycle_id ) ) ) ),
-                'native_hook'        => isset( $descriptor['native_hook'] ) ? sanitize_key( (string) $descriptor['native_hook'] ) : null,
+                'native_hook'        => isset( $descriptor['native_hook'] ) ? sanitize_text_field( (string) $descriptor['native_hook'] ) : null,
                 'execution_mode'     => sanitize_key( (string) ( $descriptor['execution_mode'] ?? 'sync' ) ),
                 'requires_ledger'    => (bool) ( $descriptor['requires_ledger'] ?? false ),
                 'unsupported_reason' => isset( $descriptor['unsupported_reason'] ) ? sanitize_text_field( (string) $descriptor['unsupported_reason'] ) : null,
@@ -279,7 +280,9 @@ class Sentient_Forms_Form_Adapter_Registry
 
         foreach ( $keys as $key )
         {
-            $normalized[ $key ] = (bool) ( $value[ $key ] ?? false );
+            $normalized[ $key ] = isset( $value[ $key ] ) && is_bool( $value[ $key ] )
+                ? $value[ $key ]
+                : false;
         }
 
         return $normalized;

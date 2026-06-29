@@ -230,6 +230,38 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'form_created_id_idx' ) );
     }
 
+    public function test_maybe_upgrade_restores_execution_event_identity_columns(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+
+        foreach ( [ 'mapping_key', 'action_code', 'action_label' ] as $column )
+        {
+            $this->assertContains( $column, $this->execution_event_columns( $table ) );
+        }
+
+        $this->assertSame( [ 'mapping_key' ], $this->execution_event_index_columns( $table, 'mapping_key_idx' ) );
+        $this->assertNotFalse( $this->wpdb->query( 'ALTER TABLE ' . esc_sql( $table ) . ' DROP INDEX mapping_key_idx' ) );
+        foreach ( [ 'mapping_key', 'action_code', 'action_label' ] as $column )
+        {
+            $this->assertNotFalse( $this->wpdb->query( 'ALTER TABLE ' . esc_sql( $table ) . ' DROP COLUMN ' . esc_sql( $column ) ) );
+        }
+
+        foreach ( [ 'mapping_key', 'action_code', 'action_label' ] as $column )
+        {
+            $this->assertNotContains( $column, $this->execution_event_columns( $table ) );
+        }
+
+        update_option( 'sentient_forms_db_version', '2026.06.18.form_source_ledger' );
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        foreach ( [ 'mapping_key', 'action_code', 'action_label' ] as $column )
+        {
+            $this->assertContains( $column, $this->execution_event_columns( $table ) );
+        }
+        $this->assertSame( [ 'mapping_key' ], $this->execution_event_index_columns( $table, 'mapping_key_idx' ) );
+    }
+
     public function test_maybe_upgrade_scrubs_existing_managed_currency_fields(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';
@@ -646,6 +678,21 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'bundle-person@example.test', $json );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_result'] );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_error_message'] );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function execution_event_columns( string $table ): array
+    {
+        $rows = $this->wpdb->get_results( 'DESCRIBE ' . esc_sql( $table ), ARRAY_A );
+
+        if ( ! is_array( $rows ) )
+        {
+            return [];
+        }
+
+        return array_values( array_map( static fn ( array $row ): string => (string) $row['Field'], $rows ) );
     }
 
     /**

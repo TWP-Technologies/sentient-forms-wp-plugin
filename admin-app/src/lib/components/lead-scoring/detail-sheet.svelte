@@ -32,6 +32,8 @@
 		generatingReply = false
 	}: Props = $props();
 
+	let isElementorEntry = $derived(entry?.form_source === 'elementor_forms');
+
 	function closeFromBackdrop(event: MouseEvent) {
 		if (event.target === event.currentTarget) onClose();
 	}
@@ -193,7 +195,7 @@
 						<Badge variant={entry.do_not_send ? 'warning' : 'info'}>
 							{entry.do_not_send ? 'Review only' : 'Draft state'}
 						</Badge>
-						{#if onGenerateReply}
+						{#if onGenerateReply && !isElementorEntry}
 							<Button
 								variant="secondary"
 								onclick={() => onGenerateReply?.(entry)}
@@ -204,6 +206,11 @@
 							</Button>
 						{/if}
 					</div>
+					{#if isElementorEntry}
+						<p class="sf:mt-4 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-3 sf:text-sm sf:leading-6 sf:text-amber-900">
+							Manual reply generation for Elementor Forms requires proven native Form Submissions support.
+						</p>
+					{/if}
 					<p class="sf:mt-5 sf:text-base sf:leading-7 sf:text-slate-800">
 						<strong>Next best action:</strong>
 						{entry.next_best_action || 'No recommendation stored.'}

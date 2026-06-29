@@ -590,10 +590,20 @@ SVG;
 
 		$sources = [];
 		foreach ( $registry->get_all_adapters() as $adapter ) {
+			$descriptor = method_exists( $registry, 'get_capability_descriptor' )
+				? $registry->get_capability_descriptor( $adapter->get_id() )
+				: null;
+			$descriptor = is_array( $descriptor ) ? $descriptor : [];
+			$requirements = is_array( $descriptor['requirements'] ?? null ) ? $descriptor['requirements'] : [];
+
 			$sources[] = [
-				'slug'     => $adapter->get_id(),
-				'label'    => $adapter->get_name(),
-				'isActive' => $adapter->is_active(),
+				'slug'                => (string) ( $descriptor['slug'] ?? $adapter->get_id() ),
+				'label'               => (string) ( $descriptor['label'] ?? $adapter->get_name() ),
+				'isActive'            => (bool) ( $descriptor['is_active'] ?? $adapter->is_active() ),
+				'availability'        => (string) ( $descriptor['availability'] ?? ( $adapter->is_active() ? 'available' : 'inactive' ) ),
+				'availabilityMessage' => (string) ( $descriptor['availability_message'] ?? '' ),
+				'requiresPro'         => ! empty( $requirements['requires_pro'] ),
+				'descriptor'          => $descriptor,
 			];
 		}
 

@@ -85,6 +85,7 @@
 	let formSpamConfig = $state<FormActionConfig>({});
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
+	const isElementorLeadScoringUnavailable = $derived(data.formSourceSlug === 'elementor_forms');
 
 	let consent = $state(false);
 	let goodCriteria = $state('');
@@ -149,6 +150,11 @@
 	let generationPollToken = 0;
 
 	onMount(() => {
+		if (isElementorLeadScoringUnavailable) {
+			loading = false;
+			return;
+		}
+
 		void loadLeadValue();
 	});
 
@@ -864,10 +870,37 @@
 	const gradeChoices: LeadGrade[] = ['A', 'B', 'C', 'Reject'];
 </script>
 
-<Section
-	heading="Lead Scoring"
-	description="Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form."
->
+{#if isElementorLeadScoringUnavailable}
+	<Section
+		heading="Lead Scoring"
+		description="Lead scoring is currently limited to form sources with reliable native entry search, notes, and correction history."
+	>
+		<Card data-testid="elementor-lead-scoring-unavailable">
+			<div class="sf:flex sf:flex-col sf:gap-4 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+				<div>
+					<p class="sf:text-base sf:font-semibold sf:text-slate-900">
+						Lead Scoring is not available for Elementor Forms yet.
+					</p>
+					<p class="sf:mt-2 sf:max-w-3xl sf:text-sm sf:text-slate-600">
+						Elementor submissions can be captured for ledger and action automation, but Lead
+						Scoring needs reliable native entry search, corrections, and notes before staff can
+						safely grade Elementor leads.
+					</p>
+				</div>
+				<ButtonLink
+					variant="secondary"
+					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`)}
+				>
+					Back to form actions
+				</ButtonLink>
+			</div>
+		</Card>
+	</Section>
+{:else}
+	<Section
+		heading="Lead Scoring"
+		description="Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form."
+	>
 	{#snippet actions()}
 		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-3">
 			<ButtonLink
@@ -1870,4 +1903,5 @@
 		onGradeChange={(grade) => (correctionGrade = grade)}
 		onJustificationChange={(value) => (correctionJustification = value)}
 	/>
-</Section>
+	</Section>
+{/if}

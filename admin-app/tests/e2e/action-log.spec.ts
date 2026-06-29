@@ -396,6 +396,38 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(page.getByTestId('action-log-active-filters')).toHaveCount(0);
 	});
 
+	test('action log form filter accepts provider-native form IDs', async ({ page }) => {
+		const requestedUrls: string[] = [];
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) => {
+			const requestedUrl = route.request().url();
+			requestedUrls.push(requestedUrl);
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					entries: mockLogEntries,
+					total: mockLogEntries.length,
+					total_pages: 1,
+					page: 1,
+					per_page: 20
+				})
+			});
+		});
+
+		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+
+		const formFilter = page.locator('#filter-form-id');
+		await expect(formFilter).toHaveAttribute('type', 'text');
+		await formFilter.fill('91:formabc');
+		await page.getByTestId('action-log-apply-filters').click();
+
+		await expect
+			.poll(() => requestedUrls[requestedUrls.length - 1] ?? '')
+			.toContain('form_id=91%3Aformabc');
+	});
+
 	test('action log pagination shows range and page context', async ({ page }) => {
 		const pagedEntries = Array.from({ length: 25 }, (_, index) => ({
 			id: `uuid-${index + 1}`,

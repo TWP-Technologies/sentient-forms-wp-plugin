@@ -63,6 +63,8 @@
 		FormActionMutationPayload,
 		FormExecutionStatus,
 		FormFieldInfo,
+		FormSourceDescriptor,
+		FormSourceSummary,
 		FormSummary,
 		LinkedActionStatus,
 		InputMapping,
@@ -270,12 +272,21 @@
 	function fallbackFormSourceLabel(slug: string): string {
 		if (slug === 'gravity_forms') return 'Gravity Forms';
 		if (slug === 'contact_form_7') return 'Contact Form 7';
+		if (slug === 'elementor_forms') return 'Elementor Forms';
 
 		return slug
 			.split('_')
 			.filter(Boolean)
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 			.join(' ');
+	}
+
+	function descriptorRequirementString(
+		requirements: FormSourceDescriptor['requirements'] | undefined,
+		key: string
+	): string {
+		const value = requirements?.[key];
+		return typeof value === 'string' ? value.trim() : '';
 	}
 
 	function sourceAwareLocalBuilderTemplate(
@@ -388,12 +399,77 @@
 	let currentFormSummary = $state<FormSummary | null>(null);
 	let currentFormSummaryLoading = $state(false);
 	let currentFormSummaryError = $state<string | null>(null);
-	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
+	const runtimeFormSources: FormSourceSummary[] =
+		typeof window === 'undefined' ? [] : (window.sentientFormsConfig?.formSources ?? []);
+	const runtimeFormSourceDescriptor = $derived.by(
+		() =>
+			runtimeFormSources.find((source) => source.slug === data.formSourceSlug)?.descriptor ?? null
+	);
+	const formSourceDescriptor = $derived(
+		actionsState.bootstrap?.form_source_descriptor ?? runtimeFormSourceDescriptor
+	);
 	const currentFormAdapterLabel = $derived(
 		currentFormSummary?.adapter_name?.trim() ||
 			formSourceDescriptor?.label?.trim() ||
 			fallbackFormSourceLabel(data.formSourceSlug)
 	);
+	const formSourceAvailability = $derived(
+		formSourceDescriptor?.availability ??
+			(formSourceDescriptor?.is_active === false ? 'inactive' : 'available')
+	);
+	const formSourceUnavailable = $derived(
+		formSourceDescriptor !== null && formSourceAvailability !== 'available'
+	);
+	const canConfigureFormSource = $derived(!formSourceUnavailable);
+	const linkedActionsError = $derived(formSourceUnavailable ? null : actionsState.error);
+	const formSourceAvailabilityMessage = $derived.by(() => {
+		const explicit = formSourceDescriptor?.availability_message?.trim();
+		if (explicit) return explicit;
+
+		if (formSourceAvailability === 'requires_pro' || formSourceDescriptor?.requires_pro === true) {
+			return `${currentFormAdapterLabel} support requires the provider's Pro Forms APIs before Sentient Forms actions can be configured.`;
+		}
+
+		if (formSourceAvailability === 'not_installed') {
+			return `${currentFormAdapterLabel} is not installed in this WordPress environment.`;
+		}
+
+		return `${currentFormAdapterLabel} is unavailable in this WordPress environment.`;
+	});
+	const formSourceLimitationMessages = $derived.by(() => {
+		if (formSourceUnavailable || !formSourceDescriptor) return [];
+
+		const messages: string[] = [];
+		const validationUnsupported = formSourceDescriptor.lifecycles.validation?.supported === false;
+		const realtimeUnsupported = formSourceDescriptor.lifecycles.real_time?.supported === false;
+		if (validationUnsupported && realtimeUnsupported) {
+			messages.push(
+				`Validation blocking and realtime assistance are not supported for ${currentFormAdapterLabel} in this release.`
+			);
+		}
+
+		const nativeSubmissionReason = descriptorRequirementString(
+			formSourceDescriptor.requirements,
+			'native_submission_parity_reason'
+		);
+		if (nativeSubmissionReason) {
+			messages.push(nativeSubmissionReason);
+		}
+
+		const nativeEnrichment = formSourceDescriptor.native_enrichment;
+		if (
+			nativeEnrichment &&
+			nativeEnrichment.notes === false &&
+			nativeEnrichment.status === false &&
+			nativeEnrichment.spam === false
+		) {
+			messages.push(
+				`Native result writing and spam status updates stay disabled for ${currentFormAdapterLabel}.`
+			);
+		}
+
+		return messages;
+	});
 	const providerEditLinkLabel = $derived(`Open in ${currentFormAdapterLabel}`);
 	const providerEditUrl = $derived(
 		currentFormSummary?.provider_edit_url ??
@@ -411,6 +487,11 @@
 		formSourceDescriptor?.native_enrichment?.notes === true ||
 			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
 	);
+	const supportsNativeEntryLookup = $derived(
+		formSourceDescriptor?.native_entry?.read === true ||
+			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
+	);
+	const supportsProviderUploadSourceMode = $derived(data.formSourceSlug === 'gravity_forms');
 	const supportsSpamNoteControls = $derived(supportsNativeSpamEffects && supportsNativeNotes);
 	const localBuilderSupportsSync = $derived.by(() => {
 		if (formSourceDescriptor) {
@@ -964,6 +1045,13 @@
 		options: { openModal?: boolean; force?: boolean } = {}
 	): Promise<FormActionConfig> {
 		const shouldOpenModal = options.openModal ?? true;
+		if (!canConfigureFormSource) {
+			if (shouldOpenModal) {
+				notifications.warning(formSourceAvailabilityMessage);
+			}
+			return createBlankFormActionConfig();
+		}
+
 		const shouldForce = options.force ?? shouldOpenModal;
 		formLevelConfigLoading = true;
 		formLevelConfig = createBlankFormActionConfig();
@@ -1063,7 +1151,7 @@
 	}
 
 	async function saveFormLevelConfig() {
-		if (!configuringActionId) return;
+		if (!configuringActionId || !canConfigureFormSource) return;
 		formLevelConfigSaving = true;
 		try {
 			const client = createClientFromConfig();
@@ -1325,6 +1413,19 @@
 		};
 	}
 
+	function normalizeAttachmentMappingForCurrentSource(raw: unknown): AttachmentMapping {
+		const mapping = normalizeAttachmentMapping(raw);
+		if (supportsProviderUploadSourceMode || !['gf_upload', 'mixed'].includes(mapping.mode)) {
+			return mapping;
+		}
+
+		return {
+			...mapping,
+			mode: mapping.mode === 'mixed' && mapping.media_ids.length > 0 ? 'media_library' : 'none',
+			gf_upload_field_ids: []
+		};
+	}
+
 	function parseMediaIdsInput(value: string): number[] {
 		return Array.from(
 			new Set(
@@ -1337,7 +1438,7 @@
 	}
 
 	function updateAttachmentMapping(next: Partial<AttachmentMapping>) {
-		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		const current = normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping);
 		draftSettings = {
 			...draftSettings,
 			attachment_mapping: {
@@ -1348,7 +1449,8 @@
 	}
 
 	function toggleAttachmentUploadField(fieldId: string) {
-		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		if (!supportsProviderUploadSourceMode) return;
+		const current = normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping);
 		const next = new Set(current.gf_upload_field_ids ?? []);
 		if (next.has(fieldId)) {
 			next.delete(fieldId);
@@ -1689,8 +1791,11 @@
 	const attachmentUploadFields = $derived(
 		formFields.filter((field) => ['fileupload', 'post_image'].includes(field.type.toLowerCase()))
 	);
+	const currentAttachmentMapping = $derived.by(() =>
+		normalizeAttachmentMappingForCurrentSource(draftSettings.attachment_mapping)
+	);
 	const attachmentMappingSummary = $derived.by(() => {
-		const mapping = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		const mapping = currentAttachmentMapping;
 		if (mapping.mode === 'none') return 'Disabled';
 		const uploadCount = Array.isArray(mapping.gf_upload_field_ids)
 			? mapping.gf_upload_field_ids.length
@@ -1800,6 +1905,7 @@
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
+	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_forms');
 	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
@@ -1843,6 +1949,27 @@
 		return 'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records instead of native WPForms entry links.';
 	});
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
+	const entryLookupHelpText = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not the Gravity Forms submission ID.'
+			: `Use a Sentient Forms Action Log entry ID for this ${currentFormAdapterLabel} form. Native provider submission IDs are not used for this check.`
+	);
+	const entryLookupUnavailableText = $derived(
+		`Native entry status lookup is unavailable for ${currentFormAdapterLabel}. Use the Submission Ledger and Action Log list for submitted ${currentFormAdapterLabel.replace(/\s+Forms$/i, '')} records.`
+	);
+	const uploadSourceModeLabel = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Gravity Forms uploads'
+			: `${currentFormAdapterLabel} uploads`
+	);
+	const mixedUploadSourceModeLabel = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Mixed (uploads + media)'
+			: `Mixed (${currentFormAdapterLabel} uploads + media)`
+	);
+	const providerUploadUnavailableText = $derived(
+		`${currentFormAdapterLabel} upload fields are stored as ledger file references only. Use Media library attachments until native upload content mapping is supported.`
+	);
 	const selectedCreateActionLabel = $derived.by(() => {
 		if (createKind === 'template') {
 			return selectedDefinition?.label ?? selectedTemplateId ?? 'Built-in action';
@@ -1865,6 +1992,7 @@
 	});
 	const linkActionDisabled = $derived(
 		creating ||
+			!canConfigureFormSource ||
 			selectedHooks.size === 0 ||
 			(!hasDefinitions && createKind === 'template') ||
 			(createKind === 'custom' && customActions.length === 0) ||
@@ -2654,6 +2782,8 @@
 	}
 
 	function openAddActionPanel() {
+		if (!canConfigureFormSource) return;
+
 		selectedCreateDependencyIds = new Set();
 		createError = null;
 		localBuilderResult = null;
@@ -3609,6 +3739,11 @@
 			dependency_ids: normalizedDependencyIds,
 			trigger_sources: persistableTriggerSources
 		};
+		if (typeof draftSettings.attachment_mapping !== 'undefined') {
+			nextSettings.attachment_mapping = normalizeAttachmentMappingForCurrentSource(
+				draftSettings.attachment_mapping
+			);
+		}
 		if (executionMode === 'real_time') {
 			nextSettings.realtime_settings = normalizeRealtimeSettings(draftSettings.realtime_settings);
 		} else {
@@ -3918,7 +4053,7 @@
 	}
 
 	async function toggleSubmissionLedger() {
-		if (submissionLedgerSaving) return;
+		if (submissionLedgerSaving || !canConfigureFormSource) return;
 
 		await formActionsStore.updateSubmissionLedgerSettings(
 			data.formSourceSlug,
@@ -4182,7 +4317,7 @@
 					<Button variant="secondary" onclick={cancelFormLevelConfig}>Cancel</Button>
 					<Button
 						onclick={saveFormLevelConfig}
-						disabled={formLevelConfigSaving || formLevelConfigLoading}
+						disabled={formLevelConfigSaving || formLevelConfigLoading || !canConfigureFormSource}
 					>
 						{formLevelConfigSaving ? 'Saving...' : 'Save Defaults'}
 					</Button>
@@ -4213,21 +4348,26 @@
 				{/if}
 				<Toggle
 					checked={!actionsState.sfDisabled}
-					onchange={() =>
+					disabled={!canConfigureFormSource}
+					onchange={() => {
+						if (!canConfigureFormSource) return;
 						formActionsStore.toggleFormDisabled(
 							data.formSourceSlug,
 							data.formId,
 							!actionsState.sfDisabled
-						)}
+						);
+					}}
 				/>
 			</div>
 			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
-			<ButtonLink
-				variant="secondary"
-				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
-			>
-				Lead Scoring
-			</ButtonLink>
+			{#if showLeadScoringLink}
+				<ButtonLink
+					variant="secondary"
+					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
+				>
+					Lead Scoring
+				</ButtonLink>
+			{/if}
 			{#if providerEditUrl}
 				<a
 					href={providerEditUrl}
@@ -4240,11 +4380,16 @@
 				</a>
 			{/if}
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
-			<Button onclick={openAddActionPanel}>Add action</Button>
-			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
+			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
+			<Button
+				variant="secondary"
+				onclick={() => (showTemplateLibrary = true)}
+				disabled={!canConfigureFormSource}
 				>Import from Library</Button
 			>
-			<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
+			{#if supportsNativeEntryLookup}
+				<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
+			{/if}
 		</div>
 	{/snippet}
 
@@ -4288,9 +4433,46 @@
 					{providerEditLinkLabel}
 				</a>
 			{/if}
-			<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+			<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+				>Add action</Button
+			>
 		</div>
 	</div>
+
+	{#if formSourceUnavailable}
+		<Alert
+			variant="warning"
+			class="sf:mt-2"
+			data-testid="form-source-availability-alert"
+		>
+			<div class="sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+				<div>
+					<p class="sf:font-medium">{currentFormAdapterLabel} is unavailable</p>
+					<p class="sf:mt-1 sf:text-sm">{formSourceAvailabilityMessage}</p>
+				</div>
+				{#if formSourceAvailability === 'requires_pro' || formSourceDescriptor?.requires_pro === true}
+					<Badge variant="warning">Requires Pro</Badge>
+				{/if}
+			</div>
+		</Alert>
+	{/if}
+
+	{#if formSourceLimitationMessages.length > 0}
+		<Alert
+			variant="info"
+			class="sf:mt-2"
+			data-testid="form-source-limitations-alert"
+		>
+			<div class="sf:flex sf:flex-col sf:gap-2">
+				<p class="sf:font-medium">{currentFormAdapterLabel} capability limits</p>
+				<ul class="sf:list-disc sf:space-y-1 sf:pl-4 sf:text-sm">
+					{#each formSourceLimitationMessages as message}
+						<li>{message}</li>
+					{/each}
+				</ul>
+			</div>
+		</Alert>
+	{/if}
 
 	<div
 		class="sf:mt-2 sf:flex sf:flex-col sf:gap-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-4 sf:py-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
@@ -4323,7 +4505,7 @@
 		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
 			<Toggle
 				checked={submissionLedgerEnabled}
-				disabled={submissionLedgerSaving}
+				disabled={submissionLedgerSaving || !canConfigureFormSource}
 				onchange={toggleSubmissionLedger}
 				label="Store snapshots"
 				data-testid="submission-ledger-toggle"
@@ -4459,7 +4641,7 @@
 											size="sm"
 											variant="ghost"
 											onclick={() => loadFormLevelConfig(definition.id)}
-											disabled={formLevelConfigLoading}
+											disabled={formLevelConfigLoading || !canConfigureFormSource}
 										>
 											Defaults
 										</Button>
@@ -4504,7 +4686,7 @@
 												size="sm"
 												variant="ghost"
 												onclick={() => loadFormLevelConfig(action.code)}
-												disabled={formLevelConfigLoading}
+												disabled={formLevelConfigLoading || !canConfigureFormSource}
 											>
 												Defaults
 											</Button>
@@ -4527,17 +4709,19 @@
 						Choose an action template or custom action, then select hooks.
 					</p>
 				</div>
-				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+				<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+					>Add action</Button
+				>
 			</div>
 		</Card>
 	</div>
 
-	{#if actionsState.error}
+	{#if linkedActionsError}
 		<div class="sf:mt-4">
 			<StateTemplate
 				variant="error"
 				title="Unable to load linked actions"
-				message={actionsState.error}
+				message={linkedActionsError}
 				actionLabel="Retry"
 				onAction={refresh}
 				testId="form-actions-error-state"
@@ -4582,7 +4766,9 @@
 						Table
 					</Button>
 				{/if}
-				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+				<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+					>Add action</Button
+				>
 				<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
 			</div>
 		</div>
@@ -4627,7 +4813,7 @@
 										size="sm"
 										variant="ghost"
 										onclick={() => loadFormLevelConfig(definition.id)}
-										disabled={formLevelConfigLoading}
+										disabled={formLevelConfigLoading || !canConfigureFormSource}
 									>
 										Defaults
 									</Button>
@@ -4672,7 +4858,7 @@
 										size="sm"
 										variant="ghost"
 										onclick={() => loadFormLevelConfig(action.code)}
-										disabled={formLevelConfigLoading}
+										disabled={formLevelConfigLoading || !canConfigureFormSource}
 									>
 										Defaults
 									</Button>
@@ -4696,9 +4882,11 @@
 			<StateTemplate
 				variant="empty"
 				title="No linked actions yet"
-				message="Add an action mapping to run Sentient Forms logic for this form."
-				actionLabel="Add action"
-				onAction={openAddActionPanel}
+				message={canConfigureFormSource
+					? 'Add an action mapping to run Sentient Forms logic for this form.'
+					: formSourceAvailabilityMessage}
+				actionLabel={canConfigureFormSource ? 'Add action' : null}
+				onAction={canConfigureFormSource ? openAddActionPanel : null}
 				inline
 				testId="form-actions-empty-state"
 			/>
@@ -4924,21 +5112,26 @@
 					</div>
 
 					<div class="sf:space-y-3">
-						<form class="sf:space-y-2" onsubmit={checkEntryStatus}>
-							<InputField
-								id="entry-id-input"
-								label="Check Sentient Forms Action Log entry"
-								placeholder="Action Log entry ID from this form"
-								bind:value={entryLookupId}
-							/>
-							<p class="sf:text-xs sf:text-slate-500">
-								Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not
-								the Gravity Forms submission ID.
-							</p>
-							<div class="sf:flex sf:justify-end">
-								<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
-							</div>
-						</form>
+						{#if supportsNativeEntryLookup}
+							<form class="sf:space-y-2" onsubmit={checkEntryStatus}>
+								<InputField
+									id="entry-id-input"
+									label="Check Sentient Forms Action Log entry"
+									placeholder="Action Log entry ID from this form"
+									bind:value={entryLookupId}
+								/>
+								<p class="sf:text-xs sf:text-slate-500">
+									{entryLookupHelpText}
+								</p>
+								<div class="sf:flex sf:justify-end">
+									<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
+								</div>
+							</form>
+						{:else}
+							<Alert variant="warning">
+								{entryLookupUnavailableText}
+							</Alert>
+						{/if}
 
 						{#if checkedEntryStatus}
 							<div
@@ -5537,21 +5730,31 @@
 										>
 										<select
 											class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											value={normalizeAttachmentMapping(draftSettings.attachment_mapping).mode}
+											value={currentAttachmentMapping.mode}
 											onchange={(event) =>
 												updateAttachmentMapping({
 													mode: (event.currentTarget as HTMLSelectElement)
 														.value as AttachmentMapping['mode']
-												})}
+											})}
 										>
 											<option value="none">Disabled</option>
-											<option value="gf_upload">Gravity Forms uploads</option>
+											{#if supportsProviderUploadSourceMode}
+												<option value="gf_upload">{uploadSourceModeLabel}</option>
+											{/if}
 											<option value="media_library">Media library</option>
-											<option value="mixed">Mixed (uploads + media)</option>
+											{#if supportsProviderUploadSourceMode}
+												<option value="mixed">{mixedUploadSourceModeLabel}</option>
+											{/if}
 										</select>
 									</label>
 
-									{#if ['gf_upload', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+									{#if !supportsProviderUploadSourceMode}
+										<Alert variant="warning">
+											{providerUploadUnavailableText}
+										</Alert>
+									{/if}
+
+									{#if supportsProviderUploadSourceMode && ['gf_upload', 'mixed'].includes(currentAttachmentMapping.mode)}
 										<div class="sf:grid sf:gap-2">
 											<span
 												class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
@@ -5570,9 +5773,9 @@
 															<input
 																type="checkbox"
 																class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-																checked={normalizeAttachmentMapping(
-																	draftSettings.attachment_mapping
-																).gf_upload_field_ids?.includes(field.id)}
+																checked={currentAttachmentMapping.gf_upload_field_ids?.includes(
+																	field.id
+																)}
 																onchange={() => toggleAttachmentUploadField(field.id)}
 															/>
 															<span class="sf:text-sm sf:text-slate-700"
@@ -5585,7 +5788,7 @@
 										</div>
 									{/if}
 
-									{#if ['media_library', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+									{#if ['media_library', 'mixed'].includes(currentAttachmentMapping.mode)}
 										<label class="sf:flex sf:flex-col sf:gap-1">
 											<span
 												class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
@@ -5595,10 +5798,7 @@
 												type="text"
 												class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												placeholder="12, 45, 98"
-												value={(
-													normalizeAttachmentMapping(draftSettings.attachment_mapping).media_ids ??
-													[]
-												).join(', ')}
+												value={(currentAttachmentMapping.media_ids ?? []).join(', ')}
 												oninput={(event) =>
 													updateAttachmentMapping({
 														media_ids: parseMediaIdsInput(
@@ -5622,8 +5822,7 @@
 											min="1"
 											max="20"
 											class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											value={normalizeAttachmentMapping(draftSettings.attachment_mapping)
-												.max_files ?? 5}
+											value={currentAttachmentMapping.max_files ?? 5}
 											oninput={(event) =>
 												updateAttachmentMapping({
 													max_files: Math.max(

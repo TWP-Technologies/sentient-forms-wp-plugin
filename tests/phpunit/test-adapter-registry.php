@@ -241,6 +241,183 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $descriptor['ledger']['enabled'] );
     }
 
+    public function test_form_sources_native_entry_capability_uses_adapter_registry_descriptor(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $capability = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( 'contact_form_7', $registry );
+
+        $this->assertIsArray( $capability );
+        $this->assertFalse( $capability['id'] );
+        $this->assertFalse( $capability['link'] );
+        $this->assertFalse( $capability['read'] );
+        $this->assertFalse( $capability['write'] );
+    }
+
+    public function test_native_entry_capability_rejects_non_boolean_descriptor_flags(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'malformed_source',
+                'Malformed Source',
+                true,
+                [
+                    'native_entry' => [
+                        'id'    => 'false',
+                        'link'  => 1,
+                        'read'  => true,
+                        'write' => false,
+                    ],
+                ]
+            )
+        );
+
+        $capability = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( 'malformed_source', $registry );
+
+        $this->assertIsArray( $capability );
+        $this->assertFalse( $capability['id'] );
+        $this->assertFalse( $capability['link'] );
+        $this->assertTrue( $capability['read'] );
+        $this->assertFalse( $capability['write'] );
+    }
+
+    public function test_elementor_forms_absent_descriptor_is_visible_and_unavailable(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+
+        $this->assertIsArray( $descriptor );
+        $this->assertSame( 'elementor_forms', $descriptor['slug'] );
+        $this->assertSame( 'Elementor Forms', $descriptor['label'] );
+        $this->assertFalse( $descriptor['is_active'] );
+        $this->assertSame( 'not_installed', $descriptor['availability'] );
+        $this->assertFalse( $descriptor['forms_discovery']['supported'] );
+        $this->assertFalse( $descriptor['field_manifest']['supported'] );
+        $this->assertTrue( $descriptor['requirements']['requires_pro'] );
+    }
+
+    public function test_elementor_forms_pro_descriptor_exposes_after_submission_hook(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        try
+        {
+            $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+
+            $this->assertIsArray( $descriptor );
+            $this->assertTrue( $descriptor['is_active'] );
+            $this->assertSame( 'available', $descriptor['availability'] );
+            $this->assertTrue( $descriptor['forms_discovery']['supported'] );
+            $this->assertNull( $descriptor['forms_discovery']['reason'] );
+            $this->assertTrue( $descriptor['field_manifest']['supported'] );
+            $this->assertNull( $descriptor['field_manifest']['reason'] );
+            $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
+            $this->assertSame( 'elementor_pro/forms/new_record', $descriptor['lifecycles']['after_submission']['native_hook'] );
+            $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+            remove_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        }
+    }
+
+    public function test_free_elementor_descriptor_requires_pro_forms_and_stays_unavailable(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
+
+        try
+        {
+            $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+            $adapter    = $registry->get_adapter_by_id( 'elementor_forms' );
+
+            $this->assertIsArray( $descriptor );
+            $this->assertInstanceOf( Sentient_Forms_Adapter_Interface::class, $adapter );
+            $this->assertFalse( $adapter->is_active() );
+            $this->assertFalse( $descriptor['is_active'] );
+            $this->assertSame( 'requires_pro', $descriptor['availability'] );
+            $this->assertFalse( $descriptor['forms_discovery']['supported'] );
+            $this->assertFalse( $descriptor['field_manifest']['supported'] );
+            $this->assertFalse( $descriptor['lifecycles']['after_submission']['supported'] );
+            $this->assertTrue( $descriptor['requirements']['requires_pro'] );
+            $this->assertNull( $adapter->get_action_hook_for_event( 'after_submission' ) );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+            remove_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
+        }
+    }
+
+    public function test_elementor_form_submissions_api_detection_still_requires_advanced_fixture_greenlight(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_true' );
+
+        try
+        {
+            $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+
+            $this->assertIsArray( $descriptor );
+            $this->assertSame( 'available', $descriptor['availability'] );
+            $this->assertTrue( $descriptor['requirements']['is_form_submissions_api_available'] );
+            $this->assertSame( 'fixture_required', $descriptor['requirements']['native_submission_parity'] );
+            $this->assertTrue( $descriptor['requirements']['native_submission_fixture_required'] );
+            $this->assertSame(
+                'elementor_pro_advanced_solo_or_higher',
+                $descriptor['requirements']['minimum_native_submission_plan']
+            );
+            $this->assertFalse( $descriptor['native_entry']['id'] );
+            $this->assertFalse( $descriptor['native_entry']['link'] );
+            $this->assertStringContainsString(
+                'Advanced Solo-or-higher',
+                $descriptor['requirements']['native_submission_parity_reason']
+            );
+            $this->assertStringContainsString(
+                'Browser and Chrome dogfood',
+                $descriptor['requirements']['native_submission_parity_reason']
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+            remove_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+            remove_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_true' );
+        }
+    }
+
+    public function test_installed_elementor_form_submissions_classes_are_detected_without_filter_override(): void
+    {
+        eval( 'namespace ElementorPro\\Modules\\Forms\\Submissions; class Component {} namespace ElementorPro\\Modules\\Forms\\Submissions\\Database; class Query {}' );
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        try
+        {
+            $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+
+            $this->assertIsArray( $descriptor );
+            $this->assertTrue( $descriptor['requirements']['is_form_submissions_api_available'] );
+            $this->assertSame( 'fixture_required', $descriptor['requirements']['native_submission_parity'] );
+            $this->assertFalse( $descriptor['native_entry']['id'] );
+            $this->assertFalse( $descriptor['native_entry']['link'] );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+            remove_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        }
+    }
+
     public function test_contact_form_7_is_supported_form_source_slug(): void
     {
         $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'contact_form_7' ) );
@@ -376,5 +553,10 @@ class AdapterRegistryTest extends WP_UnitTestCase
             remove_filter( 'sentient_forms_wpforms_is_active', $active_filter );
             remove_filter( 'sentient_forms_wpforms_native_entry_storage_available', $native_filter );
         }
+    }
+
+    public function test_elementor_forms_is_supported_form_source_slug(): void
+    {
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'elementor_forms' ) );
     }
 }

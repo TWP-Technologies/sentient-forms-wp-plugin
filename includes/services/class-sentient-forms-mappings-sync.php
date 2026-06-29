@@ -159,18 +159,23 @@ class Sentient_Forms_Mappings_Sync {
      * deletes remote rows that carry a local_mapping_id for this same form.
      *
      * @param string $form_source_slug Form adapter slug.
-     * @param int    $form_id          Form identifier.
+     * @param int|string $form_id      Form identifier.
      * @param array  $local_actions    Local mapping payloads.
      * @param bool   $include_disabled Whether disabled local mappings should stay mirrored.
      *
      * @return array|WP_Error Sync summary or configuration/transport error.
      */
-    public function sync_form_mappings_for_form( string $form_source_slug, int $form_id, array $local_actions, bool $include_disabled = true ) {
+    public function sync_form_mappings_for_form( string $form_source_slug, int|string $form_id, array $local_actions, bool $include_disabled = true ) {
         $client = $this->get_cps_client();
         $api_key = $this->get_api_key();
 
         if ( ! $client || ! $api_key ) {
             return new WP_Error( 'cps_unavailable', 'CPS is not configured.' );
+        }
+
+        $normalized_form_id = $this->normalize_cps_form_id( $form_source_slug, $form_id );
+        if ( null === $normalized_form_id ) {
+            return new WP_Error( 'invalid_form_id', 'Form identifier is invalid for CPS mapping sync.' );
         }
 
         $site_id = $this->get_site_id();
@@ -187,7 +192,7 @@ class Sentient_Forms_Mappings_Sync {
             $remote_mappings,
             $site_id,
             sanitize_key( $form_source_slug ),
-            absint( $form_id )
+            $normalized_form_id
         );
         $existing = [];
         $duplicates = [];
@@ -207,7 +212,7 @@ class Sentient_Forms_Mappings_Sync {
 
         $summary = [
             'form_source' => sanitize_key( $form_source_slug ),
-            'form_id'     => absint( $form_id ),
+            'form_id'     => $normalized_form_id,
             'site_id'     => $site_id,
             'operations'  => [],
             'counts'      => $this->build_empty_counts(),
@@ -343,7 +348,7 @@ class Sentient_Forms_Mappings_Sync {
                     [
                         'site_id'      => $site_id,
                         'form_source'  => sanitize_key( $form_source_slug ),
-                        'form_id'      => absint( $form_id ),
+                        'form_id'      => $normalized_form_id,
                         'display_name' => $normalized['display_name'],
                         'settings'     => $normalized['settings'],
                         'is_template'  => false,
@@ -545,11 +550,11 @@ class Sentient_Forms_Mappings_Sync {
      * @param array<int, array<string, mixed>> $remote_mappings
      * @return array<int, array<string, mixed>>
      */
-    private function filter_remote_mappings_for_form( array $remote_mappings, string $site_id, string $form_source_slug, int $form_id ): array {
+    private function filter_remote_mappings_for_form( array $remote_mappings, string $site_id, string $form_source_slug, int|string $form_id ): array {
         return array_values(
             array_filter(
                 $remote_mappings,
-                static function ( array $mapping ) use ( $site_id, $form_source_slug, $form_id ): bool {
+                function ( array $mapping ) use ( $site_id, $form_source_slug, $form_id ): bool {
                     if ( ! empty( $mapping['is_template'] ) ) {
                         return false;
                     }
@@ -568,10 +573,28 @@ class Sentient_Forms_Mappings_Sync {
                         return false;
                     }
 
-                    return absint( $mapping['form_id'] ?? 0 ) === $form_id;
+                    $mapping_form_id = $this->normalize_cps_form_id( $form_source_slug, $mapping['form_id'] ?? null );
+                    return null !== $mapping_form_id && (string) $mapping_form_id === (string) $form_id;
                 }
             )
         );
+    }
+
+    private function normalize_cps_form_id( string $form_source_slug, mixed $form_id ): int|string|null {
+        $form_id = Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
+        if ( '' === $form_id ) {
+            return null;
+        }
+
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS === sanitize_key( $form_source_slug ) ) {
+            if ( ! ctype_digit( $form_id ) || absint( $form_id ) <= 0 ) {
+                return null;
+            }
+
+            return absint( $form_id );
+        }
+
+        return Sentient_Forms_Provider_Form_Id_Keys::is_valid( $form_id ) ? $form_id : null;
     }
 
     private function extract_remote_local_mapping_id( array $mapping ): string {

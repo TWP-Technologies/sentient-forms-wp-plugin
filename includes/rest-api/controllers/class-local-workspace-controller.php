@@ -618,14 +618,17 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
         $row = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
             ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_event_fields( $row )
             : $row;
+        $form_source = isset( $row['form_source'] ) && is_scalar( $row['form_source'] )
+            ? sanitize_key( (string) $row['form_source'] )
+            : null;
 
         return [
             'id'                   => (int) ( $row['id'] ?? 0 ),
             'execution_request_id' => $row['execution_request_id'] ?? null,
             'mapping_id'           => isset( $row['mapping_id'] ) ? (int) $row['mapping_id'] : null,
-            'form_source'          => $row['form_source'] ?? null,
+            'form_source'          => $form_source,
             'form_id'              => $row['form_id'] ?? null,
-            'entry_id'             => $row['entry_id'] ?? null,
+            'entry_id'             => $this->format_execution_event_entry_id( $row['entry_id'] ?? null, $form_source ),
             'provider'             => $row['provider'] ?? null,
             'model'                => $row['model'] ?? null,
             'status'               => $row['status'] ?? null,
@@ -640,4 +643,30 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
             'expires_at'           => $row['expires_at'] ?? null,
         ];
     }
+
+    private function format_execution_event_entry_id( mixed $entry_id, ?string $form_source ): ?string
+    {
+        if ( null === $entry_id || ! is_scalar( $entry_id ) )
+        {
+            return null;
+        }
+
+        $entry_id = sanitize_text_field( (string) $entry_id );
+        if ( '' === $entry_id )
+        {
+            return null;
+        }
+
+        if ( null !== $form_source )
+        {
+            $native_entry = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( $form_source );
+            if ( is_array( $native_entry ) && array_key_exists( 'id', $native_entry ) && ! $native_entry['id'] )
+            {
+                return null;
+            }
+        }
+
+        return $entry_id;
+    }
+
 }

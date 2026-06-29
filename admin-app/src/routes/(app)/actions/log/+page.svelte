@@ -30,7 +30,7 @@
 	interface ActionLogEntry {
 		id: string;
 		form_source: string;
-		form_id: number;
+		form_id: string | number;
 		entry_id: number | null;
 		action_code: string;
 		action_label: string;
@@ -69,7 +69,7 @@
 	interface ActionLogFormContext {
 		provider_slug: string;
 		provider_label: string;
-		form_id: number;
+		form_id: string | number;
 		form_name: string;
 		entry_id: number | null;
 		links: {
@@ -231,7 +231,7 @@
 				provider_slug: entry.form_source,
 				provider_label: providerLabel(entry.form_source),
 				form_id: entry.form_id,
-				form_name: `Form #${entry.form_id}`,
+				form_name: formIdLabel(entry.form_id),
 				entry_id: entry.entry_id,
 				links: {},
 				entry_preview_available: Boolean(entry.entry_id)
@@ -239,15 +239,23 @@
 		);
 	}
 
+	function formIdLabel(formId: string | number | null | undefined): string {
+		if (typeof formId === 'number') return `Form #${formId}`;
+
+		const value = String(formId ?? '').trim();
+		return value ? `Form ${value}` : 'Form -';
+	}
+
 	function providerLabel(formSource: string): string {
 		if (formSource === 'gravity_forms' || formSource === 'gravity-forms') return 'Gravity Forms';
+		if (formSource === 'elementor_forms') return 'Elementor Forms';
 		if (!formSource) return 'Unknown provider';
 		return formSource.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 	}
 
 	function entryContextLabel(entry: ActionLogEntry): string {
 		const context = formContext(entry);
-		const parts = [context.provider_label, `Form #${context.form_id || entry.form_id || '-'}`];
+		const parts = [context.provider_label, formIdLabel(context.form_id || entry.form_id)];
 		parts.push(context.entry_id ? `Entry #${context.entry_id}` : 'Entry pending');
 		return parts.join(' · ');
 	}
@@ -516,7 +524,7 @@
 				>
 				<Input
 					id="filter-form-id"
-					type="number"
+					type="text"
 					bind:value={draftFilters.formId}
 					placeholder="All forms"
 				/>
