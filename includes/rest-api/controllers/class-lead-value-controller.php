@@ -77,19 +77,19 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     {
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/profile',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/profile',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => $this->form_args(),
+                    'args'                => $this->provider_form_args(),
                 ],
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'save_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->profile_write_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->profile_write_args() ),
                 ],
             ]
         );
@@ -248,19 +248,19 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/historical-runs',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/historical-runs',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'list_historical_runs' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => $this->form_args(),
+                    'args'                => $this->provider_form_args(),
                 ],
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'create_historical_run' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->historical_run_write_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->historical_run_write_args() ),
                 ],
             ]
         );
@@ -301,13 +301,13 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/dashboard',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/dashboard',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_dashboard' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->dashboard_query_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->dashboard_query_args() ),
                 ],
             ]
         );
@@ -327,14 +327,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/profile/import',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/profile/import',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'import_profile_for_form' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         [
                             'source_profile_id' => [
                                 'type'              => 'integer',
@@ -1152,7 +1152,16 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             return $this->search_submission_ledger_entries( $form_source, $form_id, $query, $limit );
         }
 
-        $numeric_form_id = absint( $form_id );
+        if ( '' === $form_id || ! ctype_digit( $form_id ) )
+        {
+            return new WP_Error(
+                'sentient_forms_gf_form_invalid',
+                __( 'Gravity Forms form IDs must be numeric.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $numeric_form_id = (int) $form_id;
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_entries' ] ) )
         {
             return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
