@@ -138,6 +138,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         delete_option( self::OPTION_KEY );
         GFAPI::$entries = [];
         GFAPI::$forms   = [];
+        $this->reset_gfapi_stub_state();
         Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Action_Log_Controller();
     }
@@ -148,12 +149,20 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->truncate_local_workspace_tables();
         GFAPI::$entries = [];
         GFAPI::$forms   = [];
+        $this->reset_gfapi_stub_state();
         Sentient_Forms_Plugin::instance()->clear_license_data();
         remove_all_filters( 'pre_http_request' );
         remove_all_filters( 'sentient_forms_elementor_is_active' );
         remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
         remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         parent::tearDown();
+    }
+
+    private function reset_gfapi_stub_state(): void
+    {
+        GFAPI::$get_entry_calls                        = 0;
+        GFAPI::$get_form_calls                         = 0;
+        GFAPI::$skip_field_values_on_full_entry_update = false;
     }
 
     /**
@@ -177,6 +186,27 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             $routes,
             'Action log entry preview route should be registered'
         );
+    }
+
+    public function test_gfapi_stub_state_reset_fixture_sets_dirty_state(): void
+    {
+        GFAPI::$get_entry_calls                        = 7;
+        GFAPI::$get_form_calls                         = 9;
+        GFAPI::$skip_field_values_on_full_entry_update = true;
+
+        $this->assertSame( 7, GFAPI::$get_entry_calls );
+        $this->assertSame( 9, GFAPI::$get_form_calls );
+        $this->assertTrue( GFAPI::$skip_field_values_on_full_entry_update );
+    }
+
+    /**
+     * @depends test_gfapi_stub_state_reset_fixture_sets_dirty_state
+     */
+    public function test_gfapi_stub_state_is_reset_between_action_log_tests(): void
+    {
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertFalse( GFAPI::$skip_field_values_on_full_entry_update );
     }
 
     /**

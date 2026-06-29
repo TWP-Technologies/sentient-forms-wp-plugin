@@ -825,10 +825,43 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertIsArray( $data );
 
         $this->assertSame( 'contact_form_7', $data['form_source'] );
-        $this->assertSame( 42, $data['form_id'] );
+        $this->assertSame( '42', $data['form_id'] );
         $this->assertSame( $submission_uuid, $data['entries'][0]['id'] ?? null );
         $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
         $this->assertSame( 'Ada Buyer', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
+    public function test_search_entries_preserves_provider_native_submission_ledger_form_ids(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-555555555556';
+        $form_id         = '91:formabc';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'elementor_forms',
+                'form_id'             => $form_id,
+                'logical_fields_json' => [
+                    'full_name'       => 'Ada Elementor',
+                    'project_summary' => 'Opaque provider form search needle.',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/search' );
+        $request->set_param( 'q', 'search needle' );
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+
+        $this->assertSame( 'elementor_forms', $data['form_source'] );
+        $this->assertSame( $form_id, $data['form_id'] );
+        $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
     }
 
     public function test_search_entries_scans_past_first_submission_ledger_page(): void
@@ -994,6 +1027,16 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $local_execution->calls[0]['entry']['submission_uuid'] ?? null );
         $this->assertSame( $submission_uuid, $local_execution->calls[0]['context']['submission_uuid'] ?? null );
         $this->assertSame( 'manual:suggested_reply_v1:contact_form_7:42:' . $submission_uuid, $data['execution']['execution_request_id'] ?? null );
+    }
+
+    public function test_manual_suggested_reply_route_accepts_provider_native_form_ids(): void
+    {
+        $routes = rest_get_server()->get_routes();
+
+        $this->assertArrayHasKey(
+            '/sentient-forms/v1/lead-value/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
+            $routes
+        );
     }
 
     public function test_manual_suggested_reply_rejects_invalid_gravity_form_entry_pair(): void

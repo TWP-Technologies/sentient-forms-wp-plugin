@@ -181,14 +181,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/search',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/search',
             [
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'search_entries' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         [
                             'q'     => [
                                 'type'              => 'string',
@@ -235,13 +235,13 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/suggested-reply',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'generate_entry_suggested_reply' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => array_merge( $this->form_args(), $this->entry_args() ),
+                    'args'                => array_merge( $this->provider_form_args(), $this->entry_args() ),
                 ],
             ]
         );
@@ -1143,24 +1143,25 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     public function search_entries( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $form_source = sanitize_key( (string) $request['form_source'] );
-        $form_id     = absint( $request['form_id'] );
+        $form_id     = sanitize_text_field( (string) $request['form_id'] );
         $query = strtolower( trim( sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ) ) );
         $limit = max( 1, min( 50, absint( $request->get_param( 'limit' ) ?: 10 ) ) );
 
         if ( ! $this->is_gravity_forms_source( $form_source ) )
         {
-            return $this->search_submission_ledger_entries( $form_source, (string) $form_id, $query, $limit );
+            return $this->search_submission_ledger_entries( $form_source, $form_id, $query, $limit );
         }
 
+        $numeric_form_id = absint( $form_id );
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_entries' ] ) )
         {
             return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
         }
 
-        $form  = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $form_id ) : null;
+        $form  = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $numeric_form_id ) : null;
 
         $entries = GFAPI::get_entries(
-            $form_id,
+            $numeric_form_id,
             [ 'status' => 'active' ],
             [ 'key' => 'date_created', 'direction' => 'DESC' ],
             [ 'offset' => 0, 'page_size' => max( 50, $limit ) ]
@@ -1202,7 +1203,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             [
                 'entries'     => $results,
                 'form_source' => $form_source,
-                'form_id'     => $form_id,
+                'form_id'     => $numeric_form_id,
             ]
         );
     }
@@ -1271,7 +1272,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             [
                 'entries'     => $results,
                 'form_source' => sanitize_key( $form_source ),
-                'form_id'     => absint( $form_id ),
+                'form_id'     => $form_id,
             ]
         );
     }
