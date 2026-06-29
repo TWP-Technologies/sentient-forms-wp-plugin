@@ -1857,6 +1857,147 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_process_action_skips_when_upstream_local_first_spam_mapping_defaults_skip_downstream(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $form_id               = '91:formabc';
+        $submission_uuid       = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+        $dependency_request_id = 'dep_req_elementor_local_first_spam';
+        $request_store         = $this->plugin->get_async_request_store();
+        $custom_actions        = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings              = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events                = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'definition_json'      => [
+                    'prompt_template' => 'Classify spam.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'elementor_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'effect_mapping_json' => [
+                    'spam' => [
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+                'settings_json'       => [
+                    'skip_downstream_on_spam' => true,
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $dependency_mapping_id = 'local_first_' . $mapping_id;
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => $dependency_mapping_id,
+            ]
+        );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'mapping_id'           => $mapping_id,
+                'mapping_key'          => $dependency_mapping_id,
+                'action_code'          => 'spam_detection_v1',
+                'action_label'         => 'Spam Detection',
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'elementor_forms',
+                'form_id'              => $form_id,
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                    ],
+                ],
+            ]
+        );
+
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'        => 'elementor_pro/forms/new_record',
+                'form_source' => 'elementor_forms',
+                'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
+                'entry'       => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'full_name'       => 'Ada Lovelace',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [],
+            ],
+            [
+                'hook'                             => 'elementor_pro/forms/new_record',
+                'form_source'                      => 'elementor_forms',
+                'form_id'                          => $form_id,
+                'entry_id'                         => null,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'map_summary_after_local_spam',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'map_summary_after_local_spam',
+                'dependency_mapping_ids'           => [ $dependency_mapping_id ],
+                'dependency_execution_request_ids' => [ $dependency_mapping_id => $dependency_request_id ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+    }
+
     public function test_process_action_records_elementor_provider_skip_event_when_dependency_gate_skips(): void
     {
         global $wpdb;

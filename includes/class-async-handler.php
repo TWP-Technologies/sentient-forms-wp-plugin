@@ -2798,20 +2798,29 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $form_settings = $this->get_form_actions_option( $form_source, $form_id );
-        if ( ! is_array( $form_settings ) || ! isset( $form_settings[ $dependency_id ] ) || ! is_array( $form_settings[ $dependency_id ] ) )
+        $form_settings      = $this->get_form_actions_option( $form_source, $form_id );
+        $dependency_mapping = null;
+        if ( is_array( $form_settings ) && isset( $form_settings[ $dependency_id ] ) && is_array( $form_settings[ $dependency_id ] ) )
+        {
+            $dependency_mapping = $this->resolve_hierarchical_settings(
+                $form_settings[ $dependency_id ],
+                [
+                    'form_source' => $form_source,
+                    'form_id'     => $form_id,
+                    'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
+                ]
+            );
+        }
+        else
+        {
+            $dependency_mapping = $this->resolve_local_first_dependency_mapping( $form_source, $form_id, $dependency_id );
+        }
+
+        if ( ! is_array( $dependency_mapping ) )
         {
             return false;
         }
 
-        $dependency_mapping = $this->resolve_hierarchical_settings(
-            $form_settings[ $dependency_id ],
-            [
-                'form_source' => $form_source,
-                'form_id'     => $form_id,
-                'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
-            ]
-        );
         $dependency_action_id = isset( $dependency_mapping['central_action_id'] ) && is_scalar( $dependency_mapping['central_action_id'] )
             ? sanitize_key( (string) $dependency_mapping['central_action_id'] )
             : '';
@@ -2830,6 +2839,115 @@ class Sentient_Forms_Async_Handler
         }
 
         return true;
+    }
+
+    /**
+     * Resolve an upstream local-first dependency row for spam skip policy checks.
+     *
+     * @param string $form_source   Current form source.
+     * @param string $form_id       Current provider-native form id.
+     * @param string $dependency_id Upstream mapping id.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function resolve_local_first_dependency_mapping( string $form_source, string $form_id, string $dependency_id ): ?array
+    {
+        if ( ! str_starts_with( $dependency_id, 'local_first_' ) || ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            return null;
+        }
+
+        $mapping_id = absint( substr( $dependency_id, strlen( 'local_first_' ) ) );
+        if ( $mapping_id <= 0 )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $row        = $repository->get( $mapping_id );
+        if ( ! is_array( $row ) || empty( $row['enabled'] ) )
+        {
+            return null;
+        }
+
+        $row_form_source = sanitize_key( (string) ( $row['form_source'] ?? '' ) );
+        $row_form_id     = $this->normalize_provider_form_id( $row['form_id'] ?? '' );
+        if ( $row_form_source !== $form_source || $row_form_id !== $this->normalize_provider_form_id( $form_id ) )
+        {
+            return null;
+        }
+
+        $action_code = $this->resolve_local_first_dependency_action_code( $row );
+        if ( '' === $action_code )
+        {
+            return null;
+        }
+
+        $settings = isset( $row['settings_json'] ) && is_array( $row['settings_json'] )
+            ? $row['settings_json']
+            : [];
+
+        $effect_mapping = isset( $row['effect_mapping_json'] ) && is_array( $row['effect_mapping_json'] )
+            ? $row['effect_mapping_json']
+            : [];
+        if (
+            ! array_key_exists( 'skip_downstream_on_spam', $settings )
+            && isset( $effect_mapping['spam'] )
+            && is_array( $effect_mapping['spam'] )
+            && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
+        )
+        {
+            $settings['skip_downstream_on_spam'] = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
+        }
+
+        return [
+            'central_action_id' => $action_code,
+            'settings'          => $settings,
+        ];
+    }
+
+    /**
+     * Resolve the action code represented by a local-first mapping row.
+     *
+     * @param array<string, mixed> $mapping Local-first mapping row.
+     *
+     * @return string
+     */
+    private function resolve_local_first_dependency_action_code( array $mapping ): string
+    {
+        if ( 'custom_action' !== sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            return '';
+        }
+
+        $action_id = absint( $mapping['action_id'] ?? 0 );
+        if ( $action_id <= 0 )
+        {
+            return '';
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action     = $repository->get( $action_id );
+        if ( ! is_array( $action ) )
+        {
+            return '';
+        }
+
+        $action_code = isset( $action['code'] ) && is_scalar( $action['code'] )
+            ? sanitize_key( (string) $action['code'] )
+            : '';
+        if ( '' === $action_code )
+        {
+            return '';
+        }
+
+        $template_code = class_exists( 'Sentient_Forms_Bundled_Action_Templates' )
+            ? Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $action_code )
+            : '';
+
+        return '' !== $template_code ? $template_code : $action_code;
     }
 
     /**
