@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.8.0...v0.9.0) (2026-06-29)
+
+
+### Features
+
+* **forms:** add Elementor Pro Forms adapter ([d1ec216](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d1ec21676eb5dd454a562bc52cedccc99d628d84))
+
+
+### Bug Fixes
+
+* **forms:** close provider-native review gaps ([b606623](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b60662344dedba0ac72fef310c8f7d5d205ae16a))
+* **forms:** complete lead value provider ids ([de54c32](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/de54c32a0eb490699b0e7a9d97a39a6647826316))
+* **forms:** expand ledger action readback ([8005415](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/8005415af13b1dbea079801a5787c29aba6bc1db))
+* **forms:** harden Elementor execution event upgrades ([49377d7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/49377d77f745af1dc4cc4bb9c485ff6cbc3ecc73))
+* **forms:** honor local-first spam gates ([aa985bd](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/aa985bd27740c0b32ff8730cb43c59aaf9b6a8f5))
+* **forms:** preserve lead value provider ids ([cf9ae34](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cf9ae342452e76c6ad0a986b954ce4e20a77a0d3))
+
 ## [0.8.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.7.0...v0.8.0) (2026-06-28)
 
 
