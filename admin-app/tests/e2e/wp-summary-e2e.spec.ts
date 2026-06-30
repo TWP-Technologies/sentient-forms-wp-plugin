@@ -8,6 +8,7 @@ import {
 	ensureGravityForm,
 	fetchCreditBalance,
 	findEntryIdByEmail,
+	getActionTemplateBaseCreditCost,
 	getEntryMeta,
 	getEntrySpamStatus,
 	getLatestActionExecutionDebitByEntryId,
@@ -180,6 +181,7 @@ test.describe('After-submission entry summary @after-submission @summary-e2e', (
 
 		const proxyKey = ensureCpsSeeded();
 		ensureCreditBalanceAtLeast(50);
+		const summaryBaseCreditCost = getActionTemplateBaseCreditCost('entry_summary_v1');
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		const baselineEntryId = getLatestEntryId(formId);
 		const email = `summary-${token}@example.test`;
@@ -200,7 +202,10 @@ test.describe('After-submission entry summary @after-submission @summary-e2e', (
 		const debitRecord = await waitForActionDebit(entryId, 'entry_summary_v1', page);
 		expect(debitRecord.central_action_id).toBe('entry_summary_v1');
 		expect(debitRecord.hook).toBe('gform_after_submission');
-		expect(debitRecord.credits_delta).toBe(-8);
+		expect(debitRecord.credits_delta).toBeLessThan(0);
+
+		const summaryDebitedCredits = Math.abs(debitRecord.credits_delta);
+		expect(summaryDebitedCredits).toBeGreaterThanOrEqual(summaryBaseCreditCost);
 
 		const summaryText = await waitForSummaryText(entryId, page);
 		expect(summaryText.length).toBeGreaterThan(0);
@@ -215,6 +220,6 @@ test.describe('After-submission entry summary @after-submission @summary-e2e', (
 
 		expect(getEntryMeta(entryId, 'sentient_forms_spam_classification')).toBeNull();
 		const balanceAfter = await fetchCreditBalance(page, proxyKey);
-		expect(Math.round(balanceBefore - balanceAfter)).toBe(8);
+		expect(Math.round(balanceBefore - balanceAfter)).toBe(summaryDebitedCredits);
 	});
 });

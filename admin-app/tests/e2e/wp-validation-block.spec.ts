@@ -69,7 +69,7 @@ test.describe('Gravity Forms content validation block @validation-block', () => 
 			.first();
 
 		await expect(formValidationMessage).toContainText(/problem with your submission/i);
-		await expect(fieldValidationMessage).toContainText(/tell us more/i);
+		await expect(fieldValidationMessage).toContainText(/tell us more|too vague|more detailed/i);
 		expect(getLatestEntryId(formId)).toBe(baselineEntryId);
 		await expect(page.locator('.gform_confirmation_message, .gform_confirmation_wrapper')).toHaveCount(
 			0

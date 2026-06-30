@@ -1575,6 +1575,21 @@ export function runActionScheduler(): void {
 	}
 }
 
+export function setGravityAsyncNotificationsEnabled(enabled: boolean): void {
+	const result = runWpCli([
+		'option',
+		'update',
+		'gform_enable_async_notifications',
+		enabled ? '1' : '0'
+	]);
+
+	if (result.status !== 0) {
+		throw new Error(
+			`Failed to update Gravity Forms async notification setting: ${stripCliNoise(result.stderr || result.stdout)}`
+		);
+	}
+}
+
 export function getProxyApiKey(): string {
 	ensureLegacyCpsE2EEnabled('getProxyApiKey');
 

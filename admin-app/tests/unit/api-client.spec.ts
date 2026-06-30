@@ -774,7 +774,7 @@ describe('SentientFormsApiClient', () => {
 										},
 										backup_provider: 'openrouter',
 										backup_credential_id: 7,
-										backup_model: 'openai/gpt-5.5'
+										backup_model: '~openai/gpt-latest'
 									},
 									blocked_reason_code: null,
 									requires_structured_output: true

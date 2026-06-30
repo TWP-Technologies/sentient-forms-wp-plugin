@@ -10,6 +10,16 @@ if ( ! defined( 'ABSPATH' ) )
 
 class Sentient_Forms_Provider_Path_Policy_Service
 {
+    /**
+     * @var array<string, string>
+     */
+    private array $openrouter_preset_model_cache = [];
+
+    /**
+     * @var array<string, bool>
+     */
+    private array $openrouter_structured_support_cache = [];
+
     public function __construct(
         private ?Sentient_Forms_Provider_Credentials_Repository $credentials = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
@@ -34,24 +44,46 @@ class Sentient_Forms_Provider_Path_Policy_Service
      */
     public function build_bundled_action_model_selection( array $definition ): array | WP_Error
     {
-        $template_code = $this->template_code_from_definition( $definition );
-        $managed      = $this->ready_managed_credential();
-        $openrouter = $this->ready_openrouter_credential();
+        return $this->build_bundled_action_model_selection_from_ready_routes(
+            $definition,
+            $this->ready_managed_credential(),
+            $this->ready_openrouter_credential()
+        );
+    }
+
+    /**
+     * @param array<string, mixed>               $definition Bundled action definition.
+     * @param array<string, mixed>|WP_Error|null $managed
+     * @param array<string, mixed>|WP_Error|null $openrouter
+     * @return array<string, mixed>|WP_Error
+     */
+    private function build_bundled_action_model_selection_from_ready_routes(
+        array $definition,
+        array | WP_Error | null $managed,
+        array | WP_Error | null $openrouter
+    ): array | WP_Error
+    {
+        $template_code    = $this->template_code_from_definition( $definition );
+        $openrouter_model = '';
+
         if ( is_wp_error( $openrouter ) && ! is_array( $managed ) )
         {
             return is_wp_error( $managed ) ? $managed : $openrouter;
         }
 
-        $openrouter_model = $this->resolve_openrouter_model_for_definition( $definition );
-        if ( is_wp_error( $openrouter_model ) )
+        if ( is_array( $openrouter ) )
         {
-            if ( is_array( $managed ) )
+            $openrouter_model = $this->resolve_openrouter_model_for_definition( $definition );
+            if ( is_wp_error( $openrouter_model ) )
             {
-                $openrouter_model = '';
-            }
-            else
-            {
-                return is_wp_error( $managed ) ? $managed : $openrouter_model;
+                if ( is_array( $managed ) )
+                {
+                    $openrouter_model = '';
+                }
+                else
+                {
+                    return is_wp_error( $managed ) ? $managed : $openrouter_model;
+                }
             }
         }
 
@@ -122,7 +154,11 @@ class Sentient_Forms_Provider_Path_Policy_Service
                 continue;
             }
 
-            $selection = $this->build_bundled_action_model_selection( $definition );
+            $selection = $this->build_bundled_action_model_selection_from_ready_routes(
+                $definition,
+                $managed,
+                $openrouter
+            );
             $actions[ $code ] = [
                 'selected_provider'    => is_wp_error( $selection ) ? null : ( $selection['provider'] ?? null ),
                 'model_selection'      => is_wp_error( $selection ) ? null : $selection,
@@ -166,6 +202,11 @@ class Sentient_Forms_Provider_Path_Policy_Service
         }
 
         $credential = $this->model_selection_service->find_single_ready_credential_for_provider( 'sentient_managed' );
+        if ( is_wp_error( $credential ) )
+        {
+            return $this->provider_credential_error( 'sentient_managed', $credential );
+        }
+
         if ( ! is_array( $credential ) )
         {
             return $credential;
@@ -181,6 +222,11 @@ class Sentient_Forms_Provider_Path_Policy_Service
     private function ready_openrouter_credential(): array | WP_Error | null
     {
         $credential = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        if ( is_wp_error( $credential ) )
+        {
+            return $this->provider_credential_error( 'openrouter', $credential );
+        }
+
         if ( ! is_array( $credential ) )
         {
             return $credential;
@@ -225,19 +271,22 @@ class Sentient_Forms_Provider_Path_Policy_Service
     {
         if ( $this->definition_requires_structured_output( $definition ) )
         {
-            $model = $this->model_selection_service->resolve_openrouter_preset_model_id( 'sf_structured' );
-            if (
-                '' === $model
-                || ! $this->model_selection_service->model_supports_structured_output( $model, 'openrouter' )
-            )
+            foreach ( $this->structured_openrouter_model_candidates( $definition ) as $candidate )
             {
-                return $this->unavailable_error(
-                    'structured_openrouter_model_unavailable',
-                    __( 'The selected OpenRouter route does not have a structured-output capable model for this built-in action.', 'sentient-forms' )
-                );
+                $model = str_starts_with( $candidate, 'sf_' )
+                    ? $this->resolve_openrouter_preset_model_id( $candidate )
+                    : $candidate;
+
+                if ( '' !== $model && $this->openrouter_model_supports_structured_output( $model ) )
+                {
+                    return $model;
+                }
             }
 
-            return $model;
+            return $this->unavailable_error(
+                'structured_openrouter_model_unavailable',
+                __( 'The selected OpenRouter route does not have a structured-output capable model for this built-in action.', 'sentient-forms' )
+            );
         }
 
         $model = isset( $definition['default_model'] ) && is_scalar( $definition['default_model'] )
@@ -245,6 +294,64 @@ class Sentient_Forms_Provider_Path_Policy_Service
             : '';
 
         return '' !== $model ? $model : 'openrouter/auto';
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     * @return array<int, string>
+     */
+    private function structured_openrouter_model_candidates( array $definition ): array
+    {
+        $default_model = isset( $definition['default_model'] ) && is_scalar( $definition['default_model'] )
+            ? trim( sanitize_text_field( (string) $definition['default_model'] ) )
+            : '';
+
+        return array_values(
+            array_unique(
+                array_filter(
+                    [
+                        $default_model,
+                        'sf_structured',
+                    ],
+                    static fn ( string $model ): bool => '' !== $model
+                )
+            )
+        );
+    }
+
+    private function resolve_openrouter_preset_model_id( string $preset_code ): string
+    {
+        $preset_code = sanitize_key( $preset_code );
+        if ( '' === $preset_code )
+        {
+            return '';
+        }
+
+        if ( ! array_key_exists( $preset_code, $this->openrouter_preset_model_cache ) )
+        {
+            $this->openrouter_preset_model_cache[ $preset_code ] = $this->model_selection_service->resolve_openrouter_preset_model_id( $preset_code );
+        }
+
+        return $this->openrouter_preset_model_cache[ $preset_code ];
+    }
+
+    private function openrouter_model_supports_structured_output( string $model_id ): bool
+    {
+        $model_id = trim( sanitize_text_field( $model_id ) );
+        if ( '' === $model_id )
+        {
+            return false;
+        }
+
+        if ( ! array_key_exists( $model_id, $this->openrouter_structured_support_cache ) )
+        {
+            $this->openrouter_structured_support_cache[ $model_id ] = $this->model_selection_service->model_supports_structured_output(
+                $model_id,
+                'openrouter'
+            );
+        }
+
+        return $this->openrouter_structured_support_cache[ $model_id ];
     }
 
     private function managed_selection( string $template_code, int $credential_id ): array
@@ -305,6 +412,22 @@ class Sentient_Forms_Provider_Path_Policy_Service
         }
 
         return '';
+    }
+
+    private function provider_credential_error( string $provider, WP_Error $error ): WP_Error
+    {
+        if ( 'sentient_forms_provider_credential_ambiguous' === $error->get_error_code() )
+        {
+            return $this->unavailable_error(
+                'multiple_ready_credentials',
+                __( 'Choose one ready credential for this provider before adding built-in actions.', 'sentient-forms' )
+            );
+        }
+
+        return $this->unavailable_error(
+            sanitize_key( $provider ) . '_credential_unavailable',
+            $error->get_error_message()
+        );
     }
 
     private function unavailable_error( string $reason_code, string $message ): WP_Error

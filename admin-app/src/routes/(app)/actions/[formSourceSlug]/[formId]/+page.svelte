@@ -2538,6 +2538,20 @@
 		return String(policy.selected_provider ?? 'Default route');
 	}
 
+	function providerPolicyRouteTooltip(policy: ProviderPathPolicyAction | null | undefined): string {
+		if (!policy) return 'Uses the plugin default execution route for this built-in action.';
+		if (providerPolicyIsBlocked(policy)) {
+			return providerPolicyBlockedMessage(policy) || 'Complete provider setup before linking this action.';
+		}
+		if (policy.selected_provider === 'sentient_managed') {
+			return 'Runs through Sentient Forms Managed Service. If Direct OpenRouter is also ready, Managed stays the default route.';
+		}
+		if (policy.selected_provider === 'openrouter') {
+			return "Runs directly with this site's OpenRouter key because Managed Service is not ready.";
+		}
+		return 'Uses the configured execution route for this built-in action.';
+	}
+
 	function providerPolicyRouteVariant(policy: ProviderPathPolicyAction | null | undefined): BadgeVariant {
 		if (!policy) return 'neutral';
 		if (providerPolicyIsBlocked(policy)) return 'warning';
@@ -6269,9 +6283,14 @@
 												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
 													{definition.label ?? definition.id}
 												</p>
-												<Badge variant={providerPolicyRouteVariant(definitionProviderPolicy)}>
-													{providerPolicyRouteLabel(definitionProviderPolicy)}
-												</Badge>
+												<span
+													class="sf:inline-flex"
+													title={providerPolicyRouteTooltip(definitionProviderPolicy)}
+												>
+													<Badge variant={providerPolicyRouteVariant(definitionProviderPolicy)}>
+														{providerPolicyRouteLabel(definitionProviderPolicy)}
+													</Badge>
+												</span>
 											</div>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">

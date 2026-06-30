@@ -2420,6 +2420,9 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByRole('radio', { name: /Spam Detection/i })).toBeDisabled();
 		await expect(drawer.getByText('Structured output route unavailable')).toBeVisible();
 		await expect(drawer.getByTestId('link-action-submit')).toBeDisabled();
+		await drawer.getByTestId('link-action-submit').evaluate((button: HTMLButtonElement) => {
+			button.click();
+		});
 		expect(createRequests).toHaveLength(0);
 	});
 

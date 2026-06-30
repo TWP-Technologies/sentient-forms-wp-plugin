@@ -32,7 +32,7 @@ describe('provider path policy schema', () => {
 						},
 						backup_provider: 'openrouter',
 						backup_credential_id: 7,
-						backup_model: 'openai/gpt-5.5'
+						backup_model: '~openai/gpt-latest'
 					},
 					blocked_reason_code: null,
 					requires_structured_output: true
@@ -46,7 +46,7 @@ describe('provider path policy schema', () => {
 			expect(result.data.actions.spam_detection_v1.model_selection).toMatchObject({
 				provider: 'sentient_managed',
 				backup_provider: 'openrouter',
-				backup_model: 'openai/gpt-5.5'
+				backup_model: '~openai/gpt-latest'
 			});
 		}
 	});

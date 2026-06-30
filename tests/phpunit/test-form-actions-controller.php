@@ -2810,6 +2810,28 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'backup_provider', $selection );
     }
 
+    public function test_add_form_action_rejects_openrouter_only_route_when_credentials_are_ambiguous(): void
+    {
+        $this->create_ready_openrouter_credential();
+        $this->create_ready_openrouter_credential();
+        $this->seed_structured_openrouter_model_cache();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/130/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 130 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param( 'settings', [] );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_bundled_action_provider_path_unavailable', $response->get_error_code() );
+        $this->assertSame( 409, $response->get_error_data()['status'] ?? null );
+        $this->assertSame( 'multiple_ready_credentials', $response->get_error_data()['blocked_reason_code'] ?? null );
+    }
+
     public function test_add_form_action_uses_openrouter_when_it_is_the_only_ready_route_and_model_supports_structured_output(): void
     {
         $credential_id = $this->create_ready_openrouter_credential();
@@ -2825,6 +2847,21 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'openrouter', $selection['selection']['provider'] ?? null );
         $this->assertSame( '~openai/gpt-latest', $selection['selection']['primary'] ?? null );
         $this->assertFalse( $selection['selection']['is_preset'] ?? true );
+    }
+
+    public function test_add_form_action_preserves_realtime_openrouter_preset_for_clarification_assistant(): void
+    {
+        $credential_id = $this->create_ready_openrouter_credential();
+
+        $this->create_bundled_local_first_mapping( 129, 'clarification_assistant_v1', [ 'real_time' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'clarification_assistant_v1' );
+
+        $this->assertSame( 'openrouter', $selection['provider'] ?? null );
+        $this->assertSame( $credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( '~google/gemini-flash-latest', $selection['model'] ?? null );
+        $this->assertSame( 'openrouter', $selection['selection']['provider'] ?? null );
+        $this->assertSame( '~google/gemini-flash-latest', $selection['selection']['primary'] ?? null );
     }
 
     public function test_add_form_action_rejects_openrouter_route_when_openrouter_consent_is_missing(): void
@@ -5281,6 +5318,55 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
     }
 
+    public function test_form_actions_bootstrap_marks_bundled_actions_blocked_when_no_provider_is_ready(): void
+    {
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data   = $response->get_data();
+        $policy = $data['provider_path_policy'] ?? null;
+
+        $this->assertIsArray( $policy );
+        $this->assertNull( $policy['default_provider'] ?? null );
+        $this->assertFalse( $policy['providers']['sentient_managed']['ready'] ?? true );
+        $this->assertFalse( $policy['providers']['openrouter']['ready'] ?? true );
+
+        $action = $policy['actions']['spam_detection_v1'] ?? null;
+        $this->assertIsArray( $action );
+        $this->assertArrayHasKey( 'selected_provider', $action );
+        $this->assertArrayHasKey( 'model_selection', $action );
+        $this->assertNull( $action['selected_provider'] );
+        $this->assertNull( $action['model_selection'] );
+        $this->assertSame( 'no_ready_provider', $action['blocked_reason_code'] ?? null );
+        $this->assertTrue( $action['requires_structured_output'] ?? false );
+    }
+
+    public function test_form_actions_bootstrap_provider_policy_fallback_uses_object_shaped_actions(): void
+    {
+        $this->set_provider_path_policy( null );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data   = $response->get_data();
+        $policy = $data['provider_path_policy'] ?? null;
+
+        $this->assertIsArray( $policy );
+        $this->assertArrayHasKey( 'default_provider', $policy );
+        $this->assertNull( $policy['default_provider'] );
+        $this->assertSame( 'policy_unavailable', $policy['providers']['sentient_managed']['blocked_reason_code'] ?? null );
+        $this->assertSame( 'policy_unavailable', $policy['providers']['openrouter']['blocked_reason_code'] ?? null );
+        $this->assertInstanceOf( stdClass::class, $policy['actions'] ?? null );
+    }
+
     public function test_contact_form_7_bootstrap_exposes_ledger_required_capabilities_without_gravity_only_claims(): void
     {
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
@@ -6262,6 +6348,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $property = new ReflectionProperty( $this->controller, 'mappings_sync' );
         $property->setAccessible( true );
         $property->setValue( $this->controller, $mappings_sync );
+    }
+
+    private function set_provider_path_policy( ?Sentient_Forms_Provider_Path_Policy_Service $policy ): void
+    {
+        $property = new ReflectionProperty( $this->controller, 'provider_path_policy' );
+        $property->setValue( $this->controller, $policy );
     }
 
     private function reset_entry_meta_store(): void

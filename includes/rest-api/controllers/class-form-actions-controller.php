@@ -2665,7 +2665,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                         'blocked_reason_code' => 'policy_unavailable',
                     ],
                 ],
-                'actions'          => [],
+                'actions'          => (object) [],
             ];
         }
 

@@ -18,20 +18,18 @@ const nullableCredentialIdSchema = z.number().int().nonnegative().nullable();
 const modelReasoningSchema = z
 	.union([
 		z.string(),
-		z
-			.object({
-				effort: z.string().optional(),
-				max_tokens: z.number().int().positive().optional(),
-				exclude: z.boolean().optional(),
-				enabled: z.boolean().optional()
-			})
-			.passthrough()
+		z.looseObject({
+			effort: z.string().optional(),
+			max_tokens: z.number().int().positive().optional(),
+			exclude: z.boolean().optional(),
+			enabled: z.boolean().optional()
+		})
 	])
 	.nullable()
 	.optional();
 
 const modelSelectionSchema = z
-	.object({
+	.looseObject({
 		primary: z.string().min(1),
 		backup: nullableStringSchema.optional(),
 		is_preset: z.boolean(),
@@ -42,11 +40,10 @@ const modelSelectionSchema = z
 		reasoning: modelReasoningSchema,
 		tools: z.record(z.string(), z.unknown()).nullable().optional()
 	})
-	.passthrough()
 	.transform((value) => value as ModelSelection);
 
 const providerPathPolicyModelSelectionSchema = z
-	.object({
+	.looseObject({
 		provider: providerSchema,
 		model: nullableStringSchema.optional(),
 		credential_id: nullableCredentialIdSchema.optional(),
@@ -55,38 +52,31 @@ const providerPathPolicyModelSelectionSchema = z
 		backup_credential_id: nullableCredentialIdSchema.optional(),
 		backup_model: nullableStringSchema.optional()
 	})
-	.passthrough()
 	.transform((value) => value as ProviderPathPolicyModelSelection);
 
-const providerPathPolicyProviderStatusSchema = z
-	.object({
-		ready: z.boolean(),
-		credential_id: nullableCredentialIdSchema,
-		blocked_reason_code: nullableStringSchema.optional()
-	})
-	.passthrough();
+const providerPathPolicyProviderStatusSchema = z.looseObject({
+	ready: z.boolean(),
+	credential_id: nullableCredentialIdSchema,
+	blocked_reason_code: nullableStringSchema.optional()
+});
 
-const providerPathPolicyActionSchema = z
-	.object({
-		selected_provider: nullableProviderSchema,
-		model_selection: providerPathPolicyModelSelectionSchema.nullable(),
-		blocked_reason_code: nullableStringSchema,
-		requires_structured_output: z.boolean()
-	})
-	.passthrough();
+const providerPathPolicyActionSchema = z.looseObject({
+	selected_provider: nullableProviderSchema,
+	model_selection: providerPathPolicyModelSelectionSchema.nullable(),
+	blocked_reason_code: nullableStringSchema,
+	requires_structured_output: z.boolean()
+});
 
 export const providerPathPolicyResponseSchema = z
-	.object({
+	.looseObject({
 		default_provider: nullableProviderSchema,
 		providers: z
-			.object({
+			.looseObject({
 				sentient_managed: providerPathPolicyProviderStatusSchema,
 				openrouter: providerPathPolicyProviderStatusSchema
-			})
-			.passthrough(),
+			}),
 		actions: z.record(z.string(), providerPathPolicyActionSchema)
 	})
-	.passthrough()
 	.transform((value) => value as ProviderPathPolicyResponse);
 
 export function parseProviderPathPolicy(value: unknown): ProviderPathPolicyResponse | undefined {
