@@ -527,12 +527,19 @@
 					'<h3 class="sentient-forms-realtime-widget__title">Suggestions</h3>' +
 					'<p class="sentient-forms-realtime-widget__subtitle" data-role="subtitle">Idle</p>' +
 				'</div>' +
+				'<div class="sentient-forms-realtime-widget__header-actions">' +
+					'<button type="button" class="sentient-forms-realtime-widget__refresh" data-role="refresh" aria-label="Refresh suggestions" title="Refresh suggestions">' +
+						'<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">' +
+							'<path d="M21 12a9 9 0 0 1-15.5 6.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+							'<path d="M3 12A9 9 0 0 1 18.5 5.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+							'<path d="M18 2v4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+							'<path d="M6 22v-4H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+						'</svg>' +
+					'</button>' +
 					'<button type="button" class="sentient-forms-realtime-widget__toggle" data-role="toggle" aria-expanded="false">Show</button>' +
+				'</div>' +
 			'</header>' +
 			'<div class="sentient-forms-realtime-widget__body" data-role="body">' +
-				'<div class="sentient-forms-realtime-widget__actions">' +
-					'<button type="button" class="sentient-forms-realtime-widget__refresh" data-role="refresh">Refresh suggestions</button>' +
-				'</div>' +
 				'<p class="sentient-forms-realtime-widget__metering" data-role="metering" hidden></p>' +
 				'<div class="sentient-forms-realtime-widget__error" data-role="error" hidden></div>' +
 				'<ul class="sentient-forms-realtime-widget__list" data-role="list"></ul>' +
@@ -1826,9 +1833,10 @@
 		toggleButton.setAttribute('aria-expanded', formState.isOpen ? 'true' : 'false');
 		body.hidden = !formState.isOpen;
 		if (refreshButton instanceof HTMLElement) {
-			refreshButton.hidden = !asArray(formState.config.mappings).some(function (mapping) {
+			var manualRefreshEnabled = asArray(formState.config.mappings).some(function (mapping) {
 				return mapping && mapping.manual_refresh_enabled !== false;
 			});
+			refreshButton.hidden = !formState.isOpen || !manualRefreshEnabled;
 		}
 
 		var meteringSummary = summarizeMetering(formState);

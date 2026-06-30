@@ -68,6 +68,30 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             {
                 $selection['model'] = '' !== $default_model ? $default_model : 'openrouter/auto';
             }
+
+            $managed_repair_credential = $this->managed_credential_for_openrouter_bundled_repair( $template_code, $selection, $provider );
+            if ( is_array( $managed_repair_credential ) )
+            {
+                $managed_credential_id = absint( $managed_repair_credential['id'] ?? 0 );
+                if ( $managed_credential_id > 0 )
+                {
+                    $provider  = 'sentient_managed';
+                    $selection = $this->repair_openrouter_bundled_selection_to_managed(
+                        $template_code,
+                        $selection,
+                        $managed_credential_id
+                    );
+
+                    $openrouter_backup_credential = $this->find_single_ready_credential_for_provider( 'openrouter' );
+                    if ( is_array( $openrouter_backup_credential ) )
+                    {
+                        $selection = $this->attach_openrouter_backup_selection(
+                            $selection,
+                            absint( $openrouter_backup_credential['id'] ?? 0 )
+                        );
+                    }
+                }
+            }
         }
         elseif ( empty( $selection['model'] ) )
         {
@@ -171,6 +195,83 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             : '';
 
         return '' === $model || 'openrouter/auto' === $model;
+    }
+
+    /**
+     * Bundled local-first actions should use the managed route whenever a ready managed
+     * credential exists. Direct OpenRouter is retained separately as a backup route.
+     *
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>|null
+     */
+    private function managed_credential_for_openrouter_bundled_repair( string $template_code, array $selection, string $provider ): ?array
+    {
+        if ( '' === $template_code || ! in_array( sanitize_key( $provider ), [ 'openrouter', 'sentient_managed' ], true ) )
+        {
+            return null;
+        }
+
+        $managed_credential = $this->find_single_ready_credential_for_provider( 'sentient_managed' );
+        return is_array( $managed_credential ) ? $managed_credential : null;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>
+     */
+    private function attach_openrouter_backup_selection( array $selection, int $credential_id ): array
+    {
+        if ( $credential_id <= 0 )
+        {
+            return $selection;
+        }
+
+        $backup_model = isset( $selection['backup_model'] ) && is_scalar( $selection['backup_model'] )
+            ? trim( sanitize_text_field( (string) $selection['backup_model'] ) )
+            : '';
+        if ( '' === $backup_model )
+        {
+            $backup_model = isset( $selection['model'] ) && is_scalar( $selection['model'] )
+                ? trim( sanitize_text_field( (string) $selection['model'] ) )
+                : '';
+        }
+        if ( '' === $backup_model || str_starts_with( $backup_model, 'sf_' ) )
+        {
+            $backup_model = 'openrouter/auto';
+        }
+
+        $selection['backup_provider']       = 'openrouter';
+        $selection['backup_credential_id'] = $credential_id;
+        $selection['backup_model']         = $backup_model;
+
+        return $selection;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>
+     */
+    private function repair_openrouter_bundled_selection_to_managed( string $template_code, array $selection, int $credential_id ): array
+    {
+        if ( $credential_id <= 0 )
+        {
+            return $selection;
+        }
+
+        $preset = 'clarification_assistant_v1' === $template_code ? 'sf_realtime' : 'sf_default';
+
+        $runtime_selection = is_array( $selection['selection'] ?? null ) ? $selection['selection'] : [];
+        $runtime_selection['primary']       = $preset;
+        $runtime_selection['provider']      = 'sentient_managed';
+        $runtime_selection['is_preset']     = true;
+        $runtime_selection['credential_id'] = $credential_id;
+
+        $selection['provider']      = 'sentient_managed';
+        $selection['model']         = $preset;
+        $selection['credential_id'] = $credential_id;
+        $selection['selection']     = $runtime_selection;
+
+        return $selection;
     }
 
     /**
