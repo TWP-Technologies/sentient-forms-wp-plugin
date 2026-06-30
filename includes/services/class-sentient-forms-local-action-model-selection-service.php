@@ -273,7 +273,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         return is_array( $credential ) ? $credential : null;
     }
 
-    private function managed_account_is_active(): bool
+    public function managed_account_is_active(): bool
     {
         if ( ! class_exists( 'Sentient_Forms_Plugin' ) )
         {
@@ -983,6 +983,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_agentic'    => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             default         => '',
         };
+    }
+
+    public function resolve_openrouter_preset_model_id( string $preset_code, bool $require_zdr = false ): string
+    {
+        return $this->resolve_local_preset_model_id( $preset_code, $require_zdr );
     }
 
     private function selection_requires_managed_zdr( array $selection ): bool

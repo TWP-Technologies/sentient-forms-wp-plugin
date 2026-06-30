@@ -44,6 +44,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     private ?Sentient_Forms_Provider_Credentials_Repository $local_provider_credentials = null;
 
+    private ?Sentient_Forms_Provider_Path_Policy_Service $provider_path_policy = null;
+
     private ?Sentient_Forms_Execution_Events_Repository $local_execution_events = null;
 
     private ?Sentient_Forms_Submission_Ledger_Settings_Repository $submission_ledger_settings = null;
@@ -168,6 +170,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( class_exists( 'Sentient_Forms_Provider_Credentials_Repository' ) )
         {
             $this->local_provider_credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Provider_Path_Policy_Service' ) )
+        {
+            $this->provider_path_policy = new Sentient_Forms_Provider_Path_Policy_Service(
+                $this->local_provider_credentials
+            );
         }
 
         if ( class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
@@ -1727,6 +1736,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'form_action_configs'  => $this->get_bootstrap_form_action_configs( $form_source_slug, $form_id ),
                 'form_fields'          => $this->get_bootstrap_form_fields( $form_source_slug, $form_id ),
                 'action_defaults'      => $this->get_bootstrap_action_defaults( $definitions, $custom_actions ),
+                'provider_path_policy' => $this->get_bootstrap_provider_path_policy(),
                 'workflow_plan'        => $this->get_bootstrap_workflow_plan( $form_source_slug, $form_id, $actions ),
                 'generated_at'     => gmdate( 'c' ),
             ]
@@ -2632,6 +2642,36 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         );
 
         return is_array( $data ) ? array_values( array_filter( $data, 'is_array' ) ) : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_provider_path_policy(): array
+    {
+        if ( ! $this->provider_path_policy || ! class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
+        {
+            return [
+                'default_provider' => null,
+                'providers'        => [
+                    'sentient_managed' => [
+                        'ready'               => false,
+                        'credential_id'       => null,
+                        'blocked_reason_code' => 'policy_unavailable',
+                    ],
+                    'openrouter' => [
+                        'ready'               => false,
+                        'credential_id'       => null,
+                        'blocked_reason_code' => 'policy_unavailable',
+                    ],
+                ],
+                'actions'          => [],
+            ];
+        }
+
+        return $this->provider_path_policy->build_bootstrap_policy(
+            Sentient_Forms_Bundled_Action_Templates::definitions()
+        );
     }
 
     /**
@@ -4611,6 +4651,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         $managed_code = Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $template_code );
         $selection    = $this->build_default_model_selection_for_bundled_action( $definition );
+        if ( is_wp_error( $selection ) )
+        {
+            return $selection;
+        }
+
         $row_id       = $this->local_custom_actions->upsert_by_code(
             [
                 'template_id'          => absint( $template_row['id'] ?? 0 ),
@@ -4663,52 +4708,20 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     /**
      * @param array<string, mixed> $definition
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|WP_Error
      */
-    private function build_default_model_selection_for_bundled_action( array $definition ): array
+    private function build_default_model_selection_for_bundled_action( array $definition ): array | WP_Error
     {
-        $selection = [
-            'provider' => 'openrouter',
-            'model'    => sanitize_text_field( (string) ( $definition['default_model'] ?? 'openrouter/auto' ) ),
-        ];
-
-        $credential_id = $this->find_default_openrouter_credential_id();
-        if ( $credential_id > 0 )
+        if ( ! $this->provider_path_policy )
         {
-            $selection['credential_id'] = $credential_id;
+            return $this->prepare_error_response(
+                'rest_provider_path_policy_unavailable',
+                __( 'Provider path policy is unavailable.', 'sentient-forms' ),
+                503
+            );
         }
 
-        return $selection;
-    }
-
-    private function find_default_openrouter_credential_id(): int
-    {
-        if ( ! $this->local_provider_credentials )
-        {
-            return 0;
-        }
-
-        $ready_credentials = [];
-        foreach ( $this->local_provider_credentials->list( [ 'limit' => 100 ] ) as $credential )
-        {
-            if ( 'openrouter' !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
-            {
-                continue;
-            }
-
-            if ( ! in_array( sanitize_key( (string) ( $credential['status'] ?? '' ) ), [ 'valid', 'limited' ], true ) )
-            {
-                continue;
-            }
-
-            $credential_id = absint( $credential['id'] ?? 0 );
-            if ( $credential_id > 0 )
-            {
-                $ready_credentials[] = $credential_id;
-            }
-        }
-
-        return 1 === count( $ready_credentials ) ? $ready_credentials[0] : 0;
+        return $this->provider_path_policy->build_bundled_action_model_selection( $definition );
     }
 
     /**

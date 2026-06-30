@@ -72,6 +72,7 @@
 		LocalFormMappingRecord,
 		LocalProviderCredential,
 		ModelSelection,
+		ProviderPathPolicyAction,
 		RealtimeSettings,
 		RepairState,
 		ResolvedModelSelection,
@@ -115,6 +116,7 @@
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
 	type LocalBuilderExecutionMode = 'sync' | 'async';
 	type LocalBuilderTemplateKey = 'spam_filter' | 'summary' | 'lead_qualification' | 'sentiment';
+	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 	type LocalBuilderTemplate = {
 		key: LocalBuilderTemplateKey;
 		label: string;
@@ -1893,6 +1895,10 @@
 	const builtInDefinitions = $derived(
 		definitions.filter((definition) => (definition.source ?? 'bundled') === 'bundled')
 	);
+	const providerPathPolicy = $derived(actionsState.bootstrap?.provider_path_policy ?? null);
+	const selectableBuiltInDefinitions = $derived(
+		builtInDefinitions.filter((definition) => !providerPolicyIsBlocked(providerPolicyForDefinition(definition)))
+	);
 	const hasDefinitions = $derived(builtInDefinitions.length > 0);
 	const hasBuiltInDefinitions = $derived(builtInDefinitions.length > 0);
 
@@ -1990,11 +1996,20 @@
 		const hooks = [...selectedHooks].map((hook) => hookOptions[hook] ?? hook);
 		return hooks.length > 0 ? hooks.join(', ') : 'No trigger selected';
 	});
+	const selectedCreateProviderPolicy = $derived.by(() =>
+		createKind === 'template' && selectedTemplateId
+			? (providerPathPolicy?.actions?.[selectedTemplateId] ?? null)
+			: null
+	);
+	const selectedCreateProviderBlocked = $derived(
+		createKind === 'template' && providerPolicyIsBlocked(selectedCreateProviderPolicy)
+	);
 	const linkActionDisabled = $derived(
 		creating ||
 			!canConfigureFormSource ||
 			selectedHooks.size === 0 ||
 			(!hasDefinitions && createKind === 'template') ||
+			(createKind === 'template' && (!selectedTemplateId || selectedCreateProviderBlocked)) ||
 			(createKind === 'custom' && customActions.length === 0) ||
 			(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)
 	);
@@ -2049,12 +2064,12 @@
 	});
 
 	$effect(() => {
-		const selectedStillAvailable = builtInDefinitions.some(
+		const selectedStillAvailable = selectableBuiltInDefinitions.some(
 			(definition) => definition.id === selectedTemplateId
 		);
 
 		if ((!selectedTemplateId || !selectedStillAvailable) && hasDefinitions) {
-			selectedTemplateId = builtInDefinitions[0]?.id ?? '';
+			selectedTemplateId = selectableBuiltInDefinitions[0]?.id ?? '';
 		}
 	});
 
@@ -2491,6 +2506,66 @@
 		if (linkage.action_type_indicator === 'local_first') return 'success';
 		if (linkage.action_type_indicator === 'custom') return 'info';
 		return 'neutral';
+	}
+
+	function providerPolicyForDefinition(definition: ActionDefinition): ProviderPathPolicyAction | null {
+		if (!providerPathPolicy) return null;
+		return (
+			providerPathPolicy.actions?.[definition.id] ?? {
+				selected_provider: null,
+				model_selection: null,
+				blocked_reason_code: 'policy_unavailable',
+				requires_structured_output: Boolean(
+					definition.structuredOutputSchema ??
+						(definition as unknown as Record<string, unknown>).structured_output_schema
+				)
+			}
+		);
+	}
+
+	function providerPolicyIsBlocked(
+		policy: ProviderPathPolicyAction | null | undefined
+	): boolean {
+		if (!policy) return false;
+		return Boolean(policy.blocked_reason_code || !policy.selected_provider);
+	}
+
+	function providerPolicyRouteLabel(policy: ProviderPathPolicyAction | null | undefined): string {
+		if (!policy) return 'Default route';
+		if (providerPolicyIsBlocked(policy)) return 'Setup required';
+		if (policy.selected_provider === 'sentient_managed') return 'Managed';
+		if (policy.selected_provider === 'openrouter') return 'Direct OpenRouter';
+		return String(policy.selected_provider ?? 'Default route');
+	}
+
+	function providerPolicyRouteVariant(policy: ProviderPathPolicyAction | null | undefined): BadgeVariant {
+		if (!policy) return 'neutral';
+		if (providerPolicyIsBlocked(policy)) return 'warning';
+		return policy.selected_provider === 'sentient_managed' ? 'success' : 'info';
+	}
+
+	function providerPolicyBlockedMessage(policy: ProviderPathPolicyAction | null | undefined): string {
+		switch (policy?.blocked_reason_code) {
+			case 'structured_openrouter_model_unavailable':
+				return 'Structured output route unavailable';
+			case 'no_ready_provider':
+				return 'Set up Managed Service or a compatible OpenRouter key';
+			case 'multiple_ready_credentials':
+				return 'Choose one ready credential for this provider';
+			case 'policy_unavailable':
+				return 'Execution route policy unavailable';
+			default:
+				return policy?.blocked_reason_code ? 'Execution route setup required' : '';
+		}
+	}
+
+	function builtInOptionClass(policy: ProviderPathPolicyAction | null | undefined): string {
+		const base = 'sf:flex sf:items-start sf:gap-3 sf:border sf:rounded-md sf:p-3';
+		if (providerPolicyIsBlocked(policy)) {
+			return `${base} sf:cursor-not-allowed sf:border-amber-200 sf:bg-amber-50`;
+		}
+
+		return `${base} sf:cursor-pointer sf:border-slate-200 sf:hover:border-primary-300`;
 	}
 
 	function dependencyBadgeLabel(mappingId: string): string {
@@ -3866,6 +3941,13 @@
 
 		if (createKind === 'custom' && !chosenCustom) {
 			createError = 'Select a custom action to link.';
+			return;
+		}
+
+		if (createKind === 'template' && providerPolicyIsBlocked(selectedCreateProviderPolicy)) {
+			createError =
+				providerPolicyBlockedMessage(selectedCreateProviderPolicy) ||
+				'Set up an execution route before linking this built-in action.';
 			return;
 		}
 
@@ -6164,20 +6246,33 @@
 									const label = (definition.label ?? '').toLowerCase();
 									return definition.id.toLowerCase().includes(term) || label.includes(term);
 								}) as definition (definition.id)}
+									{@const definitionProviderPolicy = providerPolicyForDefinition(definition)}
+									{@const definitionProviderBlocked = providerPolicyIsBlocked(definitionProviderPolicy)}
 									<label
-										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+										class={builtInOptionClass(definitionProviderPolicy)}
+										data-testid={`built-in-action-option-${definition.id}`}
 									>
 										<input
 											type="radio"
 											name="template-choice"
 											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={selectedTemplateId === definition.id}
-											onchange={() => (selectedTemplateId = definition.id)}
+											checked={!definitionProviderBlocked && selectedTemplateId === definition.id}
+											disabled={definitionProviderBlocked}
+											onchange={() => {
+												if (!definitionProviderBlocked) {
+													selectedTemplateId = definition.id;
+												}
+											}}
 										/>
-										<div class="sf:flex sf:flex-col sf:gap-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-												{definition.label ?? definition.id}
-											</p>
+										<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-1">
+											<div class="sf:flex sf:min-w-0 sf:flex-wrap sf:items-center sf:gap-2">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+													{definition.label ?? definition.id}
+												</p>
+												<Badge variant={providerPolicyRouteVariant(definitionProviderPolicy)}>
+													{providerPolicyRouteLabel(definitionProviderPolicy)}
+												</Badge>
+											</div>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
 												Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
@@ -6187,6 +6282,11 @@
 											<p class="sf:text-xs sf:text-slate-500">
 												Hooks: {summarizeDefinitionHooks(definition.hooks)}
 											</p>
+											{#if definitionProviderBlocked}
+												<p class="sf:text-xs sf:font-medium sf:text-amber-800">
+													{providerPolicyBlockedMessage(definitionProviderPolicy)}
+												</p>
+											{/if}
 										</div>
 									</label>
 								{/each}

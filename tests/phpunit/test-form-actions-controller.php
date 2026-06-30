@@ -374,6 +374,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         parent::setUp();
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_workspace_tables();
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Form_Actions_Controller();
         GFAPI::$entries = [];
         GFAPI::$forms = [];
@@ -407,6 +408,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         {
             delete_option( $option_key );
         }
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         parent::tearDown();
     }
 
@@ -2663,6 +2665,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
         $this->assertIsInt( $credential_id );
+        $this->seed_structured_openrouter_model_cache();
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/12/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
@@ -2709,7 +2712,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertIsArray( $custom_action );
         $this->assertSame( (int) ( $template['id'] ?? 0 ), (int) ( $custom_action['template_id'] ?? 0 ) );
         $this->assertSame( 'active', $custom_action['status'] ?? null );
+        $this->assertSame( 'openrouter', $custom_action['model_selection_json']['provider'] ?? null );
         $this->assertSame( $credential_id, (int) ( $custom_action['model_selection_json']['credential_id'] ?? 0 ) );
+        $this->assertSame( '~openai/gpt-latest', $custom_action['model_selection_json']['model'] ?? null );
 
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
         $this->assertCount( 2, $stored_mappings );
@@ -2727,6 +2732,116 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 0.65, $validation_mapping['effect_mapping_json']['spam']['min_confidence'] ?? null );
         $this->assertSame( 'all_results', $validation_mapping['effect_mapping_json']['spam']['note']['result_display_mode'] ?? null );
         $this->assertSame( 'detailed', $validation_mapping['effect_mapping_json']['spam']['note']['indicators_display'] ?? null );
+    }
+
+    public function test_add_form_action_defaults_bundled_actions_to_managed_when_managed_and_openrouter_are_ready(): void
+    {
+        $openrouter_credential_id = $this->create_ready_openrouter_credential();
+        $managed_credential_id    = $this->create_ready_managed_credential();
+        $this->seed_structured_openrouter_model_cache();
+
+        $this->create_bundled_local_first_mapping( 121, 'spam_detection_v1', [ 'gform_validation' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'spam_detection_v1' );
+
+        $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
+        $this->assertSame( $managed_credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( 'sf_default', $selection['model'] ?? null );
+        $this->assertSame( 'sentient_managed', $selection['selection']['provider'] ?? null );
+        $this->assertSame( 'sf_default', $selection['selection']['primary'] ?? null );
+        $this->assertSame( $managed_credential_id, (int) ( $selection['selection']['credential_id'] ?? 0 ) );
+        $this->assertSame( 'openrouter', $selection['backup_provider'] ?? null );
+        $this->assertSame( $openrouter_credential_id, (int) ( $selection['backup_credential_id'] ?? 0 ) );
+        $this->assertSame( '~openai/gpt-latest', $selection['backup_model'] ?? null );
+    }
+
+    public function test_add_form_action_defaults_bundled_actions_to_managed_when_only_managed_is_ready(): void
+    {
+        $managed_credential_id = $this->create_ready_managed_credential();
+
+        $this->create_bundled_local_first_mapping( 122, 'spam_detection_v1', [ 'gform_validation' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'spam_detection_v1' );
+
+        $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
+        $this->assertSame( $managed_credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( 'sf_default', $selection['model'] ?? null );
+        $this->assertArrayNotHasKey( 'backup_provider', $selection );
+        $this->assertArrayNotHasKey( 'backup_credential_id', $selection );
+    }
+
+    public function test_add_form_action_defaults_bundled_actions_to_managed_when_openrouter_credentials_are_ambiguous(): void
+    {
+        $managed_credential_id = $this->create_ready_managed_credential();
+        $this->create_ready_openrouter_credential();
+        $this->create_ready_openrouter_credential();
+        $this->seed_structured_openrouter_model_cache();
+
+        $this->create_bundled_local_first_mapping( 125, 'spam_detection_v1', [ 'gform_validation' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'spam_detection_v1' );
+
+        $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
+        $this->assertSame( $managed_credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( 'sf_default', $selection['model'] ?? null );
+        $this->assertArrayNotHasKey( 'backup_provider', $selection );
+    }
+
+    public function test_add_form_action_uses_openrouter_when_it_is_the_only_ready_route_and_model_supports_structured_output(): void
+    {
+        $credential_id = $this->create_ready_openrouter_credential();
+        $this->seed_structured_openrouter_model_cache();
+
+        $this->create_bundled_local_first_mapping( 123, 'spam_detection_v1', [ 'gform_validation' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'spam_detection_v1' );
+
+        $this->assertSame( 'openrouter', $selection['provider'] ?? null );
+        $this->assertSame( $credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( '~openai/gpt-latest', $selection['model'] ?? null );
+        $this->assertSame( 'openrouter', $selection['selection']['provider'] ?? null );
+        $this->assertSame( '~openai/gpt-latest', $selection['selection']['primary'] ?? null );
+        $this->assertFalse( $selection['selection']['is_preset'] ?? true );
+    }
+
+    public function test_add_form_action_uses_openrouter_when_managed_account_lacks_ready_credential(): void
+    {
+        $credential_id = $this->create_ready_openrouter_credential();
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'license_id'     => 'license-form-actions-provider-path-no-credential-test',
+                'site_id'        => '55555555-5555-4555-8555-555555555555',
+                'proxy_api_key'  => 'proxy-form-actions-provider-path-no-credential-test',
+                'tier'           => 'pro',
+            ]
+        );
+        $this->seed_structured_openrouter_model_cache();
+
+        $this->create_bundled_local_first_mapping( 126, 'spam_detection_v1', [ 'gform_validation' ] );
+
+        $selection = $this->get_bundled_custom_action_model_selection( 'spam_detection_v1' );
+
+        $this->assertSame( 'openrouter', $selection['provider'] ?? null );
+        $this->assertSame( $credential_id, (int) ( $selection['credential_id'] ?? 0 ) );
+        $this->assertSame( '~openai/gpt-latest', $selection['model'] ?? null );
+    }
+
+    public function test_add_form_action_rejects_bundled_action_when_no_ready_execution_route_exists(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/124/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 124 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param( 'settings', [] );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_bundled_action_provider_path_unavailable', $response->get_error_code() );
+        $this->assertSame( 409, $response->get_error_data()['status'] ?? null );
     }
 
     public function test_add_form_action_creates_local_first_content_validation_mapping_only_on_supported_hook(): void
@@ -5055,12 +5170,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayHasKey( 'form_action_configs', $data );
         $this->assertArrayHasKey( 'form_fields', $data );
         $this->assertArrayHasKey( 'action_defaults', $data );
+        $this->assertArrayHasKey( 'provider_path_policy', $data );
         $this->assertArrayHasKey( 'workflow_plan', $data );
         $this->assertIsArray( $data['definitions'] );
         $this->assertIsArray( $data['provider_credentials'] );
         $this->assertIsArray( $data['form_action_configs'] );
         $this->assertIsArray( $data['form_fields'] );
         $this->assertIsArray( $data['action_defaults'] );
+        $this->assertIsArray( $data['provider_path_policy'] );
         $this->assertIsArray( $data['workflow_plan'] );
         $this->assertSame( 'gravity_forms', $data['form_source_descriptor']['slug'] ?? null );
         $this->assertArrayHasKey( 'validation', $data['form_source_descriptor']['lifecycles'] ?? [] );
@@ -5071,6 +5188,35 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'cps', $data['workflow_plan']['authority'] ?? null );
         $this->assertSame( 2, $sync->plan_calls );
         $this->assertSame( 1, $sync->sync_calls );
+    }
+
+    public function test_form_actions_bootstrap_includes_bundled_provider_path_policy(): void
+    {
+        $openrouter_credential_id = $this->create_ready_openrouter_credential();
+        $managed_credential_id    = $this->create_ready_managed_credential();
+        $this->seed_structured_openrouter_model_cache();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data   = $response->get_data();
+        $policy = $data['provider_path_policy'] ?? null;
+
+        $this->assertIsArray( $policy );
+        $this->assertSame( 'sentient_managed', $policy['default_provider'] ?? null );
+        $this->assertTrue( $policy['providers']['sentient_managed']['ready'] ?? false );
+        $this->assertSame( $managed_credential_id, (int) ( $policy['providers']['sentient_managed']['credential_id'] ?? 0 ) );
+        $this->assertTrue( $policy['providers']['openrouter']['ready'] ?? false );
+        $this->assertSame( $openrouter_credential_id, (int) ( $policy['providers']['openrouter']['credential_id'] ?? 0 ) );
+        $this->assertSame( 'sentient_managed', $policy['actions']['spam_detection_v1']['selected_provider'] ?? null );
+        $this->assertSame(
+            '~openai/gpt-latest',
+            $policy['actions']['spam_detection_v1']['model_selection']['backup_model'] ?? null
+        );
     }
 
     public function test_contact_form_7_bootstrap_exposes_ledger_required_capabilities_without_gravity_only_claims(): void
@@ -5883,6 +6029,99 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         return $response->get_data();
     }
 
+    private function create_ready_openrouter_credential(): int
+    {
+        global $wpdb;
+
+        $credentials   = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'      => 'openrouter',
+                'label'         => 'Owner OpenRouter key',
+                'auth_mode'     => 'constant',
+                'constant_name' => 'SENTIENT_FORMS_OPENROUTER_KEY',
+                'status'        => 'valid',
+            ]
+        );
+
+        $this->assertIsInt( $credential_id );
+        return $credential_id;
+    }
+
+    private function create_ready_managed_credential(): int
+    {
+        global $wpdb;
+
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'license_id'     => 'license-form-actions-provider-path-test',
+                'site_id'        => '44444444-4444-4444-8444-444444444444',
+                'proxy_api_key'  => 'proxy-form-actions-provider-path-test',
+                'tier'           => 'pro',
+            ]
+        );
+
+        $credentials   = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'  => 'sentient_managed',
+                'label'     => 'Sentient Forms Managed Service',
+                'auth_mode' => 'sentient_proxy',
+                'status'    => 'valid',
+            ]
+        );
+
+        $this->assertIsInt( $credential_id );
+        return $credential_id;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_bundled_custom_action_model_selection( string $template_code ): array
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $custom_action  = $custom_actions->get_by_code(
+            Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $template_code )
+        );
+
+        $this->assertIsArray( $custom_action );
+        $selection = $custom_action['model_selection_json'] ?? null;
+        $this->assertIsArray( $selection );
+
+        return $selection;
+    }
+
+    private function seed_structured_openrouter_model_cache(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openai/gpt-5.5',
+                [
+                    'id'                   => 'openai/gpt-5.5',
+                    'name'                 => 'OpenAI: GPT-5.5',
+                    'free'                 => false,
+                    'context_length'       => 400000,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000002',
+                        'completion' => '0.000008',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+    }
+
     /**
      * @param array<int, array<string, mixed>> $mappings
      */
@@ -5910,6 +6149,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_model_cache',
             ] as $table
         )
         {

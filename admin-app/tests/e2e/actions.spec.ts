@@ -2358,6 +2358,71 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Spam Detection')).toBeVisible();
 	});
 
+	test('blocks built-in action creation when no compatible execution route is available', async ({
+		page
+	}) => {
+		const createRequests: unknown[] = [];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance,
+				providerPathPolicy: {
+					default_provider: null,
+					providers: {
+						sentient_managed: {
+							ready: false,
+							credential_id: null,
+							blocked_reason_code: null
+						},
+						openrouter: {
+							ready: false,
+							credential_id: null,
+							blocked_reason_code: 'structured_openrouter_model_unavailable'
+						}
+					},
+					actions: {
+						spam_detection_v1: {
+							selected_provider: null,
+							model_selection: null,
+							blocked_reason_code: 'structured_openrouter_model_unavailable',
+							requires_structured_output: true
+						}
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		page.on('request', (request) => {
+			if (request.method() === 'POST' && /forms\/123\/actions$/.test(request.url())) {
+				createRequests.push(request.postDataJSON());
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByRole('radio', { name: /Spam Detection/i })).toBeDisabled();
+		await expect(drawer.getByText('Structured output route unavailable')).toBeVisible();
+		await expect(drawer.getByTestId('link-action-submit')).toBeDisabled();
+		expect(createRequests).toHaveLength(0);
+	});
+
 	test('only exposes realtime trigger for the Realtime Clarification Assistant', async ({
 		page
 	}) => {
