@@ -240,17 +240,27 @@ class Sentient_Forms_Local_Action_Execution_Service
         )
         {
             $cached_result = is_array( $existing['result_json'] ?? null ) ? $existing['result_json'] : [];
+            $cached_provider = isset( $existing['provider'] ) && is_scalar( $existing['provider'] )
+                ? sanitize_key( (string) $existing['provider'] )
+                : $provider;
+            if ( ! in_array( $cached_provider, [ 'openrouter', 'sentient_managed' ], true ) )
+            {
+                $cached_provider = $provider;
+            }
+            $cached_model = isset( $existing['model'] ) && is_scalar( $existing['model'] )
+                ? sanitize_text_field( (string) $existing['model'] )
+                : $this->effective_response_model( $model, $cached_result );
 
             $cached_response = [
                 'execution_request_id' => $execution_request_id,
                 'status'               => 'succeeded',
-                'provider'             => $provider,
-                'model'                => $this->effective_response_model( $model, $cached_result ),
+                'provider'             => $cached_provider,
+                'model'                => $cached_model,
                 'cached'               => true,
                 'result'               => $cached_result,
                 'effects'              => is_array( $cached_result['effects'] ?? null ) ? $cached_result['effects'] : [],
             ];
-            if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+            if ( 'sentient_managed' === $cached_provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
             {
                 $cached_response['result'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cached_response['result'] );
                 $cached_response['effects'] = is_array( $cached_response['result']['effects'] ?? null ) ? $cached_response['result']['effects'] : [];
@@ -308,26 +318,30 @@ class Sentient_Forms_Local_Action_Execution_Service
                 ? $this->managed_privacy_route_failure_error_data( $response )
                 : $response->get_error_data();
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
-            $backup_result = $this->execute_openrouter_backup_after_managed_credit_exhaustion(
-                $response,
-                $redacted_message,
-                $model,
-                $model_selection,
-                $messages,
-                $definition,
-                $structured_output_contract,
-                $mapping,
-                $form,
-                $entry,
-                $context,
-                $action,
-                $action_code,
-                $execution_request_id,
-                $submission_uuid
-            );
-            if ( null !== $backup_result )
+            if ( 'sentient_managed' === $provider )
             {
-                return $backup_result;
+                $backup_result = $this->execute_openrouter_backup_after_managed_credit_exhaustion(
+                    $response,
+                    $redacted_message,
+                    $model,
+                    $model_selection,
+                    $messages,
+                    $definition,
+                    $structured_output_contract,
+                    $mapping,
+                    $form,
+                    $entry,
+                    $context,
+                    $action,
+                    $action_code,
+                    $execution_request_id,
+                    $submission_uuid,
+                    $payload_digest
+                );
+                if ( null !== $backup_result )
+                {
+                    return $backup_result;
+                }
             }
 
             $this->events->record(
@@ -471,11 +485,17 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $action,
         string $action_code,
         string $execution_request_id,
-        ?string $submission_uuid
+        ?string $submission_uuid,
+        string $primary_payload_digest
     ): array | WP_Error | null
     {
         $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
         if ( '' === $fallback_reason )
+        {
+            return null;
+        }
+
+        if ( $this->managed_privacy_route_required( $model_selection, $context ) )
         {
             return null;
         }
@@ -486,6 +506,11 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $backup_credential_id = absint( $model_selection['backup_credential_id'] ?? 0 );
+        if ( $backup_credential_id <= 0 )
+        {
+            return null;
+        }
+
         $backup_model         = isset( $model_selection['backup_model'] ) && is_scalar( $model_selection['backup_model'] )
             ? trim( sanitize_text_field( (string) $model_selection['backup_model'] ) )
             : '';
@@ -499,26 +524,26 @@ class Sentient_Forms_Local_Action_Execution_Service
             $model_support = $this->assert_openrouter_structured_output_model_supported( $backup_model, $structured_output_contract );
             if ( is_wp_error( $model_support ) )
             {
-                return $model_support;
+                return null;
             }
         }
 
         $consent = $this->assert_external_service_consent( 'openrouter' );
         if ( is_wp_error( $consent ) )
         {
-            return $consent;
+            return null;
         }
 
         $credential = $this->model_selection_service->resolve_execution_credential( 'openrouter', $backup_credential_id );
         if ( is_wp_error( $credential ) )
         {
-            return $credential;
+            return null;
         }
 
         $api_key = $this->resolve_api_key( $credential );
         if ( is_wp_error( $api_key ) )
         {
-            return $api_key;
+            return null;
         }
 
         $backup_model_selection = $model_selection;
@@ -649,7 +674,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'token_usage_json'     => $result['usage'] ?? null,
                 'cost_json'            => $result['cost'] ?? null,
                 'result_json'          => $stored_result,
-                'payload_digest'       => $payload_digest,
+                'payload_digest'       => $primary_payload_digest,
             ]
         );
         $this->index_lead_scoring_result( $mapping, $form, $entry, $context, $action_code, $execution_result, $result );
