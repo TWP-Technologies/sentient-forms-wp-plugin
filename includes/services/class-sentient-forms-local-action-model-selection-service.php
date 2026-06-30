@@ -44,6 +44,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         $selection['provider'] = $provider;
+        $source_provider       = $provider;
         $template_code         = $this->resolve_bundled_template_code_for_action( $action, $definition );
         if ( '' !== $template_code )
         {
@@ -67,6 +68,36 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             elseif ( '' === $model || ! str_contains( $model, '/' ) )
             {
                 $selection['model'] = '' !== $default_model ? $default_model : 'openrouter/auto';
+            }
+
+            $openrouter_backup_model      = $this->resolve_openrouter_backup_model_for_repair( $selection, $definition );
+            $openrouter_backup_credential = $this->openrouter_backup_credential_for_repair( $selection );
+            $managed_repair_credential    = $this->managed_credential_for_openrouter_bundled_repair( $template_code, $source_provider );
+            if ( is_array( $managed_repair_credential ) )
+            {
+                $managed_credential_id = absint( $managed_repair_credential['id'] ?? 0 );
+                if ( $managed_credential_id > 0 )
+                {
+                    $provider  = 'sentient_managed';
+                    $selection = $this->repair_openrouter_bundled_selection_to_managed(
+                        $template_code,
+                        $selection,
+                        $managed_credential_id
+                    );
+
+                    if ( is_array( $openrouter_backup_credential ) )
+                    {
+                        if ( '' !== $openrouter_backup_model )
+                        {
+                            $selection['backup_model'] = $openrouter_backup_model;
+                        }
+
+                        $selection = $this->attach_openrouter_backup_selection(
+                            $selection,
+                            absint( $openrouter_backup_credential['id'] ?? 0 )
+                        );
+                    }
+                }
             }
         }
         elseif ( empty( $selection['model'] ) )
@@ -171,6 +202,153 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             : '';
 
         return '' === $model || 'openrouter/auto' === $model;
+    }
+
+    /**
+     * Bundled local-first actions should use the managed route whenever a ready managed
+     * credential exists. Direct OpenRouter is retained separately as a backup route.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function managed_credential_for_openrouter_bundled_repair( string $template_code, string $provider ): ?array
+    {
+        if ( '' === $template_code || 'openrouter' !== sanitize_key( $provider ) || ! $this->managed_account_is_active() )
+        {
+            return null;
+        }
+
+        $managed_credential = $this->find_single_ready_credential_for_provider( 'sentient_managed' );
+        return is_array( $managed_credential ) ? $managed_credential : null;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @param array<string, mixed> $definition
+     */
+    private function resolve_openrouter_backup_model_for_repair( array $selection, array $definition ): string
+    {
+        $model = isset( $selection['model'] ) && is_scalar( $selection['model'] )
+            ? trim( sanitize_text_field( (string) $selection['model'] ) )
+            : '';
+
+        if ( '' !== $model && ! str_starts_with( $model, 'sf_' ) )
+        {
+            return $model;
+        }
+
+        if ( str_starts_with( $model, 'sf_' ) )
+        {
+            $resolved = $this->resolve_local_preset_model_id( sanitize_key( $model ) );
+            if ( '' !== $resolved )
+            {
+                return $resolved;
+            }
+        }
+
+        if ( is_array( $definition['structured_output_schema'] ?? null ) )
+        {
+            return $this->resolve_local_preset_model_id( 'sf_structured' );
+        }
+
+        return 'openrouter/auto' === $model ? 'openrouter/auto' : '';
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>|null
+     */
+    private function openrouter_backup_credential_for_repair( array $selection ): ?array
+    {
+        $credential_id = absint( $selection['credential_id'] ?? 0 );
+        if ( $credential_id > 0 )
+        {
+            $credential = $this->resolve_execution_credential( 'openrouter', $credential_id );
+            if ( is_array( $credential ) )
+            {
+                return $credential;
+            }
+        }
+
+        $credential = $this->find_single_ready_credential_for_provider( 'openrouter' );
+        return is_array( $credential ) ? $credential : null;
+    }
+
+    private function managed_account_is_active(): bool
+    {
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) )
+        {
+            return false;
+        }
+
+        $plugin         = Sentient_Forms_Plugin::instance();
+        $license        = $plugin->get_license_data();
+        $license_status = sanitize_key( (string) ( $license['license_status'] ?? '' ) );
+        if ( ! in_array( $license_status, [ 'active', 'trial', 'valid' ], true ) )
+        {
+            return false;
+        }
+
+        return '' !== trim( (string) ( $license['proxy_api_key'] ?? $plugin->get_proxy_api_key() ) )
+            && '' !== trim( (string) ( $license['site_id'] ?? '' ) );
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>
+     */
+    private function attach_openrouter_backup_selection( array $selection, int $credential_id ): array
+    {
+        if ( $credential_id <= 0 )
+        {
+            return $selection;
+        }
+
+        $backup_model = isset( $selection['backup_model'] ) && is_scalar( $selection['backup_model'] )
+            ? trim( sanitize_text_field( (string) $selection['backup_model'] ) )
+            : '';
+        if ( '' === $backup_model )
+        {
+            $backup_model = isset( $selection['model'] ) && is_scalar( $selection['model'] )
+                ? trim( sanitize_text_field( (string) $selection['model'] ) )
+                : '';
+        }
+        if ( '' === $backup_model || str_starts_with( $backup_model, 'sf_' ) )
+        {
+            $backup_model = 'openrouter/auto';
+        }
+
+        $selection['backup_provider']       = 'openrouter';
+        $selection['backup_credential_id'] = $credential_id;
+        $selection['backup_model']         = $backup_model;
+
+        return $selection;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>
+     */
+    private function repair_openrouter_bundled_selection_to_managed( string $template_code, array $selection, int $credential_id ): array
+    {
+        if ( $credential_id <= 0 )
+        {
+            return $selection;
+        }
+
+        $preset = 'clarification_assistant_v1' === $template_code ? 'sf_realtime' : 'sf_default';
+
+        $runtime_selection = is_array( $selection['selection'] ?? null ) ? $selection['selection'] : [];
+        $runtime_selection['primary']       = $preset;
+        $runtime_selection['provider']      = 'sentient_managed';
+        $runtime_selection['is_preset']     = true;
+        $runtime_selection['credential_id'] = $credential_id;
+
+        $selection['provider']      = 'sentient_managed';
+        $selection['model']         = $preset;
+        $selection['credential_id'] = $credential_id;
+        $selection['selection']     = $runtime_selection;
+
+        return $selection;
     }
 
     /**

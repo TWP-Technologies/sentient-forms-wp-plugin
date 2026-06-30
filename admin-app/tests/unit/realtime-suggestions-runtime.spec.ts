@@ -446,6 +446,40 @@ describe('realtime suggestions runtime', () => {
 		expect(toggle?.textContent).toBe('Show');
 	});
 
+	it('renders manual refresh as an accessible header icon only while the widget is open', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ suggestions: [] })
+			})
+		);
+		setupRuntimeConfig();
+		await evaluateRuntimeScript();
+
+		const header = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget__header');
+		const refreshButton = document.querySelector<HTMLButtonElement>('[data-role="refresh"]');
+		const toggleButton = document.querySelector<HTMLButtonElement>('[data-role="toggle"]');
+		expect(header).not.toBeNull();
+		expect(refreshButton).not.toBeNull();
+		expect(toggleButton).not.toBeNull();
+		expect(refreshButton?.closest('.sentient-forms-realtime-widget__header')).toBe(header);
+		expect(
+			Boolean(
+				refreshButton!.compareDocumentPosition(toggleButton!) &
+					Node.DOCUMENT_POSITION_FOLLOWING
+			)
+		).toBe(true);
+		expect(refreshButton?.hidden).toBe(true);
+		expect(refreshButton?.getAttribute('aria-label')).toBe('Refresh suggestions');
+		expect(refreshButton?.getAttribute('title')).toBe('Refresh suggestions');
+		expect(refreshButton?.textContent?.trim()).toBe('');
+		expect(refreshButton?.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+
+		toggleButton?.click();
+		expect(refreshButton?.hidden).toBe(false);
+	});
+
 	it('can hide the assistant from mapping-level config until a visitor starts interacting with the form', async () => {
 		vi.stubGlobal(
 			'fetch',
@@ -1811,6 +1845,7 @@ describe('realtime suggestions runtime', () => {
 			'.sentient-forms-realtime-widget__refresh'
 		);
 		expect(refreshButton).not.toBeNull();
+		expect(refreshButton?.hidden).toBe(true);
 		refreshButton?.click();
 		await flushRuntime();
 

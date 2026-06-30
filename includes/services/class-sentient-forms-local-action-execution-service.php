@@ -240,17 +240,27 @@ class Sentient_Forms_Local_Action_Execution_Service
         )
         {
             $cached_result = is_array( $existing['result_json'] ?? null ) ? $existing['result_json'] : [];
+            $cached_provider = isset( $existing['provider'] ) && is_scalar( $existing['provider'] )
+                ? sanitize_key( (string) $existing['provider'] )
+                : $provider;
+            if ( ! in_array( $cached_provider, [ 'openrouter', 'sentient_managed' ], true ) )
+            {
+                $cached_provider = $provider;
+            }
+            $cached_model = isset( $existing['model'] ) && is_scalar( $existing['model'] )
+                ? sanitize_text_field( (string) $existing['model'] )
+                : $this->effective_response_model( $model, $cached_result );
 
             $cached_response = [
                 'execution_request_id' => $execution_request_id,
                 'status'               => 'succeeded',
-                'provider'             => $provider,
-                'model'                => $this->effective_response_model( $model, $cached_result ),
+                'provider'             => $cached_provider,
+                'model'                => $cached_model,
                 'cached'               => true,
                 'result'               => $cached_result,
                 'effects'              => is_array( $cached_result['effects'] ?? null ) ? $cached_result['effects'] : [],
             ];
-            if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+            if ( 'sentient_managed' === $cached_provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
             {
                 $cached_response['result'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cached_response['result'] );
                 $cached_response['effects'] = is_array( $cached_response['result']['effects'] ?? null ) ? $cached_response['result']['effects'] : [];
@@ -308,6 +318,32 @@ class Sentient_Forms_Local_Action_Execution_Service
                 ? $this->managed_privacy_route_failure_error_data( $response )
                 : $response->get_error_data();
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
+            if ( 'sentient_managed' === $provider )
+            {
+                $backup_result = $this->execute_openrouter_backup_after_managed_credit_exhaustion(
+                    $response,
+                    $redacted_message,
+                    $model,
+                    $model_selection,
+                    $messages,
+                    $definition,
+                    $structured_output_contract,
+                    $mapping,
+                    $form,
+                    $entry,
+                    $context,
+                    $action,
+                    $action_code,
+                    $execution_request_id,
+                    $submission_uuid,
+                    $payload_digest
+                );
+                if ( null !== $backup_result )
+                {
+                    return $backup_result;
+                }
+            }
+
             $this->events->record(
                 [
                     'execution_request_id' => $execution_request_id,
@@ -426,6 +462,270 @@ class Sentient_Forms_Local_Action_Execution_Service
             'result'               => $result,
             'effects'              => $effects,
         ];
+    }
+
+    /**
+     * @param array<int, array{role?: string, content?: mixed}>                 $messages
+     * @param array{schema: array<string, mixed>, source: string}|null|WP_Error $structured_output_contract
+     *
+     * @return array<string, mixed>|WP_Error|null
+     */
+    private function execute_openrouter_backup_after_managed_credit_exhaustion(
+        WP_Error $managed_error,
+        string $redacted_managed_message,
+        string $managed_model,
+        array $model_selection,
+        array $messages,
+        array $definition,
+        array | WP_Error | null $structured_output_contract,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $context,
+        array $action,
+        string $action_code,
+        string $execution_request_id,
+        ?string $submission_uuid,
+        string $primary_payload_digest
+    ): array | WP_Error | null
+    {
+        $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
+        if ( '' === $fallback_reason )
+        {
+            return null;
+        }
+
+        if ( $this->managed_privacy_route_required( $model_selection, $context ) )
+        {
+            return null;
+        }
+
+        if ( 'openrouter' !== sanitize_key( (string) ( $model_selection['backup_provider'] ?? '' ) ) )
+        {
+            return null;
+        }
+
+        $backup_credential_id = absint( $model_selection['backup_credential_id'] ?? 0 );
+        if ( $backup_credential_id <= 0 )
+        {
+            return null;
+        }
+
+        $backup_model         = isset( $model_selection['backup_model'] ) && is_scalar( $model_selection['backup_model'] )
+            ? trim( sanitize_text_field( (string) $model_selection['backup_model'] ) )
+            : '';
+        if ( '' === $backup_model )
+        {
+            $backup_model = 'openrouter/auto';
+        }
+
+        if ( is_array( $structured_output_contract ) )
+        {
+            $model_support = $this->assert_openrouter_structured_output_model_supported( $backup_model, $structured_output_contract );
+            if ( is_wp_error( $model_support ) )
+            {
+                return null;
+            }
+        }
+
+        $consent = $this->assert_external_service_consent( 'openrouter' );
+        if ( is_wp_error( $consent ) )
+        {
+            return null;
+        }
+
+        $credential = $this->model_selection_service->resolve_execution_credential( 'openrouter', $backup_credential_id );
+        if ( is_wp_error( $credential ) )
+        {
+            return null;
+        }
+
+        $api_key = $this->resolve_api_key( $credential );
+        if ( is_wp_error( $api_key ) )
+        {
+            return null;
+        }
+
+        $backup_model_selection = $model_selection;
+        $backup_model_selection['provider']      = 'openrouter';
+        $backup_model_selection['model']         = $backup_model;
+        $backup_model_selection['credential_id'] = (int) $credential['id'];
+
+        $payload        = $this->build_provider_payload( $backup_model, $messages, $definition, $backup_model_selection, $structured_output_contract, $action );
+        $payload_digest = hash( 'sha256', (string) wp_json_encode( $payload ) );
+        $response       = $this->openrouter->chat_completion( $api_key, $payload );
+        $fallback_meta  = [
+            'primary_provider'    => 'sentient_managed',
+            'primary_model'       => $managed_model,
+            'backup_provider'     => 'openrouter',
+            'backup_model'        => $backup_model,
+            'reason'              => $fallback_reason,
+            'primary_error_code'  => $managed_error->get_error_code(),
+            'primary_error_message' => $redacted_managed_message,
+        ];
+
+        if ( is_wp_error( $response ) )
+        {
+            $redacted_message = $this->redact_secret( $response->get_error_message(), $api_key );
+            $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
+            $this->events->record(
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'mapping_id'           => (int) $mapping['id'],
+                    'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
+                    'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
+                    'entry_id'             => $entry['id'] ?? null,
+                    'submission_uuid'      => $submission_uuid,
+                    'provider'             => 'openrouter',
+                    'model'                => $backup_model,
+                    'status'               => 'failed',
+                    'error_code'           => $response->get_error_code(),
+                    'error_message'        => $redacted_message,
+                    'payload_digest'       => $payload_digest,
+                    'result_json'          => [
+                        'fallback' => $fallback_meta,
+                    ],
+                ]
+            );
+
+            return new WP_Error( $response->get_error_code(), $redacted_message, $response->get_error_data() );
+        }
+
+        $result = $this->normalize_openrouter_response( $response );
+        $result = $this->stamp_lead_profile_structured_metadata( $result, $context, $action_code );
+        $normalized_result = $result;
+        $effective_model   = $this->effective_response_model( $backup_model, $normalized_result );
+        $result            = $this->validate_structured_output( $result, $structured_output_contract );
+        if ( is_wp_error( $result ) )
+        {
+            $this->events->record(
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'mapping_id'           => (int) $mapping['id'],
+                    'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
+                    'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
+                    'entry_id'             => $entry['id'] ?? null,
+                    'submission_uuid'      => $submission_uuid,
+                    'provider'             => 'openrouter',
+                    'model'                => $effective_model,
+                    'status'               => 'failed',
+                    'token_usage_json'     => is_array( $response['usage'] ?? null ) ? $response['usage'] : null,
+                    'cost_json'            => $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] ),
+                    'error_code'           => $result->get_error_code(),
+                    'error_message'        => $result->get_error_message(),
+                    'result_json'          => array_merge(
+                        $this->structured_output_failure_result_json(
+                            $result,
+                            'openrouter',
+                            $effective_model,
+                            $action_code,
+                            $structured_output_contract,
+                            $payload,
+                            $context,
+                            $normalized_result
+                        ),
+                        [
+                            'fallback' => $fallback_meta,
+                        ]
+                    ),
+                    'payload_digest'       => $payload_digest,
+                ]
+            );
+
+            return $result;
+        }
+
+        $result['fallback'] = $fallback_meta;
+        $execution_result = [
+            'execution_request_id' => $execution_request_id,
+            'status'               => 'succeeded',
+            'provider'             => 'openrouter',
+            'model'                => $effective_model,
+            'cached'               => false,
+            'result'               => $result,
+        ];
+        $effects = $this->result_applier->apply( $mapping, $form, $entry, $execution_result, $action );
+        if ( is_wp_error( $effects ) )
+        {
+            $effects = [
+                'applied' => [],
+                'skipped' => [
+                    [
+                        'effect' => 'result_application',
+                        'reason' => $effects->get_error_code(),
+                    ],
+                ],
+            ];
+        }
+
+        $result['effects'] = $effects;
+        $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, 'openrouter' );
+        $this->events->record(
+            [
+                'execution_request_id' => $execution_request_id,
+                'mapping_id'           => (int) $mapping['id'],
+                'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
+                'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
+                'entry_id'             => $entry['id'] ?? null,
+                'submission_uuid'      => $submission_uuid,
+                'provider'             => 'openrouter',
+                'model'                => $effective_model,
+                'status'               => 'succeeded',
+                'token_usage_json'     => $result['usage'] ?? null,
+                'cost_json'            => $result['cost'] ?? null,
+                'result_json'          => $stored_result,
+                'payload_digest'       => $primary_payload_digest,
+            ]
+        );
+        $this->index_lead_scoring_result( $mapping, $form, $entry, $context, $action_code, $execution_result, $result );
+
+        return [
+            'execution_request_id' => $execution_request_id,
+            'status'               => 'succeeded',
+            'provider'             => 'openrouter',
+            'model'                => $effective_model,
+            'cached'               => false,
+            'fallback_reason'      => $fallback_reason,
+            'result'               => $result,
+            'effects'              => $effects,
+        ];
+    }
+
+    private function managed_credit_exhaustion_fallback_reason( WP_Error $error ): string
+    {
+        $code = sanitize_key( $error->get_error_code() );
+        if (
+            in_array(
+                $code,
+                [
+                    'managed_credits_exhausted',
+                    'managed_insufficient_credits',
+                    'managed_billing_spend_suspended',
+                ],
+                true
+            )
+        )
+        {
+            return 'sentient_managed_credits_exhausted';
+        }
+
+        $data   = $error->get_error_data();
+        $status = is_array( $data ) && isset( $data['status'] ) ? absint( $data['status'] ) : 0;
+        if ( 402 !== $status )
+        {
+            return '';
+        }
+
+        if (
+            str_contains( $code, 'credit' )
+            || str_contains( $code, 'billing_spend' )
+            || str_contains( $code, 'spend_suspended' )
+        )
+        {
+            return 'sentient_managed_credits_exhausted';
+        }
+
+        return '';
     }
 
     /**

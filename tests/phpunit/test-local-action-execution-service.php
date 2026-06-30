@@ -2439,6 +2439,338 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringNotContainsString( $fixture['proxy_api_key'], wp_json_encode( $event ) );
     }
 
+    public function test_bundled_action_falls_back_to_openrouter_backup_when_managed_credits_are_exhausted(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $managed = $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_credits_exhausted',
+                'Managed service credits are exhausted.',
+                [ 'status' => 402 ]
+            )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $service    = $this->create_service( $openrouter, $managed_proxy );
+        $form       = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry      = [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ];
+        $context    = [ 'hook' => 'gform_after_submission' ];
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            $form,
+            $entry,
+            $context
+        );
+        $cached = $service->execute_mapping(
+            $fixture['mapping_id'],
+            $form,
+            $entry,
+            $context
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertSame( 'openrouter', $result['provider'] );
+        $this->assertSame( 'openrouter/auto', $result['model'] );
+        $this->assertSame( 'sentient_managed_credits_exhausted', $result['fallback_reason'] ?? null );
+        $this->assertSame( 'Contact looks legitimate.', $result['result']['content'] );
+
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $fixture['secret'], $openrouter->chat_calls[0]['api_key'] );
+        $this->assertIsArray( $cached );
+        $this->assertTrue( $cached['cached'] );
+        $this->assertSame( 'openrouter', $cached['provider'] );
+        $this->assertSame( $result['execution_request_id'], $cached['execution_request_id'] );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'succeeded', $events[0]['status'] );
+        $this->assertSame( 'openrouter', $events[0]['provider'] );
+        $this->assertSame( 'sentient_managed', $events[0]['result_json']['fallback']['primary_provider'] ?? null );
+        $this->assertSame( 'openrouter', $events[0]['result_json']['fallback']['backup_provider'] ?? null );
+        $this->assertSame( 'sentient_managed_credits_exhausted', $events[0]['result_json']['fallback']['reason'] ?? null );
+    }
+
+    public function test_managed_credit_exhaustion_does_not_fallback_to_openrouter_when_zdr_required(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_credits_exhausted',
+                'Managed service credits are exhausted.',
+                [ 'status' => 402 ]
+            )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $service    = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'require_zdr' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_credits_exhausted', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'sentient_managed', $events[0]['provider'] );
+        $this->assertSame( 'managed_credits_exhausted', $events[0]['error_code'] );
+    }
+
+    public function test_managed_credit_exhaustion_with_unusable_backup_records_managed_failure(): void
+    {
+        $fixture = $this->create_local_managed_mapping();
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+
+        $action = $this->custom_actions->get( (int) $mapping['action_id'] );
+        $this->assertIsArray( $action );
+        $updated = $this->custom_actions->update(
+            (int) $action['id'],
+            [
+                'model_selection_json' => array_merge(
+                    $action['model_selection_json'],
+                    [
+                        'backup_provider' => 'openrouter',
+                        'backup_model'    => 'openrouter/auto',
+                    ]
+                ),
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_credits_exhausted',
+                'Managed service credits are exhausted.',
+                [ 'status' => 402 ]
+            )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $service    = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_credits_exhausted', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'sentient_managed', $events[0]['provider'] );
+        $this->assertSame( 'managed_credits_exhausted', $events[0]['error_code'] );
+    }
+
+    public function test_bundled_action_does_not_fallback_to_openrouter_for_non_credit_managed_failure(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_prompt_too_large',
+                'Prompt exceeds the selected model context window.',
+                [ 'status' => 400 ]
+            )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $service    = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_prompt_too_large', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'sentient_managed', $events[0]['provider'] );
+        $this->assertSame( 'managed_prompt_too_large', $events[0]['error_code'] );
+    }
+
+    public function test_managed_generic_insufficient_credits_without_402_does_not_fallback_to_openrouter(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'insufficient_credits',
+                'OpenRouter account has insufficient credits.',
+                [ 'status' => 429 ]
+            )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'insufficient_credits', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'sentient_managed', $events[0]['provider'] );
+        $this->assertSame( 'insufficient_credits', $events[0]['error_code'] );
+    }
+
+    public function test_openrouter_insufficient_credits_does_not_enter_managed_backup_path(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+
+        $action = $this->custom_actions->get( (int) $mapping['action_id'] );
+        $this->assertIsArray( $action );
+        $updated = $this->custom_actions->update(
+            (int) $action['id'],
+            [
+                'model_selection_json' => array_merge(
+                    $action['model_selection_json'],
+                    [
+                        'backup_provider'       => 'openrouter',
+                        'backup_credential_id' => $fixture['credential_id'],
+                        'backup_model'         => 'openrouter/auto',
+                    ]
+                ),
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            new WP_Error( 'insufficient_credits', 'OpenRouter account has insufficient credits.', [ 'status' => 402 ] )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'insufficient_credits', $result->get_error_code() );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'openrouter', $events[0]['provider'] );
+        $this->assertSame( 'insufficient_credits', $events[0]['error_code'] );
+    }
+
     public function test_sentient_managed_execution_requires_external_service_consent(): void
     {
         $fixture       = $this->create_local_managed_mapping( false );
