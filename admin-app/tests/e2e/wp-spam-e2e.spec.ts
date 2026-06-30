@@ -206,8 +206,8 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 				}
 		});
 		const proxyKey = ensureCpsSeeded();
-		ensureCreditBalanceAtLeast(20);
 		const spamBaseCreditCost = getActionTemplateBaseCreditCost('spam_detection_v1');
+		ensureCreditBalanceAtLeast(spamBaseCreditCost + 1);
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		expect(balanceBefore).toBeGreaterThanOrEqual(spamBaseCreditCost);
 

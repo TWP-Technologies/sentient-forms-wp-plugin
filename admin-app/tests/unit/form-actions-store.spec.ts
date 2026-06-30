@@ -179,17 +179,17 @@ describe('formActionsStore', () => {
 		expect(notifyWarningSpy).not.toHaveBeenCalled();
 	});
 
-	it('bypasses the status cache for explicit refreshes', async () => {
+	it('reloads bootstrap data for explicit refreshes', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 
 		await formActionsStore.load('gravity_forms', 1);
-		stubClient.getFormExecutionStatus.mockClear();
+		stubClient.getFormActionsBootstrap.mockClear();
 
 		await formActionsStore.refresh('gravity_forms', 1, { forceRefresh: true });
 
-		expect(stubClient.getFormExecutionStatus).toHaveBeenCalledWith('gravity_forms', 1, {
+		expect(stubClient.getFormActionsBootstrap).toHaveBeenCalledWith('gravity_forms', 1, {
 			showNotifications: false,
 			forceRefresh: true
 		});

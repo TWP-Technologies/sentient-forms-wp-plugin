@@ -1997,8 +1997,8 @@
 		return hooks.length > 0 ? hooks.join(', ') : 'No trigger selected';
 	});
 	const selectedCreateProviderPolicy = $derived.by(() =>
-		createKind === 'template' && selectedTemplateId
-			? (providerPathPolicy?.actions?.[selectedTemplateId] ?? null)
+		createKind === 'template' && selectedDefinition
+			? providerPolicyForDefinition(selectedDefinition)
 			: null
 	);
 	const selectedCreateProviderBlocked = $derived(
@@ -2508,30 +2508,32 @@
 		return 'neutral';
 	}
 
-	function providerPolicyForDefinition(definition: ActionDefinition): ProviderPathPolicyAction | null {
-		if (!providerPathPolicy) return null;
-		return (
-			providerPathPolicy.actions?.[definition.id] ?? {
-				selected_provider: null,
-				model_selection: null,
-				blocked_reason_code: 'policy_unavailable',
-				requires_structured_output: Boolean(
-					definition.structuredOutputSchema ??
-						(definition as unknown as Record<string, unknown>).structured_output_schema
-				)
-			}
-		);
+	function unavailableProviderPolicy(definition: ActionDefinition): ProviderPathPolicyAction {
+		return {
+			selected_provider: null,
+			model_selection: null,
+			blocked_reason_code: 'policy_unavailable',
+			requires_structured_output: Boolean(
+				definition.structuredOutputSchema ??
+					(definition as unknown as Record<string, unknown>).structured_output_schema
+			)
+		};
+	}
+
+	function providerPolicyForDefinition(definition: ActionDefinition): ProviderPathPolicyAction {
+		if (!providerPathPolicy) return unavailableProviderPolicy(definition);
+		return providerPathPolicy.actions?.[definition.id] ?? unavailableProviderPolicy(definition);
 	}
 
 	function providerPolicyIsBlocked(
 		policy: ProviderPathPolicyAction | null | undefined
 	): boolean {
-		if (!policy) return false;
+		if (!policy) return true;
 		return Boolean(policy.blocked_reason_code || !policy.selected_provider);
 	}
 
 	function providerPolicyRouteLabel(policy: ProviderPathPolicyAction | null | undefined): string {
-		if (!policy) return 'Default route';
+		if (!policy) return 'Setup required';
 		if (providerPolicyIsBlocked(policy)) return 'Setup required';
 		if (policy.selected_provider === 'sentient_managed') return 'Managed';
 		if (policy.selected_provider === 'openrouter') return 'Direct OpenRouter';
@@ -2539,7 +2541,7 @@
 	}
 
 	function providerPolicyRouteTooltip(policy: ProviderPathPolicyAction | null | undefined): string {
-		if (!policy) return 'Uses the plugin default execution route for this built-in action.';
+		if (!policy) return 'Provider route policy is unavailable. Refresh this page or complete provider setup before linking this action.';
 		if (providerPolicyIsBlocked(policy)) {
 			return providerPolicyBlockedMessage(policy) || 'Complete provider setup before linking this action.';
 		}
@@ -2567,7 +2569,7 @@
 			case 'multiple_ready_credentials':
 				return 'Choose one ready credential for this provider';
 			case 'policy_unavailable':
-				return 'Execution route policy unavailable';
+				return 'Provider route policy unavailable';
 			default:
 				return policy?.blocked_reason_code ? 'Execution route setup required' : '';
 		}
@@ -4048,11 +4050,11 @@
 		await formActionsStore.toggleEnabled(data.formSourceSlug, data.formId, linkage, !enabled);
 	}
 
-	function refresh() {
-		formActionsStore.refresh(data.formSourceSlug, data.formId, { forceRefresh: true });
-		loadCurrentFormSummary();
-		loadProviderCredentials();
-		loadFormActionConfigIndex();
+	async function refresh() {
+		await formActionsStore.refresh(data.formSourceSlug, data.formId, { forceRefresh: true });
+		void loadCurrentFormSummary();
+		void loadProviderCredentials();
+		void loadFormActionConfigIndex();
 	}
 
 	// Phase 7 CSM: Save current action config as a template
@@ -4475,7 +4477,7 @@
 					{providerEditLinkLabel}
 				</a>
 			{/if}
-			<Button variant="secondary" onclick={refresh}>Refresh</Button>
+			<Button variant="secondary" onclick={() => void refresh()} data-testid="actions-refresh">Refresh</Button>
 			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
 			<Button
 				variant="secondary"

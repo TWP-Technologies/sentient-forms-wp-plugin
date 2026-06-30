@@ -184,7 +184,11 @@ function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean
 	return activeFormKey === formKey && loadRequestSequence === requestSequence;
 }
 
-async function load(formSourceSlug: string, formId: FormSourceFormId) {
+async function load(
+	formSourceSlug: string,
+	formId: FormSourceFormId,
+	options: { forceRefresh?: boolean } = {}
+) {
 	// Guard against undefined or invalid parameters during hydration race conditions
 	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] load called with invalid params:', { formSourceSlug, formId });
@@ -201,7 +205,8 @@ async function load(formSourceSlug: string, formId: FormSourceFormId) {
 
 	try {
 		const bootstrap = await client.getFormActionsBootstrap(formSourceSlug, formId, {
-			showNotifications: false
+			showNotifications: false,
+			forceRefresh: options.forceRefresh === true
 		});
 		if (!isCurrentLoadRequest(formKey, loadSequence)) {
 			return;
@@ -417,6 +422,11 @@ async function refresh(
 
 	const formKey = getFormKey(formSourceSlug, formId);
 	const forceRefresh = options.forceRefresh === true;
+	if (forceRefresh) {
+		await load(formSourceSlug, formId, { forceRefresh: true });
+		return;
+	}
+
 	if (refreshInFlightKey === formKey && !forceRefresh) {
 		return;
 	}
