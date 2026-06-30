@@ -1625,7 +1625,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( '~openai/gpt-latest', $client->chat_calls[0]['payload']['model'] );
     }
 
-    public function test_runtime_model_selection_can_route_openrouter_action_through_sentient_managed(): void
+    public function test_runtime_model_selection_routes_managed_default_to_launch_safe_model(): void
     {
         $this->seed_openrouter_model_cache();
 
@@ -1637,7 +1637,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             [
                 'execution_request_id' => 'runtime-managed-req',
                 'provider'             => 'sentient_managed',
-                'model'                => '~openai/gpt-latest',
+                'model'                => 'gemini-3-flash-preview',
                 'status'               => 'succeeded',
                 'output'               => [
                     'text' => 'Managed runtime route succeeded.',
@@ -1675,7 +1675,6 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                         'is_preset'     => true,
                         'provider'      => 'sentient_managed',
                         'credential_id' => $managed['credential_id'],
-                        'reasoning'     => 'high',
                     ],
                 ],
             ]
@@ -1684,7 +1683,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
         $this->assertSame( 'sentient_managed', $result['provider'] );
-        $this->assertSame( '~openai/gpt-latest', $result['model'] );
+        $this->assertSame( 'gemini-3-flash-preview', $result['model'] );
         $this->assertCount( 0, $openrouter->chat_calls );
         $this->assertCount( 1, $managed_proxy->execute_calls );
         $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
@@ -1693,9 +1692,8 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $payload['provider'] );
         $this->assertSame( $managed['site_id'], $payload['site_id'] );
         $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
-        $this->assertSame( '~openai/gpt-latest', $payload['model'] );
+        $this->assertSame( 'gemini-3-flash-preview', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
-        $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] ?? null );
     }
 
     public function test_managed_runtime_model_selection_can_require_zdr_privacy_route(): void

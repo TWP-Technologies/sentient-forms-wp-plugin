@@ -345,6 +345,47 @@ const statusUnknown = {
 const quota = { quota_max: 3, quota_used: 1, quota_remaining: 2 };
 const creditBalance = { credits_remaining: 25, credits_used: 5, credits_max: 30 };
 
+function managedProviderPathPolicy(actionIds: string | string[]) {
+	const ids = Array.isArray(actionIds) ? actionIds : [actionIds];
+
+	return {
+		default_provider: 'sentient_managed',
+		providers: {
+			sentient_managed: {
+				ready: true,
+				credential_id: 7,
+				blocked_reason_code: null
+			},
+			openrouter: {
+				ready: false,
+				credential_id: null,
+				blocked_reason_code: 'structured_openrouter_model_unavailable'
+			}
+		},
+		actions: Object.fromEntries(
+			ids.map((actionId) => [
+				actionId,
+				{
+					selected_provider: 'sentient_managed',
+					model_selection: {
+						provider: 'sentient_managed',
+						model: 'gemini-3-flash-preview',
+						credential_id: 7,
+						selection: {
+							primary: 'sf_default',
+							provider: 'sentient_managed',
+							credential_id: 7,
+							is_preset: true
+						}
+					},
+					blocked_reason_code: null,
+					requires_structured_output: true
+				}
+			])
+		)
+	};
+}
+
 async function openLinkedActionsTable(page: Parameters<typeof test>[0]['page']) {
 	const tableToggle = page.getByTestId('linked-actions-view-table');
 	if ((await tableToggle.count()) > 0) {
@@ -2325,7 +2366,8 @@ test.describe('Actions admin flows', () => {
 				],
 				status: statusUnknown,
 				formsActions: linkages,
-				creditBalance
+				creditBalance,
+				providerPathPolicy: managedProviderPathPolicy('spam_detection_v1')
 			},
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
@@ -2358,6 +2400,214 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Spam Detection')).toBeVisible();
 	});
 
+	test('blocks built-in action creation when no compatible execution route is available', async ({
+		page
+	}) => {
+		const createRequests: unknown[] = [];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance,
+				providerPathPolicy: {
+					default_provider: null,
+					providers: {
+						sentient_managed: {
+							ready: false,
+							credential_id: null,
+							blocked_reason_code: null
+						},
+						openrouter: {
+							ready: false,
+							credential_id: null,
+							blocked_reason_code: 'structured_openrouter_model_unavailable'
+						}
+					},
+					actions: {
+						spam_detection_v1: {
+							selected_provider: null,
+							model_selection: null,
+							blocked_reason_code: 'structured_openrouter_model_unavailable',
+							requires_structured_output: true
+						}
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		page.on('request', (request) => {
+			if (request.method() === 'POST' && /forms\/123\/actions$/.test(request.url())) {
+				createRequests.push(request.postDataJSON());
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByRole('radio', { name: /Spam Detection/i })).toBeDisabled();
+		await expect(drawer.getByText('Structured output route unavailable')).toBeVisible();
+		await expect(drawer.getByTestId('link-action-submit')).toBeDisabled();
+		await drawer.getByTestId('link-action-submit').evaluate((button: HTMLButtonElement) => {
+			button.click();
+		});
+		expect(createRequests).toHaveLength(0);
+	});
+
+	test('fails closed when the provider path policy is missing from bootstrap', async ({ page }) => {
+		const createRequests: unknown[] = [];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		page.on('request', (request) => {
+			if (request.method() === 'POST' && /forms\/123\/actions$/.test(request.url())) {
+				createRequests.push(request.postDataJSON());
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		const spamOption = drawer.getByTestId('built-in-action-option-spam_detection_v1');
+		await expect(spamOption.getByRole('radio', { name: /Spam Detection/i })).toBeDisabled();
+		await expect(spamOption.getByText('Provider route policy unavailable')).toBeVisible();
+		await expect(drawer.getByTestId('link-action-submit')).toBeDisabled();
+		await drawer.getByTestId('link-action-submit').evaluate((button: HTMLButtonElement) => {
+			button.click();
+		});
+		expect(createRequests).toHaveLength(0);
+	});
+
+	test('refreshes built-in provider policy after provider setup changes', async ({ page }) => {
+		let bootstrapRequests = 0;
+		const providerPathPolicy = {
+			default_provider: null,
+			providers: {
+				sentient_managed: {
+					ready: false,
+					credential_id: null,
+					blocked_reason_code: 'managed_not_ready'
+				},
+				openrouter: {
+					ready: false,
+					credential_id: null,
+					blocked_reason_code: 'structured_openrouter_model_unavailable'
+				}
+			},
+			actions: {
+				spam_detection_v1: {
+					selected_provider: null,
+					model_selection: null,
+					blocked_reason_code: 'managed_not_ready',
+					requires_structured_output: true
+				}
+			}
+		};
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance,
+				providerPathPolicy
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		page.on('request', (request) => {
+			if (request.url().includes('/gravity_forms/forms/123/actions/bootstrap')) {
+				bootstrapRequests += 1;
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const initialBootstrapRequests = bootstrapRequests;
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+
+		const drawer = page.getByTestId('link-action-form');
+		const spamOption = drawer.getByTestId('built-in-action-option-spam_detection_v1');
+		await expect(spamOption.getByRole('radio', { name: /Spam Detection/i })).toBeDisabled();
+		await drawer.getByRole('button', { name: 'Cancel' }).click({ timeout: 10_000 });
+		await expect(drawer).toBeHidden();
+
+		providerPathPolicy.default_provider = 'sentient_managed';
+		providerPathPolicy.providers.sentient_managed = {
+			ready: true,
+			credential_id: 7,
+			blocked_reason_code: null
+		};
+		providerPathPolicy.actions.spam_detection_v1 = {
+			selected_provider: 'sentient_managed',
+			model_selection: {
+				provider: 'sentient_managed',
+				model: 'gemini-3-flash-preview',
+				credential_id: 7,
+				selection: {
+					primary: 'sf_default',
+					provider: 'sentient_managed',
+					credential_id: 7,
+					is_preset: true
+				}
+			},
+			blocked_reason_code: null,
+			requires_structured_output: true
+		};
+
+		await page.getByTestId('actions-refresh').click({ timeout: 10_000 });
+		await expect.poll(() => bootstrapRequests).toBeGreaterThan(initialBootstrapRequests);
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		await expect(drawer).toBeVisible();
+		await expect(spamOption.getByRole('radio', { name: /Spam Detection/i })).toBeEnabled();
+		await expect(spamOption.getByText(/^Managed$/)).toBeVisible();
+		await expect(drawer.getByTestId('link-action-submit')).toBeEnabled();
+	});
+
 	test('only exposes realtime trigger for the Realtime Clarification Assistant', async ({
 		page
 	}) => {
@@ -2388,6 +2638,10 @@ test.describe('Actions admin flows', () => {
 						model_hint: 'openrouter/auto'
 					}
 				],
+				providerPathPolicy: managedProviderPathPolicy([
+					'spam_detection_v1',
+					'clarification_assistant_v1'
+				]),
 				status: statusUnknown,
 				formsActions: [],
 				creditBalance
@@ -3293,6 +3547,7 @@ test.describe('Actions admin flows', () => {
 					]
 				},
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy('summarize'),
 				status: statusUnknown,
 				formsActions: [],
 				formFields: baseFormFields,
@@ -3686,6 +3941,10 @@ test.describe('Actions admin flows', () => {
 						model_hint: 'openrouter/auto'
 					}
 				],
+				providerPathPolicy: managedProviderPathPolicy([
+					'spam_detection_v1',
+					'entry_summary_v1'
+				]),
 				status: statusUnknown,
 				formsActions: [],
 				formFields: [
@@ -3862,6 +4121,7 @@ test.describe('Actions admin flows', () => {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy(['spam_detection_v1', 'summarize']),
 				status: statusUnknown,
 				formsActions: linkages,
 				creditBalance
@@ -3924,6 +4184,7 @@ test.describe('Actions admin flows', () => {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy('summarize'),
 				status: statusUnknown,
 				formsActions: linkages,
 				creditBalance

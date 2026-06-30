@@ -146,6 +146,10 @@ let loadRequestSequence = 0;
 let statusRefreshSequence = 0;
 
 type FormSourceFormId = string | number;
+type LoadOptions = {
+	forceRefresh?: boolean;
+	preserveState?: boolean;
+};
 
 function isInvalidFormSourceContext(formSourceSlug: string, formId: FormSourceFormId): boolean {
 	if (!formSourceSlug || formSourceSlug === 'undefined') {
@@ -184,7 +188,11 @@ function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean
 	return activeFormKey === formKey && loadRequestSequence === requestSequence;
 }
 
-async function load(formSourceSlug: string, formId: FormSourceFormId) {
+async function load(
+	formSourceSlug: string,
+	formId: FormSourceFormId,
+	options: LoadOptions = {}
+) {
 	// Guard against undefined or invalid parameters during hydration race conditions
 	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] load called with invalid params:', { formSourceSlug, formId });
@@ -192,16 +200,20 @@ async function load(formSourceSlug: string, formId: FormSourceFormId) {
 	}
 
 	const formKey = getFormKey(formSourceSlug, formId);
+	const preserveState = options.preserveState === true && activeFormKey === formKey;
 	activeFormKey = formKey;
 	refreshInFlightKey = null;
 	statusRefreshSequence += 1;
 	const loadSequence = ++loadRequestSequence;
-	resetState();
+	if (!preserveState) {
+		resetState();
+	}
 	formActionsState.loading = true;
 
 	try {
 		const bootstrap = await client.getFormActionsBootstrap(formSourceSlug, formId, {
-			showNotifications: false
+			showNotifications: false,
+			forceRefresh: options.forceRefresh === true
 		});
 		if (!isCurrentLoadRequest(formKey, loadSequence)) {
 			return;
@@ -255,7 +267,9 @@ async function load(formSourceSlug: string, formId: FormSourceFormId) {
 			return;
 		}
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
-		resetState();
+		if (!preserveState) {
+			resetState();
+		}
 		setState({ loading: false, error: message });
 		notifications.error(message);
 	}
@@ -417,6 +431,11 @@ async function refresh(
 
 	const formKey = getFormKey(formSourceSlug, formId);
 	const forceRefresh = options.forceRefresh === true;
+	if (forceRefresh) {
+		await load(formSourceSlug, formId, { forceRefresh: true, preserveState: true });
+		return;
+	}
+
 	if (refreshInFlightKey === formKey && !forceRefresh) {
 		return;
 	}

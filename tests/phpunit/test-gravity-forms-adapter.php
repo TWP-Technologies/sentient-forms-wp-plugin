@@ -4232,7 +4232,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( 'sentient_managed', $recent_events[0]['provider'] ?? null );
-        $this->assertSame( '~openai/gpt-latest', $recent_events[0]['model'] ?? null );
+        $this->assertSame( 'gemini-3-flash-preview', $recent_events[0]['model'] ?? null );
         $this->assertArrayNotHasKey( 'billed_amount_microusd', $recent_events[0]['cost_json'] );
         $this->assertArrayNotHasKey( 'currency', $recent_events[0]['cost_json'] );
         $this->assertSame( 1, $recent_events[0]['cost_json']['debited_credits'] ?? null );

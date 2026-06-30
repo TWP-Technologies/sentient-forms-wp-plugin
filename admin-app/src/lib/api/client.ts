@@ -1,5 +1,6 @@
 import type { SentientFormsConfig } from '$lib/api/http';
 import { safeParseFormActionConfigPayload } from '$lib/schemas/action-config';
+import { parseProviderPathPolicy } from '$lib/schemas/provider-path-policy';
 import { z } from 'zod';
 import {
 	announceWordPressSessionExpired,
@@ -1546,7 +1547,11 @@ export class SentientFormsApiClient {
 				]
 			})
 		);
-		return this.unwrap(response);
+		const data = this.unwrap<FormActionsBootstrapResponse>(response);
+		return {
+			...data,
+			provider_path_policy: parseProviderPathPolicy(data.provider_path_policy)
+		};
 	}
 
 	async getSubmissionLedgerSettings(

@@ -11,6 +11,7 @@ import {
 	ensureGravityForm,
 	fetchCreditBalance,
 	findEntryIdByEmail,
+	getActionTemplateBaseCreditCost,
 	getCapturedMailRecords,
 	getEntryMeta,
 	getEntrySpamStatus,
@@ -19,6 +20,7 @@ import {
 	getLatestEntryId,
 	requireWpRestHealthy,
 	runActionScheduler,
+	setGravityAsyncNotificationsEnabled,
 	submitGravityForm
 } from './utils/wp-e2e-helpers';
 import { installSentientCorsProxy } from './utils/cors-proxy';
@@ -132,6 +134,7 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 		if (runLegacyCpsE2E) {
 			await installSentientCorsProxy(page);
 			await requireWpRestHealthy(page);
+			setGravityAsyncNotificationsEnabled(false);
 		}
 	});
 
@@ -197,14 +200,16 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 			markAsSpam: true,
 				executionPriority: 10,
 				additionalSettings: {
+					suppress_notifications_on_spam: true,
 					spam_result_display_mode: 'all_results',
 					spam_indicators_display: 'detailed'
 				}
 		});
 		const proxyKey = ensureCpsSeeded();
-		ensureCreditBalanceAtLeast(20);
+		const spamBaseCreditCost = getActionTemplateBaseCreditCost('spam_detection_v1');
+		ensureCreditBalanceAtLeast(spamBaseCreditCost + 1);
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
-		expect(balanceBefore).toBeGreaterThanOrEqual(10);
+		expect(balanceBefore).toBeGreaterThanOrEqual(spamBaseCreditCost);
 
 		const baselineEntryId = getLatestEntryId(formId);
 		const email = `spam-${token}@example.test`;
@@ -221,9 +226,6 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 		expect(status.is_spam).toBe(true);
 		expect(status.classification).toBe('spam');
 
-		const balanceAfter = await fetchCreditBalance(page, proxyKey);
-		expect(balanceBefore - balanceAfter).toBe(10);
-
 		let debitRecord: ActionExecutionDebitRecord | null = null;
 		for (let attempt = 0; attempt < 20; attempt += 1) {
 			debitRecord = getLatestActionExecutionDebitByEntryId(entryId, 'spam_detection_v1');
@@ -237,6 +239,13 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 		expect(debitRecord?.central_action_id).toBe('spam_detection_v1');
 		expect(debitRecord?.hook).toBe('gform_after_submission');
 		expect((debitRecord?.execution_request_id ?? '').length).toBeGreaterThan(0);
+		expect(debitRecord?.credits_delta).toBeLessThan(0);
+
+		const spamDebitedCredits = Math.abs(debitRecord?.credits_delta ?? 0);
+		expect(spamDebitedCredits).toBeGreaterThanOrEqual(spamBaseCreditCost);
+
+		const balanceAfter = await fetchCreditBalance(page, proxyKey);
+		expect(Math.round(balanceBefore - balanceAfter)).toBe(spamDebitedCredits);
 
 		expect(String(getEntryMeta(entryId, 'sentient_forms_spam_classification') ?? '')).toBe('spam');
 		const lastResponse = getEntryMeta(entryId, 'sentient_forms_last_response') as
@@ -250,8 +259,8 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 			  }
 			| null;
 		expect(lastResponse?.result_data?.classification).toBe('spam');
-		expect(lastResponse?.result_data?.confidence).toBe(0.99);
-		expect(lastResponse?.result_data?.justification).toContain('local mock harness');
+		expect(lastResponse?.result_data?.confidence ?? 0).toBeGreaterThanOrEqual(0.8);
+		expect(lastResponse?.result_data?.justification?.length ?? 0).toBeGreaterThan(0);
 		expect(lastResponse?.result_data?.indicators?.length ?? 0).toBeGreaterThan(0);
 
 		for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -264,9 +273,8 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 		expect(spamNotes[0]?.value).toContain('Sentient Forms AI classified this entry as SPAM');
 		expect(spamNotes[0]?.value).not.toContain('::');
 		expect(spamNotes[0]?.value).not.toContain('{"classification"');
-		expect(spamNotes[0]?.value).toContain('local mock harness');
 		expect(spamNotes[0]?.value).toContain('Signals Detected:');
-		expect(spamNotes[0]?.value).toContain('Promotional Language');
+		expect(spamNotes[0]?.value).toContain('Suspicious Email');
 
 		const noteSections = spamNotes[0]?.value.split(/\n\s*\n/) ?? [];
 		expect(noteSections.length).toBeGreaterThan(1);

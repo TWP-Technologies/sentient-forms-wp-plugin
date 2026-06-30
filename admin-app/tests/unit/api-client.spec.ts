@@ -745,6 +745,42 @@ describe('SentientFormsApiClient', () => {
 								'/sentient-forms/v1/gravity_forms/forms/42/submissions',
 							record_count: 0
 						},
+						provider_path_policy: {
+							default_provider: 'sentient_managed',
+							providers: {
+								sentient_managed: {
+									ready: true,
+									credential_id: 14,
+									blocked_reason_code: null
+								},
+								openrouter: {
+									ready: true,
+									credential_id: 7,
+									blocked_reason_code: null
+								}
+							},
+							actions: {
+								spam_detection_v1: {
+									selected_provider: 'sentient_managed',
+									model_selection: {
+										provider: 'sentient_managed',
+										model: 'sf_default',
+										credential_id: 14,
+										selection: {
+											primary: 'sf_default',
+											provider: 'sentient_managed',
+											is_preset: true,
+											credential_id: 14
+										},
+										backup_provider: 'openrouter',
+										backup_credential_id: 7,
+										backup_model: '~openai/gpt-latest'
+									},
+									blocked_reason_code: null,
+									requires_structured_output: true
+								}
+							}
+						},
 						generated_at: '2030-01-05T10:00:00Z'
 					}
 				})
@@ -764,8 +800,53 @@ describe('SentientFormsApiClient', () => {
 		expect(result.form_source_descriptor?.lifecycles.validation.native_hook).toBe(
 			'gform_validation'
 		);
+		expect(result.provider_path_policy?.default_provider).toBe('sentient_managed');
+		expect(
+			result.provider_path_policy?.actions.spam_detection_v1.model_selection?.backup_provider
+		).toBe('openrouter');
 		expect(result.ledger_settings?.enabled).toBe(false);
 		expect(result.ledger_settings?.ledger_records_endpoint).toContain('/submissions');
+	});
+
+	it('drops malformed provider path policy payloads from form actions bootstrap', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						actions: [],
+						execution_status: {
+							status: 'unknown',
+							message: null,
+							entry_id: null,
+							last_error_code: null,
+							last_result: null
+						},
+						disabled_state: {
+							sf_disabled: false,
+							global_disabled: false,
+							provider_disabled: false,
+							effective_disabled: false
+						},
+						provider_path_policy: {
+							providers: [],
+							actions: null
+						},
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+		});
+
+		const result = await client.getFormActionsBootstrap('gravity_forms', 42, {
+			showNotifications: false
+		});
+
+		expect(result.provider_path_policy).toBeUndefined();
 	});
 
 	it('updates submission ledger settings through the form-scoped endpoint', async () => {

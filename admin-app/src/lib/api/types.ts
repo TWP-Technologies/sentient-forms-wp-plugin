@@ -1300,6 +1300,38 @@ export interface ModelSelection {
 	tools?: Record<string, unknown> | null;
 }
 
+export interface ProviderPathPolicyProviderStatus {
+	ready: boolean;
+	credential_id: number | null;
+	blocked_reason_code?: string | null;
+}
+
+export interface ProviderPathPolicyModelSelection extends Record<string, unknown> {
+	provider: LocalProvider;
+	model?: string | null;
+	credential_id?: number | null;
+	selection?: ModelSelection;
+	backup_provider?: LocalProvider | null;
+	backup_credential_id?: number | null;
+	backup_model?: string | null;
+}
+
+export interface ProviderPathPolicyAction {
+	selected_provider: LocalProvider | null;
+	model_selection: ProviderPathPolicyModelSelection | null;
+	blocked_reason_code: string | null;
+	requires_structured_output: boolean;
+}
+
+export interface ProviderPathPolicyResponse {
+	default_provider: LocalProvider | null;
+	providers: {
+		sentient_managed: ProviderPathPolicyProviderStatus;
+		openrouter: ProviderPathPolicyProviderStatus;
+	};
+	actions: Record<string, ProviderPathPolicyAction>;
+}
+
 export interface ModelInfo {
 	id: string;
 	display_name: string;
@@ -2104,6 +2136,7 @@ export interface FormActionsBootstrapResponse {
 	form_action_configs?: Record<string, FormActionConfig>;
 	form_fields?: FormFieldInfo[];
 	action_defaults?: Record<string, FormActionConfig>;
+	provider_path_policy?: ProviderPathPolicyResponse;
 	workflow_plan?: WorkflowPlanResponse | null;
 	ledger_settings?: SubmissionLedgerSettingsResponse;
 	generated_at: string;

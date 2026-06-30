@@ -11,6 +11,7 @@ import {
 	fetchCreditBalance,
 	findEntryIdByEmail,
 	getActionExecutionDebitsByEntryId,
+	getActionTemplateBaseCreditCost,
 	getEntrySpamStatus,
 	getGravityEntryNotes,
 	getLatestActionExecutionDebitByEntryId,
@@ -172,6 +173,7 @@ test.describe('Spam-gated summary chain @after-submission @spam-e2e @summary-e2e
 
 		const proxyKey = ensureCpsSeeded();
 		ensureCreditBalanceAtLeast(80);
+		const spamBaseCreditCost = getActionTemplateBaseCreditCost('spam_detection_v1');
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		const baselineEntryId = getLatestEntryId(formId);
 		const email = `spam-summary-chain-${token}@example.test`;
@@ -187,8 +189,11 @@ test.describe('Spam-gated summary chain @after-submission @spam-e2e @summary-e2e
 
 		const spamDebit = await waitForActionDebit(entryId, 'spam_detection_v1', page);
 		expect(spamDebit.central_action_id).toBe('spam_detection_v1');
-		expect(spamDebit.credits_delta).toBe(-10);
+		expect(spamDebit.credits_delta).toBeLessThan(0);
 		expect(spamDebit.hook).toBe('gform_after_submission');
+
+		const spamDebitedCredits = Math.abs(spamDebit.credits_delta);
+		expect(spamDebitedCredits).toBeGreaterThanOrEqual(spamBaseCreditCost);
 
 		const skipOutcome = await waitForSpamSkipOutcome(entryId, page);
 		expect(getActionExecutionDebitsByEntryId(entryId, 'entry_summary_v1')).toHaveLength(0);
@@ -200,6 +205,6 @@ test.describe('Spam-gated summary chain @after-submission @spam-e2e @summary-e2e
 		expect(skipOutcome.skipNotes.length > 0 || skipOutcome.summaryJob?.status === 'skipped').toBe(true);
 
 		const balanceAfter = await fetchCreditBalance(page, proxyKey);
-		expect(Math.round(balanceBefore - balanceAfter)).toBe(10);
+		expect(Math.round(balanceBefore - balanceAfter)).toBe(spamDebitedCredits);
 	});
 });

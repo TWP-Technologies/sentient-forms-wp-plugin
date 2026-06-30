@@ -20,6 +20,7 @@ type Routes = {
 		formFields?: unknown[];
 		creditBalance?: unknown;
 		disableState?: unknown;
+		providerPathPolicy?: unknown;
 		workflowPlan?: unknown;
 		executionStatus?: Record<number, unknown>;
 		ledgerSettings?: unknown;
@@ -945,6 +946,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					action_defaults: Object.fromEntries(
 						defaultIds.map((id) => [id, actionDefaultsState[id] ?? {}])
 					),
+					...(typeof routes.actions?.providerPathPolicy === 'undefined'
+						? {}
+						: { provider_path_policy: routes.actions.providerPathPolicy }),
 					workflow_plan: {
 						authority: 'local',
 						authority_reason: 'mock',
