@@ -146,6 +146,10 @@ let loadRequestSequence = 0;
 let statusRefreshSequence = 0;
 
 type FormSourceFormId = string | number;
+type LoadOptions = {
+	forceRefresh?: boolean;
+	preserveState?: boolean;
+};
 
 function isInvalidFormSourceContext(formSourceSlug: string, formId: FormSourceFormId): boolean {
 	if (!formSourceSlug || formSourceSlug === 'undefined') {
@@ -187,7 +191,7 @@ function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean
 async function load(
 	formSourceSlug: string,
 	formId: FormSourceFormId,
-	options: { forceRefresh?: boolean } = {}
+	options: LoadOptions = {}
 ) {
 	// Guard against undefined or invalid parameters during hydration race conditions
 	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
@@ -196,11 +200,14 @@ async function load(
 	}
 
 	const formKey = getFormKey(formSourceSlug, formId);
+	const preserveState = options.preserveState === true && activeFormKey === formKey;
 	activeFormKey = formKey;
 	refreshInFlightKey = null;
 	statusRefreshSequence += 1;
 	const loadSequence = ++loadRequestSequence;
-	resetState();
+	if (!preserveState) {
+		resetState();
+	}
 	formActionsState.loading = true;
 
 	try {
@@ -260,7 +267,9 @@ async function load(
 			return;
 		}
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
-		resetState();
+		if (!preserveState) {
+			resetState();
+		}
 		setState({ loading: false, error: message });
 		notifications.error(message);
 	}
@@ -423,7 +432,7 @@ async function refresh(
 	const formKey = getFormKey(formSourceSlug, formId);
 	const forceRefresh = options.forceRefresh === true;
 	if (forceRefresh) {
-		await load(formSourceSlug, formId, { forceRefresh: true });
+		await load(formSourceSlug, formId, { forceRefresh: true, preserveState: true });
 		return;
 	}
 

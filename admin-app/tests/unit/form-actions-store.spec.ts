@@ -195,6 +195,39 @@ describe('formActionsStore', () => {
 		});
 	});
 
+	it('preserves the last loaded bootstrap when an explicit refresh fails', async () => {
+		const linkage = {
+			local_mapping_id: 'map_1',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['gform_validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 10
+		};
+		const apiError = new ApiClientError('Request failed', 503, {
+			error: { code: 'service_unavailable', message: 'Bootstrap temporarily unavailable' }
+		});
+
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+
+		await formActionsStore.load('gravity_forms', 1);
+		const previousState = snapshotState();
+
+		stubClient.getFormActionsBootstrap.mockRejectedValueOnce(apiError);
+
+		await formActionsStore.refresh('gravity_forms', 1, { forceRefresh: true });
+		const state = snapshotState();
+
+		expect(state.loading).toBe(false);
+		expect(state.error).toBe('Bootstrap temporarily unavailable');
+		expect(state.items).toEqual([linkage]);
+		expect(state.bootstrap).toBe(previousState.bootstrap);
+		expect(state.effectiveDisabled).toBe(previousState.effectiveDisabled);
+		expect(notifyErrorSpy).toHaveBeenCalledWith('Bootstrap temporarily unavailable');
+	});
+
 	it('keeps actions usable without a legacy credit balance request', async () => {
 		const linkage = {
 			local_mapping_id: 'map_1',
