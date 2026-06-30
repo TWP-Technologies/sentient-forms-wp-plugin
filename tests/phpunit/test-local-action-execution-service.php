@@ -2674,6 +2674,58 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'managed_prompt_too_large', $events[0]['error_code'] );
     }
 
+    public function test_managed_generic_insufficient_credits_without_402_does_not_fallback_to_openrouter(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'insufficient_credits',
+                'OpenRouter account has insufficient credits.',
+                [ 'status' => 429 ]
+            )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'insufficient_credits', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
+
+        $events = $this->events->list_recent();
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] );
+        $this->assertSame( 'sentient_managed', $events[0]['provider'] );
+        $this->assertSame( 'insufficient_credits', $events[0]['error_code'] );
+    }
+
     public function test_openrouter_insufficient_credits_does_not_enter_managed_backup_path(): void
     {
         $fixture = $this->create_local_openrouter_mapping();

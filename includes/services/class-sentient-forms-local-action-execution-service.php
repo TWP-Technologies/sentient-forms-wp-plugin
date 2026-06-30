@@ -701,7 +701,6 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'managed_credits_exhausted',
                     'managed_insufficient_credits',
                     'managed_billing_spend_suspended',
-                    'insufficient_credits',
                 ],
                 true
             )
