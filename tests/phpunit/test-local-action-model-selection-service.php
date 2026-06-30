@@ -71,7 +71,7 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $selection = $custom_actions->get( $action_id )['model_selection_json'] ?? [];
         $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
         $this->assertSame( $managed_credential_id, $selection['credential_id'] ?? null );
-        $this->assertSame( '~google/gemini-flash-latest', $selection['model'] ?? null );
+        $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
         $this->assertSame( 'sf_realtime', $selection['selection']['primary'] ?? null );
         $this->assertTrue( $selection['selection']['is_preset'] ?? false );
     }
@@ -432,7 +432,7 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
 
         $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
         $this->assertTrue( $selection['require_zdr'] ?? false );
-        $this->assertSame( 'google/gemini-3-flash-preview', $selection['model'] ?? null );
+        $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
         $this->assertSame( 'sf_default', $selection['selection']['primary'] ?? null );
     }
 
@@ -519,7 +519,7 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
             );
 
             $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
-            $this->assertSame( 'google/gemini-3-flash-preview', $selection['model'] ?? null );
+            $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
             $this->assertFalse( $selection['selection']['require_zdr'] ?? false );
         }
         finally
@@ -601,6 +601,6 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
         $this->assertTrue( $selection['require_zdr'] ?? false );
         $this->assertTrue( $selection['selection']['require_zdr'] ?? false );
-        $this->assertSame( 'google/gemini-3-flash-preview', $selection['model'] ?? null );
+        $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
     }
 }

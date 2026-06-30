@@ -126,7 +126,9 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
         elseif ( str_starts_with( $saved_model, 'sf_' ) )
         {
-            $resolved_model = $this->resolve_local_preset_model_id( sanitize_key( $saved_model ) );
+            $resolved_model = 'sentient_managed' === $provider
+                ? $this->resolve_managed_preset_model_id( sanitize_key( $saved_model ) )
+                : $this->resolve_local_preset_model_id( sanitize_key( $saved_model ) );
             if ( '' !== $resolved_model )
             {
                 $selection['model'] = $resolved_model;
@@ -931,7 +933,17 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return $primary;
         }
 
-        return $this->resolve_local_preset_model_id( sanitize_key( $primary ), $this->selection_requires_managed_zdr( $selection ) );
+        $preset_code = sanitize_key( $primary );
+        $provider    = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : '';
+
+        if ( 'sentient_managed' === $provider )
+        {
+            return $this->resolve_managed_preset_model_id( $preset_code, $this->selection_requires_managed_zdr( $selection ) );
+        }
+
+        return $this->resolve_local_preset_model_id( $preset_code, $this->selection_requires_managed_zdr( $selection ) );
     }
 
     private function resolve_local_preset_model_id( string $preset_code, bool $require_zdr = false ): string
@@ -983,6 +995,16 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_agentic'    => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             default         => '',
         };
+    }
+
+    private function resolve_managed_preset_model_id( string $preset_code, bool $require_zdr = false ): string
+    {
+        if ( in_array( $preset_code, [ 'sf_default', 'sf_general', 'sf_structured', 'sf_fast', 'sf_realtime' ], true ) )
+        {
+            return self::MANAGED_DEFAULT_MODEL;
+        }
+
+        return $this->resolve_local_preset_model_id( $preset_code, $require_zdr );
     }
 
     public function resolve_openrouter_preset_model_id( string $preset_code, bool $require_zdr = false ): string

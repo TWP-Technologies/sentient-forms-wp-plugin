@@ -753,6 +753,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+        $this->create_ready_managed_credential();
 
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
@@ -818,6 +819,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+        $this->create_ready_managed_credential();
 
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
@@ -2540,6 +2542,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_sanitizes_trigger_hooks(): void {
         delete_option( 'sentient_forms_actions_gravity_forms_1' );
+        $this->create_ready_managed_credential();
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
@@ -2665,6 +2668,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
         $this->assertIsInt( $credential_id );
+        $this->record_provider_consent( 'openrouter' );
         $this->seed_structured_openrouter_model_cache();
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/12/actions' );
@@ -2770,6 +2774,25 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'backup_credential_id', $selection );
     }
 
+    public function test_add_form_action_rejects_bundled_action_when_managed_consent_is_missing(): void
+    {
+        $this->create_ready_managed_credential( false );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/127/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 127 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param( 'settings', [] );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_bundled_action_provider_path_unavailable', $response->get_error_code() );
+        $this->assertSame( 'managed_external_service_consent_required', $response->get_error_data()['blocked_reason_code'] ?? null );
+    }
+
     public function test_add_form_action_defaults_bundled_actions_to_managed_when_openrouter_credentials_are_ambiguous(): void
     {
         $managed_credential_id = $this->create_ready_managed_credential();
@@ -2802,6 +2825,33 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'openrouter', $selection['selection']['provider'] ?? null );
         $this->assertSame( '~openai/gpt-latest', $selection['selection']['primary'] ?? null );
         $this->assertFalse( $selection['selection']['is_preset'] ?? true );
+    }
+
+    public function test_add_form_action_rejects_openrouter_route_when_openrouter_consent_is_missing(): void
+    {
+        global $wpdb;
+
+        $wpdb->delete( $wpdb->prefix . 'sentient_provider_credentials', [ 'provider' => 'sentient_managed' ] );
+        $wpdb->delete( $wpdb->prefix . 'sentient_provider_credentials', [ 'provider' => 'openrouter' ] );
+        $wpdb->delete( $wpdb->prefix . 'sentient_external_service_consents', [ 'provider' => 'sentient_managed' ] );
+        $wpdb->delete( $wpdb->prefix . 'sentient_external_service_consents', [ 'provider' => 'openrouter' ] );
+
+        $this->create_ready_openrouter_credential( false );
+        $this->seed_structured_openrouter_model_cache();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/128/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 128 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param( 'settings', [] );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_bundled_action_provider_path_unavailable', $response->get_error_code() );
+        $this->assertSame( 'openrouter_external_service_consent_required', $response->get_error_data()['blocked_reason_code'] ?? null );
     }
 
     public function test_add_form_action_uses_openrouter_when_managed_account_lacks_ready_credential(): void
@@ -2846,6 +2896,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_creates_local_first_content_validation_mapping_only_on_supported_hook(): void
     {
+        $this->create_ready_managed_credential();
+
         $data = $this->create_bundled_local_first_mapping(
             13,
             'content_validation_v1',
@@ -2879,6 +2931,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     public function test_add_form_action_rejects_missing_bundled_local_first_dependency(): void
     {
         global $wpdb;
+
+        $this->create_ready_managed_credential();
 
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
 
@@ -3267,6 +3321,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_creates_local_first_entry_summary_mapping_only_on_supported_hook(): void
     {
+        $this->create_ready_managed_credential();
+
         $data = $this->create_bundled_local_first_mapping(
             14,
             'entry_summary_v1',
@@ -3303,6 +3359,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_rest_add_form_action_accepts_legacy_gravity_after_submission_hook(): void
     {
+        $this->create_ready_managed_credential();
+
         GFAPI::$forms[15] = [
             'id'    => 15,
             'title' => 'REST Hook Validation Fixture',
@@ -3337,6 +3395,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     public function test_add_form_action_creates_marketer_ready_bundled_after_submission_mappings(): void
     {
         global $wpdb;
+
+        $this->create_ready_managed_credential();
 
         $expectations = [
             'sentiment_urgency_v1'     => [
@@ -3423,6 +3483,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_creates_local_first_clarification_mapping_on_realtime_hook(): void
     {
+        $this->create_ready_managed_credential();
+
         GFAPI::$forms[16] = [
             'id'     => 16,
             'title'  => 'Realtime Clarification Test',
@@ -6029,7 +6091,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         return $response->get_data();
     }
 
-    private function create_ready_openrouter_credential(): int
+    private function create_ready_openrouter_credential( bool $record_consent = true ): int
     {
         global $wpdb;
 
@@ -6045,10 +6107,15 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
 
         $this->assertIsInt( $credential_id );
+        if ( $record_consent )
+        {
+            $this->record_provider_consent( 'openrouter' );
+        }
+
         return $credential_id;
     }
 
-    private function create_ready_managed_credential(): int
+    private function create_ready_managed_credential( bool $record_consent = true ): int
     {
         global $wpdb;
 
@@ -6062,6 +6129,11 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
 
+        if ( $record_consent )
+        {
+            $this->record_provider_consent( 'sentient_managed', 'setup_managed_proxy' );
+        }
+
         $credentials   = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
         $credential_id = $credentials->create(
             [
@@ -6074,6 +6146,23 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertIsInt( $credential_id );
         return $credential_id;
+    }
+
+    private function record_provider_consent( string $provider, string $action = 'setup_provider' ): void
+    {
+        global $wpdb;
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $consent_id = $consents->record(
+            $provider,
+            '2026-04-sentient-provider-path-test-v1',
+            get_current_user_id() ?: null,
+            [
+                'action' => $action,
+            ]
+        );
+
+        $this->assertIsInt( $consent_id );
     }
 
     /**

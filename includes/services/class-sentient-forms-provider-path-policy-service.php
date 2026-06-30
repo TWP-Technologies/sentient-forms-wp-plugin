@@ -12,12 +12,14 @@ class Sentient_Forms_Provider_Path_Policy_Service
 {
     public function __construct(
         private ?Sentient_Forms_Provider_Credentials_Repository $credentials = null,
-        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null
+        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
+        private ?Sentient_Forms_External_Service_Consent_Repository $consents = null
     )
     {
         global $wpdb;
 
         $this->credentials             = $this->credentials ?? new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $this->consents                = $this->consents ?? new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             null,
             $this->credentials,
@@ -34,10 +36,10 @@ class Sentient_Forms_Provider_Path_Policy_Service
     {
         $template_code = $this->template_code_from_definition( $definition );
         $managed      = $this->ready_managed_credential();
-        $openrouter = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        $openrouter = $this->ready_openrouter_credential();
         if ( is_wp_error( $openrouter ) && ! is_array( $managed ) )
         {
-            return $openrouter;
+            return is_wp_error( $managed ) ? $managed : $openrouter;
         }
 
         $openrouter_model = $this->resolve_openrouter_model_for_definition( $definition );
@@ -49,7 +51,7 @@ class Sentient_Forms_Provider_Path_Policy_Service
             }
             else
             {
-                return $openrouter_model;
+                return is_wp_error( $managed ) ? $managed : $openrouter_model;
             }
         }
 
@@ -78,6 +80,16 @@ class Sentient_Forms_Provider_Path_Policy_Service
             );
         }
 
+        if ( is_wp_error( $managed ) )
+        {
+            return $managed;
+        }
+
+        if ( is_wp_error( $openrouter ) )
+        {
+            return $openrouter;
+        }
+
         return $this->unavailable_error(
             'no_ready_provider',
             __( 'Set up Sentient Forms Managed Service or a compatible OpenRouter key before adding this built-in action.', 'sentient-forms' )
@@ -91,7 +103,7 @@ class Sentient_Forms_Provider_Path_Policy_Service
     public function build_bootstrap_policy( array $definitions ): array
     {
         $managed    = $this->ready_managed_credential();
-        $openrouter = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        $openrouter = $this->ready_openrouter_credential();
 
         $managed_ready    = is_array( $managed );
         $openrouter_ready = is_array( $openrouter );
@@ -153,7 +165,57 @@ class Sentient_Forms_Provider_Path_Policy_Service
             return null;
         }
 
-        return $this->model_selection_service->find_single_ready_credential_for_provider( 'sentient_managed' );
+        $credential = $this->model_selection_service->find_single_ready_credential_for_provider( 'sentient_managed' );
+        if ( ! is_array( $credential ) )
+        {
+            return $credential;
+        }
+
+        $consent = $this->provider_consent_ready( 'sentient_managed' );
+        return is_wp_error( $consent ) ? $consent : $credential;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error|null
+     */
+    private function ready_openrouter_credential(): array | WP_Error | null
+    {
+        $credential = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        if ( ! is_array( $credential ) )
+        {
+            return $credential;
+        }
+
+        $consent = $this->provider_consent_ready( 'openrouter' );
+        return is_wp_error( $consent ) ? $consent : $credential;
+    }
+
+    private function provider_consent_ready( string $provider ): bool | WP_Error
+    {
+        $provider = sanitize_key( $provider );
+        $latest   = $this->consents->latest_for_provider( $provider );
+        if ( ! is_array( $latest ) )
+        {
+            $reason = 'sentient_managed' === $provider
+                ? 'managed_external_service_consent_required'
+                : $provider . '_external_service_consent_required';
+
+            return $this->unavailable_error(
+                $reason,
+                __( 'Accept the provider disclosure before adding built-in actions on this execution route.', 'sentient-forms' )
+            );
+        }
+
+        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+        if ( 'sentient_managed' === $provider && 'revoke_managed_proxy' === sanitize_key( (string) ( $metadata['action'] ?? '' ) ) )
+        {
+            return $this->unavailable_error(
+                'managed_external_service_consent_revoked',
+                __( 'Re-enable Sentient Forms Managed Service disclosure consent before adding managed built-in actions.', 'sentient-forms' )
+            );
+        }
+
+        return true;
     }
 
     /**

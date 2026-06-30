@@ -4395,18 +4395,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-        $template_row = $this->ensure_bundled_action_template_row( $template_code, $definition );
-        if ( is_wp_error( $template_row ) )
-        {
-            return $template_row;
-        }
-
-        $custom_action = $this->ensure_bundled_local_custom_action( $template_row, $definition );
-        if ( is_wp_error( $custom_action ) )
-        {
-            return $custom_action;
-        }
-
         $form_source  = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         $form_id      = $this->get_request_form_id( $request );
         $settings        = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
@@ -4459,6 +4447,18 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( is_wp_error( $realtime_policy ) )
         {
             return $realtime_policy;
+        }
+
+        $template_row = $this->ensure_bundled_action_template_row( $template_code, $definition );
+        if ( is_wp_error( $template_row ) )
+        {
+            return $template_row;
+        }
+
+        $custom_action = $this->ensure_bundled_local_custom_action( $template_row, $definition );
+        if ( is_wp_error( $custom_action ) )
+        {
+            return $custom_action;
         }
 
         $enabled    = $request->has_param( 'is_action_enabled_for_form' )
