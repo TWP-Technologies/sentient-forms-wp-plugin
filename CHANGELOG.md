@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.9.0...v0.9.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **actions:** centralize bundled provider path defaults ([a98d318](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a98d3189fb11abbbb9e642a4e27f3421c7018ac1))
+* **actions:** centralize bundled provider path defaults ([12c34c9](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/12c34c9b128abc43c20e230ca4d10b08b59a8c83))
+* **actions:** enforce provider path defaults ([b7b64fc](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b7b64fc323420ab93cb9c9a9ae1167d3931eebb4))
+* **actions:** harden managed backup routing ([c10d38b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c10d38b1997a384a1bac28bb69a2d549d2da2212))
+* **actions:** prefer managed routing with openrouter backup ([76e2837](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/76e2837b304da7b35ae1caf3ea8c51ca2febc3e2))
+* **actions:** prefer managed routing with openrouter backup ([c1599ea](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c1599ea359376754a828432aca549a80e5dedc07))
+* **actions:** preserve bootstrap on refresh failure ([1129faf](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1129faf70e91658c7df092b9ebc917b1aad534ce))
+* **actions:** refresh provider path policy safely ([000dad1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/000dad1f28218752aea3d4e4db4613b6aacc55b8))
+* **actions:** require consent for bundled provider paths ([658fc55](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/658fc55968d1f98b4821032235cd821b646c0df4))
+* **actions:** require managed credit signal for fallback ([d73c631](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d73c631bd6d27cea0cf7f6f4c088d148adb0c0b8))
+
 ## [0.9.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.8.0...v0.9.0) (2026-06-29)
 
 
