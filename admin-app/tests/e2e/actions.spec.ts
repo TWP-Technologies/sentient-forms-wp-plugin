@@ -345,7 +345,9 @@ const statusUnknown = {
 const quota = { quota_max: 3, quota_used: 1, quota_remaining: 2 };
 const creditBalance = { credits_remaining: 25, credits_used: 5, credits_max: 30 };
 
-function managedProviderPathPolicy(actionId: string) {
+function managedProviderPathPolicy(actionIds: string | string[]) {
+	const ids = Array.isArray(actionIds) ? actionIds : [actionIds];
+
 	return {
 		default_provider: 'sentient_managed',
 		providers: {
@@ -360,24 +362,27 @@ function managedProviderPathPolicy(actionId: string) {
 				blocked_reason_code: 'structured_openrouter_model_unavailable'
 			}
 		},
-		actions: {
-			[actionId]: {
-				selected_provider: 'sentient_managed',
-				model_selection: {
-					provider: 'sentient_managed',
-					model: 'gemini-3-flash-preview',
-					credential_id: 7,
-					selection: {
-						primary: 'sf_default',
+		actions: Object.fromEntries(
+			ids.map((actionId) => [
+				actionId,
+				{
+					selected_provider: 'sentient_managed',
+					model_selection: {
 						provider: 'sentient_managed',
+						model: 'gemini-3-flash-preview',
 						credential_id: 7,
-						is_preset: true
-					}
-				},
-				blocked_reason_code: null,
-				requires_structured_output: true
-			}
-		}
+						selection: {
+							primary: 'sf_default',
+							provider: 'sentient_managed',
+							credential_id: 7,
+							is_preset: true
+						}
+					},
+					blocked_reason_code: null,
+					requires_structured_output: true
+				}
+			])
+		)
 	};
 }
 
@@ -2633,6 +2638,10 @@ test.describe('Actions admin flows', () => {
 						model_hint: 'openrouter/auto'
 					}
 				],
+				providerPathPolicy: managedProviderPathPolicy([
+					'spam_detection_v1',
+					'clarification_assistant_v1'
+				]),
 				status: statusUnknown,
 				formsActions: [],
 				creditBalance
@@ -3538,6 +3547,7 @@ test.describe('Actions admin flows', () => {
 					]
 				},
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy('summarize'),
 				status: statusUnknown,
 				formsActions: [],
 				formFields: baseFormFields,
@@ -3931,6 +3941,10 @@ test.describe('Actions admin flows', () => {
 						model_hint: 'openrouter/auto'
 					}
 				],
+				providerPathPolicy: managedProviderPathPolicy([
+					'spam_detection_v1',
+					'entry_summary_v1'
+				]),
 				status: statusUnknown,
 				formsActions: [],
 				formFields: [
@@ -4107,6 +4121,7 @@ test.describe('Actions admin flows', () => {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy(['spam_detection_v1', 'summarize']),
 				status: statusUnknown,
 				formsActions: linkages,
 				creditBalance
@@ -4169,6 +4184,7 @@ test.describe('Actions admin flows', () => {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
+				providerPathPolicy: managedProviderPathPolicy('summarize'),
 				status: statusUnknown,
 				formsActions: linkages,
 				creditBalance
