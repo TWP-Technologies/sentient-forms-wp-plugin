@@ -23,6 +23,7 @@ add_filter(
         $allow = array(
             '172.18.0.5',  // cps-api container IP in compose
             'cps-api',     // cps-api container hostname
+            'host.docker.internal', // host-run CPS for local dogfood
         );
 
         if ( in_array( $host, $allow, true ) ) {
@@ -47,6 +48,7 @@ add_filter(
             '172.18.0.5',  // cps-api container IP in compose
             'cps-api',     // cps-api container hostname
             'localhost',   // browser/manual localhost smoke paths
+            'host.docker.internal', // host-run CPS for local dogfood
         );
 
         return in_array( $host, $allow, true ) ? true : $allowed;

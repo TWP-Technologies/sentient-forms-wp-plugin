@@ -312,6 +312,35 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                     'minLength' => 1,
                     'maxLength' => 800,
                 ],
+                'source'    => [
+                    'type'                 => 'object',
+                    'required'             => [ 'kind' ],
+                    'additionalProperties' => false,
+                    'properties'           => [
+                        'kind'                => [
+                            'type' => 'string',
+                            'enum' => [ 'manual', 'entry' ],
+                        ],
+                        'form_source'         => [
+                            'type' => 'string',
+                        ],
+                        'form_id'             => [
+                            'type' => 'string',
+                        ],
+                        'entry_id'            => [
+                            'type' => 'string',
+                        ],
+                        'native_entry_id'     => [
+                            'type' => [ 'string', 'null' ],
+                        ],
+                        'selected_at'         => [
+                            'type' => 'string',
+                        ],
+                        'selected_by_user_id' => [
+                            'type' => [ 'integer', 'null' ],
+                        ],
+                    ],
+                ],
             ],
         ];
     }
@@ -349,10 +378,17 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                 continue;
             }
 
-            $sanitized[] = [
+            $item = [
                 'text'      => mb_substr( $text, 0, 800 ),
                 'rationale' => mb_substr( $rationale, 0, 800 ),
             ];
+            $source = $this->sanitize_spam_guidance_example_source( $example['source'] ?? null );
+            if ( null !== $source )
+            {
+                $item['source'] = $source;
+            }
+
+            $sanitized[] = $item;
 
             if ( count( $sanitized ) >= 10 )
             {
@@ -1379,13 +1415,22 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                 );
             }
 
-            $extra_keys = array_diff( array_keys( $example ), [ 'text', 'rationale' ] );
+            $extra_keys = array_diff( array_keys( $example ), [ 'text', 'rationale', 'source' ] );
             if ( [] !== $extra_keys )
             {
                 return $this->invalid_action_config_write_error(
                     $field,
-                    __( 'Spam guidance examples may only include text and rationale.', 'sentient-forms' )
+                    __( 'Spam guidance examples may only include text, rationale, and source.', 'sentient-forms' )
                 );
+            }
+
+            if ( array_key_exists( 'source', $example ) )
+            {
+                $source_validation = $this->validate_spam_guidance_example_source_for_write( $field, $example['source'] );
+                if ( is_wp_error( $source_validation ) )
+                {
+                    return $source_validation;
+                }
             }
 
             foreach ( [ 'text', 'rationale' ] as $example_field )
@@ -1420,6 +1465,97 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
             400,
             [ 'field' => $field ],
         );
+    }
+
+    private function validate_spam_guidance_example_source_for_write( string $field, mixed $source ): ?WP_Error
+    {
+        if ( ! is_array( $source ) )
+        {
+            return $this->invalid_action_config_write_error(
+                $field . '.source',
+                __( 'Spam guidance example source must be an object.', 'sentient-forms' )
+            );
+        }
+
+        $extra_keys = array_diff(
+            array_keys( $source ),
+            [ 'kind', 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at', 'selected_by_user_id' ]
+        );
+        if ( [] !== $extra_keys )
+        {
+            return $this->invalid_action_config_write_error(
+                $field . '.source',
+                __( 'Spam guidance example source contains unsupported fields.', 'sentient-forms' )
+            );
+        }
+
+        $kind = isset( $source['kind'] ) && is_string( $source['kind'] ) ? sanitize_key( $source['kind'] ) : '';
+        if ( ! in_array( $kind, [ 'manual', 'entry' ], true ) )
+        {
+            return $this->invalid_action_config_write_error(
+                $field . '.source.kind',
+                __( 'Spam guidance example source kind must be manual or entry.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( [ 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at' ] as $source_field )
+        {
+            if ( array_key_exists( $source_field, $source ) && null !== $source[ $source_field ] && ! is_string( $source[ $source_field ] ) )
+            {
+                return $this->invalid_action_config_write_error(
+                    $field . '.source.' . $source_field,
+                    __( 'Spam guidance example source string fields must be strings.', 'sentient-forms' )
+                );
+            }
+        }
+
+        if ( array_key_exists( 'selected_by_user_id', $source ) && null !== $source['selected_by_user_id'] && ! is_int( $source['selected_by_user_id'] ) )
+        {
+            return $this->invalid_action_config_write_error(
+                $field . '.source.selected_by_user_id',
+                __( 'Spam guidance example source user ID must be an integer or null.', 'sentient-forms' )
+            );
+        }
+
+        return null;
+    }
+
+    private function sanitize_spam_guidance_example_source( mixed $source ): ?array
+    {
+        if ( ! is_array( $source ) )
+        {
+            return null;
+        }
+
+        $kind = isset( $source['kind'] ) && is_scalar( $source['kind'] ) ? sanitize_key( (string) $source['kind'] ) : '';
+        if ( ! in_array( $kind, [ 'manual', 'entry' ], true ) )
+        {
+            return null;
+        }
+
+        $sanitized = [ 'kind' => $kind ];
+        foreach ( [ 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at' ] as $source_field )
+        {
+            if ( array_key_exists( $source_field, $source ) && is_scalar( $source[ $source_field ] ) )
+            {
+                $value = 'form_source' === $source_field
+                    ? sanitize_key( (string) $source[ $source_field ] )
+                    : sanitize_text_field( (string) $source[ $source_field ] );
+                if ( '' !== $value )
+                {
+                    $sanitized[ $source_field ] = $value;
+                }
+            }
+        }
+
+        if ( array_key_exists( 'selected_by_user_id', $source ) )
+        {
+            $sanitized['selected_by_user_id'] = null === $source['selected_by_user_id']
+                ? null
+                : absint( $source['selected_by_user_id'] );
+        }
+
+        return $sanitized;
     }
 
     /**

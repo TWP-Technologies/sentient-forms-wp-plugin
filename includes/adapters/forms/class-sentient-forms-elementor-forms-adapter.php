@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party Elementor Pro Forms Form Source adapter.
  */
-class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
+class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
 {
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
@@ -299,6 +299,102 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return $entry;
     }
 
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function search_historical_entries( mixed $form_id, string $query = '', int $limit = 10, string $status = 'active' ): array | WP_Error
+    {
+        $form_id = Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
+        $query   = strtolower( trim( sanitize_text_field( $query ) ) );
+        $limit   = max( 1, min( 50, $limit ) );
+        $status  = $this->normalize_historical_status_filter( $status );
+
+        if ( '' === $form_id )
+        {
+            return new WP_Error( 'sentient_forms_elementor_form_invalid', __( 'Elementor form ID is required.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        $availability = $this->elementor_historical_native_availability( $form_id );
+        if ( empty( $availability['native_read'] ) )
+        {
+            return [
+                'entries'      => [],
+                'form_source'  => $this->get_id(),
+                'form_id'      => $form_id,
+                'availability' => $availability,
+            ];
+        }
+
+        $pre = apply_filters( 'sentient_forms_elementor_historical_entries_pre', null, $form_id, $query, $limit, $status, $this );
+        if ( is_wp_error( $pre ) )
+        {
+            return $pre;
+        }
+        if ( is_array( $pre ) )
+        {
+            return $pre;
+        }
+
+        $rows    = $this->elementor_native_submission_rows( $form_id, max( 50, $limit ), $status );
+        $results = [];
+        foreach ( $rows as $row )
+        {
+            $entry = $this->format_historical_elementor_submission( $form_id, $row );
+            if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $entry['field_summary'] ?? [] ) ?: '' ), $query ) )
+            {
+                continue;
+            }
+
+            $results[] = $entry;
+            if ( count( $results ) >= $limit )
+            {
+                break;
+            }
+        }
+
+        return [
+            'entries'      => $results,
+            'form_source'  => $this->get_id(),
+            'form_id'      => $form_id,
+            'availability' => $availability,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function get_historical_entry( mixed $form_id, string $entry_id ): array | WP_Error
+    {
+        $form_id  = Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
+        $entry_id = absint( $entry_id );
+        if ( '' === $form_id || $entry_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_elementor_native_submission_not_found', __( 'Elementor submission could not be found for this form.', 'sentient-forms' ), [ 'status' => 404, 'allow_ledger_fallback' => true, 'unavailable_reason' => 'elementor_submission_not_found' ] );
+        }
+
+        $availability = $this->elementor_historical_native_availability( $form_id );
+        if ( empty( $availability['native_read'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_elementor_native_submissions_unavailable',
+                __( 'Elementor native submissions are unavailable for this form.', 'sentient-forms' ),
+                [
+                    'status'                => 404,
+                    'unavailable_reason'    => $availability['unavailable_reason'] ?? 'elementor_form_submissions_unavailable',
+                    'allow_ledger_fallback' => ! empty( $availability['allow_ledger_fallback'] ),
+                ]
+            );
+        }
+
+        $row = $this->elementor_native_submission_row( $form_id, $entry_id );
+        if ( null === $row )
+        {
+            return new WP_Error( 'sentient_forms_elementor_native_submission_not_found', __( 'Elementor submission could not be found for this form.', 'sentient-forms' ), [ 'status' => 404, 'allow_ledger_fallback' => true, 'unavailable_reason' => 'elementor_submission_not_found' ] );
+        }
+
+        return $this->format_historical_elementor_submission( $form_id, $row );
+    }
+
     public function handle_new_record( mixed $record, mixed $handler = null ): ?string
     {
         if ( ! $this->is_active() )
@@ -443,6 +539,333 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             || class_exists( '\ElementorPro\Modules\Forms\Submissions\Database\Query' );
 
         return (bool) apply_filters( 'sentient_forms_elementor_pro_form_submissions_api_available', $has_api, $this );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function elementor_historical_native_availability( string $form_id ): array
+    {
+        if ( ! $this->has_elementor() || ! $this->has_elementor_pro_forms_api() )
+        {
+            return [
+                'source'                => 'native',
+                'native_read'           => false,
+                'ledger_read'           => false,
+                'unavailable_reason'    => 'requires_pro',
+                'allow_ledger_fallback' => false,
+            ];
+        }
+
+        if ( ! $this->has_elementor_pro_form_submissions_api() || ! $this->elementor_native_submission_tables_available() )
+        {
+            return [
+                'source'                => 'native',
+                'native_read'           => false,
+                'ledger_read'           => false,
+                'unavailable_reason'    => 'elementor_form_submissions_unavailable',
+                'allow_ledger_fallback' => true,
+            ];
+        }
+
+        return [
+            'source'                => 'native',
+            'native_read'           => true,
+            'ledger_read'           => false,
+            'unavailable_reason'    => null,
+            'allow_ledger_fallback' => false,
+        ];
+    }
+
+    private function elementor_native_submission_tables_available(): bool
+    {
+        global $wpdb;
+
+        return $this->table_exists( $wpdb->prefix . 'e_submissions' )
+            && $this->table_exists( $wpdb->prefix . 'e_submissions_values' );
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function elementor_native_submission_rows( string $form_id, int $limit, string $status ): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'e_submissions';
+        if ( ! $this->table_exists( $table ) )
+        {
+            return [];
+        }
+
+        $columns = $this->table_columns( $table );
+        if ( ! in_array( 'id', $columns, true ) )
+        {
+            return [];
+        }
+
+        [ $post_id, $element_id ] = $this->elementor_form_id_parts( $form_id );
+        $select_columns = array_values( array_intersect( [ 'id', 'post_id', 'element_id', 'form_name', 'status', 'created_at', 'updated_at' ], $columns ) );
+        $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
+        $where          = [];
+        $args           = [ $table ];
+
+        if ( $post_id > 0 && in_array( 'post_id', $columns, true ) )
+        {
+            $where[] = '`post_id` = %d';
+            $args[]  = $post_id;
+        }
+        if ( '' !== $element_id && in_array( 'element_id', $columns, true ) )
+        {
+            $where[] = '`element_id` = %s';
+            $args[]  = $element_id;
+        }
+        if ( 'all' !== $status && in_array( 'status', $columns, true ) )
+        {
+            $where[] = '`status` = %s';
+            $args[]  = $status;
+        }
+
+        $where_sql = [] !== $where ? ' WHERE ' . implode( ' AND ', $where ) : '';
+        $args[]    = max( 1, min( 100, $limit ) );
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
+        $sql = "SELECT {$select_sql} FROM %i{$where_sql} ORDER BY `id` DESC LIMIT %d";
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
+        $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A );
+
+        return is_array( $rows ) ? $rows : [];
+    }
+
+    private function elementor_native_submission_row( string $form_id, int $submission_id ): ?array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'e_submissions';
+        if ( ! $this->table_exists( $table ) )
+        {
+            return null;
+        }
+
+        $columns = $this->table_columns( $table );
+        if ( ! in_array( 'id', $columns, true ) )
+        {
+            return null;
+        }
+
+        [ $post_id, $element_id ] = $this->elementor_form_id_parts( $form_id );
+        $select_columns = array_values( array_intersect( [ 'id', 'post_id', 'element_id', 'form_name', 'status', 'created_at', 'updated_at' ], $columns ) );
+        $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
+        $where          = [ '`id` = %d' ];
+        $args           = [ $table, $submission_id ];
+
+        if ( $post_id > 0 && in_array( 'post_id', $columns, true ) )
+        {
+            $where[] = '`post_id` = %d';
+            $args[]  = $post_id;
+        }
+        if ( '' !== $element_id && in_array( 'element_id', $columns, true ) )
+        {
+            $where[] = '`element_id` = %s';
+            $args[]  = $element_id;
+        }
+
+        $where_sql = ' WHERE ' . implode( ' AND ', $where );
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
+        $sql = "SELECT {$select_sql} FROM %i{$where_sql} LIMIT 1";
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
+        $row = $wpdb->get_row( $wpdb->prepare( $sql, ...$args ), ARRAY_A );
+
+        return is_array( $row ) ? $row : null;
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     *
+     * @return array<string,mixed>
+     */
+    private function format_historical_elementor_submission( string $form_id, array $row ): array
+    {
+        $submission_id = isset( $row['id'] ) && is_scalar( $row['id'] )
+            ? sanitize_text_field( (string) $row['id'] )
+            : '';
+
+        return [
+            'id'               => $submission_id,
+            'source_type'      => 'native',
+            'submission_uuid'  => null,
+            'native_entry_id'  => '' !== $submission_id ? $submission_id : null,
+            'native_entry_url' => '' !== $submission_id ? $this->elementor_native_submission_url( $submission_id ) : null,
+            'date_created'     => $this->first_scalar_value( [ $row['created_at'] ?? null, $row['updated_at'] ?? null ] ),
+            'status'           => isset( $row['status'] ) && is_scalar( $row['status'] ) && '' !== trim( (string) $row['status'] )
+                ? sanitize_key( (string) $row['status'] )
+                : 'active',
+            'field_summary'    => '' !== $submission_id ? $this->elementor_submission_field_summary( absint( $submission_id ) ) : [],
+        ];
+    }
+
+    /**
+     * @return array<int,array{field_id:string,label:string,value:string}>
+     */
+    private function elementor_submission_field_summary( int $submission_id ): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'e_submissions_values';
+        if ( ! $this->table_exists( $table ) )
+        {
+            return [];
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission values for explicit webmaster curation.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT `key`, `value` FROM %i WHERE `submission_id` = %d ORDER BY `id` ASC',
+                $table,
+                $submission_id
+            ),
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) )
+        {
+            return [];
+        }
+
+        $summary = [];
+        foreach ( $rows as $row )
+        {
+            if ( count( $summary ) >= 12 )
+            {
+                break;
+            }
+
+            $field_id = isset( $row['key'] ) && is_scalar( $row['key'] )
+                ? sanitize_key( (string) $row['key'] )
+                : '';
+            $value = $row['value'] ?? null;
+            if ( is_array( $value ) )
+            {
+                $value = wp_json_encode( $value );
+            }
+            if ( '' === $field_id || ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $summary[] = [
+                'field_id' => $field_id,
+                'label'    => sanitize_text_field( ucwords( str_replace( [ '_', '-' ], ' ', $field_id ) ) ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return array{0:int,1:string}
+     */
+    private function elementor_form_id_parts( string $form_id ): array
+    {
+        if ( 1 === preg_match( '/^([1-9][0-9]*):([A-Za-z0-9_-]+)$/', $form_id, $matches ) )
+        {
+            return [ absint( $matches[1] ), sanitize_text_field( $matches[2] ) ];
+        }
+
+        return [ 0, '' ];
+    }
+
+    private function elementor_native_submission_url( string $submission_id ): string
+    {
+        return admin_url( 'admin.php?page=e-form-submissions#/submission/' . rawurlencode( $submission_id ) );
+    }
+
+    private function table_exists( string $table ): bool
+    {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Capability detection needs to inspect the provider table surface.
+        $found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+        if ( is_string( $found ) && 0 === strcasecmp( $found, $table ) )
+        {
+            return true;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Fallback for DB drivers whose SHOW TABLES result formatting differs.
+        $count = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COUNT(1) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+                $table
+            )
+        );
+
+        if ( (int) $count > 0 )
+        {
+            return true;
+        }
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Capability detection needs to inspect the provider table surface.
+        $wpdb->get_results( $wpdb->prepare( 'SELECT 1 FROM %i LIMIT 0', $table ), ARRAY_A );
+
+        return '' === $wpdb->last_error;
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function table_columns( string $table ): array
+    {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Provider table shape varies by Elementor Pro version.
+        $rows = $wpdb->get_results( $wpdb->prepare( 'SHOW COLUMNS FROM %i', $table ), ARRAY_A );
+        if ( ! is_array( $rows ) || [] === $rows )
+        {
+            $wpdb->last_error = '';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Provider table shape varies by Elementor Pro version.
+            $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i LIMIT 0', $table ), ARRAY_A );
+            if ( '' !== $wpdb->last_error )
+            {
+                return [];
+            }
+
+            $columns = $wpdb->get_col_info( 'name' );
+            return is_array( $columns )
+                ? array_values( array_filter( array_map( static fn ( mixed $column ): string => is_scalar( $column ) ? sanitize_key( (string) $column ) : '', $columns ) ) )
+                : [];
+        }
+
+        return array_values(
+            array_filter(
+                array_map(
+                    static fn ( array $row ): string => isset( $row['Field'] ) && is_scalar( $row['Field'] ) ? sanitize_key( (string) $row['Field'] ) : '',
+                    $rows
+                )
+            )
+        );
+    }
+
+    private function first_scalar_value( array $values ): ?string
+    {
+        foreach ( $values as $value )
+        {
+            if ( is_scalar( $value ) && '' !== trim( (string) $value ) )
+            {
+                return sanitize_text_field( (string) $value );
+            }
+        }
+
+        return null;
+    }
+
+    private function normalize_historical_status_filter( string $status ): string
+    {
+        $status = sanitize_key( $status );
+        return in_array( $status, [ 'all', 'active', 'spam' ], true ) ? $status : 'active';
     }
 
     /**

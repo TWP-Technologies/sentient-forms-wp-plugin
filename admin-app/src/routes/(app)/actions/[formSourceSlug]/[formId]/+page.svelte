@@ -77,6 +77,9 @@
 		RepairState,
 		ResolvedModelSelection,
 		SpamIndicatorsDisplayMode,
+		SpamGuidanceExampleAppendPayload,
+		SpamGuidanceEntrySearchResponse,
+		SpamGuidanceEntryStatusFilter,
 		SpamResultDisplayMode,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
@@ -1150,6 +1153,22 @@
 				actionDefaultPreloadIds.delete(actionId);
 			}
 		});
+	}
+
+	async function searchHistoricalSpamGuidanceEntries(params: {
+		q?: string;
+		limit?: number;
+		status?: SpamGuidanceEntryStatusFilter;
+	}): Promise<SpamGuidanceEntrySearchResponse> {
+		const client = createClientFromConfig();
+		return client.searchSpamGuidanceEntries(data.formSourceSlug, data.formId, params);
+	}
+
+	async function saveHistoricalSpamGuidanceExample(
+		payload: SpamGuidanceExampleAppendPayload
+	) {
+		const client = createClientFromConfig();
+		return client.appendSpamGuidanceExample(data.formSourceSlug, data.formId, payload);
 	}
 
 	async function saveFormLevelConfig() {
@@ -4301,6 +4320,11 @@
 							<SpamCriteriaEditor
 								positiveExamples={formLevelConfig.spam_positive_examples ?? []}
 								negativeExamples={formLevelConfig.spam_negative_examples ?? []}
+								formSourceSlug={data.formSourceSlug}
+								formId={data.formId}
+								targetScope="form"
+								searchHistoricalEntries={searchHistoricalSpamGuidanceEntries}
+								saveHistoricalExample={saveHistoricalSpamGuidanceExample}
 								onchange={(data) => {
 									formLevelConfig = {
 										...formLevelConfig,
@@ -5541,6 +5565,12 @@
 									<SpamCriteriaEditor
 										positiveExamples={draftSettings.spam_positive_examples ?? []}
 										negativeExamples={draftSettings.spam_negative_examples ?? []}
+										formSourceSlug={data.formSourceSlug}
+										formId={data.formId}
+										targetScope="mapping"
+										mappingId={editingLinkage.local_mapping_id}
+										searchHistoricalEntries={searchHistoricalSpamGuidanceEntries}
+										saveHistoricalExample={saveHistoricalSpamGuidanceExample}
 										inheritedPositive={currentFormActionConfig.spam_positive_examples?.length
 											? (currentFormActionConfig.spam_positive_examples ?? [])
 											: (currentActionDefaults.spam_positive_examples ?? [])}

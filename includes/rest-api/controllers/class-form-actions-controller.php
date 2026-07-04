@@ -1052,13 +1052,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                                 'description'       => __( 'Manual scalar field values keyed by field id.', 'sentient-forms' ),
                                 'type'              => 'object',
                                 'required'          => false,
-                            ],
-                            'entry_id'      => [
-                                'description'       => __( 'Optional Gravity Forms entry id used for trace input import.', 'sentient-forms' ),
-                                'type'              => 'integer',
-                                'required'          => false,
-                                'validate_callback' => [ $this, 'validate_entry_id_param' ],
-                            ],
+							],
+							'entry_id'      => [
+								'description'       => __( 'Optional native entry id used for trace input import.', 'sentient-forms' ),
+								'type'              => 'integer',
+								'required'          => false,
+								'validate_callback' => [ $this, 'validate_entry_id_param' ],
+							],
                             'field_scope'   => [
                                 'description'       => __( 'Entry import scope for trace input filtering.', 'sentient-forms' ),
                                 'type'              => 'string',
@@ -2525,16 +2525,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             'provider_is_active' => ! isset( $form_data['is_active'] ) || ! empty( $form_data['is_active'] ),
         ];
 
-        if ( 'gravity_forms' === $form_source_slug && $this->is_positive_integer_form_id( $form_id ) )
-        {
-            $summary['provider_edit_url'] = admin_url(
-                sprintf(
-                    'admin.php?page=gf_edit_forms&id=%d',
-                    absint( $form_id )
-                )
-            );
-        }
-        elseif ( method_exists( $adapter, 'get_provider_edit_url' ) )
+        if ( method_exists( $adapter, 'get_provider_edit_url' ) )
         {
             $provider_edit_url = $adapter->get_provider_edit_url( $form_id );
             if ( is_scalar( $provider_edit_url ) && '' !== (string) $provider_edit_url )
@@ -2991,11 +2982,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-        [ $entry_values, $input_meta ] = $this->resolve_trace_entry_values(
-            $actions,
-            $manual_values,
-            $entry_id,
-            $field_scope,
+		[ $entry_values, $input_meta ] = $this->resolve_trace_entry_values(
+			$form_source_slug,
+			$form_id,
+			$actions,
+			$manual_values,
+			$entry_id,
+			$field_scope,
         );
         if ( is_wp_error( $entry_values ) )
         {
@@ -3269,12 +3262,14 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      *
      * @return array{0: array<string, string>|WP_Error, 1: array<string, mixed>}
      */
-    private function resolve_trace_entry_values(
-        array $actions,
-        array $manual_values,
-        int $entry_id,
-        string $field_scope
-    ): array
+	private function resolve_trace_entry_values(
+		string $form_source_slug,
+		int $form_id,
+		array $actions,
+		array $manual_values,
+		int $entry_id,
+		string $field_scope
+	): array
     {
         $meta = [
             'entry_id'           => $entry_id > 0 ? $entry_id : null,
@@ -3285,27 +3280,29 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( $entry_id <= 0 )
         {
-            return [ $manual_values, $meta ];
-        }
+			return [ $manual_values, $meta ];
+		}
 
-        if ( ! class_exists( 'GFAPI' ) )
-        {
-            return [
-                $this->prepare_error_response( 'rest_gf_missing', __( 'Gravity Forms is required for this endpoint.', 'sentient-forms' ), 500 ),
-                $meta,
-            ];
-        }
+		$registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+		$adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
+		if ( ! $adapter )
+		{
+			return [
+				$this->prepare_error_response( 'rest_form_source_unavailable', __( 'Form source adapter is not available for trace input import.', 'sentient-forms' ), 400 ),
+				$meta,
+			];
+		}
 
-        $entry = GFAPI::get_entry( $entry_id );
-        if ( is_wp_error( $entry ) )
-        {
-            return [
-                $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 ),
-                $meta,
-            ];
-        }
+		$entry = $adapter->get_entry_data( $entry_id, $form_id );
+		if ( is_wp_error( $entry ) || ( ! is_array( $entry ) && ! is_object( $entry ) ) )
+		{
+			return [
+				$this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 ),
+				$meta,
+			];
+		}
 
-        $imported_values = $this->extract_scalar_entry_values( $entry );
+		$imported_values = $this->extract_scalar_entry_values( is_array( $entry ) ? $entry : get_object_vars( $entry ) );
         if ( 'mapped_and_rule' === $field_scope )
         {
             $allowed_field_ids = $this->collect_trace_referenced_field_ids( $actions, $imported_values );
@@ -7737,13 +7734,22 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 );
             }
 
-            $extra_keys = array_diff( array_keys( $example ), [ 'text', 'rationale' ] );
+            $extra_keys = array_diff( array_keys( $example ), [ 'text', 'rationale', 'source' ] );
             if ( [] !== $extra_keys )
             {
                 return $this->invalid_settings_write_error(
                     $field,
-                    __( 'Spam guidance examples may only include text and rationale.', 'sentient-forms' )
+                    __( 'Spam guidance examples may only include text, rationale, and source.', 'sentient-forms' )
                 );
+            }
+
+            if ( array_key_exists( 'source', $example ) )
+            {
+                $source_validation = $this->validate_spam_guidance_example_source_for_write( $field, $example['source'] );
+                if ( is_wp_error( $source_validation ) )
+                {
+                    return $source_validation;
+                }
             }
 
             foreach ( [ 'text', 'rationale' ] as $example_field )
@@ -7778,6 +7784,59 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             400,
             [ 'field' => $field ],
         );
+    }
+
+    private function validate_spam_guidance_example_source_for_write( string $field, mixed $source ): ?WP_Error
+    {
+        if ( ! is_array( $source ) )
+        {
+            return $this->invalid_settings_write_error(
+                $field . '.source',
+                __( 'Spam guidance example source must be an object.', 'sentient-forms' )
+            );
+        }
+
+        $extra_keys = array_diff(
+            array_keys( $source ),
+            [ 'kind', 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at', 'selected_by_user_id' ]
+        );
+        if ( [] !== $extra_keys )
+        {
+            return $this->invalid_settings_write_error(
+                $field . '.source',
+                __( 'Spam guidance example source contains unsupported fields.', 'sentient-forms' )
+            );
+        }
+
+        $kind = isset( $source['kind'] ) && is_string( $source['kind'] ) ? sanitize_key( $source['kind'] ) : '';
+        if ( ! in_array( $kind, [ 'manual', 'entry' ], true ) )
+        {
+            return $this->invalid_settings_write_error(
+                $field . '.source.kind',
+                __( 'Spam guidance example source kind must be manual or entry.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( [ 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at' ] as $source_field )
+        {
+            if ( array_key_exists( $source_field, $source ) && null !== $source[ $source_field ] && ! is_string( $source[ $source_field ] ) )
+            {
+                return $this->invalid_settings_write_error(
+                    $field . '.source.' . $source_field,
+                    __( 'Spam guidance example source string fields must be strings.', 'sentient-forms' )
+                );
+            }
+        }
+
+        if ( array_key_exists( 'selected_by_user_id', $source ) && null !== $source['selected_by_user_id'] && ! is_int( $source['selected_by_user_id'] ) )
+        {
+            return $this->invalid_settings_write_error(
+                $field . '.source.selected_by_user_id',
+                __( 'Spam guidance example source user ID must be an integer or null.', 'sentient-forms' )
+            );
+        }
+
+        return null;
     }
 
     /**
@@ -8056,15 +8115,60 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 continue;
             }
 
-            $sanitized[] = [
+            $item = [
                 'text'      => mb_substr( $text, 0, 800 ),
                 'rationale' => mb_substr( $rationale, 0, 800 ),
             ];
+            $source = $this->sanitize_spam_guidance_example_source( $example['source'] ?? null );
+            if ( null !== $source )
+            {
+                $item['source'] = $source;
+            }
+
+            $sanitized[] = $item;
 
             if ( count( $sanitized ) >= 10 )
             {
                 break;
             }
+        }
+
+        return $sanitized;
+    }
+
+    private function sanitize_spam_guidance_example_source( mixed $source ): ?array
+    {
+        if ( ! is_array( $source ) )
+        {
+            return null;
+        }
+
+        $kind = isset( $source['kind'] ) && is_scalar( $source['kind'] ) ? sanitize_key( (string) $source['kind'] ) : '';
+        if ( ! in_array( $kind, [ 'manual', 'entry' ], true ) )
+        {
+            return null;
+        }
+
+        $sanitized = [ 'kind' => $kind ];
+        foreach ( [ 'form_source', 'form_id', 'entry_id', 'native_entry_id', 'selected_at' ] as $source_field )
+        {
+            if ( array_key_exists( $source_field, $source ) && is_scalar( $source[ $source_field ] ) )
+            {
+                $value = 'form_source' === $source_field
+                    ? sanitize_key( (string) $source[ $source_field ] )
+                    : sanitize_text_field( (string) $source[ $source_field ] );
+                if ( '' !== $value )
+                {
+                    $sanitized[ $source_field ] = $value;
+                }
+            }
+        }
+
+        if ( array_key_exists( 'selected_by_user_id', $source ) )
+        {
+            $sanitized['selected_by_user_id'] = null === $source['selected_by_user_id']
+                ? null
+                : absint( $source['selected_by_user_id'] );
         }
 
         return $sanitized;
