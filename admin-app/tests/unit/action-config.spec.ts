@@ -133,7 +133,16 @@ describe('action config helpers', () => {
 			spam_positive_examples: [
 				{
 					text: 'I need warranty help for order SF-1001.',
-					rationale: 'Specific existing-customer support request.'
+					rationale: 'Specific existing-customer support request.',
+					source: {
+						kind: 'entry',
+						form_source: 'gravity_forms',
+						form_id: '7',
+						entry_id: '123',
+						native_entry_id: '123',
+						selected_at: '2026-07-01T12:00:00Z',
+						selected_by_user_id: 5
+					}
 				}
 			],
 			spam_negative_examples: [
@@ -152,6 +161,7 @@ describe('action config helpers', () => {
 		expect(result.success).toBe(true);
 		if (result.success) {
 			expect(result.data.spam_negative_examples?.[0]?.rationale).toContain('lead-harvesting');
+			expect(result.data.spam_positive_examples?.[0]?.source?.kind).toBe('entry');
 			expect(result.data.action_customization).toContain('phone-number requests');
 			expect(result.data.suppress_webhooks_on_spam).toBe(true);
 		}
@@ -189,6 +199,17 @@ describe('action config helpers', () => {
 					text: `Example ${index}`,
 					rationale: `Rationale ${index}`
 				}))
+			}).success
+		).toBe(false);
+		expect(
+			safeParseFormActionConfigPayload({
+				spam_positive_examples: [
+					{
+						text: 'Bad source',
+						rationale: 'Malformed provenance should not be accepted.',
+						source: { kind: 'remote_import' }
+					}
+				]
 			}).success
 		).toBe(false);
 	});

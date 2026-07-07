@@ -1,0 +1,29 @@
+# Form Source Adapter Boundaries
+
+Sentient Forms behavior should be centralized unless the behavior is genuinely native to a specific Form Source plugin. The WP plugin defines the adapter contract, its shape, lifecycle vocabulary, capability descriptors, and result-effect semantics. Adapters fulfill that contract with source-specific implementations for Gravity Forms, Contact Form 7, WPForms, Elementor Pro Forms, or future sources.
+
+## Rules
+
+- Keep baseline parity source-neutral: the Sentient Forms Submission Ledger and linked action runs are the canonical cross-source surface.
+- Treat native entry links, notes, entry metadata, spam status, notification controls, and validation hooks as capabilities, not assumptions.
+- Do not branch on a Form Source slug in shared services when an adapter capability or optional interface can express the difference.
+- Do not let adapters redefine product semantics. Shared Sentient Forms services decide what an effect means; adapters only implement how that effect is discovered, captured, linked, or applied in the source plugin.
+- Native enrichments must return explicit outcomes: `applied`, `unsupported`, `skipped`, or `failed`, with a stable reason.
+- Unsupported native enrichment is acceptable when the ledger baseline still captures the submission and action run. Do not describe unsupported enrichment as full native parity.
+- Add or update a public-behavior test before moving a native effect behind an adapter contract.
+- Current broad support claims must consider Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms. Elementor support means Elementor Pro Forms, not free Elementor without the Forms APIs.
+
+## Current Slice
+
+`Sentient_Forms_Native_Effects_Adapter_Interface` is the optional native-effects contract. The first implemented vertical slices route local `store_result`, `entry_note`, `meta`, `spam_note`, `mark_as_spam`, `post_execution_entry_note`, and `post_execution_action_results` effects to a registered adapter when that adapter opts in, while preserving existing Gravity behavior and explicit unsupported results for adapters that do not opt in. These effects now use the registered native-effects adapter for any opted-in Form Source, including Gravity Forms, and fall back to the legacy Gravity writes/status behavior only when no native-effects adapter is registered.
+
+Gravity Forms now implements the same optional interface for `store_result`, `entry_note`, `meta`, `spam_note`, `mark_as_spam`, `post_execution_entry_note`, and `post_execution_action_results`, backed by the existing Gravity metadata, note, entry-meta, spam-status, and post-execution audit APIs. The shared applier has been rerouted through that Gravity interface for these local result effects.
+
+Follow-up slices should continue moving source-specific behavior behind the same style of contract:
+
+- explicit unsupported native-effects implementations for CF7, WPForms, and Elementor Pro Forms unless a verified native capability exists
+- provider preview/admin links where they still depend on source-specific branches
+
+## Agent Context Placement
+
+Keep the root instruction files concise. Put durable adapter rules here, implementation-specific reminders in `wp-plugin/AGENTS.md`, and executable constraints in PHPUnit/Vitest/Playwright tests. Use skills for repeated workflows such as TDD, architecture review, and browser greenlight validation instead of expanding every prompt with long process text.

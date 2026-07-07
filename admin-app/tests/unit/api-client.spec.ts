@@ -210,6 +210,27 @@ describe('SentientFormsApiClient', () => {
 		expect(mockFetch).toHaveBeenCalledTimes(2);
 	});
 
+	it('rejects malformed dashboard summary collection responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						generated_at: '2030-01-01T00:00:00Z',
+						providers: { openrouter: true },
+						templates: [],
+						custom_actions: [],
+						recent_events: []
+					}
+				})
+		});
+
+		await expect(client.getDashboardSummary({ showNotifications: false })).rejects.toThrow();
+	});
+
 	it('normalizes concurrent cached GET failures for deduped callers', async () => {
 		let rejectFetch!: (reason: unknown) => void;
 		mockFetch.mockReturnValue(
@@ -741,8 +762,7 @@ describe('SentientFormsApiClient', () => {
 							disabled_at: null,
 							disabled_by_user_id: null,
 							settings_source: 'sentient_submission_ledger_settings',
-							ledger_records_endpoint:
-								'/sentient-forms/v1/gravity_forms/forms/42/submissions',
+							ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
 							record_count: 0
 						},
 						provider_path_policy: {
@@ -849,6 +869,41 @@ describe('SentientFormsApiClient', () => {
 		expect(result.provider_path_policy).toBeUndefined();
 	});
 
+	it('rejects malformed form actions bootstrap responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						actions: { map_1: { central_action_id: 'spam_detection_v1' } },
+						execution_status: {
+							status: 'success',
+							message: null,
+							entry_id: 99,
+							last_error_code: null,
+							last_result: null
+						},
+						disabled_state: {
+							sf_disabled: false,
+							global_disabled: false,
+							provider_disabled: false,
+							effective_disabled: false
+						},
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+		});
+
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).rejects.toThrow();
+	});
+
 	it('updates submission ledger settings through the form-scoped endpoint', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
@@ -906,19 +961,15 @@ describe('SentientFormsApiClient', () => {
 						disabled_at: null,
 						disabled_by_user_id: null,
 						settings_source: 'sentient_submission_ledger_settings',
-						ledger_records_endpoint:
-							`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+						ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
 						record_count: 0
 					}
 				})
 		});
 
-		const result = await client.updateSubmissionLedgerSettings(
-			'opaque_forms',
-			opaqueFormId,
-			true,
-			{ showNotifications: false }
-		);
+		const result = await client.updateSubmissionLedgerSettings('opaque_forms', opaqueFormId, true, {
+			showNotifications: false
+		});
 
 		expect(mockFetch).toHaveBeenCalledWith(
 			`${baseUrl}opaque_forms/forms/${encodedFormId}/ledger-settings`,
@@ -955,8 +1006,7 @@ describe('SentientFormsApiClient', () => {
 								disabled_at: null,
 								disabled_by_user_id: null,
 								settings_source: 'sentient_submission_ledger_settings',
-								ledger_records_endpoint:
-									`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+								ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
 								record_count: 0
 							}
 						})
@@ -976,8 +1026,7 @@ describe('SentientFormsApiClient', () => {
 								disabled_at: null,
 								disabled_by_user_id: null,
 								settings_source: 'sentient_submission_ledger_settings',
-								ledger_records_endpoint:
-									`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+								ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
 								record_count: 0
 							}
 						})
@@ -1136,6 +1185,158 @@ describe('SentientFormsApiClient', () => {
 		expect(result.records[0]?.provider_metadata).toEqual({});
 		expect(result.records[0]?.file_refs).toEqual([]);
 		expect(result.records[0]?.redaction_summary).toEqual({});
+	});
+
+	it('searches historical spam guidance entries through the spam-specific endpoint', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					form_source: 'gravity_forms',
+					form_id: '42',
+					availability: {
+						source: 'native',
+						native_read: true,
+						ledger_read: false,
+						unavailable_reason: null
+					},
+					entries: [
+						{
+							id: '99',
+							source_type: 'native',
+							date_created: '2030-01-05T10:00:00Z',
+							status: 'spam',
+							native_entry_id: '99',
+							native_entry_url: 'https://example.test/wp-admin/admin.php?page=gf_entries&id=42&lid=99',
+							field_summary: [
+								{ field_id: '1', label: 'Email', value: 'spam@example.test' },
+								{ field_id: '2', label: 'Message', value: 'Buy crypto traffic now.' }
+							]
+						}
+					]
+				}
+			})
+		);
+
+		const result = await client.searchSpamGuidanceEntries('gravity_forms', 42, {
+			q: 'crypto',
+			limit: 5,
+			status: 'spam',
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}spam-guidance/forms/gravity_forms/42/entries/search?q=crypto&limit=5&status=spam`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.entries[0]?.status).toBe('spam');
+		expect(result.entries[0]?.source_type).toBe('native');
+		expect(result.availability.source).toBe('native');
+	});
+
+	it('keeps opaque Form Source IDs encoded for historical spam guidance search', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					form_source: 'elementor_forms',
+					form_id: '123:formabc',
+					availability: {
+						source: 'ledger',
+						native_read: false,
+						ledger_read: true,
+						ledger_enabled: true,
+						unavailable_reason: null,
+						native_unavailable_reason: 'elementor_form_submissions_unavailable'
+					},
+					entries: []
+				}
+			})
+		);
+
+		const result = await client.searchSpamGuidanceEntries('elementor_forms', '123:formabc', {
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}spam-guidance/forms/elementor_forms/123%3Aformabc/entries/search`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.form_id).toBe('123:formabc');
+		expect(result.availability.native_unavailable_reason).toBe(
+			'elementor_form_submissions_unavailable'
+		);
+	});
+
+	it('appends reviewed spam guidance examples and preserves provenance in the parsed config', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					target_scope: 'form',
+					label: 'ham',
+					config: {
+						spam_positive_examples: [
+							{
+								text: 'Email: ada@example.test\nMessage: Please quote a repair.',
+								rationale: 'Specific buyer request.',
+								source: {
+									kind: 'entry',
+									form_source: 'gravity_forms',
+									form_id: '42',
+									entry_id: '99',
+									native_entry_id: '99',
+									selected_at: '2030-01-05T10:05:00Z',
+									selected_by_user_id: 7
+								}
+							}
+						],
+						spam_negative_examples: []
+					}
+				}
+			})
+		);
+
+		const result = await client.appendSpamGuidanceExample('gravity_forms', 42, {
+			target_scope: 'form',
+			label: 'ham',
+			entry_id: '99'
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}spam-guidance/forms/gravity_forms/42/examples`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					target_scope: 'form',
+					label: 'ham',
+					entry_id: '99'
+				})
+			})
+		);
+		expect(result.config.spam_positive_examples?.[0]?.source?.kind).toBe('entry');
+		expect(result.config.spam_positive_examples?.[0]?.source?.selected_by_user_id).toBe(7);
+	});
+
+	it('rejects malformed spam guidance search responses', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					form_source: 'gravity_forms',
+					form_id: '42',
+					availability: {
+						source: 'native',
+						native_read: 'yes'
+					},
+					entries: []
+				}
+			})
+		);
+
+		await expect(
+			client.searchSpamGuidanceEntries('gravity_forms', 42, { showNotifications: false })
+		).rejects.toThrow();
 	});
 
 	it('rejects malformed submission ledger settings responses', async () => {
@@ -1960,6 +2161,144 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it.each([
+		[
+			'missing checkout URL',
+			{
+				checkout_intent_id: 'mci_123',
+				checkout_session_id: 'cs_test_123',
+				plan_code: 'starter'
+			}
+		],
+		[
+			'non-string checkout URL',
+			{
+				checkout_intent_id: 'mci_123',
+				checkout_session_id: 'cs_test_123',
+				checkout_url: 42,
+				plan_code: 'starter'
+			}
+		],
+		[
+			'non-HTTPS checkout URL',
+			{
+				checkout_intent_id: 'mci_123',
+				checkout_session_id: 'cs_test_123',
+				checkout_url: 'http://checkout.stripe.test/c/pay/cs_test_123',
+				plan_code: 'starter'
+			}
+		]
+	])('rejects managed checkout response with %s', async (_label, data) => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data
+				})
+		});
+
+		await expect(
+			client.startManagedCheckout(
+				{
+					plan_code: 'starter',
+					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					disclosure_version: 'managed-service-v1',
+					accepted_managed_service_terms: true
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
+	it('rejects legacy billing checkout responses with non-HTTPS redirect URLs', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						session_id: 'cs_legacy_123',
+						checkout_url: 'http://checkout.stripe.test/c/pay/cs_legacy_123',
+						customer_id: 'cus_123',
+						subscription_id: null
+					}
+				})
+		});
+
+		await expect(
+			client.createCheckoutSession(
+				{
+					plan_code: 'starter',
+					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
+	it('rejects billing portal responses with non-HTTPS redirect URLs', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						session_id: 'bps_123',
+						portal_url: 'http://billing.stripe.test/p/session/bps_123',
+						customer_id: 'cus_123'
+					}
+				})
+		});
+
+		await expect(
+			client.createPortalSession(
+				{
+					return_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
+	it('rejects top-up checkout responses with non-HTTPS redirect URLs', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						session_id: 'cs_top_up_123',
+						checkout_url: 'http://checkout.stripe.test/c/pay/cs_top_up_123',
+						customer_id: 'cus_123',
+						top_up_credits: 1000,
+						pack_code: 'top_up_small'
+					}
+				})
+		});
+
+		await expect(
+			client.createTopUpCheckoutSession(
+				{
+					pack_code: 'top_up_small',
+					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
 	it('completes managed checkout and unwraps activation metadata', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
@@ -2051,6 +2390,30 @@ describe('SentientFormsApiClient', () => {
 		);
 		expect(result.free_count).toBe(1);
 		expect(result.models[0].id).toBe('openai/gpt-oss-20b:free');
+	});
+
+	it('rejects malformed OpenRouter model responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 2,
+					total_returned: 1,
+					free_count: 1,
+					stale_count: 0,
+					models: {
+						id: 'openai/gpt-oss-20b:free'
+					}
+				})
+		});
+
+		await expect(
+			client.getOpenRouterModels({ freeOnly: true, limit: 25 }, { showNotifications: false })
+		).rejects.toThrow();
 	});
 
 	it('refreshes OpenRouter model metadata with disclosure acceptance', async () => {
@@ -2438,6 +2801,75 @@ describe('SentientFormsApiClient', () => {
 			dry_run: false,
 			applied: { total: 0 }
 		});
+	});
+
+	it('rejects malformed local migration import dry-run responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					run_id: 31,
+					status: 'dry_run_complete',
+					dry_run: 'true',
+					report: {
+						schema_version: 'sentient_forms_cps_export_v1',
+						source: 'cps_export',
+						source_version: 'cps-dev-export-1',
+						generated_at: '2026-04-19T21:00:00+00:00',
+						exported_at: '2026-04-19T20:00:00+00:00',
+						ready_to_import: true,
+						counts: { action_templates: 0 },
+						changes: { total_writes: 0 },
+						conflicts: [],
+						warnings: [],
+						mapping: {}
+					}
+				})
+		});
+
+		await expect(
+			client.createLocalMigrationImportDryRun(
+				{ bundle: { schema_version: 'sentient_forms_cps_export_v1' } },
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
+	it('rejects malformed local migration import apply responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					run_id: 32,
+					status: 'completed',
+					dry_run: false,
+					report: {
+						schema_version: 'sentient_forms_cps_export_v1',
+						source: 'cps_export',
+						source_version: 'cps-dev-export-1',
+						generated_at: '2026-04-19T21:00:00+00:00',
+						exported_at: '2026-04-19T20:00:00+00:00',
+						ready_to_import: true,
+						counts: { action_templates: 0 },
+						changes: { total_writes: 0 },
+						conflicts: [],
+						warnings: [],
+						mapping: {}
+					},
+					applied: { total: '0' }
+				})
+		});
+
+		await expect(
+			client.runLocalMigrationImportApply(
+				{ bundle: { schema_version: 'sentient_forms_cps_export_v1' } },
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
 	});
 
 	it('surfaces ApiClientError with code and notification', async () => {

@@ -13,9 +13,20 @@ const spamGuidanceTextSchema = z
 		error: `Must contain between 1 and ${MAX_SPAM_GUIDANCE_TEXT_LENGTH} characters`
 	});
 
+const spamGuidanceExampleSourceSchema = z.strictObject({
+	kind: z.enum(['manual', 'entry']),
+	form_source: z.string().trim().min(1).optional(),
+	form_id: z.string().trim().min(1).optional(),
+	entry_id: z.string().trim().min(1).optional(),
+	native_entry_id: z.string().trim().min(1).nullable().optional(),
+	selected_at: z.string().trim().min(1).optional(),
+	selected_by_user_id: z.number().int().nullable().optional()
+});
+
 const spamGuidanceExampleSchema = z.strictObject({
 	text: spamGuidanceTextSchema,
-	rationale: spamGuidanceTextSchema
+	rationale: spamGuidanceTextSchema,
+	source: spamGuidanceExampleSourceSchema.optional()
 });
 
 const spamGuidanceExamplesSchema = z

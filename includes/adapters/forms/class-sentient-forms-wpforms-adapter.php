@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party WPForms Form Source adapter.
  */
-class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
+class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'wpforms_process_complete';
     private const FORM_POST_TYPE = 'wpforms';
@@ -259,6 +259,105 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $snapshot_form  = $record_form_id > 0 ? $this->get_form_object( $record_form_id ) : null;
 
         return $this->ledger_entry_snapshot( $record, $submission_uuid, $snapshot_form );
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function search_historical_entries( mixed $form_id, string $query = '', int $limit = 10, string $status = 'active' ): array | WP_Error
+    {
+        $form_id = absint( $form_id );
+        $query   = strtolower( trim( sanitize_text_field( $query ) ) );
+        $limit   = max( 1, min( 50, $limit ) );
+        $status  = $this->normalize_historical_status_filter( $status );
+
+        if ( $form_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_wpforms_form_invalid', __( 'WPForms form IDs must be numeric.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        if ( ! $this->is_active() || ! $this->native_entry_storage_available() )
+        {
+            return $this->historical_native_unavailable( $form_id, 'wpforms_native_entry_storage_unavailable' );
+        }
+
+        $pre = apply_filters( 'sentient_forms_wpforms_historical_entries_pre', null, $form_id, $query, $limit, $status, $this );
+        if ( is_wp_error( $pre ) )
+        {
+            return $pre;
+        }
+        if ( is_array( $pre ) )
+        {
+            return $pre;
+        }
+
+        $rows    = $this->wpforms_native_entry_rows( $form_id, max( 50, $limit ), $status, $query );
+        $results = [];
+        foreach ( $rows as $row )
+        {
+            $entry = $this->format_historical_wpforms_entry( $form_id, $row );
+            if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $entry['field_summary'] ?? [] ) ?: '' ), $query ) )
+            {
+                continue;
+            }
+
+            $results[] = $entry;
+            if ( count( $results ) >= $limit )
+            {
+                break;
+            }
+        }
+
+        return [
+            'entries'      => $results,
+            'form_source'  => $this->get_id(),
+            'form_id'      => (string) $form_id,
+            'availability' => [
+                'source'                => 'native',
+                'native_read'           => true,
+                'ledger_read'           => false,
+                'unavailable_reason'    => null,
+                'allow_ledger_fallback' => false,
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function get_historical_entry( mixed $form_id, string $entry_id ): array | WP_Error
+    {
+        $form_id  = absint( $form_id );
+        $entry_id = absint( $entry_id );
+        if ( $form_id <= 0 || $entry_id <= 0 )
+        {
+            return new WP_Error(
+                'sentient_forms_wpforms_native_entry_not_found',
+                __( 'WPForms entry could not be found for this form.', 'sentient-forms' ),
+                [ 'status' => 404, 'allow_ledger_fallback' => true, 'unavailable_reason' => 'wpforms_native_entry_not_found' ]
+            );
+        }
+
+        if ( ! $this->is_active() || ! $this->native_entry_storage_available() )
+        {
+            return new WP_Error(
+                'sentient_forms_wpforms_native_entry_storage_unavailable',
+                __( 'WPForms native entries are unavailable. Sentient Forms can use captured Submission Ledger records instead.', 'sentient-forms' ),
+                [ 'status' => 404, 'allow_ledger_fallback' => true, 'unavailable_reason' => 'wpforms_native_entry_storage_unavailable' ]
+            );
+        }
+
+        $row = $this->wpforms_native_entry_row( $form_id, $entry_id );
+        if ( null === $row )
+        {
+            return new WP_Error(
+                'sentient_forms_wpforms_native_entry_not_found',
+                __( 'WPForms entry could not be found for this form.', 'sentient-forms' ),
+                [ 'status' => 404, 'allow_ledger_fallback' => true, 'unavailable_reason' => 'wpforms_native_entry_not_found' ]
+            );
+        }
+
+        return $this->format_historical_wpforms_entry( $form_id, $row );
     }
 
     public function handle_process_complete( mixed $fields, mixed $entry, mixed $form_data, mixed $entry_id ): ?string
@@ -771,12 +870,320 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         );
     }
 
+    /**
+     * @return array<string,mixed>
+     */
+    private function historical_native_unavailable( int $form_id, string $reason ): array
+    {
+        return [
+            'entries'      => [],
+            'form_source'  => $this->get_id(),
+            'form_id'      => (string) $form_id,
+            'availability' => [
+                'source'                => 'native',
+                'native_read'           => false,
+                'ledger_read'           => false,
+                'unavailable_reason'    => $reason,
+                'allow_ledger_fallback' => true,
+            ],
+        ];
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function wpforms_native_entry_rows( int $form_id, int $limit, string $status, string $query = '' ): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'wpforms_entries';
+        if ( ! $this->table_exists( $table ) )
+        {
+            return [];
+        }
+
+        $columns = $this->wpforms_entry_table_columns( $table );
+        if ( ! in_array( 'entry_id', $columns, true ) || ! in_array( 'form_id', $columns, true ) )
+        {
+            return [];
+        }
+
+        $select_columns = array_values( array_intersect( [ 'entry_id', 'form_id', 'fields', 'date', 'date_created', 'date_modified', 'created_at', 'status', 'type' ], $columns ) );
+        $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
+        $order_column   = in_array( 'date', $columns, true ) ? 'date' : 'entry_id';
+        $where_status   = '';
+        $where_query    = '';
+        $args           = [ $table, $form_id ];
+
+        if ( 'all' !== $status && in_array( 'status', $columns, true ) )
+        {
+            $where_status = ' AND `status` = %s';
+            $args[]       = $status;
+        }
+        if ( '' !== $query && in_array( 'fields', $columns, true ) )
+        {
+            $where_query = ' AND LOWER(COALESCE(`fields`, \'\')) LIKE %s';
+            $args[]      = '%' . $wpdb->esc_like( $query ) . '%';
+        }
+
+        $args[] = max( 1, min( 100, $limit ) );
+
+        // phpcs:disable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Column names are whitelisted from SHOW COLUMNS above; variadic args preserve optional filters.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads provider native entry storage for explicit webmaster curation.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i WHERE `form_id` = %d{$where_status}{$where_query} ORDER BY `{$order_column}` DESC LIMIT %d",
+                ...$args
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+
+        return is_array( $rows ) ? $rows : [];
+    }
+
+    private function wpforms_native_entry_row( int $form_id, int $entry_id ): ?array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'wpforms_entries';
+        if ( ! $this->table_exists( $table ) )
+        {
+            return null;
+        }
+
+        $columns = $this->wpforms_entry_table_columns( $table );
+        if ( ! in_array( 'entry_id', $columns, true ) || ! in_array( 'form_id', $columns, true ) )
+        {
+            return null;
+        }
+
+        $select_columns = array_values( array_intersect( [ 'entry_id', 'form_id', 'fields', 'date', 'date_created', 'date_modified', 'created_at', 'status', 'type' ], $columns ) );
+        $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
+
+        // phpcs:disable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads provider native entry storage for explicit webmaster curation.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i WHERE `entry_id` = %d AND `form_id` = %d LIMIT 1",
+                $table,
+                $entry_id,
+                $form_id
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
+        return is_array( $row ) ? $row : null;
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function wpforms_entry_table_columns( string $table ): array
+    {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Provider table shape varies by WPForms version/license.
+        $rows = $wpdb->get_results( $wpdb->prepare( 'SHOW COLUMNS FROM %i', $table ), ARRAY_A );
+        if ( ! is_array( $rows ) || [] === $rows )
+        {
+            $wpdb->last_error = '';
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Provider table shape varies by WPForms version/license.
+            $wpdb->get_results( $wpdb->prepare( 'SELECT * FROM %i LIMIT 0', $table ), ARRAY_A );
+            if ( '' !== $wpdb->last_error )
+            {
+                return [];
+            }
+
+            $columns = $wpdb->get_col_info( 'name' );
+            return is_array( $columns )
+                ? array_values( array_filter( array_map( static fn ( mixed $column ): string => is_scalar( $column ) ? sanitize_key( (string) $column ) : '', $columns ) ) )
+                : [];
+        }
+
+        return array_values(
+            array_filter(
+                array_map(
+                    static fn ( array $row ): string => isset( $row['Field'] ) && is_scalar( $row['Field'] ) ? sanitize_key( (string) $row['Field'] ) : '',
+                    $rows
+                )
+            )
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     *
+     * @return array<string,mixed>
+     */
+    private function format_historical_wpforms_entry( int $form_id, array $row ): array
+    {
+        $entry_id = isset( $row['entry_id'] ) && is_scalar( $row['entry_id'] )
+            ? sanitize_text_field( (string) $row['entry_id'] )
+            : '';
+        $summary  = $this->wpforms_field_summary_from_native_row( $row );
+
+        if ( [] === $summary && '' !== $entry_id && class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            global $wpdb;
+            $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+            $record = $this->ledger_record_for_native_entry_id( $ledger, $entry_id, (string) $form_id );
+            if ( is_array( $record ) )
+            {
+                $summary = $this->historical_field_summary_from_logical_fields( $record['logical_fields_json'] ?? [] );
+            }
+        }
+
+        return [
+            'id'               => $entry_id,
+            'source_type'      => 'native',
+            'submission_uuid'  => null,
+            'native_entry_id'  => '' !== $entry_id ? $entry_id : null,
+            'native_entry_url' => '' !== $entry_id ? $this->build_native_entry_url_if_available( $form_id, absint( $entry_id ) ) : null,
+            'date_created'     => $this->first_scalar_value( [ $row['date'] ?? null, $row['date_created'] ?? null, $row['created_at'] ?? null, $row['date_modified'] ?? null ] ),
+            'status'           => isset( $row['status'] ) && is_scalar( $row['status'] ) && '' !== trim( (string) $row['status'] )
+                ? sanitize_key( (string) $row['status'] )
+                : 'active',
+            'field_summary'    => $summary,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     *
+     * @return array<int,array{field_id:string,label:string,value:string}>
+     */
+    private function wpforms_field_summary_from_native_row( array $row ): array
+    {
+        $fields = $row['fields'] ?? null;
+        if ( is_string( $fields ) )
+        {
+            $decoded = json_decode( $fields, true );
+            if ( ! is_array( $decoded ) )
+            {
+                $decoded = maybe_unserialize( $fields );
+            }
+            $fields = $decoded;
+        }
+
+        if ( ! is_array( $fields ) )
+        {
+            return [];
+        }
+
+        $summary = [];
+        foreach ( $fields as $field_key => $field )
+        {
+            if ( count( $summary ) >= 12 )
+            {
+                break;
+            }
+
+            if ( ! is_array( $field ) )
+            {
+                if ( is_scalar( $field ) && '' !== trim( (string) $field ) )
+                {
+                    $summary[] = [
+                        'field_id' => sanitize_text_field( (string) $field_key ),
+                        'label'    => sanitize_text_field( ucwords( str_replace( [ '_', '-' ], ' ', (string) $field_key ) ) ),
+                        'value'    => mb_substr( sanitize_textarea_field( (string) $field ), 0, 300 ),
+                    ];
+                }
+                continue;
+            }
+
+            $value = $field['value'] ?? $field['value_raw'] ?? null;
+            if ( is_array( $value ) )
+            {
+                $value = wp_json_encode( $value );
+            }
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] ) ? (string) $field['id'] : (string) $field_key;
+            $label    = isset( $field['name'] ) && is_scalar( $field['name'] )
+                ? (string) $field['name']
+                : ( isset( $field['label'] ) && is_scalar( $field['label'] ) ? (string) $field['label'] : $field_id );
+            $summary[] = [
+                'field_id' => sanitize_text_field( $field_id ),
+                'label'    => sanitize_text_field( $label ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return array<int,array{field_id:string,label:string,value:string}>
+     */
+    private function historical_field_summary_from_logical_fields( mixed $fields ): array
+    {
+        if ( ! is_array( $fields ) )
+        {
+            return [];
+        }
+
+        $summary = [];
+        foreach ( $fields as $field_id => $value )
+        {
+            if ( count( $summary ) >= 12 )
+            {
+                break;
+            }
+            if ( is_array( $value ) )
+            {
+                $value = wp_json_encode( $value );
+            }
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_key( (string) $field_id );
+            $summary[] = [
+                'field_id' => $field_id,
+                'label'    => sanitize_text_field( ucwords( str_replace( [ '_', '-' ], ' ', $field_id ) ) ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    private function first_scalar_value( array $values ): ?string
+    {
+        foreach ( $values as $value )
+        {
+            if ( is_scalar( $value ) && '' !== trim( (string) $value ) )
+            {
+                return sanitize_text_field( (string) $value );
+            }
+        }
+
+        return null;
+    }
+
+    private function normalize_historical_status_filter( string $status ): string
+    {
+        $status = sanitize_key( $status );
+        return in_array( $status, [ 'all', 'active', 'spam' ], true ) ? $status : 'active';
+    }
+
     private function native_entry_exists( int $form_id, int $entry_id ): bool
     {
         $filtered = apply_filters( 'sentient_forms_wpforms_native_entry_available', null, $form_id, $entry_id, $this );
         if ( is_bool( $filtered ) )
         {
             return $filtered;
+        }
+
+        if ( ! $this->native_entry_storage_available() )
+        {
+            return false;
         }
 
         $entry_object = $this->native_entry_from_wpforms_object( $form_id, $entry_id );
@@ -798,7 +1205,53 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
 
         global $wpdb;
 
+        if ( ! $this->wpforms_native_entry_api_available() && ! $this->paid_wpforms_plugin_active() )
+        {
+            return false;
+        }
+
         return $this->table_exists( $wpdb->prefix . 'wpforms_entries' );
+    }
+
+    private function wpforms_native_entry_api_available(): bool
+    {
+        $entry_handler = $this->wpforms_object( 'entry' );
+
+        return is_object( $entry_handler ) && method_exists( $entry_handler, 'get' );
+    }
+
+    private function paid_wpforms_plugin_active(): bool
+    {
+        if ( defined( 'WPFORMS_PLUGIN_FILE' ) )
+        {
+            $plugin_file = str_replace( '\\', '/', plugin_basename( (string) WPFORMS_PLUGIN_FILE ) );
+            if ( 'wpforms/wpforms.php' === $plugin_file )
+            {
+                return true;
+            }
+        }
+
+        if ( ! function_exists( 'is_plugin_active' ) && defined( 'ABSPATH' ) )
+        {
+            $plugin_functions = ABSPATH . 'wp-admin/includes/plugin.php';
+            if ( is_readable( $plugin_functions ) )
+            {
+                require_once $plugin_functions;
+            }
+        }
+
+        if ( function_exists( 'is_plugin_active' ) && is_plugin_active( 'wpforms/wpforms.php' ) )
+        {
+            return true;
+        }
+
+        $active_plugins = get_option( 'active_plugins', [] );
+        if ( ! is_array( $active_plugins ) )
+        {
+            return false;
+        }
+
+        return in_array( 'wpforms/wpforms.php', $active_plugins, true );
     }
 
     private function native_entry_from_wpforms_object( int $form_id, int $entry_id ): mixed
@@ -853,7 +1306,29 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         global $wpdb;
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Capability detection needs to inspect the provider table surface.
-        return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        $found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
+        if ( is_string( $found ) && 0 === strcasecmp( $found, $table ) )
+        {
+            return true;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Fallback for DB drivers whose SHOW TABLES result formatting differs.
+        $count = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COUNT(1) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s',
+                $table
+            )
+        );
+        if ( (int) $count > 0 )
+        {
+            return true;
+        }
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Capability detection needs to inspect the provider table surface.
+        $wpdb->get_results( $wpdb->prepare( 'SELECT 1 FROM %i LIMIT 0', $table ), ARRAY_A );
+
+        return '' === $wpdb->last_error;
     }
 
     private function value_from_array_or_object( mixed $source, string $key ): mixed

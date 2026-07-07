@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party Contact Form 7 Form Source adapter.
  */
-class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
+class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
 {
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
@@ -251,6 +251,41 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         $entry['form_id']         = sanitize_text_field( (string) ( $record['form_id'] ?? '' ) );
 
         return $entry;
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function search_historical_entries( mixed $form_id, string $query = '', int $limit = 10, string $status = 'active' ): array | WP_Error
+    {
+        return [
+            'entries'      => [],
+            'form_source'  => $this->get_id(),
+            'form_id'      => sanitize_text_field( (string) $form_id ),
+            'availability' => [
+                'source'                => 'native',
+                'native_read'           => false,
+                'ledger_read'           => false,
+                'unavailable_reason'    => 'native_entry_storage_unavailable',
+                'allow_ledger_fallback' => true,
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function get_historical_entry( mixed $form_id, string $entry_id ): array | WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_contact_form_7_native_entry_unavailable',
+            __( 'Contact Form 7 core does not store historical native submissions. Enable the Sentient Forms Submission Ledger to curate captured submissions.', 'sentient-forms' ),
+            [
+                'status'                => 404,
+                'unavailable_reason'    => 'native_entry_storage_unavailable',
+                'allow_ledger_fallback' => true,
+            ]
+        );
     }
 
     public function handle_mail_sent( mixed $contact_form ): ?string

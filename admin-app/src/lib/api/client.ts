@@ -100,6 +100,10 @@ import type {
 	SentientManagedRevokeResponse,
 	SentientManagedSetupRequest,
 	SentientManagedSetupResponse,
+	SpamGuidanceEntrySearchResponse,
+	SpamGuidanceEntryStatusFilter,
+	SpamGuidanceExampleAppendPayload,
+	SpamGuidanceExampleAppendResponse,
 	TelemetrySettingsResponse,
 	PluginSettingsResponse,
 	TopUpCheckoutSessionRequest,
@@ -162,7 +166,6 @@ const nullableScalarStringSchema = z
 	.transform((value) => (value === null ? null : String(value)));
 const jsonRecordSchema = z.record(z.string(), z.unknown());
 const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? {});
-const nullishJsonRecordArraySchema = z.array(jsonRecordSchema).nullish().transform((value) => value ?? []);
 const nullableJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? null);
 const submissionLedgerActionRunSchema = z.object({
 	execution_request_id: z.string(),
@@ -176,6 +179,54 @@ const submissionLedgerActionRunSchema = z.object({
 	created_at: z.string().nullable().optional().transform((value) => value ?? null),
 	updated_at: z.string().nullable().optional().transform((value) => value ?? null)
 });
+const nullishJsonRecordArraySchema = z
+	.array(jsonRecordSchema)
+	.nullish()
+	.transform((value) => value ?? []);
+const httpsUrlSchema = z.string().refine((value) => {
+	try {
+		return new URL(value).protocol === 'https:';
+	} catch {
+		return false;
+	}
+}, 'Expected an HTTPS URL');
+const managedCheckoutStartResponseSchema = z
+	.object({
+		checkout_intent_id: z.string(),
+		checkout_session_id: z.string(),
+		checkout_url: httpsUrlSchema,
+		plan_code: z.string().optional(),
+		billing_interval: z.string().optional(),
+		status: z.string().optional(),
+		consent_recorded: z.boolean().optional(),
+		consent_id: z.number().int().optional(),
+		disclosure_version: z.string().optional()
+	})
+	.passthrough();
+const billingCheckoutSessionResponseSchema = z
+	.object({
+		session_id: z.string(),
+		checkout_url: httpsUrlSchema,
+		customer_id: z.string(),
+		subscription_id: z.string().nullable().optional()
+	})
+	.passthrough();
+const billingPortalSessionResponseSchema = z
+	.object({
+		session_id: z.string(),
+		portal_url: httpsUrlSchema,
+		customer_id: z.string()
+	})
+	.passthrough();
+const topUpCheckoutSessionResponseSchema = z
+	.object({
+		session_id: z.string(),
+		checkout_url: httpsUrlSchema,
+		customer_id: z.string(),
+		top_up_credits: z.number().int(),
+		pack_code: z.string()
+	})
+	.passthrough();
 const submissionLedgerRecordSchema = z.object({
 	id: z.coerce.number().int(),
 	submission_uuid: z.string(),
@@ -227,6 +278,200 @@ const submissionLedgerRecordsResponseSchema = z
 			offset: payload.offset
 		};
 	});
+const spamGuidanceFieldSummarySchema = z.object({
+	field_id: z.string(),
+	label: z.string(),
+	value: z.string()
+});
+const spamGuidanceEntrySearchEntrySchema = z
+	.object({
+		id: z.union([z.string(), z.number()]).transform((value) => String(value)),
+		source_type: z.enum(['native', 'ledger']),
+		submission_uuid: nullableScalarStringSchema.optional(),
+		native_entry_id: nullableScalarStringSchema.optional(),
+		native_entry_url: z.string().nullable().optional(),
+		date_created: z.string().nullable().optional(),
+		status: z.string().nullable().optional(),
+		field_summary: z.array(spamGuidanceFieldSummarySchema)
+	})
+	.passthrough();
+const spamGuidanceEntrySearchResponseSchema = z
+	.object({
+		form_source: z.string(),
+		form_id: ledgerFormIdSchema,
+		availability: z
+			.object({
+				source: z.enum(['native', 'ledger']),
+				native_read: z.boolean(),
+				ledger_read: z.boolean(),
+				ledger_enabled: z.boolean().optional(),
+				unavailable_reason: z.string().nullable().optional(),
+				native_unavailable_reason: z.string().nullable().optional()
+			})
+			.passthrough(),
+		entries: z.array(spamGuidanceEntrySearchEntrySchema)
+	})
+	.passthrough();
+const spamGuidanceExampleSourceSchema = z
+	.object({
+		kind: z.enum(['manual', 'entry']),
+		form_source: z.string().optional(),
+		form_id: z.string().optional(),
+		entry_id: z.string().optional(),
+		native_entry_id: z.string().nullable().optional(),
+		selected_at: z.string().optional(),
+		selected_by_user_id: z.number().int().nullable().optional()
+	})
+	.passthrough();
+const spamGuidanceExampleSchemaForResponse = z
+	.object({
+		text: z.string(),
+		rationale: z.string(),
+		source: spamGuidanceExampleSourceSchema.optional()
+	})
+	.passthrough();
+const spamGuidanceAppendResponseSchema = z
+	.object({
+		target_scope: z.enum(['form', 'mapping', 'action']),
+		label: z.enum(['ham', 'spam']),
+		config: z
+			.object({
+				spam_positive_examples: z.array(spamGuidanceExampleSchemaForResponse).optional(),
+				spam_negative_examples: z.array(spamGuidanceExampleSchemaForResponse).optional()
+			})
+			.passthrough()
+	})
+	.passthrough();
+const formExecutionStatusSchema = z
+	.object({
+		status: z.enum(['unknown', 'success', 'error']),
+		message: z.string().nullable(),
+		entry_id: z.number().int().nullable().optional(),
+		last_error_code: z.string().nullable(),
+		last_result: z.unknown().optional(),
+		updated_at: z.string().nullable().optional()
+	})
+	.passthrough();
+const formDisableStateResponseSchema = z
+	.object({
+		sf_disabled: z.boolean(),
+		global_disabled: z.boolean(),
+		provider_disabled: z.boolean(),
+		effective_disabled: z.boolean()
+	})
+	.passthrough();
+const formActionsBootstrapResponseSchema = z
+	.object({
+		form_source: z.string(),
+		form_id: z.union([z.string(), z.number()]),
+		form: jsonRecordSchema.nullable().optional(),
+		form_source_descriptor: jsonRecordSchema.nullable().optional(),
+		actions: z.array(jsonRecordSchema),
+		execution_status: formExecutionStatusSchema,
+		disabled_state: formDisableStateResponseSchema,
+		ledger_settings: submissionLedgerSettingsResponseSchema.optional(),
+		generated_at: z.string()
+	})
+	.passthrough();
+const dashboardSummaryResponseSchema = z
+	.object({
+		generated_at: z.string(),
+		providers: z.array(jsonRecordSchema),
+		templates: z.array(jsonRecordSchema),
+		custom_actions: z.array(jsonRecordSchema),
+		recent_events: z.array(jsonRecordSchema),
+		section_errors: z
+			.array(
+				z
+					.object({
+						section: z.string(),
+						code: z.string(),
+						message: z.string()
+					})
+					.passthrough()
+			)
+			.optional(),
+		license: jsonRecordSchema.optional(),
+		async_health: jsonRecordSchema.optional()
+	})
+	.passthrough();
+const openRouterModelCacheItemSchema = z
+	.object({
+		id: z.string(),
+		name: z.string(),
+		free: z.boolean(),
+		context_length: z.number().int().nullable(),
+		input_modalities: z.array(z.string()),
+		output_modalities: z.array(z.string()),
+		supported_parameters: z.array(z.string()),
+		pricing: z.record(z.string(), z.string()),
+		fetched_at: z.string().nullable(),
+		expires_at: z.string().nullable(),
+		stale: z.boolean(),
+		zdr_eligible: z.boolean().nullable().optional(),
+		zdr_source: z.string().nullable().optional(),
+		zdr_checked_at: z.string().nullable().optional(),
+		tags: z.array(z.string()).optional()
+	})
+	.passthrough();
+const openRouterModelsResponseSchema = z
+	.object({
+		provider: z.literal('openrouter'),
+		source: z.literal('local_cache'),
+		total_cached: z.number().int(),
+		total_returned: z.number().int(),
+		free_count: z.number().int(),
+		stale_count: z.number().int(),
+		zdr_filtered: z.boolean().optional(),
+		models: z.array(openRouterModelCacheItemSchema),
+		refresh_consent: jsonRecordSchema.optional(),
+		consent_recorded: z.boolean().optional(),
+		consent_id: z.number().int().optional(),
+		stored: z.number().int().optional()
+	})
+	.passthrough();
+const localMigrationImportFindingSchema = z
+	.object({
+		code: z.string(),
+		message: z.string(),
+		severity: z.string().optional(),
+		entity: z.string().optional(),
+		field: z.string().optional(),
+		value: z.string().optional()
+	})
+	.passthrough();
+const localMigrationImportReportSchema = z
+	.object({
+		schema_version: z.string(),
+		source: z.string(),
+		source_version: z.string(),
+		generated_at: z.string(),
+		exported_at: z.string().nullable(),
+		ready_to_import: z.boolean(),
+		counts: z.record(z.string(), z.number()),
+		changes: z.record(z.string(), z.union([z.number(), z.record(z.string(), z.number())])),
+		conflicts: z.array(localMigrationImportFindingSchema),
+		warnings: z.array(localMigrationImportFindingSchema),
+		mapping: jsonRecordSchema
+	})
+	.passthrough();
+const localMigrationImportDryRunResponseSchema = z
+	.object({
+		run_id: z.number().int(),
+		status: z.string(),
+		dry_run: z.literal(true),
+		report: localMigrationImportReportSchema
+	})
+	.passthrough();
+const localMigrationImportApplyResponseSchema = z
+	.object({
+		run_id: z.number().int(),
+		status: z.string(),
+		dry_run: z.literal(false),
+		report: localMigrationImportReportSchema,
+		applied: z.record(z.string(), z.number())
+	})
+	.passthrough();
 
 const adminApiMemoryCache = new Map<string, AdminApiCacheEntry>();
 const adminApiInFlight = new Map<string, AdminApiInFlightEntry>();
@@ -381,7 +626,14 @@ function inferMutationInvalidationTags(path: string): string[] {
 	}
 
 	if (normalizedPath.startsWith('local/providers/')) {
-		return ['providers', 'actions', 'custom-actions', 'form-actions', 'action-defaults', 'dashboard'];
+		return [
+			'providers',
+			'actions',
+			'custom-actions',
+			'form-actions',
+			'action-defaults',
+			'dashboard'
+		];
 	}
 
 	if (
@@ -603,11 +855,7 @@ function readSessionCacheEntry(key: string): AdminApiCacheEntry | null {
 
 	try {
 		const parsed = JSON.parse(raw) as Partial<AdminApiCacheEntry>;
-		if (
-			typeof parsed.expiresAt === 'number' &&
-			Array.isArray(parsed.tags) &&
-			'value' in parsed
-		) {
+		if (typeof parsed.expiresAt === 'number' && Array.isArray(parsed.tags) && 'value' in parsed) {
 			return {
 				expiresAt: parsed.expiresAt,
 				tags: parsed.tags.filter((tag): tag is string => typeof tag === 'string'),
@@ -795,7 +1043,9 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return billingCheckoutSessionResponseSchema.parse(
+			this.unwrap(response)
+		) as BillingCheckoutSessionResponse;
 	}
 
 	async startManagedCheckout(
@@ -810,7 +1060,9 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return managedCheckoutStartResponseSchema.parse(
+			this.unwrap(response)
+		) as ManagedCheckoutStartResponse;
 	}
 
 	async completeManagedCheckout(
@@ -840,7 +1092,9 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return billingPortalSessionResponseSchema.parse(
+			this.unwrap(response)
+		) as BillingPortalSessionResponse;
 	}
 
 	async createTopUpCheckoutSession(
@@ -855,7 +1109,9 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return topUpCheckoutSessionResponseSchema.parse(
+			this.unwrap(response)
+		) as TopUpCheckoutSessionResponse;
 	}
 
 	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
@@ -1080,21 +1336,26 @@ export class SentientFormsApiClient {
 			? `local/providers/openrouter/models?${suffix}`
 			: 'local/providers/openrouter/models';
 
-		return this.request<OpenRouterModelsResponse>(path, {
+		const response = await this.request<OpenRouterModelsResponse>(path, {
 			showNotifications: false,
 			...options
 		});
+		return openRouterModelsResponseSchema.parse(response) as unknown as OpenRouterModelsResponse;
 	}
 
 	async refreshOpenRouterModels(
 		payload: OpenRouterModelsRefreshRequest,
 		options: RequestOptions = {}
 	): Promise<OpenRouterModelsResponse> {
-		return this.request<OpenRouterModelsResponse>('local/providers/openrouter/models/refresh', {
-			method: 'POST',
-			body: payload,
-			...options
-		});
+		const response = await this.request<OpenRouterModelsResponse>(
+			'local/providers/openrouter/models/refresh',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return openRouterModelsResponseSchema.parse(response) as unknown as OpenRouterModelsResponse;
 	}
 
 	async getLocalActionTemplates(options: RequestOptions = {}): Promise<LocalActionTemplate[]> {
@@ -1260,6 +1521,64 @@ export class SentientFormsApiClient {
 		);
 	}
 
+	async searchSpamGuidanceEntries(
+		formSourceSlug: string,
+		formId: FormSourceFormId,
+		options: RequestOptions & {
+			q?: string;
+			limit?: number;
+			status?: SpamGuidanceEntryStatusFilter;
+		} = {}
+	): Promise<SpamGuidanceEntrySearchResponse> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const params = new URLSearchParams();
+		if (options.q) params.set('q', options.q);
+		if (typeof options.limit === 'number') params.set('limit', String(options.limit));
+		if (options.status) params.set('status', options.status);
+		const { q: _q, limit: _limit, status: _status, ...requestOptions } = options;
+		const response = await this.request<RestEnvelope<unknown>>(
+			`spam-guidance/forms/${slug}/${formIdSegment}/entries/search${params.toString() ? `?${params}` : ''}`,
+			withCacheDefaults(
+				{ showNotifications: false, ...requestOptions },
+				{
+					ttlMs: 15_000,
+					tags: ['spam-guidance', 'submission-ledger', formCacheTag(formSourceSlug, formId)]
+				}
+			)
+		);
+		return spamGuidanceEntrySearchResponseSchema.parse(
+			this.unwrap(response)
+		) as SpamGuidanceEntrySearchResponse;
+	}
+
+	async appendSpamGuidanceExample(
+		formSourceSlug: string,
+		formId: FormSourceFormId,
+		payload: SpamGuidanceExampleAppendPayload,
+		options: RequestOptions = {}
+	): Promise<SpamGuidanceExampleAppendResponse> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const response = await this.request<RestEnvelope<unknown>>(
+			`spam-guidance/forms/${slug}/${formIdSegment}/examples`,
+			{
+				method: 'POST',
+				body: payload,
+				invalidateCacheTags: [
+					'spam-guidance',
+					'action-defaults',
+					'form-actions',
+					formCacheTag(formSourceSlug, formId)
+				],
+				...options
+			}
+		);
+		return spamGuidanceAppendResponseSchema.parse(
+			this.unwrap(response)
+		) as SpamGuidanceExampleAppendResponse;
+	}
+
 	async correctLeadScoringEntry(
 		formSource: string,
 		formId: string | number,
@@ -1397,7 +1716,9 @@ export class SentientFormsApiClient {
 				tags: ['dashboard', 'providers', 'actions', 'execution-events', 'license']
 			})
 		);
-		return this.unwrap(response);
+		return dashboardSummaryResponseSchema.parse(
+			this.unwrap(response)
+		) as unknown as DashboardSummaryResponse;
 	}
 
 	async getLocalMigrationReadiness(
@@ -1422,22 +1743,34 @@ export class SentientFormsApiClient {
 		payload: LocalMigrationImportRequest,
 		options: RequestOptions = {}
 	): Promise<LocalMigrationImportDryRunResponse> {
-		return this.request<LocalMigrationImportDryRunResponse>('local/migration/import/dry-run', {
-			method: 'POST',
-			body: payload,
-			...options
-		});
+		const response = await this.request<LocalMigrationImportDryRunResponse>(
+			'local/migration/import/dry-run',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return localMigrationImportDryRunResponseSchema.parse(
+			response
+		) as LocalMigrationImportDryRunResponse;
 	}
 
 	async runLocalMigrationImportApply(
 		payload: LocalMigrationImportRequest,
 		options: RequestOptions = {}
 	): Promise<LocalMigrationImportApplyResponse> {
-		return this.request<LocalMigrationImportApplyResponse>('local/migration/import/apply', {
-			method: 'POST',
-			body: payload,
-			...options
-		});
+		const response = await this.request<LocalMigrationImportApplyResponse>(
+			'local/migration/import/apply',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return localMigrationImportApplyResponseSchema.parse(
+			response
+		) as LocalMigrationImportApplyResponse;
 	}
 
 	async runLocalMigrationApprovedReset(
@@ -1547,7 +1880,9 @@ export class SentientFormsApiClient {
 				]
 			})
 		);
-		const data = this.unwrap<FormActionsBootstrapResponse>(response);
+		const data = formActionsBootstrapResponseSchema.parse(
+			this.unwrap(response)
+		) as unknown as FormActionsBootstrapResponse;
 		return {
 			...data,
 			provider_path_policy: parseProviderPathPolicy(data.provider_path_policy)
@@ -2369,9 +2704,7 @@ export class SentientFormsApiClient {
 		if (cacheKey && forceRefresh) {
 			retireAdminApiCacheKeyForForcedRefresh(cacheKey, normalizedCacheTags);
 		}
-		const cacheVersionSnapshot = cacheKey
-			? getCacheVersionSnapshot(normalizedCacheTags)
-			: null;
+		const cacheVersionSnapshot = cacheKey ? getCacheVersionSnapshot(normalizedCacheTags) : null;
 
 		if (cacheKey && !forceRefresh) {
 			const cached = readAdminApiCache(cacheKey, cacheStorage);
@@ -2417,11 +2750,7 @@ export class SentientFormsApiClient {
 				throw new ApiClientError('Request failed', response.status, parsed);
 			}
 
-			if (
-				cacheKey &&
-				cacheVersionSnapshot &&
-				isCacheVersionSnapshotCurrent(cacheVersionSnapshot)
-			) {
+			if (cacheKey && cacheVersionSnapshot && isCacheVersionSnapshotCurrent(cacheVersionSnapshot)) {
 				writeAdminApiCache(cacheKey, parsed, {
 					ttlMs: cacheTtlMs,
 					tags: normalizedCacheTags,

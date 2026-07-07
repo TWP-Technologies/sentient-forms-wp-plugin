@@ -1457,9 +1457,20 @@ export interface ModelEstimateResponse {
 	pricing_estimate: ModelPricingEstimate;
 }
 
+export interface SpamGuidanceExampleSource {
+	kind: 'manual' | 'entry';
+	form_source?: string;
+	form_id?: string;
+	entry_id?: string;
+	native_entry_id?: string | null;
+	selected_at?: string;
+	selected_by_user_id?: number | null;
+}
+
 export interface SpamGuidanceExample {
 	text: string;
 	rationale: string;
+	source?: SpamGuidanceExampleSource;
 }
 
 /**
@@ -1770,6 +1781,68 @@ export interface LeadValueEntrySearchResponse {
 	form_id: number;
 }
 
+export type SpamGuidanceEntryStatusFilter = 'all' | 'active' | 'spam';
+export type SpamGuidanceExampleLabel = 'ham' | 'spam';
+export type SpamGuidanceTargetScope = 'form' | 'mapping' | 'action';
+export type SpamGuidanceEntrySourceType = 'native' | 'ledger';
+export type SpamGuidanceEntryUnavailableReason =
+	| 'submission_ledger_disabled'
+	| 'submission_ledger_unavailable'
+	| 'native_entry_storage_unavailable'
+	| 'wpforms_native_entry_storage_unavailable'
+	| 'wpforms_native_entry_not_found'
+	| 'elementor_form_submissions_unavailable'
+	| 'elementor_submission_not_found'
+	| 'requires_pro'
+	| 'gravity_forms_unavailable'
+	| string;
+
+export interface SpamGuidanceEntrySearchEntry {
+	id: string;
+	source_type: SpamGuidanceEntrySourceType;
+	submission_uuid?: string | null;
+	native_entry_id?: string | null;
+	native_entry_url?: string | null;
+	date_created?: string | null;
+	status?: string | null;
+	field_summary: Array<{ field_id: string; label: string; value: string }>;
+}
+
+export interface SpamGuidanceEntrySearchAvailability {
+	source: SpamGuidanceEntrySourceType;
+	native_read: boolean;
+	ledger_read: boolean;
+	ledger_enabled?: boolean;
+	unavailable_reason?: SpamGuidanceEntryUnavailableReason | null;
+	native_unavailable_reason?: SpamGuidanceEntryUnavailableReason | null;
+}
+
+export interface SpamGuidanceEntrySearchResponse {
+	entries: SpamGuidanceEntrySearchEntry[];
+	form_source: string;
+	form_id: string;
+	availability: SpamGuidanceEntrySearchAvailability;
+}
+
+export interface SpamGuidanceExampleAppendPayload {
+	target_scope: SpamGuidanceTargetScope;
+	label: SpamGuidanceExampleLabel;
+	entry_id?: string;
+	text?: string;
+	rationale?: string;
+	mapping_id?: number | string;
+}
+
+export interface SpamGuidanceExampleAppendResponse {
+	target_scope: SpamGuidanceTargetScope;
+	label: SpamGuidanceExampleLabel;
+	config: FormActionConfig;
+	generation?: {
+		route?: string;
+		model?: string | null;
+	} | null;
+}
+
 export type CustomActionStatus = 'active' | 'archived';
 
 /**
@@ -1945,10 +2018,10 @@ export interface CapabilitiesResponse {
 export interface FormExecutionStatus {
 	status: 'unknown' | 'success' | 'error';
 	message: string | null;
-	entry_id: number | null;
+	entry_id?: number | null;
 	last_error_code: string | null;
-	last_result: unknown;
-	updated_at: string | null;
+	last_result?: unknown;
+	updated_at?: string | null;
 }
 
 export interface ExecutionStatus {

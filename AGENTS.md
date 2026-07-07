@@ -16,15 +16,25 @@ Unless otherwise directed or noted, do not simply affirm my statements or assume
 - Before ending a session, run `git log --oneline -10` (or similar) to capture any new commits, including those authored outside the agent, and record the ones relevant to the session in the log.
 
 # Repository Guidelines
-Sentient Forms is a WordPress plugin that routes form submissions through curated LLM actions. Follow the guidance below to keep contributions predictable.
+Sentient Forms is a WordPress plugin that operates as the local control plane for LLM-backed form actions. It stores site-owned configuration and local execution records, renders the admin SPA, manages Form Source adapters, and can execute actions through either Direct OpenRouter Execution or the optional Sentient Forms Managed Service provider path. Follow the guidance below to keep contributions predictable.
 
 ## Project Structure & Module Organization
-The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `llms/`, `rest-api/`, and shared `utilities/`. Admin-facing CSS/JS are transitioning to the SvelteKit SPA located in `admin-app/` (built assets will be emitted into `assets/dist/` in Task 0.6). Legacy PHP-rendered admin scripts persist only until the SPA replaces them. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
+The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `providers/`, `rest-api/`, repositories, and shared services. The SvelteKit admin SPA lives in `admin-app/`; production assets are generated into `assets/dist/`. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
 
 - Async execution details (Action Scheduler integration, retry policy, telemetry hooks) live in `docs/async-handler.md`. Use that doc when wiring new adapters or site-specific logging so you respect consent + retry semantics.
+- Form Source adapter boundaries live in `docs/architecture/form-source-adapter-boundaries.md`. When behavior depends on Gravity Forms, Contact Form 7, WPForms, Elementor Pro Forms, or another source-specific runtime, route the platform-neutral decision through shared Sentient Forms services and put only the source-specific native operation behind the adapter/capability contract.
+
+### Form Source Adapter Contract
+The adapter pattern is part of the plugin architecture, not a convenience layer. Sentient Forms defines the adapter contract, lifecycle vocabulary, capability descriptors, and result-effect semantics. Each Form Source adapter fulfills that contract with bespoke source-specific implementation.
+
+- Shared services assign the contract shape and consume adapter capabilities; adapters do not define product semantics on their own.
+- Do not branch on Form Source slugs in shared services when an adapter capability, optional interface, or descriptor can express the difference.
+- Native entry links, notes, spam status, notification controls, webhook controls, validation hooks, and realtime hooks are capabilities. Treat them as optional unless the adapter descriptor and tests prove support.
+- The Sentient Forms Submission Ledger plus linked action runs is the cross-source parity surface when native source capabilities are absent or unavailable.
+- Current supported Form Source surfaces are Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms. Verify the live registry and release artifact when a local checkout, branch, or package appears to disagree.
 
 ### CPS Master Actions Pattern
-Actions managed by the Central Proxy Server (CPS) use `action_type_indicator: 'master'` in their settings. This pattern allows CPS-defined actions to execute without requiring a local PHP class:
+Actions with `action_type_indicator: 'master'` in their settings use the managed-template path and may execute without requiring a local PHP action class:
 
 - **Schedule Path**: `Async_Handler::schedule_action()` checks `action_type_indicator`. If `'master'`, it bypasses the local action registry requirement.
 - **Execution Path**: `Async_Handler::process_action()` routes master actions directly to `Action_Executor::execute()` instead of calling a local `$action->execute()` method.
@@ -34,6 +44,7 @@ Actions managed by the Central Proxy Server (CPS) use `action_type_indicator: 'm
 
 ### Svelte 5 SPA Conventions
 - SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
+- Use Zod at admin-app trust boundaries wherever practical: REST envelopes, imported/exported JSON, persisted action/form configuration, migration payloads, and unknown browser/runtime payloads should be parsed with schemas before application code trusts their shape. Derive TypeScript types from those schemas instead of duplicating handwritten boundary types.
 - When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
 - Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes `npx sv check` and fails if legacy syntax or `createEventDispatcher` usage slips back in.
 - The `/actions/custom` route is the canonical custom-action UX. Always go through `$lib/stores/custom-actions` so quota, notifications, and CPS envelopes stay consistent. The store expects CPS to return `{ action, quota }` on mutations and `{ actions, quota }` on reads; update the shared TypeScript types if the CPS contract changes.
@@ -52,6 +63,7 @@ Actions managed by the Central Proxy Server (CPS) use `action_type_indicator: 'm
 - `bun run tailwind:check`: verify no unprefixed/hex Tailwind classes slipped into `src/`.
 - `bun run preview:ci`: build with the pathname router and start a preview server on port `4173`. Playwright uses this preview build (see `playwright.config.ts`) so tests run against the same assets that WordPress loads.
 - `SENTIENT_RUN_WP_E2E=1 bun run qa:full`: opt-in flag to exercise the wp-admin/Gravity Forms Playwright suites against the Docker WordPress stack. Without it, the `wp-*` specs skip to keep local CI deterministic when WordPress is unavailable.
+- Use Form Source-specific E2E flags and fixtures when available. Broad support claims require real user-path proof for every supported surface in scope, not only Gravity Forms.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 - Async/unit sanity: run `vendor/bin/phpunit --testsuite "Sentient Forms"` (expects WP 6.8 deprecation noise). For local harness health before submissions, run `./scripts/check-local-health.sh` from repo root (verifies CPS /v1/health from WP container and proxy key presence).
 
@@ -72,7 +84,7 @@ The PHP workflow (`.github/workflows/php-quality.yml`) runs Composer linting on 
 Target PHP 8.2, 4-space indentation, and Allman braces to match existing files. Class names use the `Sentient_Forms_*` Pascal_Snake_Case pattern with filenames like `class-sentient-forms-foo.php`; procedural helpers stay in snake case prefixed `sentient_forms_`. Keep docblocks on public APIs and wrap user-facing strings in WordPress translation helpers.
 
 ## Testing Guidelines
-Automated tests are not yet provisioned, so combine manual QA with lightweight scripting. Run the lint command above, hit critical REST routes with `wp rest get <route>`, and document payloads or UI screenshots in the PR. New test suites should land under `tests/` using filenames `test-<feature>.php` and mirror the plugin bootstrap flow.
+Use the narrowest deterministic test that proves the behavior, then add browser/user-path proof for UI-visible or form-action claims. PHPUnit tests live under `tests/phpunit/`, admin SPA unit/E2E tests live under `admin-app/tests/`, and new PHP test files should use `test-<feature>.php` naming. For Form Source work, tests should assert capability descriptors, ledger opt-in behavior, native effect outcomes, and action-run linkage without assuming Gravity Forms native parity on other adapters.
 
 ## Commit & Pull Request Guidelines
 Recent history mixes Conventional Commits (`refactor(rest-api): ...`) with numbered summaries; prefer the conventional `type(scope): summary` format and reference issues, e.g., `feat(actions): add spam scoring (#42)`. Keep commits focused and rerun the class-map script whenever autoload paths change. PRs need a problem statement, testing notes, and evidence (screenshots or REST transcripts) for visible changes, plus at least one maintainer review.

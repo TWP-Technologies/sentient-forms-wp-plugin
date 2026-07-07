@@ -15,7 +15,7 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Gravity_Forms_Adapter
  * Adapter for Gravity Forms integration
  */
-class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
+class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
 {
     private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
     private const REALTIME_DEFAULT_DEBOUNCE_MS = 900;
@@ -3130,6 +3130,268 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return GFAPI::get_entry( $entry_id );
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function search_historical_entries( mixed $form_id, string $query = '', int $limit = 10, string $status = 'active' ): array | WP_Error
+    {
+        $form_id = absint( $form_id );
+        $query   = strtolower( trim( sanitize_text_field( $query ) ) );
+        $limit   = max( 1, min( 50, $limit ) );
+        $status  = $this->normalize_historical_status_filter( $status );
+
+        if ( $form_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_gf_form_invalid', __( 'Gravity Forms form IDs must be numeric.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        if (
+            ! class_exists( 'GFAPI' )
+            || ( ! is_callable( [ 'GFAPI', 'get_entries' ] ) && ( ! property_exists( 'GFAPI', 'entries' ) || ! is_array( GFAPI::$entries ) ) )
+        )
+        {
+            return [
+                'entries'      => [],
+                'form_source'  => $this->get_id(),
+                'form_id'      => (string) $form_id,
+                'availability' => $this->historical_native_availability( false, 'gravity_forms_unavailable' ),
+            ];
+        }
+
+        $form          = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $form_id ) : null;
+        $status_values = 'all' === $status ? [ 'active', 'spam' ] : [ $status ];
+        $entries       = [];
+
+        foreach ( $status_values as $status_value )
+        {
+            $status_matches = 0;
+            if ( is_callable( [ 'GFAPI', 'get_entries' ] ) )
+            {
+                $page_size = max( 50, $limit );
+                $offset    = 0;
+                do
+                {
+                    $batch = GFAPI::get_entries(
+                        $form_id,
+                        [ 'status' => $status_value ],
+                        [ 'key' => 'date_created', 'direction' => 'DESC' ],
+                        [ 'offset' => $offset, 'page_size' => $page_size ]
+                    );
+                    if ( is_wp_error( $batch ) )
+                    {
+                        return $batch;
+                    }
+
+                    $batch      = is_array( $batch ) ? $batch : [];
+                    $batch_size = count( $batch );
+                    $offset    += $page_size;
+
+                    foreach ( $batch as $entry )
+                    {
+                        if ( ! is_array( $entry ) )
+                        {
+                            continue;
+                        }
+
+                        $entry_id = (string) ( $entry['id'] ?? '' );
+                        if ( '' === $entry_id )
+                        {
+                            continue;
+                        }
+
+                        $entry_status = $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? $status_value ) );
+                        if ( 'all' !== $status && $entry_status !== $status )
+                        {
+                            continue;
+                        }
+
+                        $formatted = $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
+                        if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $formatted['field_summary'] ?? [] ) ?: '' ), $query ) )
+                        {
+                            continue;
+                        }
+
+                        $entries[ $entry_id ] = $formatted;
+                        ++$status_matches;
+                        if ( $status_matches >= $limit )
+                        {
+                            break 2;
+                        }
+                    }
+                }
+                while ( $batch_size === $page_size );
+            }
+            else
+            {
+                foreach ( GFAPI::$entries as $entry )
+                {
+                    if ( ! is_array( $entry ) || (int) ( $entry['form_id'] ?? 0 ) !== $form_id )
+                    {
+                        continue;
+                    }
+
+                    $entry_id = (string) ( $entry['id'] ?? '' );
+                    if ( '' === $entry_id )
+                    {
+                        continue;
+                    }
+
+                    $entry_status = $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? 'active' ) );
+                    if ( $entry_status !== $status_value )
+                    {
+                        continue;
+                    }
+
+                    $formatted = $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
+                    if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $formatted['field_summary'] ?? [] ) ?: '' ), $query ) )
+                    {
+                        continue;
+                    }
+
+                    $entries[ $entry_id ] = $formatted;
+                    ++$status_matches;
+                    if ( $status_matches >= $limit )
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        usort(
+            $entries,
+            static fn ( array $a, array $b ): int => strcmp( (string) ( $b['date_created'] ?? '' ), (string) ( $a['date_created'] ?? '' ) )
+        );
+
+        return [
+            'entries'      => array_slice( $entries, 0, $limit ),
+            'form_source'  => $this->get_id(),
+            'form_id'      => (string) $form_id,
+            'availability' => $this->historical_native_availability( true ),
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    public function get_historical_entry( mixed $form_id, string $entry_id ): array | WP_Error
+    {
+        $form_id  = absint( $form_id );
+        $entry_id = absint( $entry_id );
+        if ( $form_id <= 0 || $entry_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_entry_search_invalid_entry', __( 'Entry could not be found for this form.', 'sentient-forms' ), [ 'status' => 404 ] );
+        }
+
+        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
+        {
+            return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
+        }
+
+        $entry = GFAPI::get_entry( $entry_id );
+        if ( is_wp_error( $entry ) )
+        {
+            return $entry;
+        }
+        if ( ! is_array( $entry ) || (int) ( $entry['form_id'] ?? 0 ) !== $form_id )
+        {
+            return new WP_Error( 'sentient_forms_entry_search_entry_not_found', __( 'Entry could not be found for this form.', 'sentient-forms' ), [ 'status' => 404 ] );
+        }
+
+        $form = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $form_id ) : null;
+
+        return $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function format_historical_gravity_entry( string $form_id, array $form, array $entry ): array
+    {
+        $entry_id = sanitize_text_field( (string) ( $entry['id'] ?? '' ) );
+
+        return [
+            'id'               => $entry_id,
+            'source_type'      => 'native',
+            'submission_uuid'  => null,
+            'native_entry_id'  => '' !== $entry_id ? $entry_id : null,
+            'native_entry_url' => $this->build_submission_ledger_entry_url( absint( $form_id ), absint( $entry_id ) ),
+            'date_created'     => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] )
+                ? sanitize_text_field( (string) $entry['date_created'] )
+                : null,
+            'status'           => $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? 'active' ) ),
+            'field_summary'    => $this->summarize_historical_entry_fields( $form, $entry ),
+        ];
+    }
+
+    /**
+     * @return array<int,array{field_id:string,label:string,value:string}>
+     */
+    private function summarize_historical_entry_fields( array $form, array $entry ): array
+    {
+        $summary = [];
+        foreach ( is_array( $form['fields'] ?? null ) ? $form['fields'] : [] as $field )
+        {
+            $id = is_object( $field ) && isset( $field->id ) ? (string) $field->id : ( is_array( $field ) ? (string) ( $field['id'] ?? '' ) : '' );
+            if ( '' === $id )
+            {
+                continue;
+            }
+
+            $value = $entry[ $id ] ?? '';
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $label = is_object( $field ) && isset( $field->label ) ? (string) $field->label : ( is_array( $field ) ? (string) ( $field['label'] ?? $id ) : $id );
+            $summary[] = [
+                'field_id' => sanitize_text_field( $id ),
+                'label'    => sanitize_text_field( $label ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        if ( [] === $summary )
+        {
+            foreach ( $entry as $key => $value )
+            {
+                if ( count( $summary ) >= 8 || ! is_scalar( $value ) || '' === trim( (string) $value ) )
+                {
+                    continue;
+                }
+
+                $summary[] = [
+                    'field_id' => sanitize_text_field( (string) $key ),
+                    'label'    => sanitize_text_field( (string) $key ),
+                    'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+                ];
+            }
+        }
+
+        return array_slice( $summary, 0, 12 );
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function historical_native_availability( bool $available, ?string $reason = null ): array
+    {
+        return [
+            'source'                => 'native',
+            'native_read'           => $available,
+            'ledger_read'           => false,
+            'unavailable_reason'    => $available ? null : $reason,
+            'allow_ledger_fallback' => false,
+        ];
+    }
+
+    private function normalize_historical_status_filter( string $status ): string
+    {
+        $status = sanitize_key( $status );
+        return in_array( $status, [ 'all', 'active', 'spam' ], true ) ? $status : 'active';
     }
 
     /**
