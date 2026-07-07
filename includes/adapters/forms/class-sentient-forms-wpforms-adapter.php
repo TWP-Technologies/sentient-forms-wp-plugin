@@ -928,11 +928,16 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
 
         $args[] = max( 1, min( 100, $limit ) );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
-        $sql = "SELECT {$select_sql} FROM %i WHERE `form_id` = %d{$where_status}{$where_query} ORDER BY `{$order_column}` DESC LIMIT %d";
-
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads provider native entry storage for explicit webmaster curation.
-        $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A );
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i WHERE `form_id` = %d{$where_status}{$where_query} ORDER BY `{$order_column}` DESC LIMIT %d",
+                ...$args
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         return is_array( $rows ) ? $rows : [];
     }
@@ -956,11 +961,18 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $select_columns = array_values( array_intersect( [ 'entry_id', 'form_id', 'fields', 'date', 'date_created', 'date_modified', 'created_at', 'status', 'type' ], $columns ) );
         $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
-        $sql = "SELECT {$select_sql} FROM %i WHERE `entry_id` = %d AND `form_id` = %d LIMIT 1";
-
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads provider native entry storage for explicit webmaster curation.
-        $row = $wpdb->get_row( $wpdb->prepare( $sql, $table, $entry_id, $form_id ), ARRAY_A );
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i WHERE `entry_id` = %d AND `form_id` = %d LIMIT 1",
+                $table,
+                $entry_id,
+                $form_id
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         return is_array( $row ) ? $row : null;
     }

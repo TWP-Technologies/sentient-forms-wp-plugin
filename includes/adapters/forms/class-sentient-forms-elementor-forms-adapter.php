@@ -635,11 +635,16 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         $where_sql = [] !== $where ? ' WHERE ' . implode( ' AND ', $where ) : '';
         $args[]    = max( 1, min( 100, $limit ) );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
-        $sql = "SELECT {$select_sql} FROM %i{$where_sql} ORDER BY `id` DESC LIMIT %d";
-
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
-        $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A );
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i{$where_sql} ORDER BY `id` DESC LIMIT %d",
+                ...$args
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         return is_array( $rows ) ? $rows : [];
     }
@@ -679,11 +684,16 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
         $where_sql = ' WHERE ' . implode( ' AND ', $where );
 
-        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
-        $sql = "SELECT {$select_sql} FROM %i{$where_sql} LIMIT 1";
-
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
-        $row = $wpdb->get_row( $wpdb->prepare( $sql, ...$args ), ARRAY_A );
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT {$select_sql} FROM %i{$where_sql} LIMIT 1",
+                ...$args
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         return is_array( $row ) ? $row : null;
     }
