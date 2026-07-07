@@ -3264,7 +3264,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
 	private function resolve_trace_entry_values(
 		string $form_source_slug,
-		int $form_id,
+		string $form_id,
 		array $actions,
 		array $manual_values,
 		int $entry_id,
