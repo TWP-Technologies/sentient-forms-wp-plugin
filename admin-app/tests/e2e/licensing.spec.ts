@@ -1,7 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Request } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
 const billingStateRoutePattern = /\/wp-json\/sentient-forms\/v1\/license\/billing-state(?:\?.*)?$/;
+const managedCheckoutRedirectUrl =
+	'https://checkout.stripe.test/c/session/managed?managed-checkout-started=1';
+const businessTopUpRedirectUrl =
+	'https://checkout.stripe.test/c/session/business-top-up#business-top-up';
+const planManagementPortalUrl =
+	'https://billing.stripe.test/p/session/plan-management#stripe-plan-management';
+const planDowngradePortalUrl =
+	'https://billing.stripe.test/p/session/plan-downgrade#stripe-plan-downgrade';
+
+function redirectRequestMatches(expectedUrl: string) {
+	const url = new URL(expectedUrl);
+	const expectedRequestUrl = `${url.origin}${url.pathname}${url.search}`;
+
+	return (request: Request) => request.url() === expectedRequestUrl;
+}
 
 test('licensing screen handles activation flow', async ({ page }) => {
 	let status = {
@@ -248,7 +263,7 @@ test('first-time managed checkout starts from the recommended license path with 
 				data: {
 					checkout_intent_id: 'mci_test_123',
 					checkout_session_id: 'cs_test_123',
-					checkout_url: `${process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175'}/licensing?managed-checkout-started=1`,
+					checkout_url: managedCheckoutRedirectUrl,
 					status: 'open',
 					provider: 'stripe'
 				}
@@ -272,10 +287,13 @@ test('first-time managed checkout starts from the recommended license path with 
 	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeDisabled();
 	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
 	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeEnabled();
+	const checkoutRedirectRequest = page.waitForRequest(
+		redirectRequestMatches(managedCheckoutRedirectUrl)
+	);
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
 
 	await expect.poll(() => checkoutRequests).toBe(1);
-	await expect(page).toHaveURL(/managed-checkout-started=1/);
+	await checkoutRedirectRequest;
 });
 
 test('managed checkout return with completed status resumes activation on the licensing route', async ({
@@ -908,7 +926,7 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 				success: true,
 				data: {
 					session_id: 'cs_business_top_up',
-					checkout_url: 'about:blank#business-top-up',
+					checkout_url: businessTopUpRedirectUrl,
 					customer_id: 'cus_business_top_up',
 					top_up_credits: 5000,
 					pack_code: 'top_up_medium'
@@ -928,9 +946,12 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 
 	const addCapacityButtons = page.getByRole('button', { name: 'Add capacity' });
 	await expect(addCapacityButtons).toHaveCount(3);
+	const topUpRedirectRequest = page.waitForRequest(
+		redirectRequestMatches(businessTopUpRedirectUrl)
+	);
 	await addCapacityButtons.nth(1).click();
 	await expect.poll(() => topUpRequests).toBe(1);
-	await expect(page).toHaveURL(/about:blank#business-top-up/);
+	await topUpRedirectRequest;
 });
 
 test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {
@@ -1040,7 +1061,7 @@ test('existing subscriptions use subscription update portal for plan changes', a
 				success: true,
 				data: {
 					session_id: 'bps_plan_management_123',
-					portal_url: 'about:blank#stripe-plan-management',
+					portal_url: planManagementPortalUrl,
 					customer_id: 'cus_test_123'
 				}
 			}),
@@ -1056,10 +1077,13 @@ test('existing subscriptions use subscription update portal for plan changes', a
 		'Use the Stripe billing portal'
 	);
 
+	const portalRedirectRequest = page.waitForRequest(
+		redirectRequestMatches(planManagementPortalUrl)
+	);
 	await page.getByRole('button', { name: 'Upgrade to Pro' }).click();
 
 	await expect.poll(() => portalAttempts).toBe(1);
-	await expect(page).toHaveURL(/about:blank#stripe-plan-management/);
+	await portalRedirectRequest;
 });
 
 test('larger subscriptions use the same subscription update portal for downgrades', async ({
@@ -1167,7 +1191,7 @@ test('larger subscriptions use the same subscription update portal for downgrade
 				success: true,
 				data: {
 					session_id: 'bps_plan_downgrade_123',
-					portal_url: 'about:blank#stripe-plan-downgrade',
+					portal_url: planDowngradePortalUrl,
 					customer_id: 'cus_test_123'
 				}
 			}),
@@ -1176,10 +1200,11 @@ test('larger subscriptions use the same subscription update portal for downgrade
 	});
 
 	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
+	const portalRedirectRequest = page.waitForRequest(redirectRequestMatches(planDowngradePortalUrl));
 	await page.getByRole('button', { name: 'Downgrade to Starter' }).click();
 
 	await expect.poll(() => portalAttempts).toBe(1);
-	await expect(page).toHaveURL(/about:blank#stripe-plan-downgrade/);
+	await portalRedirectRequest;
 });
 
 test('licensing billing error state maps portal failures to actionable copy', async ({ page }) => {
