@@ -635,7 +635,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         $where_sql = [] !== $where ? ' WHERE ' . implode( ' AND ', $where ) : '';
         $args[]    = max( 1, min( 100, $limit ) );
 
-        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
+        // phpcs:disable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Column names are whitelisted from SHOW COLUMNS above; variadic args preserve optional filters.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
         $rows = $wpdb->get_results(
             $wpdb->prepare(
@@ -644,7 +644,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             ),
             ARRAY_A
         );
-        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        // phpcs:enable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
 
         return is_array( $rows ) ? $rows : [];
     }
@@ -684,7 +684,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
         $where_sql = ' WHERE ' . implode( ' AND ', $where );
 
-        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
+        // phpcs:disable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads Elementor native submission storage for explicit webmaster curation.
         $row = $wpdb->get_row(
             $wpdb->prepare(
@@ -693,7 +693,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             ),
             ARRAY_A
         );
-        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        // phpcs:enable PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
         return is_array( $row ) ? $row : null;
     }
