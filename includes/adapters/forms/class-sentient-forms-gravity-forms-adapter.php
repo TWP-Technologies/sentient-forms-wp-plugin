@@ -3166,35 +3166,55 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         foreach ( $status_values as $status_value )
         {
-            $batch = is_callable( [ 'GFAPI', 'get_entries' ] )
-                ? GFAPI::get_entries(
-                    $form_id,
-                    [ 'status' => $status_value ],
-                    [ 'key' => 'date_created', 'direction' => 'DESC' ],
-                    [ 'offset' => 0, 'page_size' => max( 50, $limit ) ]
-                )
-                : array_values(
+            $batches = [];
+            if ( is_callable( [ 'GFAPI', 'get_entries' ] ) )
+            {
+                $page_size = max( 50, $limit );
+                $offset    = 0;
+                do
+                {
+                    $batch = GFAPI::get_entries(
+                        $form_id,
+                        [ 'status' => $status_value ],
+                        [ 'key' => 'date_created', 'direction' => 'DESC' ],
+                        [ 'offset' => $offset, 'page_size' => $page_size ]
+                    );
+                    if ( is_wp_error( $batch ) )
+                    {
+                        return $batch;
+                    }
+
+                    $batch      = is_array( $batch ) ? $batch : [];
+                    $batches[]  = $batch;
+                    $batch_size = count( $batch );
+                    $offset    += $page_size;
+                }
+                while ( $batch_size === $page_size );
+            }
+            else
+            {
+                $batches[] = array_values(
                     array_filter(
                         GFAPI::$entries,
                         static fn ( array $entry ): bool => (int) ( $entry['form_id'] ?? 0 ) === $form_id
                     )
                 );
-            if ( is_wp_error( $batch ) )
-            {
-                return $batch;
             }
 
-            foreach ( is_array( $batch ) ? $batch : [] as $entry )
+            foreach ( $batches as $batch )
             {
-                if ( ! is_array( $entry ) )
+                foreach ( $batch as $entry )
                 {
-                    continue;
-                }
+                    if ( ! is_array( $entry ) )
+                    {
+                        continue;
+                    }
 
-                $entry_id = (string) ( $entry['id'] ?? '' );
-                if ( '' !== $entry_id )
-                {
-                    $entries[ $entry_id ] = $entry;
+                    $entry_id = (string) ( $entry['id'] ?? '' );
+                    if ( '' !== $entry_id )
+                    {
+                        $entries[ $entry_id ] = $entry;
+                    }
                 }
             }
         }

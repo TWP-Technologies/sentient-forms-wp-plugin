@@ -335,7 +335,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return $pre;
         }
 
-        $rows    = $this->elementor_native_submission_rows( $form_id, max( 50, $limit ), $status );
+        $rows    = $this->elementor_native_submission_rows( $form_id, max( 50, $limit ), $status, $query );
         $results = [];
         foreach ( $rows as $row )
         {
@@ -588,7 +588,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function elementor_native_submission_rows( string $form_id, int $limit, string $status ): array
+    private function elementor_native_submission_rows( string $form_id, int $limit, string $status, string $query = '' ): array
     {
         global $wpdb;
 
@@ -624,6 +624,12 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         {
             $where[] = '`status` = %s';
             $args[]  = $status;
+        }
+        if ( '' !== $query && $this->table_exists( $wpdb->prefix . 'e_submissions_values' ) )
+        {
+            $where[] = '`id` IN (SELECT `submission_id` FROM %i WHERE LOWER(COALESCE(`value`, \'\')) LIKE %s)';
+            $args[]  = $wpdb->prefix . 'e_submissions_values';
+            $args[]  = '%' . $wpdb->esc_like( $query ) . '%';
         }
 
         $where_sql = [] !== $where ? ' WHERE ' . implode( ' AND ', $where ) : '';

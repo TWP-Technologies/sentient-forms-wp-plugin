@@ -291,7 +291,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             return $pre;
         }
 
-        $rows    = $this->wpforms_native_entry_rows( $form_id, max( 50, $limit ), $status );
+        $rows    = $this->wpforms_native_entry_rows( $form_id, max( 50, $limit ), $status, $query );
         $results = [];
         foreach ( $rows as $row )
         {
@@ -892,7 +892,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function wpforms_native_entry_rows( int $form_id, int $limit, string $status ): array
+    private function wpforms_native_entry_rows( int $form_id, int $limit, string $status, string $query = '' ): array
     {
         global $wpdb;
 
@@ -912,6 +912,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $select_sql     = implode( ', ', array_map( static fn ( string $column ): string => '`' . esc_sql( $column ) . '`', $select_columns ) );
         $order_column   = in_array( 'date', $columns, true ) ? 'date' : 'entry_id';
         $where_status   = '';
+        $where_query    = '';
         $args           = [ $table, $form_id ];
 
         if ( 'all' !== $status && in_array( 'status', $columns, true ) )
@@ -919,11 +920,16 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             $where_status = ' AND `status` = %s';
             $args[]       = $status;
         }
+        if ( '' !== $query && in_array( 'fields', $columns, true ) )
+        {
+            $where_query = ' AND LOWER(COALESCE(`fields`, \'\')) LIKE %s';
+            $args[]      = '%' . $wpdb->esc_like( $query ) . '%';
+        }
 
         $args[] = max( 1, min( 100, $limit ) );
 
         // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Column names are whitelisted from SHOW COLUMNS above.
-        $sql = "SELECT {$select_sql} FROM %i WHERE `form_id` = %d{$where_status} ORDER BY `{$order_column}` DESC LIMIT %d";
+        $sql = "SELECT {$select_sql} FROM %i WHERE `form_id` = %d{$where_status}{$where_query} ORDER BY `{$order_column}` DESC LIMIT %d";
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Reads provider native entry storage for explicit webmaster curation.
         $rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A );

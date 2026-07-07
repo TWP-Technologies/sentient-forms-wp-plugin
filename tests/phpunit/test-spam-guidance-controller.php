@@ -28,12 +28,32 @@ if ( ! class_exists( 'GFAPI' ) )
 
         public static function get_entries( $form_id, $search_criteria = [], $sorting = null, $paging = null )
         {
-            return array_values(
+            $entries = array_values(
                 array_filter(
                     self::$entries,
-                    static fn ( array $entry ): bool => (int) ( $entry['form_id'] ?? 0 ) === (int) $form_id
+                    static function ( array $entry ) use ( $form_id, $search_criteria ): bool {
+                        if ( (int) ( $entry['form_id'] ?? 0 ) !== (int) $form_id )
+                        {
+                            return false;
+                        }
+                        if ( isset( $search_criteria['status'] ) && (string) ( $entry['status'] ?? 'active' ) !== (string) $search_criteria['status'] )
+                        {
+                            return false;
+                        }
+
+                        return true;
+                    }
                 )
             );
+            usort(
+                $entries,
+                static fn ( array $a, array $b ): int => strcmp( (string) ( $b['date_created'] ?? '' ), (string) ( $a['date_created'] ?? '' ) )
+            );
+
+            $offset    = is_array( $paging ) ? absint( $paging['offset'] ?? 0 ) : 0;
+            $page_size = is_array( $paging ) ? absint( $paging['page_size'] ?? count( $entries ) ) : count( $entries );
+
+            return array_slice( $entries, $offset, $page_size > 0 ? $page_size : null );
         }
 
         public static function count_entries( $form_id, $search_criteria = [] )
@@ -146,6 +166,53 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertSame( 'spam', $data['entries'][0]['status'] ?? null );
         $this->assertSame( 'native', $data['entries'][0]['source_type'] ?? null );
         $this->assertSame( 'Buy crypto traffic now.', $data['entries'][0]['field_summary'][1]['value'] ?? null );
+    }
+
+    public function test_search_entries_pages_gravity_native_rows_until_older_query_match(): void
+    {
+        GFAPI::$forms = [
+            7 => [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    [ 'id' => '1', 'label' => 'Email' ],
+                    [ 'id' => '2', 'label' => 'Message' ],
+                ],
+            ],
+        ];
+        GFAPI::$entries = [];
+        for ( $i = 0; $i < 60; ++$i )
+        {
+            GFAPI::$entries[ 1000 + $i ] = [
+                'id'           => 1000 + $i,
+                'form_id'      => 7,
+                'status'       => 'active',
+                'date_created' => sprintf( '2026-07-02 12:%02d:00', $i ),
+                '1'            => 'recent-' . $i . '@example.test',
+                '2'            => 'Recent non-matching submission ' . $i,
+            ];
+        }
+        GFAPI::$entries[42] = [
+            'id'           => 42,
+            'form_id'      => 7,
+            'status'       => 'active',
+            'date_created' => '2026-07-01 09:00:00',
+            '1'            => 'older@example.test',
+            '2'            => 'Rare calibration phrase from an older Gravity submission.',
+        ];
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/gravity_forms/7/entries/search' );
+        $request->set_param( 'form_source', 'gravity_forms' );
+        $request->set_param( 'form_id', 7 );
+        $request->set_param( 'q', 'rare calibration phrase' );
+        $request->set_param( 'status', 'active' );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertSame( '42', $data['entries'][0]['id'] ?? null, wp_json_encode( $data ) );
+        $this->assertSame( 'Rare calibration phrase from an older Gravity submission.', $data['entries'][0]['field_summary'][1]['value'] ?? null );
     }
 
     public function test_search_entries_returns_submission_ledger_rows_for_non_gravity_sources(): void
@@ -305,6 +372,62 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertSame( 'Grace Hopper', $data['entries'][0]['field_summary'][0]['value'] ?? null );
     }
 
+    public function test_search_entries_queries_wpforms_native_payload_beyond_recent_page(): void
+    {
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+        add_filter( 'sentient_forms_wpforms_native_entry_storage_available', '__return_true' );
+        $this->ensure_wpforms_entries_table();
+        for ( $i = 0; $i < 60; ++$i )
+        {
+            $this->insert_wpforms_native_entry(
+                55,
+                2000 + $i,
+                [
+                    1 => [
+                        'id'    => 1,
+                        'name'  => 'Full Name',
+                        'value' => 'Recent WPForms User ' . $i,
+                    ],
+                    2 => [
+                        'id'    => 2,
+                        'name'  => 'Message',
+                        'value' => 'Recent non-matching WPForms submission ' . $i,
+                    ],
+                ],
+                sprintf( '2026-07-02 12:%02d:00', $i )
+            );
+        }
+        $this->insert_wpforms_native_entry(
+            55,
+            1901,
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'value' => 'Older WPForms Match',
+                ],
+                2 => [
+                    'id'    => 2,
+                    'name'  => 'Message',
+                    'value' => 'Rare WPForms calibration phrase from an older entry.',
+                ],
+            ],
+            '2026-07-01 09:00:00'
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/wpforms/55/entries/search' );
+        $request->set_param( 'form_source', 'wpforms' );
+        $request->set_param( 'form_id', 55 );
+        $request->set_param( 'q', 'rare wpforms calibration phrase' );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertSame( '1901', $data['entries'][0]['id'] ?? null, wp_json_encode( $data ) );
+        $this->assertSame( 'Older WPForms Match', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
     public function test_search_entries_returns_elementor_native_rows_when_form_submissions_are_available(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
@@ -335,6 +458,49 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertSame( 'native', $data['entries'][0]['source_type'] ?? null );
         $this->assertStringContainsString( 'e-form-submissions', $data['entries'][0]['native_entry_url'] ?? '' );
         $this->assertSame( 'Ada Lovelace', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
+    public function test_search_entries_queries_elementor_native_values_beyond_recent_page(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_true' );
+        $this->ensure_elementor_submission_tables();
+        for ( $i = 0; $i < 60; ++$i )
+        {
+            $this->insert_elementor_native_submission(
+                '123:formabc',
+                3000 + $i,
+                [
+                    'full_name' => 'Recent Elementor User ' . $i,
+                    'email'     => 'recent-elementor-' . $i . '@example.test',
+                    'message'   => 'Recent non-matching Elementor submission ' . $i,
+                ],
+                sprintf( '2026-07-02 12:%02d:00', $i )
+            );
+        }
+        $this->insert_elementor_native_submission(
+            '123:formabc',
+            2701,
+            [
+                'full_name' => 'Older Elementor Match',
+                'email'     => 'older-elementor@example.test',
+                'message'   => 'Rare Elementor calibration phrase from an older submission.',
+            ],
+            '2026-07-01 09:00:00'
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_forms/123:formabc/entries/search' );
+        $request->set_param( 'form_source', 'elementor_forms' );
+        $request->set_param( 'form_id', '123:formabc' );
+        $request->set_param( 'q', 'rare elementor calibration phrase' );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertSame( '2701', $data['entries'][0]['id'] ?? null, wp_json_encode( $data ) );
+        $this->assertSame( 'Older Elementor Match', $data['entries'][0]['field_summary'][0]['value'] ?? null );
     }
 
     public function test_search_entries_returns_elementor_requires_pro_unavailable_state(): void
@@ -1097,7 +1263,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
     /**
      * @param array<int|string,mixed> $fields
      */
-    private function insert_wpforms_native_entry( int $form_id, int $entry_id, array $fields ): void
+    private function insert_wpforms_native_entry( int $form_id, int $entry_id, array $fields, string $date = '2026-07-01 11:00:00' ): void
     {
         global $wpdb;
 
@@ -1108,7 +1274,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
                 'entry_id' => $entry_id,
                 'form_id'  => $form_id,
                 'fields'   => wp_json_encode( $fields ),
-                'date'     => '2026-07-01 11:00:00',
+                'date'     => $date,
                 'status'   => 'active',
             ],
             [ '%d', '%d', '%s', '%s', '%s' ]
@@ -1151,7 +1317,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
     /**
      * @param array<string,string> $fields
      */
-    private function insert_elementor_native_submission( string $form_id, int $submission_id, array $fields ): void
+    private function insert_elementor_native_submission( string $form_id, int $submission_id, array $fields, string $created_at = '2026-07-01 12:00:00' ): void
     {
         global $wpdb;
 
@@ -1167,7 +1333,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
                 'element_id' => sanitize_text_field( $element_id ),
                 'form_name'  => 'Quote Request',
                 'status'     => 'active',
-                'created_at' => '2026-07-01 12:00:00',
+                'created_at' => $created_at,
             ],
             [ '%d', '%d', '%s', '%s', '%s', '%s' ]
         );
