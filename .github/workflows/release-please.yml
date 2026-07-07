@@ -353,6 +353,50 @@ jobs:
           fi
           gh release create "${create_args[@]}"
 
+      - name: Mark Release Please PR tagged
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          pr_number="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq '.[] | select(.merged_at != null and .base.ref == "production" and (.title | test("^chore(\\(.+\\))?: release")) and (.head.ref | test("^release-please(--branches--production(--components--.*)?|/branches/production(/components/.*)?)$"))) | .number' \
+              | head -n 1
+          )"
+          if [[ -z "${pr_number}" ]]; then
+            echo "::error::Could not resolve merged Release Please PR for ${GITHUB_SHA}."
+            exit 1
+          fi
+
+          labels="$(gh pr view "${pr_number}" --json labels --jq '.labels[].name')"
+          edit_args=()
+          if grep -Fxq "autorelease: pending" <<< "${labels}"; then
+            edit_args+=(--remove-label "autorelease: pending")
+          fi
+          if ! grep -Fxq "autorelease: tagged" <<< "${labels}"; then
+            edit_args+=(--add-label "autorelease: tagged")
+          fi
+
+          if (( ${#edit_args[@]} > 0 )); then
+            gh issue edit "${pr_number}" "${edit_args[@]}"
+          else
+            echo "Release Please PR #${pr_number} already has tagged label state."
+          fi
+
+          updated_labels="$(gh pr view "${pr_number}" --json labels --jq '.labels[].name')"
+          if grep -Fxq "autorelease: pending" <<< "${updated_labels}"; then
+            echo "::error::Release Please PR #${pr_number} still has autorelease: pending."
+            exit 1
+          fi
+          if ! grep -Fxq "autorelease: tagged" <<< "${updated_labels}"; then
+            echo "::error::Release Please PR #${pr_number} is missing autorelease: tagged."
+            exit 1
+          fi
+          echo "Release Please PR #${pr_number} marked autorelease: tagged."
+
       - name: Upload package artifact
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         uses: actions/upload-artifact@v7

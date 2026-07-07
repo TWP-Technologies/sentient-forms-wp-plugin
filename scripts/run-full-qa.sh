@@ -60,6 +60,7 @@ run_wp_php() {
   composer encoding-check
   composer phpcs
   php scripts/validate-workflow-path-filters.php
+  php scripts/validate-release-workflow.php
   vendor/bin/phpunit
   popd >/dev/null
 }
