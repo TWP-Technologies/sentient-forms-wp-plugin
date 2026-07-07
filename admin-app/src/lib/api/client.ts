@@ -346,9 +346,9 @@ const formExecutionStatusSchema = z
 	.object({
 		status: z.enum(['unknown', 'success', 'error']),
 		message: z.string().nullable(),
-		entry_id: z.number().int().nullable(),
+		entry_id: z.number().int().nullable().optional(),
 		last_error_code: z.string().nullable(),
-		last_result: z.unknown(),
+		last_result: z.unknown().optional(),
 		updated_at: z.string().nullable().optional()
 	})
 	.passthrough();

@@ -2018,10 +2018,10 @@ export interface CapabilitiesResponse {
 export interface FormExecutionStatus {
 	status: 'unknown' | 'success' | 'error';
 	message: string | null;
-	entry_id: number | null;
+	entry_id?: number | null;
 	last_error_code: string | null;
-	last_result: unknown;
-	updated_at: string | null;
+	last_result?: unknown;
+	updated_at?: string | null;
 }
 
 export interface ExecutionStatus {
