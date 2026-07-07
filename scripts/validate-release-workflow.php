@@ -10,8 +10,9 @@ if ( PHP_SAPI !== 'cli' )
 }
 
 $plugin_root = dirname( __DIR__ );
-$workflow    = $plugin_root . '/.github/workflows/release-please.yml';
-$issues      = [];
+$workflow      = $plugin_root . '/.github/workflows/release-please.yml';
+$sync_workflow = $plugin_root . '/.github/workflows/release-pr-sync.yml';
+$issues        = [];
 
 if ( ! file_exists( $workflow ) )
 {
@@ -27,6 +28,23 @@ else
     else
     {
         sentient_forms_validate_release_workflow( $contents, $issues );
+    }
+}
+
+if ( ! file_exists( $sync_workflow ) )
+{
+    $issues[] = 'Missing .github/workflows/release-pr-sync.yml.';
+}
+else
+{
+    $sync_contents = file_get_contents( $sync_workflow );
+    if ( ! is_string( $sync_contents ) || '' === trim( $sync_contents ) )
+    {
+        $issues[] = 'release-pr-sync.yml is empty or unreadable.';
+    }
+    else
+    {
+        sentient_forms_validate_release_pr_sync_workflow( $sync_contents, $issues );
     }
 }
 
@@ -94,5 +112,38 @@ function sentient_forms_validate_release_workflow( string $contents, array &$iss
     )
     {
         $issues[] = 'Release Please PR label reconciliation must run after release asset upload/create steps and before artifact upload.';
+    }
+}
+
+/**
+ * Validate Release PR Sync only runs for exact Release Please branches.
+ *
+ * @param array<int,string> $issues
+ */
+function sentient_forms_validate_release_pr_sync_workflow( string $contents, array &$issues ): void
+{
+    if ( false !== strpos( $contents, "contains(github.head_ref, 'release-please')" ) )
+    {
+        $issues[] = 'release-pr-sync.yml must not use broad release-please substring matching for job gating.';
+    }
+
+    if ( false === strpos( $contents, "github.head_ref == 'release-please--branches--production'" ) )
+    {
+        $issues[] = 'release-pr-sync.yml must explicitly allow the exact Release Please production branch name.';
+    }
+
+    if ( false === strpos( $contents, "startsWith(github.head_ref, 'release-please--branches--production--components--')" ) )
+    {
+        $issues[] = 'release-pr-sync.yml must explicitly allow Release Please production component branch names.';
+    }
+
+    if ( false === strpos( $contents, "github.head_ref == 'release-please/branches/production'" ) )
+    {
+        $issues[] = 'release-pr-sync.yml must explicitly allow the exact Release Please slash-style production branch name.';
+    }
+
+    if ( false === strpos( $contents, "startsWith(github.head_ref, 'release-please/branches/production/components/')" ) )
+    {
+        $issues[] = 'release-pr-sync.yml must explicitly allow Release Please slash-style production component branch names.';
     }
 }

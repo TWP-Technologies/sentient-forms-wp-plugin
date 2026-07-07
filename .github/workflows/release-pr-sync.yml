@@ -21,7 +21,16 @@ env:
 jobs:
   sync-version-surfaces:
     name: Sync WordPress Version Surfaces
-    if: ${{ contains(github.head_ref, 'release-please') && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: >-
+      ${{
+        github.event.pull_request.head.repo.full_name == github.repository
+        && (
+          github.head_ref == 'release-please--branches--production'
+          || startsWith(github.head_ref, 'release-please--branches--production--components--')
+          || github.head_ref == 'release-please/branches/production'
+          || startsWith(github.head_ref, 'release-please/branches/production/components/')
+        )
+      }}
     runs-on: ubuntu-latest
     steps:
       - name: Detect release bot token configuration
