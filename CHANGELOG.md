@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.9.1...v0.10.0) (2026-07-07)
+
+
+### Features
+
+* **spam:** curate historical examples across form sources ([893b76a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/893b76a93be6e5cf9009b7f4eeb8cb9c2ac8a495))
+* **spam:** curate historical examples across form sources ([eb6c8c9](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/eb6c8c988644faca9b219a6ed1c585c9090c0993))
+
+
+### Bug Fixes
+
+* **actions:** preserve provider-native trace form ids ([22b165f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/22b165f0123576fc588402bb11bc3ac2b4e0541a))
+* **admin:** tolerate sparse execution status ([c2b7c74](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c2b7c740a7ccad83843e997e1926ffb70feb1102))
+* **release:** mark packaged release PRs tagged ([467d366](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/467d366c0341229355ea6cd78a5c96ed244139f3))
+* **release:** mark packaged release PRs tagged ([63ae153](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/63ae1534737721c359af47132232a167c4705512))
+* **release:** narrow release PR sync trigger ([4ea5780](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4ea57800dbf4bbf3488ad84dae6761cd388e1c4e))
+* **spam:** address historical curation review findings ([fbb0ac0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/fbb0ac05cbfabfea0a3b4a2deec63868af270b47))
+* **spam:** satisfy package SQL preflight ([0bb43e5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0bb43e5ab3149d07df79989c7de2d14f5df69985))
+* **spam:** search older native entries ([76d9c38](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/76d9c38250415e9ee8acca45b21f7024e7ed52d7))
+* **spam:** suppress vetted package SQL warnings ([cad5388](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cad5388069952b2d98367f3df38bd213b8a74a5b))
+
 ## [0.9.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.9.0...v0.9.1) (2026-06-30)
 
 
