@@ -116,134 +116,6 @@ class Sentient_Forms_Form_Entry_Search_Service
     /**
      * @return array{entries: array<int,array<string,mixed>>, form_source: string, form_id: string, availability: array<string,mixed>}|WP_Error
      */
-    private function search_gravity_forms_entries( string $form_source, string $form_id, string $query, int $limit, string $status ): array | WP_Error
-    {
-        if ( ! class_exists( 'GFAPI' ) )
-        {
-            return [
-                'entries'      => [],
-                'form_source'  => $form_source,
-                'form_id'      => $form_id,
-                'availability' => [
-                    'source'             => 'native',
-                    'native_read'        => false,
-                    'ledger_read'        => false,
-                    'unavailable_reason' => 'gravity_forms_unavailable',
-                ],
-            ];
-        }
-
-        $form          = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( absint( $form_id ) ) : null;
-        $status_values = 'all' === $status ? [ 'active', 'spam' ] : [ $status ];
-        $entries       = [];
-        if ( is_callable( [ 'GFAPI', 'get_entries' ] ) )
-        {
-            foreach ( $status_values as $status_value )
-            {
-                $batch = GFAPI::get_entries(
-                    absint( $form_id ),
-                    [ 'status' => $status_value ],
-                    [ 'key' => 'date_created', 'direction' => 'DESC' ],
-                    [ 'offset' => 0, 'page_size' => max( 50, $limit ) ]
-                );
-                if ( is_wp_error( $batch ) )
-                {
-                    return $batch;
-                }
-
-                foreach ( is_array( $batch ) ? $batch : [] as $entry )
-                {
-                    if ( ! is_array( $entry ) )
-                    {
-                        continue;
-                    }
-
-                    $entry_id = (string) ( $entry['id'] ?? '' );
-                    if ( '' === $entry_id )
-                    {
-                        continue;
-                    }
-
-                    $entries[ $entry_id ] = $entry;
-                }
-            }
-        }
-        elseif ( property_exists( 'GFAPI', 'entries' ) && is_array( GFAPI::$entries ) )
-        {
-            foreach ( GFAPI::$entries as $entry )
-            {
-                if ( ! is_array( $entry ) || (int) ( $entry['form_id'] ?? 0 ) !== absint( $form_id ) )
-                {
-                    continue;
-                }
-
-                $entry_id = (string) ( $entry['id'] ?? '' );
-                if ( '' === $entry_id )
-                {
-                    continue;
-                }
-
-                $entries[ $entry_id ] = $entry;
-            }
-        }
-        else
-        {
-            return [
-                'entries'      => [],
-                'form_source'  => $form_source,
-                'form_id'      => $form_id,
-                'availability' => [
-                    'source'             => 'native',
-                    'native_read'        => false,
-                    'ledger_read'        => false,
-                    'unavailable_reason' => 'gravity_forms_unavailable',
-                ],
-            ];
-        }
-
-        usort(
-            $entries,
-            static fn ( array $a, array $b ): int => strcmp( (string) ( $b['date_created'] ?? '' ), (string) ( $a['date_created'] ?? '' ) )
-        );
-
-        $results = [];
-        foreach ( $entries as $entry )
-        {
-            $entry_status = $this->normalize_entry_status( $entry['status'] ?? null );
-            if ( 'all' !== $status && $entry_status !== $status )
-            {
-                continue;
-            }
-
-            $formatted = $this->format_gravity_forms_entry( $form_source, $form_id, is_array( $form ) ? $form : [], $entry );
-            if ( '' !== $query && ! $this->entry_matches_query( $formatted, $query ) )
-            {
-                continue;
-            }
-
-            $results[] = $formatted;
-            if ( count( $results ) >= $limit )
-            {
-                break;
-            }
-        }
-
-        return [
-            'entries'      => $results,
-            'form_source'  => $form_source,
-            'form_id'      => $form_id,
-            'availability' => [
-                'source'             => 'native',
-                'native_read'        => true,
-                'ledger_read'        => false,
-                'unavailable_reason' => null,
-            ],
-        ];
-    }
-
-    /**
-     * @return array{entries: array<int,array<string,mixed>>, form_source: string, form_id: string, availability: array<string,mixed>}|WP_Error
-     */
     private function search_submission_ledger_entries( string $form_source, string $form_id, string $query, int $limit, ?array $native_availability = null ): array | WP_Error
     {
         $ledger = $this->submission_ledger_repository();
@@ -319,27 +191,6 @@ class Sentient_Forms_Form_Entry_Search_Service
     /**
      * @return array<string,mixed>
      */
-    private function format_gravity_forms_entry( string $form_source, string $form_id, array $form, array $entry ): array
-    {
-        $entry_id = sanitize_text_field( (string) ( $entry['id'] ?? '' ) );
-
-        return [
-            'id'               => $entry_id,
-            'source_type'      => 'native',
-            'submission_uuid'  => null,
-            'native_entry_id'  => '' !== $entry_id ? $entry_id : null,
-            'native_entry_url' => $this->gravity_forms_entry_url( $form_id, $entry_id ),
-            'date_created'     => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] )
-                ? sanitize_text_field( (string) $entry['date_created'] )
-                : null,
-            'status'           => $this->normalize_entry_status( $entry['status'] ?? null ),
-            'field_summary'    => $this->summarize_entry_fields( $form, $entry ),
-        ];
-    }
-
-    /**
-     * @return array<string,mixed>
-     */
     private function format_submission_ledger_record( array $record ): array
     {
         $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
@@ -372,69 +223,10 @@ class Sentient_Forms_Form_Entry_Search_Service
         return in_array( $status, [ 'all', 'active', 'spam' ], true ) ? $status : 'active';
     }
 
-    private function normalize_entry_status( mixed $status ): string
-    {
-        $status = is_scalar( $status ) ? sanitize_key( (string) $status ) : '';
-        return '' !== $status ? $status : 'active';
-    }
-
-    private function entry_matches_query( array $entry, string $query ): bool
-    {
-        return str_contains( strtolower( wp_json_encode( $entry['field_summary'] ?? [] ) ?: '' ), strtolower( $query ) );
-    }
-
     private function submission_ledger_record_matches_query( array $record, string $query ): bool
     {
         $logical_fields = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
         return str_contains( strtolower( wp_json_encode( $logical_fields ) ?: '' ), strtolower( $query ) );
-    }
-
-    /**
-     * @return array<int, array{field_id: string, label: string, value: string}>
-     */
-    private function summarize_entry_fields( array $form, array $entry ): array
-    {
-        $summary = [];
-        foreach ( is_array( $form['fields'] ?? null ) ? $form['fields'] : [] as $field )
-        {
-            $id = is_object( $field ) && isset( $field->id ) ? (string) $field->id : ( is_array( $field ) ? (string) ( $field['id'] ?? '' ) : '' );
-            if ( '' === $id )
-            {
-                continue;
-            }
-
-            $label = is_object( $field ) && isset( $field->label ) ? (string) $field->label : ( is_array( $field ) ? (string) ( $field['label'] ?? $id ) : $id );
-            $value = $entry[ $id ] ?? '';
-            if ( '' === trim( (string) $value ) )
-            {
-                continue;
-            }
-
-            $summary[] = [
-                'field_id' => $id,
-                'label'    => sanitize_text_field( $label ),
-                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
-            ];
-        }
-
-        if ( [] === $summary )
-        {
-            foreach ( $entry as $key => $value )
-            {
-                if ( count( $summary ) >= 8 || ! is_scalar( $value ) || '' === trim( (string) $value ) )
-                {
-                    continue;
-                }
-
-                $summary[] = [
-                    'field_id' => sanitize_text_field( (string) $key ),
-                    'label'    => sanitize_text_field( (string) $key ),
-                    'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
-                ];
-            }
-        }
-
-        return array_slice( $summary, 0, 12 );
     }
 
     /**
@@ -801,24 +593,4 @@ class Sentient_Forms_Form_Entry_Search_Service
         return $this->ledger_settings;
     }
 
-    private function is_gravity_forms_source( string $form_source ): bool
-    {
-        return in_array( sanitize_key( $form_source ), [ 'gravity_forms', 'gravity-forms' ], true );
-    }
-
-    private function gravity_forms_entry_url( string $form_id, string $entry_id ): ?string
-    {
-        if ( '' === $entry_id )
-        {
-            return null;
-        }
-
-        return admin_url(
-            sprintf(
-                'admin.php?page=gf_entries&view=entry&id=%d&lid=%d',
-                absint( $form_id ),
-                absint( $entry_id )
-            )
-        );
-    }
 }

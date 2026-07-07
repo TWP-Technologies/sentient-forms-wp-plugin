@@ -3166,7 +3166,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         foreach ( $status_values as $status_value )
         {
-            $batches = [];
+            $status_matches = 0;
             if ( is_callable( [ 'GFAPI', 'get_entries' ] ) )
             {
                 $page_size = max( 50, $limit );
@@ -3185,35 +3185,76 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     }
 
                     $batch      = is_array( $batch ) ? $batch : [];
-                    $batches[]  = $batch;
                     $batch_size = count( $batch );
                     $offset    += $page_size;
+
+                    foreach ( $batch as $entry )
+                    {
+                        if ( ! is_array( $entry ) )
+                        {
+                            continue;
+                        }
+
+                        $entry_id = (string) ( $entry['id'] ?? '' );
+                        if ( '' === $entry_id )
+                        {
+                            continue;
+                        }
+
+                        $entry_status = $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? $status_value ) );
+                        if ( 'all' !== $status && $entry_status !== $status )
+                        {
+                            continue;
+                        }
+
+                        $formatted = $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
+                        if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $formatted['field_summary'] ?? [] ) ?: '' ), $query ) )
+                        {
+                            continue;
+                        }
+
+                        $entries[ $entry_id ] = $formatted;
+                        ++$status_matches;
+                        if ( $status_matches >= $limit )
+                        {
+                            break 2;
+                        }
+                    }
                 }
                 while ( $batch_size === $page_size );
             }
             else
             {
-                $batches[] = array_values(
-                    array_filter(
-                        GFAPI::$entries,
-                        static fn ( array $entry ): bool => (int) ( $entry['form_id'] ?? 0 ) === $form_id
-                    )
-                );
-            }
-
-            foreach ( $batches as $batch )
-            {
-                foreach ( $batch as $entry )
+                foreach ( GFAPI::$entries as $entry )
                 {
-                    if ( ! is_array( $entry ) )
+                    if ( ! is_array( $entry ) || (int) ( $entry['form_id'] ?? 0 ) !== $form_id )
                     {
                         continue;
                     }
 
                     $entry_id = (string) ( $entry['id'] ?? '' );
-                    if ( '' !== $entry_id )
+                    if ( '' === $entry_id )
                     {
-                        $entries[ $entry_id ] = $entry;
+                        continue;
+                    }
+
+                    $entry_status = $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? 'active' ) );
+                    if ( $entry_status !== $status_value )
+                    {
+                        continue;
+                    }
+
+                    $formatted = $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
+                    if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $formatted['field_summary'] ?? [] ) ?: '' ), $query ) )
+                    {
+                        continue;
+                    }
+
+                    $entries[ $entry_id ] = $formatted;
+                    ++$status_matches;
+                    if ( $status_matches >= $limit )
+                    {
+                        break;
                     }
                 }
             }
@@ -3224,30 +3265,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             static fn ( array $a, array $b ): int => strcmp( (string) ( $b['date_created'] ?? '' ), (string) ( $a['date_created'] ?? '' ) )
         );
 
-        $results = [];
-        foreach ( $entries as $entry )
-        {
-            $entry_status = $this->normalize_historical_status_filter( (string) ( $entry['status'] ?? 'active' ) );
-            if ( 'all' !== $status && $entry_status !== $status )
-            {
-                continue;
-            }
-
-            $formatted = $this->format_historical_gravity_entry( (string) $form_id, is_array( $form ) ? $form : [], $entry );
-            if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $formatted['field_summary'] ?? [] ) ?: '' ), $query ) )
-            {
-                continue;
-            }
-
-            $results[] = $formatted;
-            if ( count( $results ) >= $limit )
-            {
-                break;
-            }
-        }
-
         return [
-            'entries'      => $results,
+            'entries'      => array_slice( $entries, 0, $limit ),
             'form_source'  => $this->get_id(),
             'form_id'      => (string) $form_id,
             'availability' => $this->historical_native_availability( true ),

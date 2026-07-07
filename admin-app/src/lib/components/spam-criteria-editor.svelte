@@ -590,7 +590,7 @@
 		<div
 			class="sf-picker"
 			role="dialog"
-			aria-modal="false"
+			aria-modal="true"
 			aria-label="Historical submission picker"
 			data-testid="spam-guidance-picker"
 		>

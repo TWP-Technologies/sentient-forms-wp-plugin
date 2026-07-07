@@ -1,6 +1,6 @@
 {
   ".svelte-kit/generated/client-optimized/app.js": {
-    "file": "_app/immutable/entry/app.CIhGZEeF.js",
+    "file": "_app/immutable/entry/app.DXt9klMl.js",
     "name": "entry/app",
     "src": ".svelte-kit/generated/client-optimized/app.js",
     "isEntry": true,
@@ -61,7 +61,7 @@
     ]
   },
   ".svelte-kit/generated/client-optimized/nodes/10.js": {
-    "file": "_app/immutable/nodes/10.LqBuo42D.js",
+    "file": "_app/immutable/nodes/10.nyJHQzBi.js",
     "name": "nodes/10",
     "src": ".svelte-kit/generated/client-optimized/nodes/10.js",
     "isEntry": true,
@@ -79,7 +79,7 @@
       "_BFbU5qhn.js",
       "_CXy0rHsr.js",
       "_Cj9ecUMW.js",
-      "_CZqNY16y.js",
+      "_CuKYkEfy.js",
       "_BNS5LF6k.js"
     ]
   },
@@ -273,7 +273,7 @@
     ]
   },
   ".svelte-kit/generated/client-optimized/nodes/4.js": {
-    "file": "_app/immutable/nodes/4.DRIGPwgu.js",
+    "file": "_app/immutable/nodes/4.DzVUczbC.js",
     "name": "nodes/4",
     "src": ".svelte-kit/generated/client-optimized/nodes/4.js",
     "isEntry": true,
@@ -290,7 +290,7 @@
       "_CXy0rHsr.js",
       "_Cj9ecUMW.js",
       "_De2U8BpS.js",
-      "_CZqNY16y.js",
+      "_CuKYkEfy.js",
       "_CQv1-N-o.js",
       "_BrMTXoyD.js",
       "_Dh2PkwVA.js",
@@ -379,7 +379,7 @@
     ]
   },
   ".svelte-kit/generated/client-optimized/nodes/9.js": {
-    "file": "_app/immutable/nodes/9.SEsnXnb_.js",
+    "file": "_app/immutable/nodes/9.DvRkkYyy.js",
     "name": "nodes/9",
     "src": ".svelte-kit/generated/client-optimized/nodes/9.js",
     "isEntry": true,
@@ -395,7 +395,7 @@
       "_CXy0rHsr.js",
       "_Cj9ecUMW.js",
       "_De2U8BpS.js",
-      "_CZqNY16y.js",
+      "_CuKYkEfy.js",
       "_BNS5LF6k.js",
       "_CQv1-N-o.js",
       "_B7m94xS7.js",
@@ -506,8 +506,15 @@
       "_De2yIhEs.js"
     ]
   },
-  "_CZqNY16y.js": {
-    "file": "_app/immutable/chunks/CZqNY16y.js",
+  "_Cj9ecUMW.js": {
+    "file": "_app/immutable/chunks/Cj9ecUMW.js",
+    "name": "index-client",
+    "imports": [
+      "_De2yIhEs.js"
+    ]
+  },
+  "_CuKYkEfy.js": {
+    "file": "_app/immutable/chunks/CuKYkEfy.js",
     "name": "spam-criteria-editor",
     "imports": [
       "_apzAM8IG.js",
@@ -515,13 +522,6 @@
     ],
     "css": [
       "_app/immutable/assets/spam-criteria-editor.DfJKKhDC.css"
-    ]
-  },
-  "_Cj9ecUMW.js": {
-    "file": "_app/immutable/chunks/Cj9ecUMW.js",
-    "name": "index-client",
-    "imports": [
-      "_De2yIhEs.js"
     ]
   },
   "_Cz40Oy6a.js": {
