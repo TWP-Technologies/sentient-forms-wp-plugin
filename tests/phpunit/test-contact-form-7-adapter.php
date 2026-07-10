@@ -1,5 +1,56 @@
 <?php
 
+if ( ! class_exists( 'Sentient_Forms_Test_Accepted_Submission_Adapter' ) )
+{
+    class Sentient_Forms_Test_Accepted_Submission_Adapter implements Sentient_Forms_Accepted_Submission_Adapter_Interface
+    {
+        public function get_id(): string
+        {
+            return 'fixture_forms';
+        }
+
+        public function get_name(): string
+        {
+            return 'Fixture Forms';
+        }
+
+        public function is_active(): bool
+        {
+            return true;
+        }
+
+        public function get_forms(): array
+        {
+            return [];
+        }
+
+        public function get_form_fields( $form_id ): array
+        {
+            return [];
+        }
+
+        public function get_accepted_submission_native_hook(): string
+        {
+            return 'fixture_forms_submission_accepted';
+        }
+
+        public function normalize_accepted_submission( mixed $native_submission ): array | WP_Error
+        {
+            return [
+                'form_id'        => '99',
+                'form'           => [
+                    'id'          => '99',
+                    'title'       => 'Fixture Form',
+                    'form_source' => 'fixture_forms',
+                    'fields'      => [],
+                ],
+                'logical_fields' => [ 'message' => 'Accepted fixture submission' ],
+                'files'          => [],
+            ];
+        }
+    }
+}
+
 class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 {
     protected function tearDown(): void
@@ -9,10 +60,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
         remove_all_filters( 'sentient_forms_contact_form_7_current_submission' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
-        foreach ( [ '44', '47', '48' ] as $form_id )
+        remove_all_actions( 'wpcf7_before_send_mail' );
+        remove_all_actions( 'wpcf7_mail_sent' );
+        foreach ( [ '44', '47', '48', '49' ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
         }
+        delete_option( 'sentient_forms_actions_fixture_forms_99' );
 
         global $wpdb;
         foreach ( [
@@ -27,6 +81,98 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         }
 
         parent::tearDown();
+    }
+
+    public function test_contact_form_7_exposes_only_mail_sent_as_accepted_submission_hook(): void
+    {
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_current_submission',
+            static fn() => new class {
+                public function get_posted_data(): array
+                {
+                    return [
+                        'your-name' => 'Accepted User',
+                        '_wpcf7'    => '49',
+                    ];
+                }
+            }
+        );
+
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+
+        $this->assertInstanceOf( Sentient_Forms_Accepted_Submission_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpcf7_mail_sent', $adapter->get_accepted_submission_native_hook() );
+
+        $normalized = $adapter->normalize_accepted_submission( $this->cf7_form( 49, 'Accepted CF7 Submission' ) );
+        $this->assertIsArray( $normalized );
+        $this->assertSame( '49', $normalized['form_id'] ?? null );
+        $this->assertSame( 'Accepted User', $normalized['logical_fields']['your-name'] ?? null );
+
+        $adapter->init();
+
+        $this->assertSame( 10, has_action( 'wpcf7_mail_sent', [ $adapter, 'handle_mail_sent' ] ) );
+        $this->assertFalse( has_action( 'wpcf7_before_send_mail', [ $adapter, 'handle_mail_sent' ] ) );
+    }
+
+    public function test_accepted_submission_runner_schedules_source_neutral_mapping(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'fixture_mapping' => [
+                    'local_mapping_id'           => 'fixture_mapping',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Evaluate fixture submission',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+            ],
+            false
+        );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $runner->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [ 'native' => 'payload' ] );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( 'fixture_forms', $scheduled_jobs[0]['args']['context']['form_source'] ?? null );
+        $this->assertSame( 'fixture_forms_submission_accepted', $scheduled_jobs[0]['args']['context']['hook'] ?? null );
+        $this->assertSame( $submission_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
+        $this->assertSame( 'Accepted fixture submission', $scheduled_jobs[0]['args']['data']['entry']['message'] ?? null );
+    }
+
+    public function test_form_source_workflow_runner_remains_lifecycle_neutral(): void
+    {
+        $services_dir = dirname( __DIR__, 2 ) . '/includes/services/';
+
+        $this->assertTrue( class_exists( 'Sentient_Forms_Form_Source_Workflow_Runner' ) );
+        $this->assertFalse( class_exists( 'Sentient_Forms_Accepted_Submission_Workflow_Runner' ) );
+        $this->assertFalse( class_exists( 'Sentient_Forms_Validation_Workflow_Runner' ) );
+        $this->assertFileDoesNotExist( $services_dir . 'class-sentient-forms-accepted-submission-workflow-runner.php' );
+        $this->assertFileDoesNotExist( $services_dir . 'class-sentient-forms-validation-workflow-runner.php' );
     }
 
     public function test_active_contact_form_7_forms_are_discoverable(): void
@@ -300,8 +446,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $scheduled_jobs );
 
         $ledger_settings->set_enabled( 'contact_form_7', '44', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $adapter->init();
 
-        $submission_uuid = $adapter->handle_mail_sent( $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        do_action( 'wpcf7_before_send_mail', $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        $this->assertSame( [], $scheduled_jobs );
+
+        do_action( 'wpcf7_mail_sent', $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        $submission_uuid = $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null;
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
