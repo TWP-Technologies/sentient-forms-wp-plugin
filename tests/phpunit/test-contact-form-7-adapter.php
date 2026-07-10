@@ -147,6 +147,89 @@ if ( ! class_exists( 'Sentient_Forms_Test_Context_Action_Executor' ) )
     }
 }
 
+if ( ! class_exists( 'Sentient_Forms_Test_CF7_Validation_Action' ) )
+{
+    final class Sentient_Forms_Test_CF7_Validation_Action implements Sentient_Forms_Action_Interface
+    {
+        /** @var callable */
+        private $on_execute;
+
+        public function __construct( private string $id, callable $on_execute )
+        {
+            $this->on_execute = $on_execute;
+        }
+
+        public function get_id(): string
+        {
+            return $this->id;
+        }
+
+        public function get_name(): string
+        {
+            return 'CF7 validation fixture';
+        }
+
+        public function get_description(): string
+        {
+            return 'Exercises the public Contact Form 7 validation hooks.';
+        }
+
+        public function get_icon(): string
+        {
+            return 'dashicons-shield';
+        }
+
+        public function get_settings(): array
+        {
+            return [];
+        }
+
+        public function get_hooks(): array
+        {
+            return [ 'wpcf7_validate' ];
+        }
+
+        public function get_compatibility(): array
+        {
+            return [ 'contact_form_7' ];
+        }
+
+        public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+        {
+            return call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
+        }
+
+        public function estimate_cost( array $data, array $settings ): int
+        {
+            return 0;
+        }
+
+        public function get_settings_fields(): array
+        {
+            return [];
+        }
+
+        public function validate_settings( array $settings ): array
+        {
+            return $settings;
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_CF7_Validation_Result' ) )
+{
+    final class Sentient_Forms_Test_CF7_Validation_Result
+    {
+        /** @var array<int, array{tag: object, message: string}> */
+        public array $invalidations = [];
+
+        public function invalidate( object $tag, string $message ): void
+        {
+            $this->invalidations[] = compact( 'tag', 'message' );
+        }
+    }
+}
+
 class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 {
     protected function tearDown(): void
@@ -159,7 +242,9 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_actions( 'wpcf7_before_send_mail' );
         remove_all_actions( 'wpcf7_mail_sent' );
-        foreach ( [ '44', '47', '48', '49' ] as $form_id )
+        remove_all_filters( 'wpcf7_validate' );
+        remove_all_filters( 'wpcf7_spam' );
+        foreach ( [ '44', '47', '48', '49', '7951', '7952', '7953', '7954', '7955' ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
         }
@@ -217,6 +302,245 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 10, has_action( 'wpcf7_mail_sent', [ $adapter, 'handle_mail_sent' ] ) );
         $this->assertFalse( has_action( 'wpcf7_before_send_mail', [ $adapter, 'handle_mail_sent' ] ) );
+    }
+
+    public function test_cf7_content_validation_invalidates_matching_tag_through_two_argument_hook(): void
+    {
+        $form_id    = 7951;
+        $action_id  = 'cf7_content_validation_fixture';
+        $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
+        $executions = 0;
+        $seen       = [];
+        $tag        = $this->cf7_tag( 'textarea*', 'textarea', 'project-details' );
+        $form       = $this->cf7_form( $form_id, 'CF7 Content Validation', [ $tag ] );
+        $submission = $this->cf7_submission( $form, [ 'project-details' => 'test' ] );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_CF7_Validation_Action(
+                $action_id,
+                static function ( array $form_data ) use ( &$executions, &$seen ): array {
+                    ++$executions;
+                    $seen = $form_data;
+
+                    return [
+                        'validation' => [
+                            'is_valid' => false,
+                            'message'  => 'Please add useful project details.',
+                            'fields'   => [
+                                [
+                                    'field_id' => 'project-details',
+                                    'message' => 'Tell us what you need built.',
+                                ],
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_content' => [
+                    'local_mapping_id'           => 'map_content',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        global $wp_filter;
+        $accepted_args = null;
+        foreach ( (array) ( $wp_filter['wpcf7_validate']->callbacks[10] ?? [] ) as $callback )
+        {
+            if ( [ $adapter, 'handle_validation' ] === ( $callback['function'] ?? null ) )
+            {
+                $accepted_args = $callback['accepted_args'] ?? null;
+                break;
+            }
+        }
+        $result = apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
+
+        $this->assertSame( 2, $accepted_args );
+        $this->assertSame( 1, $executions );
+        $this->assertSame( 'wpcf7_validate', $seen['hook'] ?? null );
+        $this->assertSame( 'contact_form_7', $seen['form_source'] ?? null );
+        $this->assertSame( 'test', $seen['entry']['project-details'] ?? null );
+        $this->assertCount( 1, $result->invalidations );
+        $this->assertSame( $tag, $result->invalidations[0]['tag'] ?? null );
+        $this->assertSame( 'Tell us what you need built.', $result->invalidations[0]['message'] ?? null );
+    }
+
+    public function test_cf7_spam_hook_reuses_validation_outcome_without_second_execution(): void
+    {
+        $form_id    = 7952;
+        $action_id  = 'cf7_spam_validation_fixture';
+        $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
+        $executions = 0;
+        $tag        = $this->cf7_tag( 'text*', 'text', 'your-name' );
+        $form       = $this->cf7_form( $form_id, 'CF7 Spam Validation', [ $tag ] );
+        $submission = $this->cf7_submission( $form, [ 'your-name' => 'Buy now' ] );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_CF7_Validation_Action(
+                $action_id,
+                static function () use ( &$executions ): array {
+                    ++$executions;
+
+                    return [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'classification' => 'spam',
+                                'confidence'     => 0.99,
+                                'justification'  => 'Known spam fixture.',
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'action_name_label'          => 'Spam Detection',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
+        $spam = apply_filters( 'wpcf7_spam', false, $submission );
+
+        $this->assertTrue( $spam );
+        $this->assertSame( 1, $executions );
+    }
+
+    public function test_cf7_validation_failures_fail_open_and_descriptor_preserves_mail_sent_boundary(): void
+    {
+        $form_id    = 7953;
+        $action_id  = 'cf7_validation_failure_fixture';
+        $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
+        $tag        = $this->cf7_tag( 'email*', 'email', 'your-email' );
+        $form       = $this->cf7_form( $form_id, 'CF7 Failure Validation', [ $tag ] );
+        $submission = $this->cf7_submission( $form, [ 'your-email' => 'private@example.test' ] );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_CF7_Validation_Action(
+                $action_id,
+                static fn(): WP_Error => new WP_Error( 'provider_timeout', 'Private provider failure details.' )
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_failure' => [
+                    'local_mapping_id'           => 'map_failure',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'fail_open'                  => false,
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        $result     = apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
+        $descriptor = $adapter->get_capability_descriptor();
+
+        $this->assertSame( [], $result->invalidations );
+        $this->assertFalse( apply_filters( 'wpcf7_spam', false, $submission ) );
+        $this->assertTrue( apply_filters( 'wpcf7_spam', true, $submission ) );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] ?? false );
+        $this->assertSame( 'wpcf7_validate', $descriptor['lifecycles']['validation']['native_hook'] ?? null );
+        $this->assertSame( 'blocking', $descriptor['lifecycles']['validation']['execution_mode'] ?? null );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] ?? false );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertSame( 'wpcf7_mail_sent', $adapter->get_accepted_submission_native_hook() );
+        $this->assertSame( 10, has_action( 'wpcf7_mail_sent', [ $adapter, 'handle_mail_sent' ] ) );
+    }
+
+    public function test_cf7_ham_and_unstructured_validation_outcomes_preserve_existing_spam_state(): void
+    {
+        $cases = [
+            7954 => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'ham',
+                        'confidence'     => 0.98,
+                        'justification'  => 'Known legitimate fixture.',
+                    ],
+                ],
+            ],
+            7955 => [
+                'content' => 'Unstructured provider response.',
+            ],
+        ];
+
+        foreach ( $cases as $form_id => $action_result )
+        {
+            remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
+            remove_all_filters( 'sentient_forms_contact_form_7_current_submission' );
+            remove_all_filters( 'wpcf7_validate' );
+            remove_all_filters( 'wpcf7_spam' );
+            $tag        = $this->cf7_tag( 'text*', 'text', 'your-name' );
+            $form       = $this->cf7_form( $form_id, 'CF7 Spam Preservation', [ $tag ] );
+            $submission = $this->cf7_submission( $form, [ 'your-name' => 'Legitimate visitor' ] );
+            $action_id  = 'cf7_spam_preservation_' . $form_id;
+            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+                new Sentient_Forms_Test_CF7_Validation_Action(
+                    $action_id,
+                    static fn(): array => $action_result
+                )
+            );
+            update_option(
+                'sentient_forms_actions_contact_form_7_' . $form_id,
+                [
+                    'map_spam' => [
+                        'local_mapping_id'           => 'map_spam',
+                        'central_action_id'          => $action_id,
+                        'action_type_indicator'      => 'custom',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'validation' ],
+                        'settings'                   => [ 'async' => false ],
+                    ],
+                ],
+                false
+            );
+            add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+            add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+            ( new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() ) )->init();
+
+            apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
+
+            $this->assertFalse( apply_filters( 'wpcf7_spam', false, $submission ) );
+            $this->assertTrue( apply_filters( 'wpcf7_spam', true, $submission ) );
+        }
     }
 
     public function test_accepted_submission_runner_schedules_source_neutral_mapping(): void
@@ -1796,6 +2120,25 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             public function scan_form_tags(): array
             {
                 return $this->tags;
+            }
+        };
+    }
+
+    private function cf7_submission( object $form, array $posted_data ): object
+    {
+        return new class( $form, $posted_data ) {
+            public function __construct( private object $form, private array $posted_data )
+            {
+            }
+
+            public function get_contact_form(): object
+            {
+                return $this->form;
+            }
+
+            public function get_posted_data(): array
+            {
+                return $this->posted_data;
             }
         };
     }

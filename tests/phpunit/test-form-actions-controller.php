@@ -5420,7 +5420,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'Contact Form 7', $descriptor['label'] ?? null );
         $this->assertTrue( $descriptor['is_active'] ?? false );
         $this->assertSame( 'available', $descriptor['availability'] ?? null );
-        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] ?? true );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] ?? false );
+        $this->assertSame( 'wpcf7_validate', $descriptor['lifecycles']['validation']['native_hook'] ?? null );
         $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] ?? true );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] ?? false );
         $this->assertSame( 'wpcf7_mail_sent', $descriptor['lifecycles']['after_submission']['native_hook'] ?? null );
@@ -5429,6 +5430,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $descriptor['native_entry']['link'] ?? true );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] ?? true );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] ?? false );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] ?? false );
         $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
         $this->assertSame( 'your-name', $data['form_fields'][0]['id'] ?? null );

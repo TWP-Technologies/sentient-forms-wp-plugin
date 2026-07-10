@@ -223,6 +223,10 @@ class Sentient_Forms_Form_Adapter_Registry
                 $provided['native_enrichment'] ?? [],
                 [ 'notes', 'status', 'spam', 'notification_controls', 'webhook_controls' ]
             ),
+            'validation_effects'   => $this->normalize_boolean_capabilities(
+                $provided['validation_effects'] ?? [],
+                [ 'field_errors', 'form_errors', 'submission_spam' ]
+            ),
             'ledger'               => array_merge(
                 [
                     'required_for_parity' => false,

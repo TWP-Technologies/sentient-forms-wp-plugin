@@ -386,6 +386,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'notification_controls' => true,
                 'webhook_controls'      => $this->gravity_forms_webhooks_feed_controls_available(),
             ],
+            'validation_effects'   => [
+                'field_errors'    => true,
+                'form_errors'     => true,
+                'submission_spam' => true,
+            ],
             'ledger'               => [
                 'required_for_parity' => false,
                 'enabled'             => false,

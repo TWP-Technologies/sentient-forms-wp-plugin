@@ -315,6 +315,9 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['native_entry']['id'] );
         $this->assertTrue( $descriptor['native_enrichment']['notes'] );
         $this->assertTrue( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] );
     }
 
     public function test_registry_exposes_gravity_validation_through_optional_contracts(): void
@@ -342,14 +345,29 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
         $this->assertSame( 'wpcf7_mail_sent', $descriptor['lifecycles']['after_submission']['native_hook'] );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
-        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertSame( 'wpcf7_validate', $descriptor['lifecycles']['validation']['native_hook'] );
+        $this->assertSame( 'blocking', $descriptor['lifecycles']['validation']['execution_mode'] );
         $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
         $this->assertFalse( $descriptor['native_entry']['id'] );
         $this->assertFalse( $descriptor['native_entry']['link'] );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['form_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
         $this->assertFalse( $descriptor['ledger']['enabled'] );
+    }
+
+    public function test_registry_exposes_contact_form_7_validation_through_optional_contracts(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $adapter  = $registry->get_adapter_by_id( 'contact_form_7' );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpcf7_validate', $adapter->get_validation_native_hook() );
     }
 
     public function test_form_sources_native_entry_capability_uses_adapter_registry_descriptor(): void
@@ -405,6 +423,9 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $descriptor['forms_discovery']['supported'] );
         $this->assertFalse( $descriptor['field_manifest']['supported'] );
         $this->assertTrue( $descriptor['requirements']['requires_pro'] );
+        $this->assertFalse( $descriptor['validation_effects']['field_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['form_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
     }
 
     public function test_elementor_pro_forms_pro_descriptor_exposes_after_submission_hook(): void
@@ -624,6 +645,9 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $descriptor['native_entry']['link'] );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertFalse( $descriptor['validation_effects']['field_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['form_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
         $this->assertFalse( $descriptor['ledger']['enabled'] );
     }
