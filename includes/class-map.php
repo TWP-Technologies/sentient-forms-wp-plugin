@@ -122,6 +122,7 @@ return [
 	'Sentient_Forms_Provider_Credentials_Repository' => __DIR__ . '/repositories/class-sentient-forms-provider-credentials-repository.php',
 	'Sentient_Forms_Provider_Form_Id_Keys' => __DIR__ . '/services/class-sentient-forms-provider-form-id-keys.php',
 	'Sentient_Forms_Provider_Path_Policy_Service' => __DIR__ . '/services/class-sentient-forms-provider-path-policy-service.php',
+	'Sentient_Forms_Provider_Route_Decision' => __DIR__ . '/services/class-sentient-forms-provider-route-decision.php',
 	'Sentient_Forms_Provider_Secret_Resolver' => __DIR__ . '/services/class-sentient-forms-provider-secret-resolver.php',
 	'Sentient_Forms_Pull_Token_Service' => __DIR__ . '/services/class-sentient-forms-pull-token-service.php',
 	'Sentient_Forms_REST_API' => __DIR__ . '/rest-api/class-rest-api.php',
