@@ -5493,7 +5493,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] ?? false );
         $this->assertSame( 'wpforms_process_complete', $descriptor['lifecycles']['after_submission']['native_hook'] ?? null );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] ?? false );
-        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] ?? true );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] ?? false );
+        $this->assertSame( 'wpforms_process', $descriptor['lifecycles']['validation']['native_hook'] ?? null );
         $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] ?? true );
         $this->assertTrue( $descriptor['native_entry']['id'] ?? false );
         $this->assertTrue( $descriptor['native_entry']['link'] ?? false );
@@ -5501,6 +5502,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $descriptor['native_entry']['write'] ?? true );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] ?? true );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] ?? false );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] ?? false );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] ?? true );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] ?? false );
         $this->assertSame( 'wpforms', $data['ledger_settings']['form_source'] ?? null );
         $this->assertSame( (string) $form_id, $data['ledger_settings']['form_id'] ?? null );

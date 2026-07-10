@@ -1,5 +1,89 @@
 <?php
 
+if ( ! class_exists( 'Sentient_Forms_Test_WPForms_Validation_Action' ) )
+{
+    final class Sentient_Forms_Test_WPForms_Validation_Action implements Sentient_Forms_Action_Interface
+    {
+        /** @var callable */
+        private $on_execute;
+
+        public function __construct( private string $id, callable $on_execute )
+        {
+            $this->on_execute = $on_execute;
+        }
+
+        public function get_id(): string
+        {
+            return $this->id;
+        }
+
+        public function get_name(): string
+        {
+            return 'WPForms validation fixture';
+        }
+
+        public function get_description(): string
+        {
+            return 'Exercises the public WPForms validation hook.';
+        }
+
+        public function get_icon(): string
+        {
+            return 'dashicons-shield';
+        }
+
+        public function get_settings(): array
+        {
+            return [];
+        }
+
+        public function get_hooks(): array
+        {
+            return [ 'wpforms_process' ];
+        }
+
+        public function get_compatibility(): array
+        {
+            return [ 'wpforms' ];
+        }
+
+        public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+        {
+            return call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
+        }
+
+        public function estimate_cost( array $data, array $settings ): int
+        {
+            return 0;
+        }
+
+        public function get_settings_fields(): array
+        {
+            return [];
+        }
+
+        public function validate_settings( array $settings ): array
+        {
+            return $settings;
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_WPForms_Validation_Adapter_Spy' ) )
+{
+    final class Sentient_Forms_Test_WPForms_Validation_Adapter_Spy extends Sentient_Forms_WPForms_Adapter
+    {
+        public int $native_spam_calls = 0;
+
+        public function mark_entry_as_spam( mixed $entry_id ): bool
+        {
+            ++$this->native_spam_calls;
+
+            return true;
+        }
+    }
+}
+
 class Tests_WPForms_Adapter extends WP_UnitTestCase
 {
     private bool $created_wpforms_entries_table = false;
@@ -9,11 +93,12 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_wpforms_is_active' );
         remove_all_filters( 'sentient_forms_wpforms_native_entry_available' );
         remove_all_filters( 'sentient_forms_wpforms_hidden_field_storage_allowlist' );
+        remove_all_filters( 'sentient_forms_wpforms_object' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_actions( 'wpforms_process' );
         remove_all_actions( 'wpforms_process_complete' );
 
-        foreach ( [ 44, 48, 49, 50 ] as $form_id )
+        foreach ( [ 44, 48, 49, 50, 7956, 7957, 7958, 7959, 7960 ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_wpforms_' . $form_id );
         }
@@ -56,8 +141,181 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
 
         $adapter->init();
 
+        $this->assertSame( 1, has_action( 'wpforms_process', [ $adapter, 'handle_validation' ] ) );
         $this->assertSame( 10, has_action( 'wpforms_process_complete', [ $adapter, 'handle_process_complete' ] ) );
         $this->assertFalse( has_action( 'wpforms_process', [ $adapter, 'handle_process_complete' ] ) );
+    }
+
+    public function test_wpforms_content_validation_writes_matching_field_and_header_errors_through_three_argument_hook(): void
+    {
+        $form_id    = 7956;
+        $action_id  = 'wpforms_content_validation_fixture';
+        $option_key = 'sentient_forms_actions_wpforms_' . $form_id;
+        $executions = 0;
+        $seen       = [];
+        $process    = (object) [ 'errors' => [] ];
+        $fields     = $this->validation_fields();
+        $entry      = [ 'fields' => [ 1 => 'Ada Lovelace', 2 => 'test' ], 'source' => 'frontend' ];
+        $form_data  = $this->validation_form_data( $form_id );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_WPForms_Validation_Action(
+                $action_id,
+                static function ( array $form_data ) use ( &$executions, &$seen ): array {
+                    ++$executions;
+                    $seen = $form_data;
+
+                    return [
+                        'validation' => [
+                            'is_valid' => false,
+                            'message'  => 'Please review your submission.',
+                            'fields'   => [
+                                [
+                                    'field_id' => '2',
+                                    'message'  => 'Tell us what you need built.',
+                                ],
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+        $this->configure_validation_mapping( $form_id, $action_id );
+        $adapter = $this->initialize_validation_adapter( $process );
+
+        global $wp_filter;
+        $accepted_args = null;
+        foreach ( (array) ( $wp_filter['wpforms_process']->callbacks[1] ?? [] ) as $callback )
+        {
+            if ( [ $adapter, 'handle_validation' ] === ( $callback['function'] ?? null ) )
+            {
+                $accepted_args = $callback['accepted_args'] ?? null;
+                break;
+            }
+        }
+        do_action( 'wpforms_process', $fields, $entry, $form_data );
+
+        $this->assertSame( 3, $accepted_args );
+        $this->assertSame( 1, $executions );
+        $this->assertSame( 'wpforms_process', $seen['hook'] ?? null );
+        $this->assertSame( 'wpforms', $seen['form_source'] ?? null );
+        $this->assertSame( 'test', $seen['entry']['project_details'] ?? null );
+        $this->assertSame( [ 'source' ], $seen['execution_context']['native_validation_context']['entry_keys'] ?? null );
+        $this->assertSame( 'Tell us what you need built.', $process->errors[ $form_id ][2] ?? null );
+        $this->assertSame( 'Please review your submission.', $process->errors[ $form_id ]['header'] ?? null );
+    }
+
+    public function test_wpforms_validation_blocks_priority_ten_payment_callbacks_before_they_charge(): void
+    {
+        $form_id       = 7960;
+        $action_id     = 'wpforms_payment_order_validation_fixture';
+        $process       = (object) [ 'errors' => [] ];
+        $payment_count = 0;
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_WPForms_Validation_Action(
+                $action_id,
+                static fn(): array => [
+                    'validation' => [
+                        'is_valid' => false,
+                        'message'  => 'Payment must not run for an invalid submission.',
+                    ],
+                ]
+            )
+        );
+        $this->configure_validation_mapping( $form_id, $action_id );
+
+        add_action(
+            'wpforms_process',
+            static function () use ( &$payment_count, $process ): void {
+                if ( empty( $process->errors ) )
+                {
+                    ++$payment_count;
+                }
+            },
+            10,
+            3
+        );
+
+        $adapter = $this->initialize_validation_adapter( $process );
+
+        do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
+
+        $this->assertNotEmpty( $process->errors[ $form_id ]['header'] ?? '' );
+        $this->assertSame( 0, $payment_count );
+        $this->assertSame( 1, has_action( 'wpforms_process', [ $adapter, 'handle_validation' ] ) );
+        $this->assertSame( 10, has_action( 'wpforms_process_complete', [ $adapter, 'handle_process_complete' ] ) );
+    }
+
+    public function test_wpforms_spam_validation_blocks_with_header_error_without_native_spam_state(): void
+    {
+        $form_id    = 7957;
+        $action_id  = 'wpforms_spam_validation_fixture';
+        $process    = (object) [ 'errors' => [] ];
+        $executions = 0;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_WPForms_Validation_Action(
+                $action_id,
+                static function () use ( &$executions ): array {
+                    ++$executions;
+
+                    return [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'classification' => 'spam',
+                                'confidence'     => 0.99,
+                                'justification'  => 'Known spam fixture.',
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+        $this->configure_validation_mapping( $form_id, $action_id );
+        $adapter = $this->initialize_validation_adapter( $process, true );
+
+        do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
+        $descriptor = $adapter->get_capability_descriptor();
+
+        $this->assertSame( 1, $executions );
+        $this->assertNotEmpty( $process->errors[ $form_id ]['header'] ?? '' );
+        $this->assertSame( 0, $adapter->native_spam_calls );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] ?? true );
+        $this->assertFalse( $descriptor['native_entry']['write'] ?? true );
+    }
+
+    public function test_wpforms_provider_and_unstructured_failures_leave_process_errors_unchanged(): void
+    {
+        $cases = [
+            7958 => new WP_Error( 'provider_timeout', 'Private provider timeout details.' ),
+            7959 => [ 'content' => 'Unstructured provider response.' ],
+        ];
+
+        foreach ( $cases as $form_id => $action_result )
+        {
+            remove_all_actions( 'wpforms_process' );
+            remove_all_filters( 'sentient_forms_wpforms_is_active' );
+            remove_all_filters( 'sentient_forms_wpforms_object' );
+            $process   = (object) [ 'errors' => [ $form_id => [ 9 => 'Existing WPForms error.' ] ] ];
+            $action_id = 'wpforms_fail_open_' . $form_id;
+            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+                new Sentient_Forms_Test_WPForms_Validation_Action(
+                    $action_id,
+                    static fn(): WP_Error | array => $action_result
+                )
+            );
+            $this->configure_validation_mapping( $form_id, $action_id );
+            $adapter = $this->initialize_validation_adapter( $process );
+            $before  = $process->errors;
+
+            do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
+
+            $this->assertSame( $before, $process->errors );
+            $this->assertSame( 'wpforms_process_complete', $adapter->get_accepted_submission_native_hook() );
+            $this->assertSame( 10, has_action( 'wpforms_process_complete', [ $adapter, 'handle_process_complete' ] ) );
+        }
     }
 
     public function test_wpforms_field_manifest_marks_logical_hidden_and_file_fields(): void
@@ -1198,6 +1456,64 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $table = $wpdb->prefix . 'wpforms_entries';
 
         return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function validation_fields(): array
+    {
+        return [
+            1 => [ 'id' => 1, 'name' => 'Full Name', 'type' => 'name', 'value' => 'Ada Lovelace' ],
+            2 => [ 'id' => 2, 'name' => 'Project Details', 'type' => 'textarea', 'value' => 'test' ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function validation_form_data( int $form_id ): array
+    {
+        return [
+            'id'       => $form_id,
+            'settings' => [ 'form_title' => 'WPForms Validation' ],
+            'fields'   => [
+                1 => [ 'id' => 1, 'label' => 'Full Name', 'type' => 'name' ],
+                2 => [ 'id' => 2, 'label' => 'Project Details', 'type' => 'textarea' ],
+            ],
+        ];
+    }
+
+    private function configure_validation_mapping( int $form_id, string $action_id ): void
+    {
+        update_option(
+            'sentient_forms_actions_wpforms_' . $form_id,
+            [
+                'map_validation' => [
+                    'local_mapping_id'           => 'map_validation',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'action_name_label'          => 'WPForms validation',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+    }
+
+    private function initialize_validation_adapter( object $process, bool $spy = false ): Sentient_Forms_WPForms_Adapter
+    {
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_wpforms_object',
+            static fn( mixed $object, string $name ): mixed => 'process' === $name ? $process : $object,
+            10,
+            2
+        );
+        $adapter = $spy
+            ? new Sentient_Forms_Test_WPForms_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() )
+            : new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        return $adapter;
     }
 
     private function create_wpforms_entries_table(): void
