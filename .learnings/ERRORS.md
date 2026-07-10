@@ -30,6 +30,72 @@ Normalize raw text to LF before calculating marker offsets for generated patches
 
 ---
 
+## [ERR-20260710-006] opaque_parallel_read_failure
+
+**Logged**: 2026-07-10T10:20:06-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A parallel reconnaissance batch containing nested Docker quoting failed without returning the successful sibling outputs or identifying the failing child.
+
+### Error
+```text
+Script error: Exit code 1 with no child output
+```
+
+### Context
+- The batch mixed local file reads with a nested `docker exec ... sh -lc` grep.
+- No repository or runtime state changed.
+
+### Suggested Fix
+Run quoting-sensitive Docker inspection separately from deterministic local reads.
+
+### Resolution
+- **Resolved**: 2026-07-10T10:20:06-05:00
+- **Notes**: Split the inspection into individual commands.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: tests/phpunit/test-contact-form-7-adapter.php
+- See Also: none
+
+---
+
+## [ERR-20260710-005] optional_context_file_read
+
+**Logged**: 2026-07-10T10:20:06-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+A reconnaissance batch attempted to read optional `CONTEXT.md` without first checking whether it existed.
+
+### Error
+```text
+Cannot find path 'CONTEXT.md' because it does not exist.
+```
+
+### Context
+- The TDD skill recommends reading `CONTEXT.md` only when present.
+- The repository's Form Source architecture document was present and remained the applicable source.
+
+### Suggested Fix
+Guard optional project-context reads with `Test-Path` before `Get-Content`.
+
+### Resolution
+- **Resolved**: 2026-07-10T10:20:06-05:00
+- **Notes**: Continued with existence-checked reads.
+
+### Metadata
+- Reproducible: yes
+- Related Files: docs/architecture/form-source-adapter-boundaries.md
+- See Also: none
+
+---
+
 ## [ERR-20260710-004] docker-exec-nested-grep-quoting
 
 **Logged**: 2026-07-10T09:42:36-05:00
