@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party WPForms Form Source adapter.
  */
-class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
+class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface, Sentient_Forms_Native_Entry_Capabilities_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'wpforms_process_complete';
     private const NATIVE_VALIDATION_HOOK = 'wpforms_process';
@@ -60,6 +60,25 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             || class_exists( 'WPForms' );
 
         return (bool) apply_filters( 'sentient_forms_wpforms_is_active', $is_active, $this );
+    }
+
+    public function get_structural_native_entry_capabilities(): array
+    {
+        return [
+            'id'    => true,
+            'link'  => true,
+            'read'  => false,
+            'write' => false,
+        ];
+    }
+
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => true,
+            'submission_spam' => false,
+        ];
     }
 
     /**

@@ -15,7 +15,7 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Gravity_Forms_Adapter
  * Adapter for Gravity Forms integration
  */
-class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
+class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface, Sentient_Forms_Native_Entry_Capabilities_Adapter_Interface, Sentient_Forms_Native_Effects_Capabilities_Adapter_Interface, Sentient_Forms_Realtime_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'gform_after_submission';
     private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
@@ -327,6 +327,46 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'form_source' => $this->get_id(),
             'fields'      => $fields,
         ];
+    }
+
+    public function get_structural_native_entry_capabilities(): array
+    {
+        return [
+            'id'    => true,
+            'link'  => true,
+            'read'  => true,
+            'write' => true,
+        ];
+    }
+
+    public function get_structural_native_effect_capabilities(): array
+    {
+        return [
+            'notes'                 => true,
+            'status'                => true,
+            'spam'                  => true,
+            'notification_controls' => true,
+            'webhook_controls'      => true,
+        ];
+    }
+
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => true,
+            'submission_spam' => true,
+        ];
+    }
+
+    public function get_realtime_native_hook(): string
+    {
+        return 'real_time';
+    }
+
+    public function get_structural_realtime_capabilities(): array
+    {
+        return [ 'qna_storage' => true ];
     }
 
     /**

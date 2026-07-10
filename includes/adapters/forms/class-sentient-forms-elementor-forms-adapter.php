@@ -50,6 +50,15 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return $this->has_elementor_pro_forms_api();
     }
 
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => true,
+            'submission_spam' => false,
+        ];
+    }
+
     /**
      * @return array<string, mixed>
      */

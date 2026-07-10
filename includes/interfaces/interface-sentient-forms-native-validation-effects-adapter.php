@@ -17,6 +17,11 @@ if ( ! defined( 'ABSPATH' ) )
 interface Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     /**
+     * @return array<string, bool>
+     */
+    public function get_structural_validation_effect_capabilities(): array;
+
+    /**
      * Apply visitor-visible validation errors.
      */
     public function apply_validation_result(

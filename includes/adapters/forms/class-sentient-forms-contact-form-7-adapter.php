@@ -57,6 +57,15 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         return (bool) apply_filters( 'sentient_forms_contact_form_7_is_active', $is_active, $this );
     }
 
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => false,
+            'submission_spam' => true,
+        ];
+    }
+
     /**
      * @return array<string, mixed>
      */
