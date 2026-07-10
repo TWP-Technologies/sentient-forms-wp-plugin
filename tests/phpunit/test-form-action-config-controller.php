@@ -10,7 +10,7 @@
 class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 	private Sentient_Forms_Form_Action_Config_Controller $controller;
 	private string $option_key = 'sentient_forms_form_config_gravity_forms_999';
-	private string $elementor_opaque_option_key = 'sentient_forms_form_config_elementor_forms_123_formabc';
+	private string $elementor_opaque_option_key = 'sentient_forms_form_config_elementor_pro_forms_123_formabc';
 	/** @var string[] */
 	private array $dynamic_option_keys = [];
 	private string $action_defaults_option_key = 'sentient_forms_action_defaults_spam_detection_v1';
@@ -141,12 +141,12 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		do_action( 'rest_api_init' );
 		$this->controller->register_routes();
 
-		$request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/forms/elementor_forms/123%3Aformabc/action-config/entry_summary_v1' );
+		$request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/forms/elementor_pro_forms/123%3Aformabc/action-config/entry_summary_v1' );
 		$response = rest_do_request( $request );
 		$data     = $response->get_data();
 
 		$this->assertSame( 200, $response->get_status() );
-		$this->assertSame( 'elementor_forms', $data['form_source'] ?? null );
+		$this->assertSame( 'elementor_pro_forms', $data['form_source'] ?? null );
 		$this->assertSame( '123:formabc', $data['form_id'] ?? null );
 		$this->assertSame( 'entry_summary_v1', $data['action_id'] ?? null );
 		$this->assertSame(
@@ -163,8 +163,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		];
 
 		foreach ( $form_configs as $form_id => $customization ) {
-			$request = new WP_REST_Request( 'POST', sprintf( '/sentient-forms/v1/forms/elementor_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
-			$request->set_param( 'form_source', 'elementor_forms' );
+			$request = new WP_REST_Request( 'POST', sprintf( '/sentient-forms/v1/forms/elementor_pro_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
+			$request->set_param( 'form_source', 'elementor_pro_forms' );
 			$request->set_param( 'form_id', $form_id );
 			$request->set_param( 'action_id', 'entry_summary_v1' );
 			$request->set_param( 'action_customization', $customization );
@@ -178,13 +178,13 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$this->dynamic_option_keys = $wpdb->get_col(
 			$wpdb->prepare(
 				"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
-				$wpdb->esc_like( 'sentient_forms_form_config_elementor_forms_' ) . '%'
+				$wpdb->esc_like( 'sentient_forms_form_config_elementor_pro_forms_' ) . '%'
 			)
 		);
 
 		foreach ( $form_configs as $form_id => $customization ) {
-			$request = new WP_REST_Request( 'GET', sprintf( '/sentient-forms/v1/forms/elementor_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
-			$request->set_param( 'form_source', 'elementor_forms' );
+			$request = new WP_REST_Request( 'GET', sprintf( '/sentient-forms/v1/forms/elementor_pro_forms/%s/action-config/entry_summary_v1', rawurlencode( $form_id ) ) );
+			$request->set_param( 'form_source', 'elementor_pro_forms' );
 			$request->set_param( 'form_id', $form_id );
 			$request->set_param( 'action_id', 'entry_summary_v1' );
 

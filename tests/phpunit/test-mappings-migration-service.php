@@ -126,6 +126,22 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
     {
         parent::setUp();
 
+        global $wpdb;
+        $action_option_names = $wpdb->get_col(
+            $wpdb->prepare(
+                'SELECT option_name FROM %i WHERE option_name LIKE %s',
+                $wpdb->options,
+                $wpdb->esc_like( 'sentient_forms_actions_' ) . '%'
+            )
+        );
+        foreach ( is_array( $action_option_names ) ? $action_option_names : [] as $action_option_name )
+        {
+            if ( is_string( $action_option_name ) )
+            {
+                delete_option( $action_option_name );
+            }
+        }
+
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
                 'proxy_api_key' => 'proxy-migrate-test',
@@ -256,7 +272,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
     public function test_migrate_apply_preserves_elementor_provider_native_form_id(): void
     {
-        $option_key           = 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' );
+        $option_key           = 'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' );
         $this->option_keys[] = $option_key;
         update_option(
             $option_key,
@@ -290,7 +306,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
                 [
                     'id'                   => 'eeeeeeee-2222-4333-8444-111111111111',
                     'site_id'              => '11111111-2222-4333-8444-555555555555',
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => '91:formabc',
                     'action_template_id'   => null,
                     'action_template_code' => 'entry_summary_v1',
@@ -315,7 +331,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
             [
                 'apply'            => true,
                 'include_disabled' => true,
-                'form_source'      => 'elementor_forms',
+                'form_source'      => 'elementor_pro_forms',
                 'form_id'          => '91:formabc',
             ]
         );
@@ -332,7 +348,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
     public function test_scoped_elementor_migration_reads_legacy_provider_native_option_key(): void
     {
-        $option_key           = 'sentient_forms_actions_elementor_forms_91_formabc';
+        $option_key           = 'sentient_forms_actions_elementor_pro_forms_91_formabc';
         $this->option_keys[] = $option_key;
         update_option(
             $option_key,
@@ -356,7 +372,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
                 [
                     'id'                   => 'ffffffff-2222-4333-8444-111111111111',
                     'site_id'              => '11111111-2222-4333-8444-555555555555',
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => '91:formabc',
                     'action_template_id'   => null,
                     'action_template_code' => 'entry_summary_v1',
@@ -381,7 +397,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
             [
                 'apply'            => true,
                 'include_disabled' => true,
-                'form_source'      => 'elementor_forms',
+                'form_source'      => 'elementor_pro_forms',
                 'form_id'          => '91:formabc',
             ]
         );
@@ -554,7 +570,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
     public function test_migrate_all_scope_discovers_elementor_provider_native_option_key(): void
     {
-        $option_key           = 'sentient_forms_actions_elementor_forms_91_form-alpha_2026';
+        $option_key           = 'sentient_forms_actions_elementor_pro_forms_91_form-alpha_2026';
         $this->option_keys[] = $option_key;
         update_option(
             $option_key,
@@ -589,7 +605,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
         $this->assertIsArray( $result );
         $this->assertSame( 1, count( $result['forms'] ) );
-        $this->assertSame( 'elementor_forms', $result['forms'][0]['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $result['forms'][0]['form_source'] ?? null );
         $this->assertSame( '91:form-alpha_2026', $result['forms'][0]['form_id'] ?? null );
         $this->assertSame( $option_key, $result['forms'][0]['option_key'] ?? null );
         $this->assertSame( 1, $result['totals']['create'] ?? -1 );
@@ -605,7 +621,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
 
         foreach ( $form_ids as $form_id )
         {
-            $option_key           = 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
+            $option_key           = 'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
             $this->option_keys[] = $option_key;
             update_option(
                 $option_key,

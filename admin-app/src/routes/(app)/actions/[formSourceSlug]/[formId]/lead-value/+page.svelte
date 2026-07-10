@@ -85,7 +85,7 @@
 	let formSpamConfig = $state<FormActionConfig>({});
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
-	const isElementorLeadScoringUnavailable = $derived(data.formSourceSlug === 'elementor_forms');
+	const isElementorLeadScoringUnavailable = $derived(data.formSourceSlug === 'elementor_pro_forms');
 
 	let consent = $state(false);
 	let goodCriteria = $state('');
@@ -879,7 +879,7 @@
 			<div class="sf:flex sf:flex-col sf:gap-4 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
 				<div>
 					<p class="sf:text-base sf:font-semibold sf:text-slate-900">
-						Lead Scoring is not available for Elementor Forms yet.
+						Lead Scoring is not available for Elementor Pro Forms yet.
 					</p>
 					<p class="sf:mt-2 sf:max-w-3xl sf:text-sm sf:text-slate-600">
 						Elementor submissions can be captured for ledger and action automation, but Lead

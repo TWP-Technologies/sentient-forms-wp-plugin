@@ -277,7 +277,7 @@
 	function fallbackFormSourceLabel(slug: string): string {
 		if (slug === 'gravity_forms') return 'Gravity Forms';
 		if (slug === 'contact_form_7') return 'Contact Form 7';
-		if (slug === 'elementor_forms') return 'Elementor Forms';
+		if (slug === 'elementor_pro_forms') return 'Elementor Pro Forms';
 
 		return slug
 			.split('_')
@@ -1930,7 +1930,7 @@
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
-	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_forms');
+	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_pro_forms');
 	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
@@ -1980,7 +1980,7 @@
 			: `Use a Sentient Forms Action Log entry ID for this ${currentFormAdapterLabel} form. Native provider submission IDs are not used for this check.`
 	);
 	const entryLookupUnavailableText = $derived(
-		`Native entry status lookup is unavailable for ${currentFormAdapterLabel}. Use the Submission Ledger and Action Log list for submitted ${currentFormAdapterLabel.replace(/\s+Forms$/i, '')} records.`
+		`Native entry status lookup is unavailable for ${currentFormAdapterLabel}. Use the Submission Ledger and Action Log list for submitted ${currentFormAdapterLabel} records.`
 	);
 	const uploadSourceModeLabel = $derived(
 		data.formSourceSlug === 'gravity_forms'

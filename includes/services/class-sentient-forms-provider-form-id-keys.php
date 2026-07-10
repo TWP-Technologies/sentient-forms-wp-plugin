@@ -157,7 +157,7 @@ final class Sentient_Forms_Provider_Form_Id_Keys
     private static function elementor_forms_slug(): string
     {
         return class_exists( 'Sentient_Forms_Form_Sources' )
-            ? Sentient_Forms_Form_Sources::ELEMENTOR_FORMS
-            : 'elementor_forms';
+            ? Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS
+            : 'elementor_pro_forms';
     }
 }

@@ -59,6 +59,58 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
         }
     }
 
+    public function test_network_activation_migrates_elementor_identifiers_for_every_existing_site(): void
+    {
+        $main_blog_id   = get_current_blog_id();
+        $second_blog_id = (int) self::factory()->blog->create();
+        $blog_ids       = [ $main_blog_id, $second_blog_id ];
+
+        try
+        {
+            foreach ( $blog_ids as $blog_id )
+            {
+                $this->with_blog(
+                    (int) $blog_id,
+                    function (): void {
+                        update_option( 'sentient_forms_db_version', '2026.06.28.execution_event_identity', false );
+                        update_option( 'sentient_forms_actions_elementor_forms_401_formabc', [ 'site' => get_current_blog_id() ], false );
+                    }
+                );
+            }
+
+            Sentient_Forms_Installer::activate( true );
+
+            foreach ( $blog_ids as $blog_id )
+            {
+                $this->with_blog(
+                    (int) $blog_id,
+                    function () use ( $blog_id ): void {
+                        $this->assertFalse( get_option( 'sentient_forms_actions_elementor_forms_401_formabc', false ) );
+                        $this->assertSame(
+                            [ 'site' => $blog_id ],
+                            get_option( 'sentient_forms_actions_elementor_pro_forms_401_formabc' )
+                        );
+                    }
+                );
+            }
+        }
+        finally
+        {
+            foreach ( $blog_ids as $blog_id )
+            {
+                $this->with_blog(
+                    (int) $blog_id,
+                    static function (): void {
+                        delete_option( 'sentient_forms_actions_elementor_forms_401_formabc' );
+                        delete_option( 'sentient_forms_actions_elementor_pro_forms_401_formabc' );
+                    }
+                );
+            }
+            $this->delete_blog( $second_blog_id );
+            $this->restore_main_blog_context();
+        }
+    }
+
     public function test_new_site_initialization_runs_when_plugin_is_network_active(): void
     {
         $plugin_basename = plugin_basename( SENTIENT_FORMS_PLUGIN_FILE );

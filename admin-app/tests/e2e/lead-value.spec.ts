@@ -486,15 +486,15 @@ test.describe('lead scoring workspace', () => {
 		const encodedElementorFormId = encodeURIComponent(elementorFormId);
 		const elementorDashboardResponse = {
 			...dashboardResponse,
-			form_source: 'elementor_forms',
+			form_source: 'elementor_pro_forms',
 			form_id: elementorFormId,
 			entries: [
 				{
 					...dashboardResponse.entries[0],
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: elementorFormId,
 					form_title: 'Elementor lead form',
-					provider_label: 'Elementor Forms',
+					provider_label: 'Elementor Pro Forms',
 					entry_id: 'sf-ledger-1',
 					lead_execution_id: 'lead:elementor:sf-ledger-1',
 					reply_execution_id: 'reply:elementor:sf-ledger-1'
@@ -503,10 +503,10 @@ test.describe('lead scoring workspace', () => {
 			forms: [
 				{
 					...dashboardResponse.forms[0],
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: elementorFormId,
 					form_title: 'Elementor lead form',
-					provider_label: 'Elementor Forms'
+					provider_label: 'Elementor Pro Forms'
 				}
 			],
 			unconfigured_forms: []
@@ -521,7 +521,7 @@ test.describe('lead scoring workspace', () => {
 		);
 		let correctionRequests = 0;
 		await page.route(
-			`**/wp-json/sentient-forms/v1/lead-value/forms/elementor_forms/${encodedElementorFormId}/entries/sf-ledger-1/correction`,
+			`**/wp-json/sentient-forms/v1/lead-value/forms/elementor_pro_forms/${encodedElementorFormId}/entries/sf-ledger-1/correction`,
 			async (route) => {
 				correctionRequests += 1;
 				expect(route.request().method()).toBe('POST');
@@ -551,7 +551,7 @@ test.describe('lead scoring workspace', () => {
 		);
 
 		await page.goto(
-			`/lead-scoring?entry=sf-ledger-1&form_source=elementor_forms&form_id=${encodedElementorFormId}`,
+			`/lead-scoring?entry=sf-ledger-1&form_source=elementor_pro_forms&form_id=${encodedElementorFormId}`,
 			{ waitUntil: 'networkidle' }
 		);
 		await expect(page.getByRole('table').getByText('Elementor lead form')).toBeVisible();
@@ -561,7 +561,7 @@ test.describe('lead scoring workspace', () => {
 		await expect(dialog.getByRole('button', { name: 'Correct grade' })).toBeVisible();
 		await expect(dialog.getByRole('button', { name: 'Generate reply' })).toHaveCount(0);
 		await expect(dialog).toContainText(
-			'Manual reply generation for Elementor Forms requires proven native Form Submissions support.'
+			'Manual reply generation for Elementor Pro Forms requires proven native Form Submissions support.'
 		);
 		await dialog.getByRole('button', { name: 'Correct grade' }).click();
 		const correctionDialog = page.getByRole('dialog', { name: 'Correct this grade' });
@@ -579,34 +579,34 @@ test.describe('lead scoring workspace', () => {
 	}) => {
 		const elementorDashboardResponse = {
 			...dashboardResponse,
-			form_source: 'elementor_forms',
+			form_source: 'elementor_pro_forms',
 			form_id: '91:formabc',
 			entries: [
 				{
 					...dashboardResponse.entries[0],
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: '91:formabc',
 					form_title: 'Elementor lead form',
-					provider_label: 'Elementor Forms',
+					provider_label: 'Elementor Pro Forms',
 					entry_id: 'sf-ledger-1'
 				}
 			],
 			forms: [
 				{
 					...dashboardResponse.forms[0],
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: '91:formabc',
 					form_title: 'Elementor lead form',
-					provider_label: 'Elementor Forms'
+					provider_label: 'Elementor Pro Forms'
 				}
 			],
 			unconfigured_forms: [
 				{
 					...dashboardResponse.unconfigured_forms[0],
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: '92:quote-widget',
 					form_title: 'Elementor quote form',
-					provider_label: 'Elementor Forms'
+					provider_label: 'Elementor Pro Forms'
 				}
 			]
 		};
@@ -625,16 +625,16 @@ test.describe('lead scoring workspace', () => {
 			page
 				.getByRole('row', { name: /Elementor lead form/ })
 				.getByRole('link', { name: 'Setup' })
-		).toHaveAttribute('href', /\/actions\/elementor_forms\/91(?::|%3A)formabc$/);
+		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
 		await expect(
 			page
 				.getByTestId('lead-scoring-configured-forms-list')
 				.getByRole('link', { name: 'Setup' })
-		).toHaveAttribute('href', /\/actions\/elementor_forms\/91(?::|%3A)formabc$/);
+		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
 		await expect(
 			page
 				.getByTestId('lead-scoring-quick-jump-list')
 				.getByRole('link', { name: 'Set Up' })
-		).toHaveAttribute('href', /\/actions\/elementor_forms\/92(?::|%3A)quote-widget$/);
+		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/92(?::|%3A)quote-widget$/);
 	});
 });

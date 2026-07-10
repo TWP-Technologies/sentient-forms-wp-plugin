@@ -1716,7 +1716,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $submission_uuid = '11111111-1111-4111-8111-222222222222';
 
         update_option(
-            'sentient_forms_actions_elementor_forms_91_formabc',
+            'sentient_forms_actions_elementor_pro_forms_91_formabc',
             [
                 'map_prereq' => [
                     'local_mapping_id'           => 'map_prereq',
@@ -1751,7 +1751,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'spam_detection_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -1768,7 +1768,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                  => 'elementor_pro/forms/new_record',
-                    'form_source'           => 'elementor_forms',
+                    'form_source'           => 'elementor_pro_forms',
                     'form_id'               => $form_id,
                     'entry_id'              => null,
                     'submission_uuid'       => $submission_uuid,
@@ -1802,7 +1802,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'entry_summary_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -1817,7 +1817,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                             => 'elementor_pro/forms/new_record',
-                    'form_source'                      => 'elementor_forms',
+                    'form_source'                      => 'elementor_pro_forms',
                     'form_id'                          => $form_id,
                     'entry_id'                         => null,
                     'submission_uuid'                  => $submission_uuid,
@@ -1853,7 +1853,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
         finally
         {
-            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+            delete_option( 'sentient_forms_actions_elementor_pro_forms_91_formabc' );
         }
     }
 
@@ -1890,7 +1890,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -1926,7 +1926,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'action_code'          => 'spam_detection_v1',
                 'action_label'         => 'Spam Detection',
                 'submission_uuid'      => $submission_uuid,
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'provider'             => 'openrouter',
                 'model'                => 'openrouter/auto',
@@ -1947,7 +1947,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'entry_summary_v1',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -1962,7 +1962,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             ],
             [
                 'hook'                             => 'elementor_pro/forms/new_record',
-                'form_source'                      => 'elementor_forms',
+                'form_source'                      => 'elementor_pro_forms',
                 'form_id'                          => $form_id,
                 'entry_id'                         => null,
                 'submission_uuid'                  => $submission_uuid,
@@ -2010,7 +2010,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'action_id' => 'entry_summary_v1',
-                'adapter'   => 'elementor_forms',
+                'adapter'   => 'elementor_pro_forms',
                 'status'    => 'queued',
             ]
         );
@@ -2019,7 +2019,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'entry_summary_v1',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => '91:formabc', 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -2033,7 +2033,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'hook'                        => 'elementor_pro/forms/new_record',
-                'form_source'                 => 'elementor_forms',
+                'form_source'                 => 'elementor_pro_forms',
                 'form_id'                     => '91:formabc',
                 'entry_id'                    => null,
                 'submission_uuid'             => $submission_uuid,
@@ -2127,7 +2127,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'remote_elementor_spam',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -2143,7 +2143,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'hook'                  => 'elementor_pro/forms/new_record',
-                'form_source'           => 'elementor_forms',
+                'form_source'           => 'elementor_pro_forms',
                 'form_id'               => $form_id,
                 'entry_id'              => null,
                 'submission_uuid'       => $submission_uuid,
@@ -2163,7 +2163,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'failed', $event['status'] ?? null );
         $this->assertSame( 'elementor_cps_failed', $event['error_code'] ?? null );
         $this->assertSame( 'Elementor CPS execution failed.', $event['error_message'] ?? null );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( $form_id, $event['form_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
     }
@@ -2174,7 +2174,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $submission_uuid = '11111111-1111-4111-8111-111111111111';
 
         update_option(
-            'sentient_forms_actions_elementor_forms_91_formabc',
+            'sentient_forms_actions_elementor_pro_forms_91_formabc',
             [
                 'map_prereq' => [
                     'local_mapping_id'           => 'map_prereq',
@@ -2200,7 +2200,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 [
                     'status'    => 'success',
                     'action_id' => 'spam_detection_v1',
-                    'adapter'   => 'elementor_forms',
+                    'adapter'   => 'elementor_pro_forms',
                 ]
             );
 
@@ -2209,7 +2209,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $events->record(
                 [
                     'execution_request_id' => 'dep_req_elementor_spam',
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => $form_id,
                     'entry_id'             => null,
                     'submission_uuid'      => $submission_uuid,
@@ -2227,7 +2227,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'entry_summary_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -2242,7 +2242,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                             => 'elementor_pro/forms/new_record',
-                    'form_source'                      => 'elementor_forms',
+                    'form_source'                      => 'elementor_pro_forms',
                     'form_id'                          => $form_id,
                     'entry_id'                         => null,
                     'submission_uuid'                  => $submission_uuid,
@@ -2279,7 +2279,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
         finally
         {
-            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+            delete_option( 'sentient_forms_actions_elementor_pro_forms_91_formabc' );
         }
     }
 
@@ -3191,7 +3191,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			]
 		);
 		update_option(
-			'sentient_forms_form_config_elementor_forms_91_formabc',
+			'sentient_forms_form_config_elementor_pro_forms_91_formabc',
 			[
 				'entry_summary_v1' => [
 					'action_customization' => 'Elementor form-level summary customization.',
@@ -3210,7 +3210,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'entry' => [ 'id' => 'submission-uuid-123', 'field_1' => 'summarize me' ],
 		];
 		$context = [
-			'form_source' => 'elementor_forms',
+			'form_source' => 'elementor_pro_forms',
 			'form_id'     => '91:formabc',
 			'entry_id'    => 'submission-uuid-123',
 			'job_id'      => wp_generate_uuid4(),
@@ -3240,7 +3240,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		finally
 		{
 			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
-			delete_option( 'sentient_forms_form_config_elementor_forms_91_formabc' );
+			delete_option( 'sentient_forms_form_config_elementor_pro_forms_91_formabc' );
 		}
 	}
 
@@ -3254,8 +3254,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		);
 
 		$config_controller = new Sentient_Forms_Form_Action_Config_Controller();
-		$config_request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_forms/91%3Aformabc/action-config/entry_summary_v1' );
-		$config_request->set_param( 'form_source', 'elementor_forms' );
+		$config_request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_pro_forms/91%3Aformabc/action-config/entry_summary_v1' );
+		$config_request->set_param( 'form_source', 'elementor_pro_forms' );
 		$config_request->set_param( 'form_id', '91:formabc' );
 		$config_request->set_param( 'action_id', 'entry_summary_v1' );
 		$config_request->set_param( 'action_customization', 'Controller-saved Elementor form-level customization.' );
@@ -3274,7 +3274,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'entry' => [ 'id' => 'submission-uuid-456', 'field_1' => 'summarize me' ],
 		];
 		$context = [
-			'form_source' => 'elementor_forms',
+			'form_source' => 'elementor_pro_forms',
 			'form_id'     => '91:formabc',
 			'entry_id'    => 'submission-uuid-456',
 			'job_id'      => wp_generate_uuid4(),
@@ -3304,11 +3304,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		finally
 		{
 			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
-			foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( 'elementor_forms', '91:formabc' ) as $suffix )
+			foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( 'elementor_pro_forms', '91:formabc' ) as $suffix )
 			{
-				delete_option( 'sentient_forms_form_config_elementor_forms_' . $suffix );
+				delete_option( 'sentient_forms_form_config_elementor_pro_forms_' . $suffix );
 			}
-			delete_option( 'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ) );
+			delete_option( 'sentient_forms_form_config_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ) );
 		}
 	}
 
@@ -3609,7 +3609,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->get_async_handler()->complete_remote_cps_async_success(
             'req-elementor-cps-provider-native-identity',
             [
-                'form_source'       => 'elementor_forms',
+                'form_source'       => 'elementor_pro_forms',
                 'form_id'           => '4:formabc',
                 'entry_id'          => null,
                 'submission_uuid'   => $submission_uuid,
@@ -3838,11 +3838,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $this->assertIsString( $encrypted );
 
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
         $captured = $ledger_capture->capture(
             [
                 'submission_uuid'  => $submission_uuid,
-                'form_source'      => 'elementor_forms',
+                'form_source'      => 'elementor_pro_forms',
                 'form_id'          => $form_id,
                 'logical_fields'   => [
                     'full_name' => 'Elementor Lead',
@@ -3887,7 +3887,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -3958,7 +3958,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'full_name'       => 'Elementor Lead',
             ],
             [
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'action_id'            => 'local_first_' . $mapping_id,
                 'execution_request_id' => 'elementor-local-async-request-success',
@@ -3978,7 +3978,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertIsArray( $event );
         $this->assertSame( 'succeeded', $event['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( $form_id, $event['form_id'] ?? null );
         $this->assertNull( $event['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );

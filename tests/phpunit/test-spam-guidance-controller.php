@@ -444,8 +444,8 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             ]
         );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_forms/123:formabc/entries/search' );
-        $request->set_param( 'form_source', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_pro_forms/123:formabc/entries/search' );
+        $request->set_param( 'form_source', 'elementor_pro_forms' );
         $request->set_param( 'form_id', '123:formabc' );
         $request->set_param( 'q', 'Lovelace' );
 
@@ -490,8 +490,8 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             '2026-07-01 09:00:00'
         );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_forms/123:formabc/entries/search' );
-        $request->set_param( 'form_source', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_pro_forms/123:formabc/entries/search' );
+        $request->set_param( 'form_source', 'elementor_pro_forms' );
         $request->set_param( 'form_id', '123:formabc' );
         $request->set_param( 'q', 'rare elementor calibration phrase' );
 
@@ -508,8 +508,8 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_forms/123:formabc/entries/search' );
-        $request->set_param( 'form_source', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/spam-guidance/forms/elementor_pro_forms/123:formabc/entries/search' );
+        $request->set_param( 'form_source', 'elementor_pro_forms' );
         $request->set_param( 'form_id', '123:formabc' );
 
         $response = rest_get_server()->dispatch( $request );
@@ -576,7 +576,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $sources = [
             'contact_form_7' => [ 'form_id' => '42', 'native_entry_id' => 'wpcf7-9002' ],
             'wpforms'        => [ 'form_id' => '55', 'native_entry_id' => 'wpforms-9002' ],
-            'elementor_forms' => [ 'form_id' => '123:formabc', 'native_entry_id' => 'elementor-9002' ],
+            'elementor_pro_forms' => [ 'form_id' => '123:formabc', 'native_entry_id' => 'elementor-9002' ],
         ];
 
         foreach ( $sources as $form_source => $scope )
@@ -1536,7 +1536,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_form_config_gravity_forms_7' );
         delete_option( 'sentient_forms_form_config_contact_form_7_42' );
         delete_option( 'sentient_forms_form_config_wpforms_55' );
-        delete_option( 'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
+        delete_option( 'sentient_forms_form_config_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
         delete_option( 'sentient_forms_action_defaults_spam_detection_v1' );
         delete_option( 'sentient_forms_actions_gravity_forms_7' );
     }

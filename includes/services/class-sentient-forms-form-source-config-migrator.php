@@ -15,10 +15,38 @@ final class Sentient_Forms_Form_Source_Config_Migrator
 {
     private const OPTION_PREFIX = 'sentient_forms_actions_';
 
+    private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
+
+    private const ELEMENTOR_FORM_SOURCE = 'elementor_pro_forms';
+
+    /**
+     * Option namespaces whose keys contain the Form Source identifier.
+     *
+     * @var array<int, string>
+     */
+    private const FORM_SOURCE_OPTION_PREFIXES = [
+        'sentient_forms_actions_',
+        'sentient_forms_form_config_',
+    ];
+
+    /**
+     * Plugin-owned tables with a form_source column and no source-based unique key.
+     *
+     * @var array<int, string>
+     */
+    private const FORM_SOURCE_TABLE_SUFFIXES = [
+        'sentient_form_mappings',
+        'sentient_submission_ledger',
+        'sentient_execution_events',
+        'sentient_lead_profiles',
+        'sentient_historical_analysis_runs',
+        'sentient_lead_scoring_results',
+    ];
+
     /**
      * Migrate active configuration to canonical Form Source lifecycle IDs.
      *
-     * @return array{options_scanned: int, options_updated: int, mapping_rows_scanned: int, mapping_rows_updated: int}
+     * @return array<string, int>
      */
     public static function migrate_active_configuration(): array
     {
@@ -27,10 +55,18 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             'options_updated'      => 0,
             'mapping_rows_scanned' => 0,
             'mapping_rows_updated' => 0,
+            'form_source_options_scanned'    => 0,
+            'form_source_options_renamed'    => 0,
+            'form_source_option_collisions'  => 0,
+            'form_source_option_failures'    => 0,
+            'form_source_rows_updated'       => 0,
+            'form_source_row_collisions'     => 0,
         ];
 
         self::migrate_option_backed_configuration( $summary );
         self::migrate_local_first_mapping_rows( $summary );
+        self::migrate_elementor_option_keys( $summary );
+        self::migrate_elementor_storage_rows( $summary );
 
         return $summary;
     }
@@ -264,6 +300,205 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             if ( false !== $updated )
             {
                 $summary['mapping_rows_updated']++;
+            }
+        }
+    }
+
+    /**
+     * Move Elementor option keys to the canonical identifier without
+     * overwriting a key that has already been written canonically.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_option_keys( array &$summary ): void
+    {
+        global $wpdb;
+
+        if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! property_exists( $wpdb, 'options' ) )
+        {
+            return;
+        }
+
+        foreach ( self::FORM_SOURCE_OPTION_PREFIXES as $option_prefix )
+        {
+            $legacy_prefix = $option_prefix . self::LEGACY_ELEMENTOR_FORM_SOURCE . '_';
+            $option_keys   = $wpdb->get_col(
+                $wpdb->prepare(
+                    'SELECT option_name FROM %i WHERE option_name LIKE %s ORDER BY option_name ASC',
+                    $wpdb->options,
+                    $wpdb->esc_like( $legacy_prefix ) . '%'
+                )
+            );
+            if ( ! is_array( $option_keys ) )
+            {
+                continue;
+            }
+
+            foreach ( $option_keys as $legacy_key )
+            {
+                if ( ! is_string( $legacy_key ) || ! str_starts_with( $legacy_key, $legacy_prefix ) )
+                {
+                    continue;
+                }
+
+                $summary['form_source_options_scanned']++;
+                $canonical_key = $option_prefix . self::ELEMENTOR_FORM_SOURCE . '_' . substr( $legacy_key, strlen( $legacy_prefix ) );
+                $canonical_exists = 1 === (int) $wpdb->get_var(
+                    $wpdb->prepare(
+                        'SELECT COUNT(*) FROM %i WHERE option_name = %s',
+                        $wpdb->options,
+                        $canonical_key
+                    )
+                );
+
+                if ( $canonical_exists )
+                {
+                    delete_option( $legacy_key );
+                    $summary['form_source_option_collisions']++;
+                    continue;
+                }
+
+                $legacy_value = get_option( $legacy_key, null );
+                if ( add_option( $canonical_key, $legacy_value, '', false ) )
+                {
+                    delete_option( $legacy_key );
+                    $summary['form_source_options_renamed']++;
+                    continue;
+                }
+
+                $summary['form_source_option_failures']++;
+            }
+        }
+    }
+
+    /**
+     * Rewrite all current plugin-owned storage identities. Canonical data wins
+     * the only possible source/form collision in ledger settings.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_storage_rows( array &$summary ): void
+    {
+        global $wpdb;
+
+        if ( ! isset( $wpdb ) || ! is_object( $wpdb ) )
+        {
+            return;
+        }
+
+        self::migrate_elementor_ledger_settings_rows( $summary );
+
+        foreach ( self::FORM_SOURCE_TABLE_SUFFIXES as $table_suffix )
+        {
+            $table = $wpdb->prefix . $table_suffix;
+            if ( ! self::table_exists( $table ) )
+            {
+                continue;
+            }
+
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET form_source = %s WHERE form_source = %s',
+                    $table,
+                    self::ELEMENTOR_FORM_SOURCE,
+                    self::LEGACY_ELEMENTOR_FORM_SOURCE
+                )
+            );
+            if ( false !== $updated )
+            {
+                $summary['form_source_rows_updated'] += (int) $updated;
+            }
+        }
+
+        $async_table = $wpdb->prefix . 'sentient_async_requests';
+        if ( self::table_exists( $async_table ) )
+        {
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET adapter = %s WHERE adapter = %s',
+                    $async_table,
+                    self::ELEMENTOR_FORM_SOURCE,
+                    self::LEGACY_ELEMENTOR_FORM_SOURCE
+                )
+            );
+            if ( false !== $updated )
+            {
+                $summary['form_source_rows_updated'] += (int) $updated;
+            }
+        }
+    }
+
+    /**
+     * Resolve the source/form unique key in ledger settings deterministically.
+     * Existing canonical rows are authoritative and remain byte-for-byte intact.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_ledger_settings_rows( array &$summary ): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'sentient_submission_ledger_settings';
+        if ( ! self::table_exists( $table ) )
+        {
+            return;
+        }
+
+        $legacy_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT id, form_id FROM %i WHERE form_source = %s ORDER BY id ASC',
+                $table,
+                self::LEGACY_ELEMENTOR_FORM_SOURCE
+            ),
+            ARRAY_A
+        );
+        if ( ! is_array( $legacy_rows ) )
+        {
+            return;
+        }
+
+        foreach ( $legacy_rows as $legacy_row )
+        {
+            $legacy_id = absint( $legacy_row['id'] ?? 0 );
+            $form_id   = isset( $legacy_row['form_id'] ) && is_scalar( $legacy_row['form_id'] )
+                ? sanitize_text_field( (string) $legacy_row['form_id'] )
+                : '';
+            if ( $legacy_id <= 0 || '' === $form_id )
+            {
+                continue;
+            }
+
+            $canonical_id = absint(
+                $wpdb->get_var(
+                    $wpdb->prepare(
+                        'SELECT id FROM %i WHERE form_source = %s AND form_id = %s LIMIT 1',
+                        $table,
+                        self::ELEMENTOR_FORM_SOURCE,
+                        $form_id
+                    )
+                )
+            );
+            if ( $canonical_id > 0 )
+            {
+                $deleted = $wpdb->delete( $table, [ 'id' => $legacy_id ], [ '%d' ] );
+                if ( false !== $deleted )
+                {
+                    $summary['form_source_rows_updated'] += (int) $deleted;
+                    $summary['form_source_row_collisions']++;
+                }
+                continue;
+            }
+
+            $updated = $wpdb->update(
+                $table,
+                [ 'form_source' => self::ELEMENTOR_FORM_SOURCE ],
+                [ 'id' => $legacy_id ],
+                [ '%s' ],
+                [ '%d' ]
+            );
+            if ( false !== $updated )
+            {
+                $summary['form_source_rows_updated'] += (int) $updated;
             }
         }
     }

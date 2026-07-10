@@ -436,8 +436,8 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
     private function elementor_forms_source_unavailable_error( string $form_source_slug ): ?WP_Error
     {
         $elementor_slug = class_exists( 'Sentient_Forms_Form_Sources' )
-            ? Sentient_Forms_Form_Sources::ELEMENTOR_FORMS
-            : 'elementor_forms';
+            ? Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS
+            : 'elementor_pro_forms';
 
         if ( $elementor_slug !== sanitize_key( $form_source_slug ) )
         {
@@ -469,7 +469,7 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
             : '';
         if ( '' === $message )
         {
-            $message = __( 'Elementor Forms support is unavailable until Elementor Pro Forms APIs are available.', 'sentient-forms' );
+            $message = __( 'Elementor Pro Forms support is unavailable until Elementor Pro Forms APIs are available.', 'sentient-forms' );
         }
 
         return $this->prepare_error_response(

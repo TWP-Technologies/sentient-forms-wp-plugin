@@ -285,11 +285,11 @@ describe('SpamCriteriaEditor', () => {
 			positiveExamples: [],
 			negativeExamples: [],
 			initiallyExpanded: true,
-			formSourceSlug: 'elementor_forms',
+			formSourceSlug: 'elementor_pro_forms',
 			formId: '123:formabc',
 			targetScope: 'form',
 			searchHistoricalEntries: async () => ({
-				form_source: 'elementor_forms',
+				form_source: 'elementor_pro_forms',
 				form_id: '123:formabc',
 				availability: {
 					source: 'native',
@@ -308,7 +308,7 @@ describe('SpamCriteriaEditor', () => {
 		});
 
 		await clickButton(requiresPro.target, 'Use past submissions');
-		expect(requiresPro.target.textContent).toContain('Historical submissions for Elementor Forms');
+		expect(requiresPro.target.textContent).toContain('Historical submissions for Elementor Pro Forms');
 		expect(requiresPro.target.textContent).toContain(
 			'Elementor Pro Forms submissions are required to read historical Elementor submissions.'
 		);

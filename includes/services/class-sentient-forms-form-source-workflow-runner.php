@@ -108,6 +108,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
 
         $this->schedule_actions(
+            $adapter,
             $form_source,
             $form_id,
             $adapter->get_accepted_submission_native_hook(),
@@ -134,11 +135,22 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return [];
         }
 
-        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, [] );
+        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, null );
+        if ( null === $settings )
+        {
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $form_source, $form_id ) as $legacy_suffix )
+            {
+                $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $legacy_suffix, null );
+                if ( null !== $settings )
+                {
+                    break;
+                }
+            }
+        }
 
         if ( ! is_array( $settings ) )
         {
-            return [];
+            $settings = [];
         }
 
         return $this->merge_local_first_form_mappings(
@@ -172,6 +184,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * @param array<string, mixed> $settings
      */
     private function schedule_actions(
+        Sentient_Forms_Accepted_Submission_Adapter_Interface $adapter,
         string $form_source,
         string $form_id,
         string $native_hook,
@@ -187,6 +200,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
         $mapping_outcomes      = [];
         $execution_request_ids = [];
+        $capability_descriptor = method_exists( $adapter, 'get_capability_descriptor' )
+            ? $adapter->get_capability_descriptor()
+            : [];
         $native_entry_id       = isset( $entry['id'] ) && is_scalar( $entry['id'] ) && '' !== (string) $entry['id']
             ? sanitize_text_field( (string) $entry['id'] )
             : null;
@@ -199,7 +215,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $action_settings = $node['mapping'];
+            $action_settings = $this->filter_mapping_for_native_capabilities( $node['mapping'], $capability_descriptor );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $central_action_id = $this->central_action_id( $action_settings );
             if ( '' === $central_action_id )
@@ -227,7 +243,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $action_settings = $node['mapping'];
+            $action_settings = $this->filter_mapping_for_native_capabilities( $node['mapping'], $capability_descriptor );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $central_action_id = $this->central_action_id( $action_settings );
             if ( '' === $central_action_id )
@@ -308,6 +324,141 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             && ! empty( $node['enabled'] )
             && ! empty( $node['hook_enabled'] )
             && ! $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION );
+    }
+
+    /**
+     * Remove native side effects the selected Form Source cannot execute.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $descriptor
+     *
+     * @return array<string, mixed>
+     */
+    private function filter_mapping_for_native_capabilities( array $mapping, array $descriptor ): array
+    {
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) )
+        {
+            $mapping['settings'] = $this->filter_runtime_settings_for_native_capabilities( $mapping['settings'], $descriptor );
+        }
+
+        return $mapping;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $descriptor
+     *
+     * @return array<string, mixed>
+     */
+    private function filter_runtime_settings_for_native_capabilities( array $settings, array $descriptor ): array
+    {
+        $native_enrichment = isset( $descriptor['native_enrichment'] ) && is_array( $descriptor['native_enrichment'] )
+            ? $descriptor['native_enrichment']
+            : [];
+
+        if ( isset( $settings['effect_mapping_json'] ) && is_array( $settings['effect_mapping_json'] ) )
+        {
+            $settings['effect_mapping_json'] = $this->filter_effect_mapping_for_native_capabilities(
+                $settings['effect_mapping_json'],
+                $descriptor
+            );
+        }
+
+        if ( empty( $native_enrichment['notification_controls'] ) )
+        {
+            unset( $settings['suppress_notifications_on_spam'] );
+        }
+        if ( empty( $native_enrichment['webhook_controls'] ) )
+        {
+            unset( $settings['suppress_webhooks_on_spam'] );
+        }
+        if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
+        {
+            unset(
+                $settings['spam_confidence_threshold'],
+                $settings['spam_result_display_mode'],
+                $settings['spam_indicators_display']
+            );
+        }
+
+        return $settings;
+    }
+
+    /**
+     * @param array<string, mixed> $effect_mapping
+     * @param array<string, mixed> $descriptor
+     *
+     * @return array<string, mixed>
+     */
+    private function filter_effect_mapping_for_native_capabilities( array $effect_mapping, array $descriptor ): array
+    {
+        if ( [] === $effect_mapping )
+        {
+            return [];
+        }
+
+        $native_entry = isset( $descriptor['native_entry'] ) && is_array( $descriptor['native_entry'] )
+            ? $descriptor['native_entry']
+            : [];
+        if ( empty( $native_entry['write'] ) )
+        {
+            unset( $effect_mapping['store_result'], $effect_mapping['store_result_meta'], $effect_mapping['meta'] );
+        }
+
+        $native_enrichment = isset( $descriptor['native_enrichment'] ) && is_array( $descriptor['native_enrichment'] )
+            ? $descriptor['native_enrichment']
+            : [];
+        if ( empty( $native_enrichment['notes'] ) )
+        {
+            unset( $effect_mapping['entry_note'] );
+            if ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
+            {
+                unset( $effect_mapping['spam']['note'] );
+            }
+        }
+
+        if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
+        {
+            $skip_downstream_on_spam = null;
+            if (
+                isset( $effect_mapping['spam'] )
+                && is_array( $effect_mapping['spam'] )
+                && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
+            )
+            {
+                $skip_downstream_on_spam = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
+            }
+
+            unset( $effect_mapping['spam'], $effect_mapping['mark_as_spam'] );
+            if ( null !== $skip_downstream_on_spam )
+            {
+                $effect_mapping['spam'] = [
+                    'skip_downstream_on_spam' => $skip_downstream_on_spam,
+                ];
+            }
+        }
+        elseif ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
+        {
+            if ( empty( $native_enrichment['notification_controls'] ) )
+            {
+                unset( $effect_mapping['spam']['suppress_notifications_on_spam'] );
+            }
+            if ( empty( $native_enrichment['webhook_controls'] ) )
+            {
+                unset( $effect_mapping['spam']['suppress_webhooks_on_spam'] );
+            }
+        }
+
+        if ( empty( $native_enrichment['notification_controls'] ) )
+        {
+            unset( $effect_mapping['suppress_notifications_on_spam'] );
+        }
+        if ( empty( $native_enrichment['webhook_controls'] ) )
+        {
+            unset( $effect_mapping['suppress_webhooks_on_spam'] );
+        }
+
+        return $effect_mapping;
     }
 
     /**

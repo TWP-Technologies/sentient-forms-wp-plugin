@@ -38,12 +38,12 @@ final class Sentient_Forms_Form_Sources
     const CONTACT_FORM_7 = 'contact_form_7';
 
     /**
-     * Slug for Elementor Forms.
+     * Slug for Elementor Pro Forms.
      *
      * @var string
      * @since 0.5.1
      */
-    const ELEMENTOR_FORMS = 'elementor_forms';
+    const ELEMENTOR_PRO_FORMS = 'elementor_pro_forms';
 
     /**
      * Slug for WPForms.

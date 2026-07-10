@@ -9,9 +9,9 @@ class Tests_Form_Controller extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
         remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         delete_option( 'sentient_forms_actions_contact_form_7_55' );
-        delete_option( 'sentient_forms_actions_elementor_forms_123' );
-        delete_option( 'sentient_forms_actions_elementor_forms_123_formabc' );
-        delete_option( 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
+        delete_option( 'sentient_forms_actions_elementor_pro_forms_123' );
+        delete_option( 'sentient_forms_actions_elementor_pro_forms_123_formabc' );
+        delete_option( 'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
 
         parent::tearDown();
     }
@@ -88,7 +88,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
         update_option(
-            'sentient_forms_actions_elementor_forms_123',
+            'sentient_forms_actions_elementor_pro_forms_123',
             [
                 'enabled' => true,
             ],
@@ -96,8 +96,8 @@ class Tests_Form_Controller extends WP_UnitTestCase
         );
 
         $controller = new Sentient_Forms_Form_Controller();
-        $request    = new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_forms/forms/123' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request    = new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_pro_forms/forms/123' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', 123 );
         $request->set_param( 'enabled', false );
 
@@ -108,7 +108,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_error_data()['status'] ?? null );
         $this->assertStringContainsString( 'Elementor Pro Forms', $response->get_error_message() );
 
-        $stored = get_option( 'sentient_forms_actions_elementor_forms_123', [] );
+        $stored = get_option( 'sentient_forms_actions_elementor_pro_forms_123', [] );
         $this->assertTrue( $stored['enabled'] ?? false );
     }
 
@@ -119,7 +119,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
 
         update_option(
-            'sentient_forms_actions_elementor_forms_123_formabc',
+            'sentient_forms_actions_elementor_pro_forms_123_formabc',
             [
                 'enabled'     => true,
                 'map_summary' => [
@@ -131,7 +131,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
             ],
             false
         );
-        update_option( 'sentient_forms_actions_elementor_forms_123', [ 'enabled' => true ], false );
+        update_option( 'sentient_forms_actions_elementor_pro_forms_123', [ 'enabled' => true ], false );
 
         $controller = new Sentient_Forms_Form_Controller();
         add_action( 'rest_api_init', [ $controller, 'register_routes' ] );
@@ -139,7 +139,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
         remove_action( 'rest_api_init', [ $controller, 'register_routes' ] );
 
         wp_set_current_user( self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_forms/forms/123:formabc' );
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_pro_forms/forms/123:formabc' );
         $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->set_param( 'enabled', false );
 
@@ -152,10 +152,10 @@ class Tests_Form_Controller extends WP_UnitTestCase
         $this->assertSame( 'entry_summary_v1', $data['settings']['map_summary']['central_action_id'] ?? null );
 
         $stored_opaque = get_option(
-            'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ),
+            'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ),
             []
         );
-        $stored_numeric = get_option( 'sentient_forms_actions_elementor_forms_123', [] );
+        $stored_numeric = get_option( 'sentient_forms_actions_elementor_pro_forms_123', [] );
 
         $this->assertFalse( $stored_opaque['enabled'] ?? true );
         $this->assertSame( 'entry_summary_v1', $stored_opaque['map_summary']['central_action_id'] ?? null );

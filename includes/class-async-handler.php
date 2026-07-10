@@ -290,7 +290,7 @@ class Sentient_Forms_Async_Handler
 		$form_source = isset( $context['form_source'] ) && is_scalar( $context['form_source'] )
 			? sanitize_key( (string) $context['form_source'] )
 			: sanitize_key( (string) ( $data['form_source'] ?? '' ) );
-		if ( Sentient_Forms_Form_Sources::ELEMENTOR_FORMS !== $form_source )
+		if ( Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS !== $form_source )
 		{
 			return false;
 		}

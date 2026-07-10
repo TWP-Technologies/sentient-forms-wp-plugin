@@ -9,8 +9,8 @@ describe('lead scoring utilities', () => {
 	});
 
 	it('routes Elementor setup jumps to the form actions page', () => {
-		expect(setupJumpPath({ form_source: 'elementor_forms', form_id: '91:formabc' })).toBe(
-			'/actions/elementor_forms/91:formabc'
+		expect(setupJumpPath({ form_source: 'elementor_pro_forms', form_id: '91:formabc' })).toBe(
+			'/actions/elementor_pro_forms/91:formabc'
 		);
 	});
 

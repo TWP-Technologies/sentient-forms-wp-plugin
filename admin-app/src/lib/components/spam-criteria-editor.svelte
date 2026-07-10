@@ -302,8 +302,8 @@
 				return 'Contact Form 7';
 			case 'wpforms':
 				return 'WPForms';
-			case 'elementor_forms':
-				return 'Elementor Forms';
+			case 'elementor_pro_forms':
+				return 'Elementor Pro Forms';
 			default:
 				return slug ? titleCaseSlug(slug) : 'this Form Source';
 		}
