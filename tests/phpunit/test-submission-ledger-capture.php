@@ -115,6 +115,48 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->assertNotNull( $ledger->get_by_submission_uuid( (string) $result['submission_uuid'] ) );
     }
 
+    public function test_capture_rejects_reused_submission_uuid_for_a_different_native_submission(): void
+    {
+        $settings        = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service         = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $submission_uuid = wp_generate_uuid4();
+
+        $settings->set_enabled( 'gravity_forms', '404', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $first = $service->capture(
+            [
+                'submission_uuid' => $submission_uuid,
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '404',
+                'native_entry_id' => '504',
+                'logical_fields'  => [
+                    'email' => 'first@example.test',
+                ],
+            ]
+        );
+        $replay = $service->capture(
+            [
+                'submission_uuid' => $submission_uuid,
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '404',
+                'native_entry_id' => '505',
+                'logical_fields'  => [
+                    'email' => 'second@example.test',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $first );
+        $this->assertWPError( $replay );
+        $this->assertSame( 'sentient_forms_submission_ledger_replay_conflict', $replay->get_error_code() );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( '504', $stored['native_entry_id'] ?? null );
+        $this->assertSame( 'first@example.test', $stored['logical_fields_json']['email'] ?? null );
+        $this->assertCount( 1, $ledger->list_for_form( 'gravity_forms', '404' ) );
+    }
+
     public function test_capture_preserves_json_serializable_structured_logical_values(): void
     {
         $settings        = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );

@@ -19,13 +19,21 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
     private ?Sentient_Forms_Submission_Ledger_Capture_Service $capture_service;
 
+    private Sentient_Forms_Action_Runtime_Settings_Resolver $runtime_settings_resolver;
+
+    private ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service;
+
     public function __construct(
         Sentient_Forms_Plugin $plugin,
-        ?Sentient_Forms_Submission_Ledger_Capture_Service $capture_service = null
+        ?Sentient_Forms_Submission_Ledger_Capture_Service $capture_service = null,
+        ?Sentient_Forms_Action_Runtime_Settings_Resolver $runtime_settings_resolver = null,
+        ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service = null
     )
     {
-        $this->plugin          = $plugin;
-        $this->capture_service = $capture_service;
+        $this->plugin                    = $plugin;
+        $this->capture_service           = $capture_service;
+        $this->runtime_settings_resolver = $runtime_settings_resolver ?? new Sentient_Forms_Action_Runtime_Settings_Resolver();
+        $this->local_execution_service   = $local_execution_service;
     }
 
     /**
@@ -36,15 +44,26 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         mixed $native_submission
     ): ?string
     {
+        return $this->run_accepted_submission_with_outcome( $adapter, $native_submission )->get_submission_uuid();
+    }
+
+    /**
+     * Capture and execute one accepted submission with source-neutral mapping outcomes.
+     */
+    public function run_accepted_submission_with_outcome(
+        Sentient_Forms_Accepted_Submission_Adapter_Interface $adapter,
+        mixed $native_submission
+    ): Sentient_Forms_Accepted_Submission_Run_Result
+    {
         if ( ! $adapter->is_active() )
         {
-            return null;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( null );
         }
 
         $normalized = $adapter->normalize_accepted_submission( $native_submission );
         if ( is_wp_error( $normalized ) )
         {
-            return null;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( null );
         }
 
         $form_source = sanitize_key( $adapter->get_id() );
@@ -56,13 +75,15 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             : [];
         if ( '' === $form_source || '' === $form_id || [] === $form )
         {
-            return null;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( null );
         }
+
+        $correlation_uuid = $this->stable_native_submission_uuid( $form_source, $form_id, $normalized );
 
         $capture_service = $this->get_capture_service();
         if ( null === $capture_service )
         {
-            return null;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( null );
         }
 
         $capture_payload = [
@@ -75,6 +96,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 ? $normalized['files']
                 : [],
         ];
+        if ( null !== $correlation_uuid )
+        {
+            $capture_payload['submission_uuid'] = $correlation_uuid;
+        }
         foreach ( [ 'native_entry_id', 'native_entry_url', 'source_submitted_at' ] as $identity_key )
         {
             if ( isset( $normalized[ $identity_key ] ) && is_scalar( $normalized[ $identity_key ] ) )
@@ -90,7 +115,16 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $captured = $capture_service->capture( $capture_payload );
         if ( is_wp_error( $captured ) )
         {
-            return null;
+            if (
+                'sentient_forms_submission_ledger_disabled' !== $captured->get_error_code()
+                || $this->accepted_submission_requires_ledger( $adapter )
+                || null === $correlation_uuid
+            )
+            {
+                return new Sentient_Forms_Accepted_Submission_Run_Result( null );
+            }
+
+            $captured = $this->uncaptured_native_submission_snapshot( $normalized, $correlation_uuid );
         }
 
         $submission_uuid = isset( $captured['submission_uuid'] ) && is_scalar( $captured['submission_uuid'] )
@@ -98,16 +132,16 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             : '';
         if ( '' === $submission_uuid )
         {
-            return null;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( null );
         }
 
         $settings = $this->get_form_settings( $form_source, $form_id );
         if ( [] === $settings || ! empty( $this->get_execution_disable_flags( $form_source, $settings )['effective_disabled'] ) )
         {
-            return $submission_uuid;
+            return new Sentient_Forms_Accepted_Submission_Run_Result( $submission_uuid );
         }
 
-        $this->schedule_actions(
+        return $this->schedule_actions(
             $adapter,
             $form_source,
             $form_id,
@@ -117,8 +151,95 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $submission_uuid,
             $settings
         );
+    }
 
-        return $submission_uuid;
+    /**
+     * Native-entry Form Sources can execute without local ledger opt-in. Use a
+     * stable correlation UUID so retries share one idempotency identity.
+     *
+     * @param array<string, mixed> $normalized
+     */
+    private function stable_native_submission_uuid( string $form_source, string $form_id, array $normalized ): ?string
+    {
+        $native_entry_id = isset( $normalized['native_entry_id'] ) && is_scalar( $normalized['native_entry_id'] )
+            ? sanitize_text_field( (string) $normalized['native_entry_id'] )
+            : '';
+        if ( '' === $native_entry_id )
+        {
+            return null;
+        }
+
+        $hex = substr(
+            hash(
+                'sha256',
+                implode(
+                    '|',
+                    [
+                        'sentient-forms-native-submission-v1',
+                        (string) get_current_blog_id(),
+                        $form_source,
+                        $form_id,
+                        $native_entry_id,
+                    ]
+                )
+            ),
+            0,
+            32
+        );
+        $hex[12] = '5';
+        $hex[16] = dechex( ( hexdec( $hex[16] ) & 0x3 ) | 0x8 );
+
+        return sprintf(
+            '%s-%s-%s-%s-%s',
+            substr( $hex, 0, 8 ),
+            substr( $hex, 8, 4 ),
+            substr( $hex, 12, 4 ),
+            substr( $hex, 16, 4 ),
+            substr( $hex, 20, 12 )
+        );
+    }
+
+    private function accepted_submission_requires_ledger(
+        Sentient_Forms_Accepted_Submission_Adapter_Interface $adapter
+    ): bool
+    {
+        if ( ! method_exists( $adapter, 'get_capability_descriptor' ) )
+        {
+            return true;
+        }
+
+        $descriptor = $adapter->get_capability_descriptor();
+        if ( ! is_array( $descriptor ) )
+        {
+            return true;
+        }
+
+        return ! empty( $descriptor['ledger']['required_for_parity'] )
+            || ! empty( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
+    }
+
+    /**
+     * @param array<string, mixed> $normalized
+     *
+     * @return array<string, mixed>
+     */
+    private function uncaptured_native_submission_snapshot( array $normalized, string $submission_uuid ): array
+    {
+        return [
+            'submission_uuid'    => $submission_uuid,
+            'native_entry_id'    => isset( $normalized['native_entry_id'] ) && is_scalar( $normalized['native_entry_id'] )
+                ? sanitize_text_field( (string) $normalized['native_entry_id'] )
+                : null,
+            'native_entry_url'   => isset( $normalized['native_entry_url'] ) && is_scalar( $normalized['native_entry_url'] )
+                ? esc_url_raw( (string) $normalized['native_entry_url'] )
+                : null,
+            'logical_fields_json' => isset( $normalized['logical_fields'] ) && is_array( $normalized['logical_fields'] )
+                ? $normalized['logical_fields']
+                : [],
+            'file_refs_json'     => isset( $normalized['files'] ) && is_array( $normalized['files'] )
+                ? $normalized['files']
+                : [],
+        ];
     }
 
     /**
@@ -192,7 +313,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $entry,
         string $submission_uuid,
         array $settings
-    ): void
+    ): Sentient_Forms_Accepted_Submission_Run_Result
     {
         $plan = $this->plugin->get_mapping_dependency_planner()->build_execution_plan(
             $settings,
@@ -200,6 +321,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
         $mapping_outcomes      = [];
         $execution_request_ids = [];
+        $resolved_mappings     = [];
+        $execution_results     = [];
         $capability_descriptor = method_exists( $adapter, 'get_capability_descriptor' )
             ? $adapter->get_capability_descriptor()
             : [];
@@ -215,8 +338,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $action_settings = $this->filter_mapping_for_native_capabilities( $node['mapping'], $capability_descriptor );
+            $action_settings = $this->runtime_settings_resolver->resolve_mapping( $node['mapping'], $form_source, $form_id );
+            $action_settings = $this->filter_mapping_for_native_capabilities( $action_settings, $capability_descriptor );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+            $resolved_mappings[ (string) $mapping_id ] = $action_settings;
             $central_action_id = $this->central_action_id( $action_settings );
             if ( '' === $central_action_id )
             {
@@ -243,8 +368,13 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $action_settings = $this->filter_mapping_for_native_capabilities( $node['mapping'], $capability_descriptor );
+            $action_settings = $resolved_mappings[ (string) $mapping_id ]
+                ?? $this->filter_mapping_for_native_capabilities(
+                    $this->runtime_settings_resolver->resolve_mapping( $node['mapping'], $form_source, $form_id ),
+                    $capability_descriptor
+                );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+            $resolved_mappings[ (string) $mapping_id ] = $action_settings;
             $central_action_id = $this->central_action_id( $action_settings );
             if ( '' === $central_action_id )
             {
@@ -253,7 +383,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
-            if ( null !== $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes ) )
+            $should_async  = $this->is_mapping_async( $action_settings );
+            if ( null !== $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes, $should_async ) )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            if ( $this->should_skip_for_upstream_spam( $dependency_ids, $resolved_mappings, $execution_results ) )
             {
                 $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
                 continue;
@@ -275,6 +412,39 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
+                if ( ! $should_async )
+                {
+                    $run = $this->execute_claimed_synchronous_mapping(
+                        $form_source,
+                        $form_id,
+                        $native_entry_id,
+                        (string) $mapping_id,
+                        $action_settings,
+                        $submission_uuid,
+                        $execution_request_ids[ (string) $mapping_id ] ?? '',
+                        fn (): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
+                            absint( $action_settings['local_form_mapping_id'] ?? 0 ),
+                            $form,
+                            $entry,
+                            [
+                                'hook'             => $native_hook,
+                                'form_source'      => $form_source,
+                                'mapping_id'       => (string) $mapping_id,
+                                'local_mapping_id' => (string) $mapping_id,
+                                'form_id'          => $form_id,
+                                'entry_id'         => $native_entry_id,
+                                'submission_uuid'  => $submission_uuid,
+                            ] + $dependency_context
+                        )
+                    );
+                    $mapping_outcomes[ (string) $mapping_id ] = $run['outcome'];
+                    if ( null !== $run['result'] )
+                    {
+                        $execution_results[ (string) $mapping_id ] = $run['result'];
+                    }
+                    continue;
+                }
+
                 $scheduled = $this->schedule_local_first_mapping(
                     $form_source,
                     $form_id,
@@ -286,7 +456,54 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     $submission_uuid,
                     $dependency_context
                 );
-                $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
+                $schedule_outcome = $this->async_schedule_outcome(
+                    $scheduled,
+                    $execution_request_ids[ (string) $mapping_id ] ?? ''
+                );
+                $mapping_outcomes[ (string) $mapping_id ] = $schedule_outcome;
+                if ( 'queued' === $schedule_outcome )
+                {
+                    $this->log_queued_accepted_mapping(
+                        $form_source,
+                        $form_id,
+                        $native_entry_id,
+                        (string) $mapping_id,
+                        $action_settings,
+                        $submission_uuid,
+                        $execution_request_ids[ (string) $mapping_id ] ?? ''
+                    );
+                }
+                continue;
+            }
+
+            if ( ! $should_async )
+            {
+                $run = $this->execute_claimed_synchronous_mapping(
+                    $form_source,
+                    $form_id,
+                    $native_entry_id,
+                    (string) $mapping_id,
+                    $action_settings,
+                    $submission_uuid,
+                    $execution_request_ids[ (string) $mapping_id ] ?? '',
+                    fn (): array | bool | WP_Error => $this->execute_synchronous_mapping(
+                        $central_action_id,
+                        $form_source,
+                        $form_id,
+                        $native_hook,
+                        $form,
+                        $entry,
+                        (string) $mapping_id,
+                        $action_settings,
+                        $submission_uuid,
+                        $dependency_context
+                    )
+                );
+                $mapping_outcomes[ (string) $mapping_id ] = $run['outcome'];
+                if ( null !== $run['result'] )
+                {
+                    $execution_results[ (string) $mapping_id ] = $run['result'];
+                }
                 continue;
             }
 
@@ -312,8 +529,424 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
                 ] + $dependency_context
             );
-            $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
+            $schedule_outcome = $this->async_schedule_outcome(
+                $scheduled,
+                $execution_request_ids[ (string) $mapping_id ] ?? ''
+            );
+            $mapping_outcomes[ (string) $mapping_id ] = $schedule_outcome;
+            if ( 'queued' === $schedule_outcome )
+            {
+                $this->log_queued_accepted_mapping(
+                    $form_source,
+                    $form_id,
+                    $native_entry_id,
+                    (string) $mapping_id,
+                    $action_settings,
+                    $submission_uuid,
+                    $execution_request_ids[ (string) $mapping_id ] ?? ''
+                );
+            }
         }
+
+        return new Sentient_Forms_Accepted_Submission_Run_Result(
+            $submission_uuid,
+            $mapping_outcomes,
+            $resolved_mappings,
+            $execution_results
+        );
+    }
+
+    /**
+     * Claim and execute one synchronous accepted mapping exactly once.
+     *
+     * @param array<string, mixed> $mapping
+     * @param callable(): (array<string, mixed>|bool|WP_Error) $execute
+     *
+     * @return array{outcome: string, result: array<string, mixed>|bool|WP_Error|null}
+     */
+    private function execute_claimed_synchronous_mapping(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $mapping_id,
+        array $mapping,
+        string $submission_uuid,
+        string $execution_request_id,
+        callable $execute
+    ): array
+    {
+        if ( '' === $execution_request_id )
+        {
+            return [
+                'outcome' => 'failed',
+                'result'  => new WP_Error( 'sentient_forms_missing_execution_request_id', __( 'Synchronous execution identity is missing.', 'sentient-forms' ) ),
+            ];
+        }
+
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        $digest   = hash(
+            'sha256',
+            (string) wp_json_encode(
+                [
+                    'action_code'     => $this->central_action_id( $mapping ),
+                    'mapping_id'      => $mapping_id,
+                    'submission_uuid' => $submission_uuid,
+                    'settings'        => $settings,
+                ]
+            )
+        );
+        $request_store = $this->plugin->get_async_request_store();
+        $claim         = $request_store->claim_execution(
+            $execution_request_id,
+            [
+                'action_id'      => $this->central_action_id( $mapping ),
+                'adapter'        => $form_source,
+                'payload_digest' => $digest,
+            ],
+            ! empty( $settings['synchronous_retry_safe'] ),
+            'accepted_sync'
+        );
+        $claim_state = sanitize_key( (string) ( $claim['state'] ?? 'conflict' ) );
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        if ( 'claimed' !== $claim_state )
+        {
+            $event = $events->get_by_request_id( $execution_request_id );
+            if ( 'success' === $claim_state )
+            {
+                return [
+                    'outcome' => 'replayed_success',
+                    'result'  => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [],
+                ];
+            }
+            if ( 'failed' === $claim_state )
+            {
+                return [
+                    'outcome' => 'replayed_failed',
+                    'result'  => new WP_Error(
+                        isset( $event['error_code'] ) ? sanitize_key( (string) $event['error_code'] ) : 'sentient_forms_synchronous_execution_failed',
+                        __( 'Synchronous accepted action previously failed.', 'sentient-forms' )
+                    ),
+                ];
+            }
+
+            return [ 'outcome' => 'replayed_active', 'result' => null ];
+        }
+
+        $event_base = [
+            'execution_request_id' => $execution_request_id,
+            'mapping_id'           => isset( $mapping['local_form_mapping_id'] ) ? absint( $mapping['local_form_mapping_id'] ) : null,
+            'mapping_key'          => $mapping_id,
+            'action_code'          => $this->central_action_id( $mapping ),
+            'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+            'form_source'          => $form_source,
+            'form_id'              => $form_id,
+            'entry_id'             => $entry_id,
+            'submission_uuid'      => $submission_uuid,
+            'status'               => 'running',
+            'payload_digest'       => $digest,
+        ];
+        $events->record( $event_base );
+
+        $result = $execute();
+        if ( is_wp_error( $result ) )
+        {
+            $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
+            $events->record(
+                array_merge( $event_base, [
+                    'status'        => 'failed',
+                    'error_code'    => $result->get_error_code(),
+                    'error_message' => $safe_error,
+                ] )
+            );
+            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
+            $this->log_synchronous_accepted_failure(
+                $form_source,
+                $form_id,
+                $entry_id,
+                $mapping_id,
+                $mapping,
+                $submission_uuid,
+                $execution_request_id,
+                $result
+            );
+
+            return [ 'outcome' => 'failed', 'result' => $result ];
+        }
+
+        $result_payload = is_array( $result ) ? $result : [ 'completed' => (bool) $result ];
+        $stored_result  = class_exists( 'Sentient_Forms_Local_Data_Governance' )
+            ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result_payload )
+            : [];
+        $events->record(
+            array_merge( $event_base, [
+                'status'      => 'succeeded',
+                'result_json' => $stored_result,
+            ] )
+        );
+        $request_store->mark_status( $execution_request_id, 'success', null, 'accepted_sync' );
+        $this->log_synchronous_accepted_success(
+            $form_source,
+            $form_id,
+            $entry_id,
+            $mapping_id,
+            $mapping,
+            $submission_uuid,
+            $execution_request_id,
+            $result_payload
+        );
+
+        return [ 'outcome' => 'succeeded', 'result' => $result ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     */
+    private function log_queued_accepted_mapping(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $mapping_id,
+        array $mapping,
+        string $submission_uuid,
+        string $execution_request_id
+    ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        Sentient_Forms_Action_Log_Controller::log_execution(
+            [
+                'form_source'          => $form_source,
+                'form_id'              => $form_id,
+                'entry_id'             => $entry_id,
+                'action_code'          => $this->central_action_id( $mapping ),
+                'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'status'               => 'pending',
+                'result_summary'       => __( 'Queued for background execution.', 'sentient-forms' ),
+                'execution_request_id' => $execution_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'mapping_id'           => $mapping_id,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $result
+     */
+    private function log_synchronous_accepted_success(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $mapping_id,
+        array $mapping,
+        string $submission_uuid,
+        string $execution_request_id,
+        array $result
+    ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        $stored_result = class_exists( 'Sentient_Forms_Local_Data_Governance' )
+            ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result )
+            : [];
+        $classification = $this->extract_spam_classification( $stored_result );
+        $result_summary = '' !== $classification
+            ? sprintf(
+                /* translators: %s: safe classification slug. */
+                __( 'Accepted action completed with classification: %s.', 'sentient-forms' ),
+                $classification
+            )
+            : __( 'Accepted action completed successfully.', 'sentient-forms' );
+
+        Sentient_Forms_Action_Log_Controller::log_execution(
+            [
+                'form_source'         => $form_source,
+                'form_id'             => $form_id,
+                'entry_id'            => $entry_id,
+                'action_code'         => $this->central_action_id( $mapping ),
+                'action_label'        => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'status'              => 'success',
+                'result_summary'      => wp_trim_words( $result_summary, 20, '...' ),
+                'classification'      => $classification,
+                'execution_request_id'=> $execution_request_id,
+                'submission_uuid'     => $submission_uuid,
+                'mapping_id'          => $mapping_id,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     */
+    private function log_synchronous_accepted_failure(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $mapping_id,
+        array $mapping,
+        string $submission_uuid,
+        string $execution_request_id,
+        WP_Error $error
+    ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        $error_code = sanitize_key( (string) $error->get_error_code() );
+        if ( '' === $error_code )
+        {
+            $error_code = 'synchronous_action_failed';
+        }
+
+        Sentient_Forms_Action_Log_Controller::log_execution(
+            [
+                'form_source'          => $form_source,
+                'form_id'              => $form_id,
+                'entry_id'             => $entry_id,
+                'action_code'          => $this->central_action_id( $mapping ),
+                'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'status'               => 'error',
+                'error_code'           => $error_code,
+                'error_message'        => __( 'Synchronous accepted action failed.', 'sentient-forms' ),
+                'execution_request_id' => $execution_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'mapping_id'           => $mapping_id,
+            ]
+        );
+    }
+
+    private function async_schedule_outcome( bool $scheduled, string $execution_request_id ): string
+    {
+        if ( $scheduled )
+        {
+            return 'queued';
+        }
+
+        if ( '' === $execution_request_id )
+        {
+            return 'failed';
+        }
+
+        $existing = $this->plugin->get_async_request_store()->get( $execution_request_id );
+        $status   = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
+
+        return in_array( $status, [ 'queued', 'running', 'success' ], true )
+            ? 'replayed'
+            : 'failed';
+    }
+
+    private function get_local_execution_service(): Sentient_Forms_Local_Action_Execution_Service
+    {
+        if ( null === $this->local_execution_service )
+        {
+            $this->local_execution_service = new Sentient_Forms_Local_Action_Execution_Service();
+        }
+
+        return $this->local_execution_service;
+    }
+
+    private function is_mapping_async( array $mapping ): bool
+    {
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        if ( array_key_exists( 'async', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['async'] );
+        }
+        if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
+        {
+            return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $settings['execution_mode'] );
+        }
+        if ( array_key_exists( 'async', $mapping ) )
+        {
+            return rest_sanitize_boolean( $mapping['async'] );
+        }
+        if ( isset( $mapping['execution_mode'] ) && is_scalar( $mapping['execution_mode'] ) )
+        {
+            return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $mapping['execution_mode'] );
+        }
+
+        return 'master' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) );
+    }
+
+    /**
+     * @param array<string, mixed> $form
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $action_settings
+     * @param array<string, mixed> $dependency_context
+     *
+     * @return array<string, mixed>|bool|WP_Error
+     */
+    private function execute_synchronous_mapping(
+        string $central_action_id,
+        string $form_source,
+        string $form_id,
+        string $native_hook,
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $action_settings,
+        string $submission_uuid,
+        array $dependency_context
+    ): array | bool | WP_Error
+    {
+        $action = $this->plugin->get_action( $central_action_id );
+        if ( $action instanceof Sentient_Forms_Action_Interface )
+        {
+            $execution_context = [
+                'hook'                 => $native_hook,
+                'form_source'          => $form_source,
+                'mapping_id'           => $mapping_id,
+                'local_mapping_id'     => $mapping_id,
+                'form_id'              => $form_id,
+                'entry_id'             => $entry['id'] ?? null,
+                'submission_uuid'      => $submission_uuid,
+                'execution_request_id' => $dependency_context['execution_request_id'] ?? null,
+                'central_action_id'    => $central_action_id,
+            ] + $dependency_context;
+
+            return $action->execute(
+                [
+                    'form'              => $form,
+                    'entry'             => $entry,
+                    'hook'              => $native_hook,
+                    'form_source'       => $form_source,
+                    'execution_context' => $execution_context,
+                ],
+                $action_settings,
+                $entry['id'] ?? '',
+                $form_id
+            );
+        }
+
+        return $this->plugin->get_action_executor()->execute(
+            $central_action_id,
+            $form,
+            $entry,
+            [
+                'hook'              => $native_hook,
+                'form_source'       => $form_source,
+                'action_id'         => $mapping_id,
+                'mapping_id'        => $mapping_id,
+                'local_mapping_id'  => $mapping_id,
+                'form_id'           => $form_id,
+                'entry_id'          => $entry['id'] ?? null,
+                'submission_uuid'   => $submission_uuid,
+                'central_action_id' => $central_action_id,
+                'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                    ? $action_settings['settings']
+                    : [],
+            ] + $dependency_context
+        );
     }
 
     private function is_runnable_plan_node( mixed $node ): bool
@@ -528,7 +1161,11 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * @param array<int, mixed>     $dependency_ids
      * @param array<string, string> $mapping_outcomes
      */
-    private function resolve_dependency_blocking_mapping( array $dependency_ids, array $mapping_outcomes ): ?string
+    private function resolve_dependency_blocking_mapping(
+        array $dependency_ids,
+        array $mapping_outcomes,
+        bool $allow_queued_dependencies = true
+    ): ?string
     {
         foreach ( $dependency_ids as $dependency_id )
         {
@@ -538,13 +1175,83 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             $dependency_id = sanitize_text_field( (string) $dependency_id );
-            if ( '' !== $dependency_id && in_array( $mapping_outcomes[ $dependency_id ] ?? null, [ null, 'failed', 'skipped' ], true ) )
+            $blocking_outcomes = $allow_queued_dependencies
+                ? [ null, 'failed', 'replayed_failed', 'skipped' ]
+                : [ null, 'failed', 'replayed_failed', 'skipped', 'queued', 'replayed_active' ];
+            if ( '' !== $dependency_id && in_array( $mapping_outcomes[ $dependency_id ] ?? null, $blocking_outcomes, true ) )
             {
                 return $dependency_id;
             }
         }
 
         return null;
+    }
+
+    /**
+     * @param array<int, mixed>                       $dependency_ids
+     * @param array<string, array<string, mixed>>     $resolved_mappings
+     * @param array<string, mixed>                    $execution_results
+     */
+    private function should_skip_for_upstream_spam(
+        array $dependency_ids,
+        array $resolved_mappings,
+        array $execution_results
+    ): bool
+    {
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            if ( ! is_scalar( $dependency_id ) )
+            {
+                continue;
+            }
+
+            $dependency_id = sanitize_text_field( (string) $dependency_id );
+            $mapping       = $resolved_mappings[ $dependency_id ] ?? null;
+            $result        = $execution_results[ $dependency_id ] ?? null;
+            if ( ! is_array( $mapping ) || ! is_array( $result ) )
+            {
+                continue;
+            }
+
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+            if ( empty( $settings['skip_downstream_on_spam'] ) )
+            {
+                continue;
+            }
+
+            if ( in_array( $this->extract_spam_classification( $result ), [ 'spam', 'likely_spam' ], true ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function extract_spam_classification( array $result ): string
+    {
+        $candidates = [
+            $result['classification'] ?? null,
+            $result['result_data']['classification'] ?? null,
+            $result['result_data']['structured_output']['classification'] ?? null,
+            $result['structured_output']['classification'] ?? null,
+        ];
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $classification = sanitize_key( (string) $candidate );
+                if ( '' !== $classification )
+                {
+                    return $classification;
+                }
+            }
+        }
+
+        return '';
     }
 
     /**

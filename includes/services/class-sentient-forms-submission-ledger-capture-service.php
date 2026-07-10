@@ -56,7 +56,16 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
             ? $this->sanitize_file_references( $payload['files'] )
             : null;
 
-        $submission_uuid = $this->normalize_submission_uuid( $payload['submission_uuid'] ?? null ) ?? wp_generate_uuid4();
+        $supplied_submission_uuid = $this->normalize_submission_uuid( $payload['submission_uuid'] ?? null );
+        $submission_uuid          = $supplied_submission_uuid ?? wp_generate_uuid4();
+        if ( null !== $supplied_submission_uuid )
+        {
+            $existing = $this->ledger->get_by_submission_uuid( $supplied_submission_uuid );
+            if ( is_array( $existing ) )
+            {
+                return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+            }
+        }
 
         $created = $this->ledger->create(
             [
@@ -79,6 +88,15 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
 
         if ( is_wp_error( $created ) )
         {
+            if ( null !== $supplied_submission_uuid )
+            {
+                $existing = $this->ledger->get_by_submission_uuid( $supplied_submission_uuid );
+                if ( is_array( $existing ) )
+                {
+                    return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+                }
+            }
+
             return $created;
         }
 
@@ -89,6 +107,45 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
         }
 
         return $stored;
+    }
+
+    /**
+     * Return a previously captured record only when its stable identity agrees
+     * with the replaying request. UUID reuse across scopes or native entries is
+     * an explicit conflict rather than a masked database duplicate.
+     *
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function resolve_idempotent_replay(
+        array $existing,
+        string $form_source,
+        string $form_id,
+        array $payload
+    ): array | WP_Error
+    {
+        $existing_form_source = sanitize_key( (string) ( $existing['form_source'] ?? '' ) );
+        $existing_form_id     = sanitize_text_field( (string) ( $existing['form_id'] ?? '' ) );
+        $existing_entry_id    = isset( $existing['native_entry_id'] ) && is_scalar( $existing['native_entry_id'] )
+            ? sanitize_text_field( (string) $existing['native_entry_id'] )
+            : '';
+        $requested_entry_id   = isset( $payload['native_entry_id'] ) && is_scalar( $payload['native_entry_id'] )
+            ? sanitize_text_field( (string) $payload['native_entry_id'] )
+            : '';
+        $scope_matches        = $existing_form_source === $form_source && $existing_form_id === $form_id;
+        $entry_matches        = $existing_entry_id === $requested_entry_id;
+
+        if ( ! $scope_matches || ! $entry_matches )
+        {
+            return new WP_Error(
+                'sentient_forms_submission_ledger_replay_conflict',
+                __( 'Submission ledger correlation conflicts with an existing submission.', 'sentient-forms' )
+            );
+        }
+
+        return $existing;
     }
 
     private function normalize_submission_uuid( mixed $submission_uuid ): ?string

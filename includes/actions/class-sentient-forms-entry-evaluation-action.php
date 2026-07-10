@@ -362,8 +362,9 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
 
 
 
-        $context = array_filter( 
-            [
+        $context = array_filter(
+            array_replace(
+                [
                 'hook'              => $payload['hook'],
                 'form_source'       => $payload['form_source'],
                 'form_id'           => isset( $payload['form']['id'] ) ? (string) $payload['form']['id'] : (string) $form_id,
@@ -373,8 +374,10 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
                 'action_type_indicator' => $settings['action_type_indicator'] ?? null,
                 'local_mapping_id'       => $settings['local_mapping_id'] ?? null,
                 'settings'               => $raw_mapping_settings,
-            ],
-            static fn( $value ) => null !== $value && '' !== $value,
+                ],
+                $payload['execution_context']
+            ),
+            static fn ( $value ) => null !== $value && '' !== $value,
         );
 
 

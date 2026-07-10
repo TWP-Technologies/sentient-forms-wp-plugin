@@ -93,6 +93,94 @@ class Sentient_Forms_Async_Request_Store
         );
     }
 
+    /**
+     * Atomically claim one durable execution identity.
+     *
+     * Failed work remains terminal unless the caller explicitly declares that
+     * replay is safe for the operation being claimed.
+     *
+     * @return array{state: string, record: array<string, mixed>|null}
+     */
+    public function claim_execution(
+        string $request_hash,
+        array $context,
+        bool $retry_failed_safely = false,
+        string $record_type = 'accepted_sync'
+    ): array
+    {
+        $now       = current_time( 'mysql' );
+        $action_id = sanitize_text_field( (string) ( $context['action_id'] ?? '' ) );
+        $adapter   = isset( $context['adapter'] ) ? sanitize_key( (string) $context['adapter'] ) : null;
+        $digest    = isset( $context['payload_digest'] ) ? sanitize_text_field( (string) $context['payload_digest'] ) : null;
+        $inserted  = $this->wpdb->query(
+            $this->wpdb->prepare(
+                'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                $this->table(),
+                $request_hash,
+                $action_id,
+                $adapter,
+                $record_type,
+                'running',
+                $now,
+                $now,
+                $digest
+            )
+        );
+        if ( 1 === $inserted )
+        {
+            return [
+                'state'  => 'claimed',
+                'record' => $this->get( $request_hash, $record_type ),
+            ];
+        }
+
+        $existing = $this->get( $request_hash, $record_type );
+        if ( ! is_array( $existing ) )
+        {
+            return [ 'state' => 'conflict', 'record' => null ];
+        }
+
+        $status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
+        if ( $retry_failed_safely && in_array( $status, [ 'failed', 'error' ], true ) )
+        {
+            $claimed = $this->wpdb->query(
+                $this->wpdb->prepare(
+                    "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL, payload_digest = %s WHERE request_hash = %s AND record_type = %s AND status IN ('failed', 'error')",
+                    $this->table(),
+                    $now,
+                    $digest,
+                    $request_hash,
+                    $record_type
+                )
+            );
+            if ( 1 === $claimed )
+            {
+                return [
+                    'state'  => 'claimed',
+                    'record' => $this->get( $request_hash, $record_type ),
+                ];
+            }
+
+            $existing = $this->get( $request_hash, $record_type );
+            $status   = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
+        }
+
+        if ( in_array( $status, [ 'success', 'succeeded' ], true ) )
+        {
+            $state = 'success';
+        }
+        elseif ( in_array( $status, [ 'failed', 'error' ], true ) )
+        {
+            $state = 'failed';
+        }
+        else
+        {
+            $state = 'active';
+        }
+
+        return [ 'state' => $state, 'record' => $existing ];
+    }
+
     public function mark_status( string $request_hash, string $status, ?string $error = null, string $record_type = 'job' ): void
     {
         $this->wpdb->update(

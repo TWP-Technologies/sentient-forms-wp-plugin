@@ -252,7 +252,8 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
         $payload = $this->normalize_execution_payload( $form_data, $entry_id, $form_id );
 
         $context = array_filter(
-            [
+            array_replace(
+                [
                 'hook'              => $payload[ 'hook' ],
                 'form_source'       => $payload[ 'form_source' ],
                 'form_id'           => isset( $payload['form']['id'] ) ? (string) $payload['form']['id'] : (string) $form_id,
@@ -262,7 +263,9 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
                 'action_type_indicator' => $settings['action_type_indicator'] ?? null,
                 'local_mapping_id'       => $settings['local_mapping_id'] ?? null,
                 'settings'               => $raw_mapping_settings,
-            ],
+                ],
+                $payload['execution_context']
+            ),
             static fn ( $value ) => null !== $value && '' !== $value,
         );
 
