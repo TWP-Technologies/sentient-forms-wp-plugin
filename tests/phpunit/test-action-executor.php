@@ -76,6 +76,74 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( 'filtered-request-id-42', $request_id );
 	}
 
+	public function test_execute_prioritizes_explicit_submission_uuid_token(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-submission-uuid',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = compact( 'path', 'payload', 'options' );
+
+				return [
+					'result_data' => [ 'llm_output' => 'ok' ],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$executor->execute(
+			'entry_evaluation_v1',
+			[ 'id' => 48, 'title' => 'Accepted submission identity' ],
+			[
+				'id'              => '781',
+				'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+				'message'         => 'identical payload',
+			],
+			[ 'hook' => 'wpforms_process_complete', 'action_id' => 'map_summary' ]
+		);
+
+		$this->assertSame(
+			'submission:11111111-1111-4111-8111-111111111111',
+			$client->calls[0]['payload']['action_context']['submission_token'] ?? null
+		);
+	}
+
+	public function test_execution_request_ids_are_stable_per_submission_uuid_and_distinct_across_submissions(): void {
+		$form    = [ 'id' => 48, 'title' => 'Accepted submission identity' ];
+		$context = [ 'hook' => 'wpforms_process_complete', 'action_id' => 'map_summary' ];
+		$first   = [
+			'id'              => null,
+			'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+			'message'         => 'identical payload',
+		];
+		$second  = $first;
+		$second['submission_uuid'] = '22222222-2222-4222-8222-222222222222';
+
+		$first_request = Sentient_Forms_Action_Executor::generate_execution_request_id(
+			'entry_evaluation_v1',
+			$form,
+			$first,
+			$context
+		);
+
+		$this->assertSame(
+			$first_request,
+			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $first, $context )
+		);
+		$this->assertNotSame(
+			$first_request,
+			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $second, $context )
+		);
+	}
+
 	public function test_execute_invokes_client_and_returns_response(): void {
 		$this->plugin->set_license_data(
 			[

@@ -994,6 +994,13 @@ class Sentient_Forms_Action_Executor {
 	}
 
 	private static function derive_submission_token( array $form, array $entry ): string {
+		if ( isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) ) {
+			$submission_uuid = strtolower( sanitize_text_field( (string) $entry['submission_uuid'] ) );
+			if ( wp_is_uuid( $submission_uuid ) ) {
+				return 'submission:' . $submission_uuid;
+			}
+		}
+
 		if ( isset( $entry['id'] ) && $entry['id'] ) {
 			return 'entry:' . (string) $entry['id'];
 		}
