@@ -12,24 +12,34 @@ if ( ! defined( 'ABSPATH' ) )
 
 class Sentient_Forms_Spam_Guidance_Rationale_Service
 {
-    private const ACTION_CODE = 'spam_guidance_rationale_v1';
+    private const ACTION_TEMPLATE_CODE = 'spam_detection_v1';
+    private const ACTION_FACET_CODE = 'spam_guidance_rationale_generation';
+    private const CPS_ACCOUNTING_ACTION_CODE = 'spam_guidance_rationale_v1';
     private const DEFAULT_MODEL = 'google/gemini-3-flash-preview';
     private const MAX_TEXT_LENGTH = 800;
     private const READY_CREDENTIAL_STATUSES = [ 'valid', 'limited' ];
     private const MANAGED_SERVICE_PLAN_CODES = [ 'starter', 'pro', 'business' ];
     private const ACTIVE_SUBSCRIPTION_STATUSES = [ 'active', 'trial', 'trialing', 'valid' ];
 
+    private Sentient_Forms_Action_Policy_Resolver $policy_resolver;
+
+    private Sentient_Forms_Provider_Route_Decision $provider_route_decision;
+
     public function __construct(
         private ?Sentient_Forms_Managed_Service_Client $managed_service = null,
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_OpenRouter_Direct_Client $openrouter = null,
-        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection = null
+        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection = null,
+        ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null,
+        ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
     )
     {
         $this->managed_service = $this->managed_service ?? new Sentient_Forms_Managed_Service_Client( null, 30 );
         $this->managed_proxy   = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client( null, 60 );
         $this->openrouter      = $this->openrouter ?? new Sentient_Forms_OpenRouter_Direct_Client( 60 );
         $this->model_selection = $this->model_selection ?? new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $this->policy_resolver         = $policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
+        $this->provider_route_decision = $provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
     }
 
     /**
@@ -54,6 +64,12 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             return $this->normalize_generation_result( $pre, 'filter' );
         }
 
+        $effective_policy = $this->resolve_effective_action_policy();
+        if ( is_wp_error( $effective_policy ) )
+        {
+            return $effective_policy;
+        }
+
         $managed_context = $this->resolve_managed_context();
         if ( is_wp_error( $managed_context ) )
         {
@@ -63,37 +79,79 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
         $prompt       = $this->build_prompt( $context );
         $billing      = $this->resolve_billing_state( $managed_context );
         $billing_code = is_wp_error( $billing ) ? $billing->get_error_code() : null;
-        if ( is_wp_error( $billing ) || ! $this->billing_state_has_active_subscription( $billing ) )
+        $subscription_active = is_array( $billing ) && $this->billing_state_has_active_subscription( $billing );
+        $has_credits         = is_array( $billing ) && $this->billing_state_has_credits( $billing );
+        $managed_credential  = $subscription_active
+            ? $this->resolve_ready_managed_credential()
+            : $this->subscription_required_error();
+        $openrouter_credential = $subscription_active
+            ? $this->resolve_ready_openrouter_credential()
+            : $this->subscription_required_error();
+        $route = $this->provider_route_decision->decide(
+            $effective_policy,
+            [
+                'subscription_active'        => $subscription_active,
+                'managed_ready'              => is_array( $managed_credential ),
+                'managed_capacity_available' => $has_credits,
+                'direct_ready'               => is_array( $openrouter_credential ),
+            ]
+        );
+        if ( is_wp_error( $route ) )
         {
-            return $this->subscription_required_error();
-        }
-
-        $has_credits = $this->billing_state_has_credits( $billing );
-
-        if ( $has_credits )
-        {
-            $credential = $this->resolve_ready_managed_credential();
-            if ( is_wp_error( $credential ) )
+            if ( 'sentient_forms_provider_route_subscription_required' === $route->get_error_code() )
             {
-                return $credential;
+                return $this->subscription_required_error();
             }
 
+            if ( $has_credits && is_wp_error( $managed_credential ) && ! is_array( $openrouter_credential ) )
+            {
+                return $managed_credential;
+            }
+
+            return $this->provider_setup_required_error(
+                $billing_code,
+                is_wp_error( $managed_credential ) ? $managed_credential : null,
+                is_wp_error( $openrouter_credential ) ? $openrouter_credential : null,
+                $route
+            );
+        }
+
+        if ( 'sentient_managed' === $route['provider'] )
+        {
             return $this->run_managed_generation( $managed_context, $prompt, $context );
         }
 
-        $openrouter = $this->run_openrouter_generation( $prompt, $context );
-        if ( ! is_wp_error( $openrouter ) )
-        {
-            return $openrouter;
-        }
+        return $this->run_openrouter_generation( $prompt, $context, $openrouter_credential );
+    }
 
+    /**
+     * @return array<string,mixed>|WP_Error
+     */
+    private function resolve_effective_action_policy(): array | WP_Error
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( self::ACTION_TEMPLATE_CODE );
+        return $this->policy_resolver->resolve_action_definition(
+            is_array( $definition ) ? $definition : [],
+            [ self::ACTION_FACET_CODE ]
+        );
+    }
+
+    private function provider_setup_required_error(
+        ?string $billing_error_code,
+        ?WP_Error $managed_error,
+        ?WP_Error $openrouter_error,
+        WP_Error $route_error
+    ): WP_Error
+    {
         return new WP_Error(
             'sentient_forms_spam_rationale_provider_setup_required',
             __( 'Rationale generation requires Sentient Forms managed credits or a ready paid OpenRouter key on an active managed-service subscription.', 'sentient-forms' ),
             [
-                'status'              => 402,
-                'billing_error_code'  => $billing_code,
-                'openrouter_error_code' => $openrouter->get_error_code(),
+                'status'                => 402,
+                'billing_error_code'    => $billing_error_code,
+                'managed_error_code'    => $managed_error?->get_error_code(),
+                'openrouter_error_code' => $openrouter_error?->get_error_code(),
+                'route_error_code'      => $route_error->get_error_code(),
             ]
         );
     }
@@ -393,11 +451,11 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             'execution_request_id' => 'spam_guidance_rationale_' . wp_generate_uuid4(),
             'provider'             => 'sentient_managed',
             'model'                => self::DEFAULT_MODEL,
-            'action_code'          => self::ACTION_CODE,
+            'action_code'          => self::CPS_ACCOUNTING_ACTION_CODE,
             'prompt'               => $prompt,
             'temperature'          => 0.2,
             'max_output_tokens'    => 300,
-            'output_contract'      => [ 'schema' => $this->rationale_output_schema(), 'source' => self::ACTION_CODE ],
+            'output_contract'      => [ 'schema' => $this->rationale_output_schema(), 'source' => self::CPS_ACCOUNTING_ACTION_CODE ],
             'metadata'             => [ 'kind' => 'spam_guidance_rationale' ],
         ];
 
@@ -448,14 +506,8 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
      * @param array<string,mixed> $context
      * @return array{rationale:string,route:string,model?:string}|WP_Error
      */
-    private function run_openrouter_generation( string $prompt, array $context ): array | WP_Error
+    private function run_openrouter_generation( string $prompt, array $context, array $credential ): array | WP_Error
     {
-        $credential = $this->resolve_ready_openrouter_credential();
-        if ( is_wp_error( $credential ) )
-        {
-            return $credential;
-        }
-
         $api_key = $this->resolve_openrouter_api_key( $credential );
         if ( is_wp_error( $api_key ) )
         {

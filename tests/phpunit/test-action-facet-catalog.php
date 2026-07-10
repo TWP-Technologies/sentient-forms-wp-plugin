@@ -84,6 +84,31 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
         $this->assertSame( 'not_registered', $resolved->get_error_data()['facet_code'] ?? null );
     }
 
+    public function test_action_definition_fails_closed_for_registered_but_not_allowed_facet(): void
+    {
+        $resolver = new Sentient_Forms_Action_Policy_Resolver();
+
+        $resolved = $resolver->resolve_action_definition(
+            [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            [ 'spam_guidance_rationale_generation' ]
+        );
+
+        $this->assertWPError( $resolved );
+        $this->assertSame( 'sentient_forms_action_facet_not_allowed', $resolved->get_error_code() );
+        $this->assertSame( 'spam_guidance_rationale_generation', $resolved->get_error_data()['facet_code'] ?? null );
+    }
+
     public function test_effective_policy_fails_closed_when_facet_lifecycles_do_not_overlap_base(): void
     {
         $catalog = new Sentient_Forms_Action_Facet_Catalog(

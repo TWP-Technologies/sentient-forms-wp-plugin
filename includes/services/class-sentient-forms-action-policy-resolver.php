@@ -33,6 +33,77 @@ final class Sentient_Forms_Action_Policy_Resolver
     }
 
     /**
+     * Resolve one executable Action definition and its explicitly enabled facets.
+     *
+     * @param array<string, mixed> $definition
+     * @param array<int, string>   $enabled_facet_codes
+     * @return array<string, mixed>|WP_Error
+     */
+    public function resolve_action_definition( array $definition, array $enabled_facet_codes = [] ): array | WP_Error
+    {
+        if ( ! is_array( $definition['action_policy'] ?? null ) )
+        {
+            return $this->invalid_policy_error( 'action_definition', 'action_policy' );
+        }
+
+        $allowed_facets = $this->normalize_identifier_list(
+            $definition['allowed_facets'] ?? null,
+            'allowed_facets',
+            'action_definition'
+        );
+        if ( is_wp_error( $allowed_facets ) )
+        {
+            return $allowed_facets;
+        }
+
+        $default_enabled_facets = $this->normalize_identifier_list(
+            $definition['enabled_facets'] ?? null,
+            'enabled_facets',
+            'action_definition'
+        );
+        if ( is_wp_error( $default_enabled_facets ) )
+        {
+            return $default_enabled_facets;
+        }
+
+        $requested_facets = $this->normalize_identifier_list(
+            $enabled_facet_codes,
+            'enabled_facets',
+            'action_definition'
+        );
+        if ( is_wp_error( $requested_facets ) )
+        {
+            return $requested_facets;
+        }
+
+        foreach ( $allowed_facets as $facet_code )
+        {
+            if ( ! $this->catalog->has( $facet_code ) )
+            {
+                return $this->unknown_facet_error( $facet_code );
+            }
+        }
+
+        $enabled_facets = $this->unique_merge( $default_enabled_facets, $requested_facets );
+        foreach ( $enabled_facets as $facet_code )
+        {
+            if ( ! in_array( $facet_code, $allowed_facets, true ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_action_facet_not_allowed',
+                    __( 'The enabled Action facet is not allowed by this Action.', 'sentient-forms' ),
+                    [
+                        'status'     => 500,
+                        'facet_code' => $facet_code,
+                    ]
+                );
+            }
+        }
+
+        return $this->resolve( $definition['action_policy'], $enabled_facets );
+    }
+
+    /**
      * @param array<string, mixed> $base_policy
      * @param array<int, string>   $enabled_facet_codes
      * @return array<string, mixed>|WP_Error
@@ -56,14 +127,7 @@ final class Sentient_Forms_Action_Policy_Resolver
             $facet = $this->catalog->get( $facet_code );
             if ( null === $facet )
             {
-                return new WP_Error(
-                    'sentient_forms_action_facet_unknown',
-                    __( 'The enabled Action facet is not registered.', 'sentient-forms' ),
-                    [
-                        'status'     => 500,
-                        'facet_code' => $facet_code,
-                    ]
-                );
+                return $this->unknown_facet_error( $facet_code );
             }
 
             $facet = $this->normalize_facet_policy( $facet, $facet_code );
@@ -374,6 +438,18 @@ final class Sentient_Forms_Action_Policy_Resolver
             'sentient_forms_action_policy_invalid',
             __( 'The Action policy is invalid.', 'sentient-forms' ),
             $data
+        );
+    }
+
+    private function unknown_facet_error( string $facet_code ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_action_facet_unknown',
+            __( 'The enabled Action facet is not registered.', 'sentient-forms' ),
+            [
+                'status'     => 500,
+                'facet_code' => $facet_code,
+            ]
         );
     }
 
