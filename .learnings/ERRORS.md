@@ -185,3 +185,37 @@ Use PowerShell JSON string serialization and `JSON.parse` instead of browser bas
 - **Notes**: Switched the helper transport to JSON.
 
 ---
+
+## [ERR-20260710-007] phpunit-windows-file-argument
+
+**Logged**: 2026-07-10T11:10:32-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+PHPUnit 9 on Windows interpreted an individual test-file argument as a class name, and its batch wrapper obscured the useful error behind PHP 8.4 deprecation output.
+
+### Error
+```text
+Class test-form-actions-controller could not be found in ...\tests\phpunit\test-form-actions-controller.php
+```
+
+### Context
+- The supervisor attempted to pass several individual test files to `vendor/bin/phpunit`, then repeated the pattern with one file.
+- The `.bat` wrapper also passed pipe characters in a filter expression through `cmd.exe` unless the PHP entry point was invoked directly.
+- No repository or runtime state changed.
+
+### Suggested Fix
+Invoke `php vendor/phpunit/phpunit/phpunit --filter '<class expression>'` and capture output in a PowerShell variable before selecting the summary; use a test directory or suite rather than multiple file arguments.
+
+### Metadata
+- Reproducible: yes
+- Related Files: tests/phpunit/test-form-actions-controller.php
+- See Also: ERR-20260710-006
+
+### Resolution
+- **Resolved**: 2026-07-10T11:10:32-05:00
+- **Notes**: The class-filtered runs passed with 219 tests / 1,582 assertions and 146 tests / 1,095 assertions.
+
+---
