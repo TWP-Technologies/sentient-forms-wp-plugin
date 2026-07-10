@@ -3391,8 +3391,6 @@ class Sentient_Forms_Async_Handler
             );
         }
 
-        // Store the result in the database
-        $this->store_result( $action_id, $result );
     }
 
     /**
@@ -3456,42 +3454,6 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
-     * Store the action result in the database
-     *
-     * @param string $action_id The action ID.
-     * @param array  $result    The action result.
-     *
-     * @return void
-     */
-    private function store_result( string $action_id, array $result ): void
-    {
-        // Get plugin options
-        $options = $this->plugin->get_options();
-        $result  = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $result );
-
-        // Initialize the results array if it doesn't exist
-        if ( !isset( $options[ 'action_results' ] ) )
-        {
-            $options[ 'action_results' ] = [];
-        }
-
-        // Add the result to the array
-        $options[ 'action_results' ][ $action_id ][] = [
-            'timestamp' => time(),
-            'result'    => $result,
-        ];
-
-        // Limit the number of stored results to 20 per action
-        if ( count( $options[ 'action_results' ][ $action_id ] ) > 20 )
-        {
-            $options[ 'action_results' ][ $action_id ] = array_slice( $options[ 'action_results' ][ $action_id ], -20 );
-        }
-
-        // Update the options
-        $this->plugin->update_options( $options );
-    }
-
-    /**
      * Mark lingering queued evaluation/telemetry rows so async-health stays accurate.
      */
     private function sweep_stale_async_rows(): void
@@ -3531,56 +3493,4 @@ class Sentient_Forms_Async_Handler
         }
     }
 
-    /**
-     * Get the median cost for an action
-     *
-     * @param string $action_id The action ID.
-     *
-     * @return float|int|null The median cost or null if not enough data.
-     */
-    public function get_median_cost( string $action_id ): float | int | null
-    {
-        // Get plugin options
-        $options = $this->plugin->get_options();
-
-        // Check if we have results for this action
-        if ( !isset( $options[ 'action_results' ][ $action_id ] ) || count( $options[ 'action_results' ][ $action_id ] ) < 10 )
-        {
-            return null;
-        }
-
-        // Extract costs from results
-        $costs = [];
-        foreach ( $options[ 'action_results' ][ $action_id ] as $result_data )
-        {
-            if ( isset( $result_data[ 'result' ][ 'cost' ] ) )
-            {
-                $costs[] = $result_data[ 'result' ][ 'cost' ];
-            }
-        }
-
-        // Check if we have enough costs
-        if ( count( $costs ) < 10 )
-        {
-            return null;
-        }
-
-        // Sort costs
-        sort( $costs );
-
-        // Calculate median
-        $count  = count( $costs );
-        $middle = floor( $count / 2 );
-
-        if ( $count % 2 === 0 )
-        {
-            // Even number of costs, average the middle two
-            return ( $costs[ $middle - 1 ] + $costs[ $middle ] ) / 2;
-        }
-        else
-        {
-            // Odd number of costs, return the middle one
-            return $costs[ $middle ];
-        }
-    }
 }
