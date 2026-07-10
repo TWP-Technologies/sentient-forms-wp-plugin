@@ -726,7 +726,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'rest_form_not_found', $data['code'] ?? null );
     }
 
-    public function test_elementor_actions_reject_unsupported_validation_lifecycle(): void
+    public function test_elementor_actions_allow_supported_validation_lifecycle(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
@@ -742,10 +742,16 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
-        $this->assertSame( 400, $response->get_status() );
-        $this->assertSame( 'rest_unsupported_form_source_lifecycle', $data['code'] ?? null );
-        $this->assertStringContainsString( 'validation', $data['message'] ?? '' );
-        $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_pro_forms_' . $page_id . '_formabc', [] ) );
+        $stored = get_option(
+            'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ),
+            []
+        );
+
+        $this->assertSame( 201, $response->get_status() );
+        $this->assertSame( 'cps_remote_summary_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( [ 'validation' ], $data['trigger_hooks'] ?? null );
+        $this->assertCount( 1, $stored );
+        $this->assertSame( [ 'validation' ], reset( $stored )['trigger_hooks'] ?? null );
     }
 
     public function test_elementor_actions_strip_native_result_writing_effects(): void
@@ -5105,6 +5111,15 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( $form_id, $data['forms'][0]['id'] ?? null );
         $this->assertSame( 'Known Elementor Form', $data['forms'][0]['title'] ?? null );
         $this->assertSame( 'available', $data['form_source_descriptor']['availability'] ?? null );
+        $this->assertTrue( $data['form_source_descriptor']['lifecycles']['validation']['supported'] ?? false );
+        $this->assertSame(
+            'elementor_pro/forms/validation',
+            $data['form_source_descriptor']['lifecycles']['validation']['native_hook'] ?? null
+        );
+        $this->assertTrue( $data['form_source_descriptor']['validation_effects']['field_errors'] ?? false );
+        $this->assertTrue( $data['form_source_descriptor']['validation_effects']['form_errors'] ?? false );
+        $this->assertFalse( $data['form_source_descriptor']['validation_effects']['submission_spam'] ?? true );
+        $this->assertFalse( $data['form_source_descriptor']['native_enrichment']['spam'] ?? true );
         $this->assertSame(
             'unavailable',
             $data['form_source_descriptor']['requirements']['native_submission_parity'] ?? null

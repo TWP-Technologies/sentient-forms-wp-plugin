@@ -68,7 +68,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             : '';
         $form        = isset( $normalized['form'] ) && is_array( $normalized['form'] ) ? $normalized['form'] : [];
         $entry       = isset( $normalized['entry'] ) && is_array( $normalized['entry'] ) ? $normalized['entry'] : [];
-        $native_hook = sanitize_key( $adapter->get_validation_native_hook() );
+        $native_hook = sanitize_text_field( $adapter->get_validation_native_hook() );
         if ( '' === $form_source || '' === $form_id || [] === $form || '' === $native_hook )
         {
             return new Sentient_Forms_Validation_Run_Result();

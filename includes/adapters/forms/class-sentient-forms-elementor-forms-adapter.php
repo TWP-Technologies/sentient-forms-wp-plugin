@@ -13,11 +13,13 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party Elementor Pro Forms Form Source adapter.
  */
-class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
+class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'elementor_pro/forms/new_record';
+
+    private const NATIVE_VALIDATION_HOOK = 'elementor_pro/forms/validation';
 
     private Sentient_Forms_Plugin $plugin;
 
@@ -104,12 +106,12 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             ],
             'lifecycles'           => [
                 Sentient_Forms_Form_Source_Lifecycles::VALIDATION        => [
-                    'supported'          => false,
+                    'supported'          => true,
                     'label'              => __( 'Validation', 'sentient-forms' ),
-                    'native_hook'        => null,
+                    'native_hook'        => self::NATIVE_VALIDATION_HOOK,
                     'execution_mode'     => 'blocking',
                     'requires_ledger'    => false,
-                    'unsupported_reason' => __( 'Elementor Pro Forms validation blocking is not supported in this release.', 'sentient-forms' ),
+                    'unsupported_reason' => null,
                 ],
                 Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => [
                     'supported'          => $has_pro_forms,
@@ -141,6 +143,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
+            'validation_effects'   => [
+                'field_errors'    => true,
+                'form_errors'     => true,
+                'submission_spam' => false,
+            ],
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,
@@ -170,7 +177,132 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return;
         }
 
+        add_action( self::NATIVE_VALIDATION_HOOK, [ $this, 'handle_validation' ], 10, 2 );
         add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_new_record' ], 10, 2 );
+    }
+
+    public function get_validation_native_hook(): string
+    {
+        return self::NATIVE_VALIDATION_HOOK;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_validation( mixed $native_validation, mixed $native_context = null ): array | WP_Error
+    {
+        if ( ! is_array( $native_validation ) || ! array_key_exists( 'record', $native_validation ) )
+        {
+            return new WP_Error( 'sentient_forms_elementor_invalid_validation', __( 'Elementor validation data is unavailable.', 'sentient-forms' ) );
+        }
+
+        $record  = $native_validation['record'];
+        $handler = $native_validation['handler'] ?? null;
+        $form_id = $this->resolve_form_id_from_record( $record, $handler );
+        if ( '' === $form_id )
+        {
+            return new WP_Error( 'sentient_forms_elementor_invalid_validation', __( 'Elementor validation is missing its form identity.', 'sentient-forms' ) );
+        }
+
+        $record_field_ids = [];
+        foreach ( $this->record_fields( $record ) as $field_key => $field )
+        {
+            $field_id = $this->record_field_id( $field_key, $field );
+            if ( '' !== $field_id )
+            {
+                $record_field_ids[] = $field_id;
+            }
+        }
+
+        return [
+            'form_id'        => $form_id,
+            'form'           => $this->form_snapshot( $form_id ),
+            'entry'          => $this->logical_fields_from_record( $record, $form_id ),
+            'native_context' => [
+                'record_field_ids' => array_values( array_unique( $record_field_ids ) ),
+                'widget_id'        => $this->record_widget_id( $record ),
+            ],
+        ];
+    }
+
+    public function apply_validation_result(
+        mixed $native_validation,
+        Sentient_Forms_Validation_Run_Result $result
+    ): mixed
+    {
+        if ( ! is_array( $native_validation ) )
+        {
+            return $native_validation;
+        }
+
+        $record  = $native_validation['record'] ?? null;
+        $handler = $native_validation['handler'] ?? null;
+        if ( ! is_object( $handler ) || ! method_exists( $handler, 'add_error' ) || ! method_exists( $handler, 'add_error_message' ) )
+        {
+            return $native_validation;
+        }
+
+        $native_field_ids = $this->validation_native_field_ids( $record );
+        foreach ( $result->get_field_errors() as $field_error )
+        {
+            if ( ! is_array( $field_error ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field_error['field_id'] ) && is_scalar( $field_error['field_id'] )
+                ? $this->exact_validation_field_id( $field_error['field_id'] )
+                : '';
+            $message = isset( $field_error['message'] ) && is_scalar( $field_error['message'] )
+                ? sanitize_text_field( (string) $field_error['message'] )
+                : '';
+            if ( '' === $field_id || '' === $message || ! array_key_exists( $field_id, $native_field_ids ) )
+            {
+                continue;
+            }
+
+            $handler->add_error( $native_field_ids[ $field_id ], $message );
+        }
+
+        $form_errors = [];
+        $form_error  = $result->get_form_error();
+        if ( null !== $form_error && '' !== $form_error )
+        {
+            $form_errors[] = sanitize_text_field( $form_error );
+        }
+        foreach ( $result->get_spam_classifications() as $classification )
+        {
+            if ( in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+            {
+                $form_errors[] = __( 'This submission could not be processed. Please review it and try again.', 'sentient-forms' );
+                break;
+            }
+        }
+
+        foreach ( array_values( array_unique( array_filter( $form_errors ) ) ) as $message )
+        {
+            $handler->add_error_message( $message );
+        }
+
+        return $native_validation;
+    }
+
+    public function apply_validation_entry_effects(
+        array $entry,
+        array $form,
+        Sentient_Forms_Validation_Run_Result $result
+    ): void
+    {
+    }
+
+    public function handle_validation( mixed $record, mixed $handler ): void
+    {
+        $native_validation = [
+            'record'  => $record,
+            'handler' => $handler,
+        ];
+        $result = $this->get_workflow_runner()->run_validation( $this, $native_validation );
+        $this->apply_validation_result( $native_validation, $result );
     }
 
     public function get_accepted_submission_native_hook(): string
@@ -474,6 +606,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         }
 
         $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $event_name );
+
+        if ( Sentient_Forms_Form_Source_Lifecycles::VALIDATION === $lifecycle_id )
+        {
+            return self::NATIVE_VALIDATION_HOOK;
+        }
 
         return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $lifecycle_id ? self::NATIVE_AFTER_SUBMISSION_HOOK : null;
     }
@@ -1696,6 +1833,68 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return is_array( $fields ) ? $fields : [];
     }
 
+    /**
+     * Resolve catalog field IDs to the exact record keys Elementor expects in
+     * Ajax_Handler::add_error(). Ambiguous aliases are intentionally omitted.
+     *
+     * @return array<string, string|int>
+     */
+    private function validation_native_field_ids( mixed $record ): array
+    {
+        $native_field_ids = [];
+        $ambiguous_ids    = [];
+
+        foreach ( $this->record_fields( $record ) as $native_field_id => $field )
+        {
+            if ( ! is_string( $native_field_id ) && ! is_int( $native_field_id ) )
+            {
+                continue;
+            }
+
+            $aliases = [ $this->exact_validation_field_id( $native_field_id ) ];
+            if ( is_array( $field ) )
+            {
+                foreach ( [ 'id', 'custom_id', 'field_id' ] as $id_key )
+                {
+                    if ( ! isset( $field[ $id_key ] ) || ! is_scalar( $field[ $id_key ] ) )
+                    {
+                        continue;
+                    }
+
+                    $aliases[] = $this->exact_validation_field_id( $field[ $id_key ] );
+                }
+            }
+            foreach ( array_values( array_unique( array_filter( $aliases ) ) ) as $alias )
+            {
+                if ( array_key_exists( $alias, $native_field_ids ) && $native_field_ids[ $alias ] !== $native_field_id )
+                {
+                    $ambiguous_ids[ $alias ] = true;
+                    continue;
+                }
+
+                $native_field_ids[ $alias ] = $native_field_id;
+            }
+        }
+
+        foreach ( array_keys( $ambiguous_ids ) as $ambiguous_id )
+        {
+            unset( $native_field_ids[ $ambiguous_id ] );
+        }
+
+        return $native_field_ids;
+    }
+
+    private function exact_validation_field_id( mixed $field_id ): string
+    {
+        if ( ! is_scalar( $field_id ) )
+        {
+            return '';
+        }
+
+        $field_id = strtolower( trim( (string) $field_id ) );
+        return 1 === preg_match( '/^[a-z0-9_-]+$/', $field_id ) ? $field_id : '';
+    }
+
     private function record_form_setting( mixed $record, string $key ): mixed
     {
         if ( is_object( $record ) && method_exists( $record, 'get_form_settings' ) )
@@ -1748,7 +1947,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private function record_post_id( mixed $record ): int
     {
-        foreach ( [ 'post_id', '_post_id', 'elementor_post_id', '_elementor_post_id', 'page_id' ] as $candidate_id )
+        foreach ( [ 'form_post_id', 'edit_post_id', 'post_id', '_post_id', 'elementor_post_id', '_elementor_post_id', 'page_id' ] as $candidate_id )
         {
             $value = $this->record_form_setting( $record, $candidate_id );
             if ( is_scalar( $value ) )
