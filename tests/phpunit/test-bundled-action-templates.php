@@ -66,6 +66,165 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         }
     }
 
+    public function test_bundled_actions_expose_the_canonical_product_policy_matrix(): void
+    {
+        $expected = [
+            'spam_detection_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'validation', 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [ 'spam_guidance_rationale_generation' ],
+                'enabled_facets' => [],
+            ],
+            'content_validation_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'field_errors' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'validation' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'entry_summary_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'sentiment_urgency_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'missing_information_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'pain_point_intent_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'routing_recommendation_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'toxicity_moderation_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'lead_grading_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'suggested_reply_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+            'clarification_assistant_v1' => [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'realtime_qna_storage' ],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'real_time' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ],
+        ];
+        $actual = [];
+
+        foreach ( Sentient_Forms_Bundled_Action_Templates::definitions() as $code => $definition )
+        {
+            $actual[ $code ] = [
+                'action_policy' => $definition['action_policy'] ?? null,
+                'allowed_facets' => $definition['allowed_facets'] ?? null,
+                'enabled_facets' => $definition['enabled_facets'] ?? null,
+            ];
+        }
+
+        $this->assertSame( $expected, $actual );
+
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog();
+        foreach ( $expected as $definition )
+        {
+            foreach ( $definition['allowed_facets'] as $facet_code )
+            {
+                $this->assertTrue( $facet_catalog->has( $facet_code ), $facet_code );
+            }
+        }
+    }
+
     public function test_bundled_effects_include_gravity_forms_entry_note_evidence_for_accepted_submissions(): void
     {
         $spam = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
