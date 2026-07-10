@@ -17,6 +17,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
         delete_option( 'sentient_forms_plugin_settings' );
         delete_option( 'sentient_forms_execution_event_retention_days' );
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
         delete_option( 'sentient_forms_delete_data_on_uninstall' );
         delete_option( 'sentient_forms_store_full_ai_outputs' );
         delete_option( 'sentient_forms_privacy_setup_profile' );
@@ -28,6 +29,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_settings' );
         delete_option( 'sentient_forms_plugin_settings' );
         delete_option( 'sentient_forms_execution_event_retention_days' );
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
         delete_option( 'sentient_forms_delete_data_on_uninstall' );
         delete_option( 'sentient_forms_store_full_ai_outputs' );
         delete_option( 'sentient_forms_privacy_setup_profile' );
@@ -51,6 +53,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
 
         $data = $response->get_data();
         $this->assertSame( 90, $data['execution_event_retention_days'] );
+        $this->assertSame( 90, $data['submission_ledger_retention_days'] );
         $this->assertTrue( $data['delete_data_on_uninstall'] );
         $this->assertFalse( $data['store_full_ai_outputs'] );
         $this->assertSame( 'balanced', $data['privacy_setup_profile'] );
@@ -103,6 +106,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
             [
                 'enable_logging'                 => false,
                 'execution_event_retention_days' => 30,
+                'submission_ledger_retention_days' => 180,
                 'delete_data_on_uninstall'       => true,
                 'store_full_ai_outputs'          => true,
             ]
@@ -114,17 +118,20 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertTrue( $data['success'] );
         $this->assertSame( 30, $data['settings']['execution_event_retention_days'] );
+        $this->assertSame( 180, $data['settings']['submission_ledger_retention_days'] );
         $this->assertTrue( $data['settings']['delete_data_on_uninstall'] );
         $this->assertTrue( $data['settings']['store_full_ai_outputs'] );
 
         $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
         $this->assertIsArray( $plugin_settings );
         $this->assertArrayNotHasKey( 'execution_event_retention_days', $plugin_settings );
+        $this->assertArrayNotHasKey( 'submission_ledger_retention_days', $plugin_settings );
         $this->assertArrayNotHasKey( 'delete_data_on_uninstall', $plugin_settings );
         $this->assertArrayNotHasKey( 'store_full_ai_outputs', $plugin_settings );
         $this->assertFalse( $plugin_settings['enable_logging'] );
 
         $this->assertSame( 30, Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days() );
+        $this->assertSame( 180, Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days() );
         $this->assertTrue( Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled() );
         $this->assertTrue( Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled() );
     }
@@ -161,6 +168,23 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertSame( 90, Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days() );
     }
 
+    public function test_settings_update_rejects_unsupported_submission_ledger_retention_window(): void
+    {
+        update_option( 'sentient_forms_submission_ledger_retention_days', 90 );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
+        $request->set_body_params(
+            [
+                'submission_ledger_retention_days' => 365,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 90, Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days() );
+    }
+
     public function test_settings_update_applies_privacy_setup_profile_defaults(): void
     {
         $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
@@ -176,6 +200,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertSame( 'maximum_visibility', $data['settings']['privacy_setup_profile'] );
         $this->assertSame( 180, $data['settings']['execution_event_retention_days'] );
+        $this->assertSame( 180, $data['settings']['submission_ledger_retention_days'] );
         $this->assertTrue( $data['settings']['delete_data_on_uninstall'] );
         $this->assertTrue( $data['settings']['store_full_ai_outputs'] );
         $this->assertNotNull( $data['settings']['privacy_setup_completed_at'] );
@@ -191,6 +216,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
     public function test_settings_update_applies_privacy_setup_profile_defaults_from_json_body(): void
     {
         update_option( 'sentient_forms_execution_event_retention_days', 30 );
+        update_option( 'sentient_forms_submission_ledger_retention_days', 7 );
         update_option( 'sentient_forms_delete_data_on_uninstall', false );
 
         $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
@@ -209,6 +235,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertSame( 'balanced', $data['settings']['privacy_setup_profile'] );
         $this->assertSame( 90, $data['settings']['execution_event_retention_days'] );
+        $this->assertSame( 90, $data['settings']['submission_ledger_retention_days'] );
         $this->assertTrue( $data['settings']['delete_data_on_uninstall'] );
         $this->assertFalse( $data['settings']['store_full_ai_outputs'] );
         $this->assertNotNull( $data['settings']['privacy_setup_completed_at'] );
@@ -216,5 +243,25 @@ class Tests_Settings_Controller extends WP_UnitTestCase
             $data['settings']['privacy_setup_completed_at'],
             get_option( 'sentient_forms_privacy_setup_completed_at' )
         );
+    }
+
+    public function test_independent_retention_updates_do_not_reapply_the_recorded_preset(): void
+    {
+        Sentient_Forms_Local_Data_Governance::apply_privacy_preset( 'balanced' );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
+        $request->set_body_params(
+            [
+                'submission_ledger_retention_days' => 30,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status() );
+
+        $settings = $response->get_data()['settings'];
+        $this->assertSame( 'balanced', $settings['privacy_setup_profile'] );
+        $this->assertSame( 90, $settings['execution_event_retention_days'] );
+        $this->assertSame( 30, $settings['submission_ledger_retention_days'] );
     }
 }

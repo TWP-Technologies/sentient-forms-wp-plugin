@@ -14,6 +14,12 @@ class Sentient_Forms_Installer
     private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
     private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
     private const NATIVE_CORRELATION_BACKFILL_VERSION = 'v1';
+    private const OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION = 'sentient_forms_submission_ledger_retention_backfill_version';
+    private const OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT = 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1';
+    private const OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR = 'sentient_forms_submission_ledger_retention_backfill_cursor_v1';
+    private const SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION = '2026.07.10.v1';
+    private const SUBMISSION_LEDGER_RETENTION_BACKFILL_BATCH_SIZE = 500;
+    private const SUBMISSION_LEDGER_RETENTION_BACKFILL_MAX_BATCHES = 4;
 
     public static function activate( bool $network_wide = false ): void
     {
@@ -112,6 +118,11 @@ class Sentient_Forms_Installer
             return;
         }
 
+        if ( ! self::backfill_submission_ledger_retention() )
+        {
+            return;
+        }
+
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
         {
@@ -149,6 +160,312 @@ class Sentient_Forms_Installer
         {
             update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
         }
+    }
+
+    /**
+     * Give existing Submission Ledger rows an expiry without allowing an
+     * upgrade to delete them less than 30 days after this migration runs.
+     */
+    private static function backfill_submission_ledger_retention(): bool
+    {
+        if ( self::SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION === get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION, '' ) )
+        {
+            return self::delete_submission_ledger_retention_backfill_progress();
+        }
+
+        $snapshot = self::get_or_create_submission_ledger_retention_backfill_snapshot();
+        if ( null === $snapshot )
+        {
+            return false;
+        }
+
+        $cursor = self::get_or_create_submission_ledger_retention_backfill_cursor( $snapshot['max_id'] );
+        if ( null === $cursor )
+        {
+            return false;
+        }
+
+        $batch_size = (int) apply_filters(
+            'sentient_forms_submission_ledger_retention_backfill_batch_size',
+            self::SUBMISSION_LEDGER_RETENTION_BACKFILL_BATCH_SIZE
+        );
+        $batch_size = max( 1, min( 1000, $batch_size ) );
+        $max_batches = (int) apply_filters(
+            'sentient_forms_submission_ledger_retention_backfill_max_batches',
+            self::SUBMISSION_LEDGER_RETENTION_BACKFILL_MAX_BATCHES
+        );
+        $max_batches = max( 1, min( 20, $max_batches ) );
+
+        for ( $batch = 0; $batch < $max_batches && $cursor < $snapshot['max_id']; $batch++ )
+        {
+            $ids = self::next_submission_ledger_retention_backfill_ids( $cursor, $snapshot['max_id'], $batch_size );
+            if ( null === $ids )
+            {
+                return false;
+            }
+
+            $last_id = [] === $ids ? $snapshot['max_id'] : max( $ids );
+            if ( [] !== $ids && ! self::apply_submission_ledger_retention_backfill_batch( $snapshot, $cursor, $last_id ) )
+            {
+                return false;
+            }
+
+            $persisted_cursor = self::persist_submission_ledger_retention_backfill_cursor( $last_id, $snapshot['max_id'] );
+            if ( null === $persisted_cursor )
+            {
+                return false;
+            }
+
+            $cursor = $persisted_cursor;
+        }
+
+        if ( $cursor < $snapshot['max_id'] )
+        {
+            return false;
+        }
+
+        update_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION, self::SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION, false );
+        if ( self::SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION !== get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_VERSION, '' ) )
+        {
+            return false;
+        }
+
+        return self::delete_submission_ledger_retention_backfill_progress();
+    }
+
+    /**
+     * @return array{migration_time: string, migration_floor: string, retention_days: int, max_id: int}|null
+     */
+    private static function get_or_create_submission_ledger_retention_backfill_snapshot(): ?array
+    {
+        $stored = get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT, null );
+        if ( null !== $stored )
+        {
+            return self::normalize_submission_ledger_retention_backfill_snapshot( $stored );
+        }
+
+        global $wpdb;
+
+        $wpdb->last_error = '';
+        $max_id = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COALESCE(MAX(id), 0) FROM %i',
+                $wpdb->prefix . 'sentient_submission_ledger'
+            )
+        );
+        if ( '' !== $wpdb->last_error || ! is_numeric( $max_id ) )
+        {
+            return null;
+        }
+
+        $migration_time = (string) apply_filters(
+            'sentient_forms_submission_ledger_retention_migration_time',
+            current_time( 'mysql', true )
+        );
+        $migration_timestamp = strtotime( $migration_time . ' UTC' );
+        if ( false === $migration_timestamp )
+        {
+            $migration_timestamp = time();
+        }
+
+        $snapshot = [
+            'migration_time'  => gmdate( 'Y-m-d H:i:s', $migration_timestamp ),
+            'migration_floor' => gmdate( 'Y-m-d H:i:s', $migration_timestamp + ( 30 * DAY_IN_SECONDS ) ),
+            'retention_days'  => Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days(),
+            'max_id'          => max( 0, (int) $max_id ),
+        ];
+
+        if ( add_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT, $snapshot, '', false ) )
+        {
+            return $snapshot;
+        }
+
+        return self::normalize_submission_ledger_retention_backfill_snapshot(
+            get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT, null )
+        );
+    }
+
+    /**
+     * @return array{migration_time: string, migration_floor: string, retention_days: int, max_id: int}|null
+     */
+    private static function normalize_submission_ledger_retention_backfill_snapshot( mixed $snapshot ): ?array
+    {
+        if ( ! is_array( $snapshot ) )
+        {
+            return null;
+        }
+
+        $migration_time  = $snapshot['migration_time'] ?? null;
+        $migration_floor = $snapshot['migration_floor'] ?? null;
+        $retention_days  = $snapshot['retention_days'] ?? null;
+        $max_id          = $snapshot['max_id'] ?? null;
+        $is_mysql_time   = static fn ( mixed $value ): bool => is_string( $value )
+            && 1 === preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value );
+
+        if (
+            ! $is_mysql_time( $migration_time )
+            || ! $is_mysql_time( $migration_floor )
+            || ! is_numeric( $retention_days )
+            || ! in_array( (int) $retention_days, Sentient_Forms_Local_Data_Governance::submission_ledger_retention_choices(), true )
+            || ! is_numeric( $max_id )
+            || (int) $max_id < 0
+        )
+        {
+            return null;
+        }
+
+        return [
+            'migration_time'  => $migration_time,
+            'migration_floor' => $migration_floor,
+            'retention_days'  => (int) $retention_days,
+            'max_id'          => (int) $max_id,
+        ];
+    }
+
+    private static function get_or_create_submission_ledger_retention_backfill_cursor( int $max_id ): ?int
+    {
+        $cursor = get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, null );
+        if ( null === $cursor )
+        {
+            add_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, 0, '', false );
+            $cursor = get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, null );
+        }
+
+        if ( ! is_numeric( $cursor ) || (int) $cursor < 0 || (int) $cursor > $max_id )
+        {
+            return null;
+        }
+
+        return (int) $cursor;
+    }
+
+    /**
+     * @return array<int, int>|null
+     */
+    private static function next_submission_ledger_retention_backfill_ids( int $cursor, int $max_id, int $batch_size ): ?array
+    {
+        global $wpdb;
+
+        $wpdb->last_error = '';
+        $ids = $wpdb->get_col(
+            $wpdb->prepare(
+                'SELECT id FROM %i WHERE id > %d AND id <= %d ORDER BY id ASC LIMIT %d',
+                $wpdb->prefix . 'sentient_submission_ledger',
+                $cursor,
+                $max_id,
+                $batch_size
+            )
+        );
+        if ( '' !== $wpdb->last_error || ! is_array( $ids ) )
+        {
+            return null;
+        }
+
+        return array_values( array_map( 'absint', $ids ) );
+    }
+
+    /**
+     * @param array{migration_time: string, migration_floor: string, retention_days: int, max_id: int} $snapshot
+     */
+    private static function apply_submission_ledger_retention_backfill_batch( array $snapshot, int $cursor, int $last_id ): bool
+    {
+        global $wpdb;
+
+        if ( 0 === $snapshot['retention_days'] )
+        {
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET expires_at = NULL WHERE id > %d AND id <= %d AND id <= %d',
+                    $wpdb->prefix . 'sentient_submission_ledger',
+                    $cursor,
+                    $last_id,
+                    $snapshot['max_id']
+                )
+            );
+        }
+        else
+        {
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i
+                    SET expires_at = CASE
+                        WHEN DATE_ADD(captured_at, INTERVAL %d DAY) > %s
+                            THEN DATE_ADD(captured_at, INTERVAL %d DAY)
+                        ELSE %s
+                    END
+                    WHERE id > %d AND id <= %d AND id <= %d',
+                    $wpdb->prefix . 'sentient_submission_ledger',
+                    $snapshot['retention_days'],
+                    $snapshot['migration_floor'],
+                    $snapshot['retention_days'],
+                    $snapshot['migration_floor'],
+                    $cursor,
+                    $last_id,
+                    $snapshot['max_id']
+                )
+            );
+        }
+
+        return false !== $updated;
+    }
+
+    private static function persist_submission_ledger_retention_backfill_cursor( int $cursor, int $max_id ): ?int
+    {
+        $allowed = (bool) apply_filters(
+            'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist',
+            true,
+            $cursor,
+            $max_id
+        );
+        if ( ! $allowed )
+        {
+            return null;
+        }
+
+        $stored_cursor = get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, null );
+        if ( ! is_numeric( $stored_cursor ) )
+        {
+            return null;
+        }
+
+        if ( (int) $stored_cursor < $cursor )
+        {
+            global $wpdb;
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The migration cursor needs a monotonic compare-and-set across concurrent upgrade requests.
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET option_value = %s WHERE option_name = %s AND CAST(option_value AS UNSIGNED) < %d',
+                    $wpdb->options,
+                    (string) $cursor,
+                    self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR,
+                    $cursor
+                )
+            );
+            if ( false === $updated )
+            {
+                return null;
+            }
+
+            wp_cache_delete( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, 'options' );
+        }
+
+        $persisted_cursor = get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, null );
+        if ( ! is_numeric( $persisted_cursor ) || (int) $persisted_cursor < $cursor || (int) $persisted_cursor > $max_id )
+        {
+            return null;
+        }
+
+        return (int) $persisted_cursor;
+    }
+
+    private static function delete_submission_ledger_retention_backfill_progress(): bool
+    {
+        delete_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT );
+        delete_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR );
+
+        return null === get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_SNAPSHOT, null )
+            && null === get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_BACKFILL_CURSOR, null );
     }
 
     private static function create_async_requests_table(): void
