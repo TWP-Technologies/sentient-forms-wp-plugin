@@ -46,6 +46,10 @@ if ( ! class_exists( 'Sentient_Forms_Test_Accepted_Submission_Adapter' ) )
                 ],
                 'logical_fields' => [ 'message' => 'Accepted fixture submission' ],
                 'files'          => [],
+                'native_entry_id' => 'fixture-entry-99',
+                'native_entry_url' => 'https://example.test/fixture-forms/entries/fixture-entry-99',
+                'source_submitted_at' => '2026-07-10 09:45:00',
+                'provider_metadata' => [ 'form_name' => 'Fixture Form' ],
             ];
         }
     }
@@ -161,7 +165,15 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'fixture_forms', $scheduled_jobs[0]['args']['context']['form_source'] ?? null );
         $this->assertSame( 'fixture_forms_submission_accepted', $scheduled_jobs[0]['args']['context']['hook'] ?? null );
         $this->assertSame( $submission_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
+        $this->assertSame( 'fixture-entry-99', $scheduled_jobs[0]['args']['context']['entry_id'] ?? null );
         $this->assertSame( 'Accepted fixture submission', $scheduled_jobs[0]['args']['data']['entry']['message'] ?? null );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( 'fixture-entry-99', $stored['native_entry_id'] ?? null );
+        $this->assertSame( 'https://example.test/fixture-forms/entries/fixture-entry-99', $stored['native_entry_url'] ?? null );
+        $this->assertSame( '2026-07-10 09:45:00', $stored['source_submitted_at'] ?? null );
+        $this->assertSame( 'Fixture Form', $stored['provider_metadata_json']['form_name'] ?? null );
     }
 
     public function test_form_source_workflow_runner_remains_lifecycle_neutral(): void

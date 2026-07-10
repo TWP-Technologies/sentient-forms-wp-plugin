@@ -65,18 +65,29 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return null;
         }
 
-        $captured = $capture_service->capture(
-            [
-                'form_source'    => $form_source,
-                'form_id'        => $form_id,
-                'logical_fields' => isset( $normalized['logical_fields'] ) && is_array( $normalized['logical_fields'] )
-                    ? $normalized['logical_fields']
-                    : [],
-                'files'          => isset( $normalized['files'] ) && is_array( $normalized['files'] )
-                    ? $normalized['files']
-                    : [],
-            ]
-        );
+        $capture_payload = [
+            'form_source'    => $form_source,
+            'form_id'        => $form_id,
+            'logical_fields' => isset( $normalized['logical_fields'] ) && is_array( $normalized['logical_fields'] )
+                ? $normalized['logical_fields']
+                : [],
+            'files'          => isset( $normalized['files'] ) && is_array( $normalized['files'] )
+                ? $normalized['files']
+                : [],
+        ];
+        foreach ( [ 'native_entry_id', 'native_entry_url', 'source_submitted_at' ] as $identity_key )
+        {
+            if ( isset( $normalized[ $identity_key ] ) && is_scalar( $normalized[ $identity_key ] ) )
+            {
+                $capture_payload[ $identity_key ] = (string) $normalized[ $identity_key ];
+            }
+        }
+        if ( isset( $normalized['provider_metadata'] ) && is_array( $normalized['provider_metadata'] ) )
+        {
+            $capture_payload['provider_metadata'] = $normalized['provider_metadata'];
+        }
+
+        $captured = $capture_service->capture( $capture_payload );
         if ( is_wp_error( $captured ) )
         {
             return null;
@@ -101,7 +112,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $form_id,
             $adapter->get_accepted_submission_native_hook(),
             $form,
-            $this->ledger_entry_snapshot( $form_source, $form_id, $captured, $submission_uuid ),
+            $this->ledger_entry_snapshot( $form_source, $form_id, $form, $captured, $submission_uuid ),
             $submission_uuid,
             $settings
         );
@@ -176,6 +187,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
         $mapping_outcomes      = [];
         $execution_request_ids = [];
+        $native_entry_id       = isset( $entry['id'] ) && is_scalar( $entry['id'] ) && '' !== (string) $entry['id']
+            ? sanitize_text_field( (string) $entry['id'] )
+            : null;
 
         foreach ( (array) ( $plan['order'] ?? [] ) as $mapping_id )
         {
@@ -276,7 +290,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'mapping_id'        => (string) $mapping_id,
                     'local_mapping_id'  => (string) $mapping_id,
                     'form_id'           => $form_id,
-                    'entry_id'          => null,
+                    'entry_id'          => $native_entry_id,
                     'submission_uuid'   => $submission_uuid,
                     'central_action_id' => $central_action_id,
                     'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
@@ -724,6 +738,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
     private function ledger_entry_snapshot(
         string $form_source,
         string $form_id,
+        array $form,
         array $captured,
         string $submission_uuid
     ): array
@@ -731,17 +746,97 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $entry = isset( $captured['logical_fields_json'] ) && is_array( $captured['logical_fields_json'] )
             ? $captured['logical_fields_json']
             : [];
+        $entry = $this->add_form_field_aliases( $entry, $form );
         if ( isset( $captured['file_refs_json'] ) && is_array( $captured['file_refs_json'] ) )
         {
             $entry['file_refs'] = $captured['file_refs_json'];
         }
 
-        $entry['id']              = null;
+        $entry['id']              = isset( $captured['native_entry_id'] ) && is_scalar( $captured['native_entry_id'] ) && '' !== (string) $captured['native_entry_id']
+            ? sanitize_text_field( (string) $captured['native_entry_id'] )
+            : null;
         $entry['submission_uuid'] = $submission_uuid;
         $entry['form_source']     = $form_source;
         $entry['form_id']         = $form_id;
+        $entry['native_entry_url'] = isset( $captured['native_entry_url'] ) && is_scalar( $captured['native_entry_url'] ) && '' !== (string) $captured['native_entry_url']
+            ? esc_url_raw( (string) $captured['native_entry_url'] )
+            : null;
 
         return $entry;
+    }
+
+    /**
+     * Add source-native field identifiers as runtime aliases without changing
+     * the canonical ledger field storage.
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $form
+     *
+     * @return array<string, mixed>
+     */
+    private function add_form_field_aliases( array $entry, array $form ): array
+    {
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            if ( ! is_array( $field ) || empty( $field['storage_eligible'] ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] )
+                ? sanitize_text_field( (string) $field['id'] )
+                : '';
+            if ( '' === $field_id || array_key_exists( $field_id, $entry ) )
+            {
+                continue;
+            }
+
+            foreach ( $this->form_field_storage_keys( $field, $field_id ) as $storage_key )
+            {
+                if ( array_key_exists( $storage_key, $entry ) )
+                {
+                    $entry[ $field_id ] = $entry[ $storage_key ];
+                    break;
+                }
+            }
+        }
+
+        return $entry;
+    }
+
+    /**
+     * @param array<string, mixed> $field
+     *
+     * @return array<int, string>
+     */
+    private function form_field_storage_keys( array $field, string $field_id ): array
+    {
+        $keys = [];
+        foreach ( [ 'label', 'name', 'admin_label', 'adminLabel' ] as $label_key )
+        {
+            if ( ! isset( $field[ $label_key ] ) || ! is_scalar( $field[ $label_key ] ) )
+            {
+                continue;
+            }
+
+            $label = sanitize_text_field( (string) $field[ $label_key ] );
+            if ( 'adminLabel' === $label_key && str_contains( $label, ': ' ) )
+            {
+                $label = substr( $label, strpos( $label, ': ' ) + 2 );
+            }
+
+            $key = sanitize_key( str_replace( [ ' ', '.', '-' ], '_', strtolower( $label ) ) );
+            if ( '' !== $key )
+            {
+                $keys[] = $key;
+                $keys[] = sanitize_key( $key . '_field_' . str_replace( '.', '_', $field_id ) );
+            }
+        }
+
+        $keys[] = sanitize_key( 'field_' . str_replace( '.', '_', $field_id ) );
+
+        return array_values( array_unique( array_filter( $keys ) ) );
     }
 
     /**

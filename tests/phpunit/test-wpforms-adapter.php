@@ -10,6 +10,8 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_wpforms_native_entry_available' );
         remove_all_filters( 'sentient_forms_wpforms_hidden_field_storage_allowlist' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
+        remove_all_actions( 'wpforms_process' );
+        remove_all_actions( 'wpforms_process_complete' );
 
         foreach ( [ 44, 48, 49, 50 ] as $form_id )
         {
@@ -41,6 +43,21 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         }
 
         parent::tearDown();
+    }
+
+    public function test_wpforms_exposes_only_process_complete_as_accepted_submission_hook(): void
+    {
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $adapter = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+
+        $this->assertInstanceOf( Sentient_Forms_Accepted_Submission_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpforms_process_complete', $adapter->get_accepted_submission_native_hook() );
+
+        $adapter->init();
+
+        $this->assertSame( 10, has_action( 'wpforms_process_complete', [ $adapter, 'handle_process_complete' ] ) );
+        $this->assertFalse( has_action( 'wpforms_process', [ $adapter, 'handle_process_complete' ] ) );
     }
 
     public function test_wpforms_field_manifest_marks_logical_hidden_and_file_fields(): void
@@ -635,31 +652,35 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
 
         add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
 
-        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
-        $submission_uuid = $adapter->handle_process_complete(
-            [
-                1 => [
-                    'id'    => 1,
-                    'name'  => 'Full Name',
-                    'type'  => 'name',
-                    'value' => 'Ada Lovelace',
-                ],
-                2 => [
-                    'id'    => 2,
-                    'name'  => 'Message',
-                    'type'  => 'textarea',
-                    'value' => 'Summarize this WPForms submission.',
-                ],
+        $fields = [
+            1 => [
+                'id'    => 1,
+                'name'  => 'Full Name',
+                'type'  => 'name',
+                'value' => 'Ada Lovelace',
             ],
-            [],
-            [
-                'id'       => 48,
-                'settings' => [
-                    'form_title' => 'WPForms Option Backed Execution',
-                ],
+            2 => [
+                'id'    => 2,
+                'name'  => 'Message',
+                'type'  => 'textarea',
+                'value' => 'Summarize this WPForms submission.',
             ],
-            781
-        );
+        ];
+        $form_data = [
+            'id'       => 48,
+            'settings' => [
+                'form_title' => 'WPForms Option Backed Execution',
+            ],
+        ];
+
+        $adapter = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        do_action( 'wpforms_process', $fields, [], $form_data );
+        $this->assertSame( [], $scheduled_jobs );
+
+        do_action( 'wpforms_process_complete', $fields, [], $form_data, 781 );
+        $submission_uuid = $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null;
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
