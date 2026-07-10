@@ -317,6 +317,16 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['native_enrichment']['spam'] );
     }
 
+    public function test_registry_exposes_gravity_validation_through_optional_contracts(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $adapter  = $registry->get_adapter_by_id( 'gravity_forms' );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'gform_validation', $adapter->get_validation_native_hook() );
+    }
+
     public function test_contact_form_7_absent_descriptor_requires_ledger_and_hides_gravity_only_capabilities(): void
     {
         $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );

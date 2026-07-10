@@ -321,6 +321,8 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
 
     public bool $throw_on_notification_dispatch = false;
 
+    public int $spam_marks = 0;
+
     public function get_capability_descriptor(): array
     {
         $descriptor = parent::get_capability_descriptor();
@@ -356,6 +358,7 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
         }
 
         ++$this->spam_status_updates;
+        ++$this->spam_marks;
         $this->entries[ $entry_id ]['status'] = 'spam';
 
         return true;
@@ -645,6 +648,336 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
 
         $this->assertSame( 2, $accepted_args );
+    }
+
+    public function test_gravity_forms_validation_hook_uses_shared_runner_with_actual_context_and_native_content_errors(): void
+    {
+        $form_id    = 7901;
+        $action_id  = 'shared_validation_context';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $seen       = [];
+        $executions = 0;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static function ( array $form_data ) use ( &$seen, &$executions ): array {
+                    $seen = $form_data;
+                    ++$executions;
+
+                    return [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'is_valid' => false,
+                                'message'  => 'Please describe a real project.',
+                                'fields'   => [
+                                    [
+                                        'field_id' => '3',
+                                        'is_valid' => false,
+                                        'message'  => 'Tell us what you need built.',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ];
+                },
+                [ 'gform_validation' ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_content' => [
+                    'local_mapping_id'           => 'map_content',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        $field = (object) [
+            'id'                 => 3,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+        $native_context = [ 'source' => 'form-submit', 'page_number' => 2 ];
+        $validation     = [
+            'is_valid' => true,
+            'form'     => [
+                'id'                => $form_id,
+                'failed_validation' => false,
+                'fields'            => [ $field ],
+            ],
+        ];
+        $this->adapter->register_hooks();
+
+        global $wp_filter;
+        $accepted_args = null;
+        foreach ( (array) ( $wp_filter['gform_validation']->callbacks[10] ?? [] ) as $callback )
+        {
+            if ( [ $this->adapter, 'handle_validation' ] === ( $callback['function'] ?? null ) )
+            {
+                $accepted_args = $callback['accepted_args'] ?? null;
+                break;
+            }
+        }
+
+        $result = $this->adapter->handle_validation( $validation, $native_context );
+        $replay = $this->adapter->handle_validation( $validation, $native_context );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $this->adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $this->adapter );
+        $this->assertSame( 2, $accepted_args );
+        $this->assertSame( 'gform_validation', $seen['hook'] ?? null );
+        $this->assertSame( 'gravity_forms', $seen['form_source'] ?? null );
+        $this->assertSame( $native_context, $seen['execution_context']['native_validation_context'] ?? null );
+        $this->assertSame( 1, $executions );
+        $this->assertFalse( $result['is_valid'] );
+        $this->assertTrue( $result['form']['failed_validation'] );
+        $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
+        $this->assertFalse( $replay['is_valid'] );
+
+        delete_option( $option_key );
+    }
+
+    public function test_shared_validation_result_fails_open_and_blocks_dependents_without_exposing_provider_error(): void
+    {
+        $form_id      = 7902;
+        $failing_id   = 'shared_validation_timeout';
+        $dependent_id = 'shared_validation_dependent';
+        $option_key   = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $calls        = [];
+        delete_option( 'sentient_forms_action_log' );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $failing_id,
+                static function () use ( &$calls ): WP_Error {
+                    $calls[] = 'failing';
+
+                    return new WP_Error( 'provider_TIMEOUT!', 'RAW_PROVIDER_TIMEOUT_7902 with submitted private content.' );
+                },
+                [ 'gform_validation' ]
+            )
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $dependent_id,
+                static function () use ( &$calls ): array {
+                    $calls[] = 'dependent';
+
+                    return [ 'validation' => [ 'is_valid' => false, 'message' => 'Must never be shown.' ] ];
+                },
+                [ 'gform_validation' ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_failure' => [
+                    'local_mapping_id'           => 'map_failure',
+                    'central_action_id'          => $failing_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'fail_open'                  => false,
+                    'settings'                   => [ 'async' => false ],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => $dependent_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [
+                        'async'          => false,
+                        'dependency_ids' => [ 'map_failure' ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+        $native_result = $this->adapter->apply_validation_result( $validation, $outcome );
+        $logs          = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Run_Result::class, $outcome );
+        $this->assertSame( [ 'failing' ], $calls );
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['map_failure'] ?? null );
+        $this->assertSame( 'skipped', $outcome->get_mapping_outcomes()['map_dependent'] ?? null );
+        $this->assertSame( 'provider_timeout', $outcome->get_errors()['map_failure']['code'] ?? null );
+        $this->assertSame( $validation, $native_result );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'Validation action failed open.', $logs[0]['error_message'] ?? null );
+        $this->assertStringNotContainsString( 'RAW_PROVIDER_TIMEOUT_7902', (string) wp_json_encode( $logs ) );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_validation_log_marks_unrecognized_fail_open_completion_as_structurally_invalid(): void
+    {
+        $form_id    = 7904;
+        $action_id  = 'shared_validation_unstructured';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $secret     = 'RAW_PROVIDER_UNSTRUCTURED_7904';
+        delete_option( 'sentient_forms_action_log' );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static fn (): array => [
+                    'content'          => $secret,
+                    'provider_payload' => [ 'raw' => $secret ],
+                ],
+                [ 'gform_validation' ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_unstructured' => [
+                    'local_mapping_id'           => 'map_unstructured',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $result = $this->adapter->handle_validation( $validation, [ 'source' => 'form-submit' ] );
+        $logs   = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertSame( $validation, $result );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'success', $logs[0]['status'] ?? null );
+        $this->assertFalse( $logs[0]['structured_output_valid'] ?? true );
+        $this->assertStringNotContainsString( $secret, (string) wp_json_encode( $logs ) );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_validation_log_marks_recognized_content_schema_as_structurally_valid(): void
+    {
+        $form_id    = 7905;
+        $action_id  = 'shared_validation_recognized';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        delete_option( 'sentient_forms_action_log' );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static fn (): array => [
+                    'validation' => [
+                        'is_valid' => true,
+                        'message'  => '',
+                        'fields'   => [],
+                    ],
+                ],
+                [ 'gform_validation' ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_recognized' => [
+                    'local_mapping_id'           => 'map_recognized',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $result = $this->adapter->handle_validation( $validation, [ 'source' => 'form-submit' ] );
+        $logs   = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertSame( $validation, $result );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'success', $logs[0]['status'] ?? null );
+        $this->assertTrue( $logs[0]['structured_output_valid'] ?? false );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_valid_spam_classification_bridges_once_to_saved_gravity_entry(): void
+    {
+        $form_id    = 7903;
+        $entry_id   = 17903;
+        $action_id  = 'shared_validation_spam';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static fn (): array => [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'Known spam fixture.',
+                        ],
+                    ],
+                ],
+                [ 'gform_validation' ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'action_name_label'          => 'Spam Detection',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $result = $adapter->handle_validation( $validation, [ 'source' => 'form-submit' ] );
+        $entry  = $adapter->entries[ $entry_id ];
+        $form   = [ 'id' => $form_id, 'fields' => [] ];
+        $adapter->handle_validation_entry_post_save( $entry, $form );
+        $adapter->handle_validation_entry_post_save( $entry, $form );
+
+        $this->assertSame( $validation, $result );
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] );
+        $this->assertSame( 1, $adapter->spam_marks );
+
+        delete_option( $option_key );
     }
 
     public function test_gravity_forms_normalizes_accepted_entry_for_shared_runner(): void
@@ -4790,7 +5123,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     /**
      * Test fail-closed mode blocks submission on CPS error.
      */
-    public function test_fail_closed_blocks_submission_on_cps_error(): void
+    public function test_legacy_fail_closed_setting_cannot_block_submission_on_cps_error(): void
     {
         $method = new ReflectionMethod( $this->adapter, 'apply_cps_validation_response' );
         $method->setAccessible( true );
@@ -4807,9 +5140,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $result = $method->invoke( $this->adapter, $validation_result, $error, $action_settings );
 
-        // With fail-open disabled, submission should be blocked
-        $this->assertFalse( $result['is_valid'] );
-        $this->assertTrue( $result['form']['failed_validation'] );
+        $this->assertTrue( $result['is_valid'] );
+        $this->assertFalse( $result['form']['failed_validation'] );
     }
 
     /**

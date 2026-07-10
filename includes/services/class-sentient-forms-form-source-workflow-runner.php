@@ -23,6 +23,12 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
     private ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service;
 
+    /** @var array<string, array<string, mixed>|bool|WP_Error> */
+    private array $validation_execution_cache = [];
+
+    /** @var array<string, true> */
+    private array $validation_logged_request_ids = [];
+
     public function __construct(
         Sentient_Forms_Plugin $plugin,
         ?Sentient_Forms_Submission_Ledger_Capture_Service $capture_service = null,
@@ -34,6 +40,507 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $this->capture_service           = $capture_service;
         $this->runtime_settings_resolver = $runtime_settings_resolver ?? new Sentient_Forms_Action_Runtime_Settings_Resolver();
         $this->local_execution_service   = $local_execution_service;
+    }
+
+    /**
+     * Execute one source-normalized visitor-validation workflow.
+     */
+    public function run_validation(
+        Sentient_Forms_Validation_Adapter_Interface $adapter,
+        mixed $native_validation,
+        mixed $native_context = null
+    ): Sentient_Forms_Validation_Run_Result
+    {
+        if ( ! $adapter->is_active() )
+        {
+            return new Sentient_Forms_Validation_Run_Result();
+        }
+
+        $normalized = $adapter->normalize_validation( $native_validation, $native_context );
+        if ( is_wp_error( $normalized ) )
+        {
+            return new Sentient_Forms_Validation_Run_Result();
+        }
+
+        $form_source = sanitize_key( $adapter->get_id() );
+        $form_id     = isset( $normalized['form_id'] ) && is_scalar( $normalized['form_id'] )
+            ? sanitize_text_field( (string) $normalized['form_id'] )
+            : '';
+        $form        = isset( $normalized['form'] ) && is_array( $normalized['form'] ) ? $normalized['form'] : [];
+        $entry       = isset( $normalized['entry'] ) && is_array( $normalized['entry'] ) ? $normalized['entry'] : [];
+        $native_hook = sanitize_key( $adapter->get_validation_native_hook() );
+        if ( '' === $form_source || '' === $form_id || [] === $form || '' === $native_hook )
+        {
+            return new Sentient_Forms_Validation_Run_Result();
+        }
+
+        $settings = $this->get_form_settings( $form_source, $form_id );
+        if ( [] === $settings || ! empty( $this->get_execution_disable_flags( $form_source, $settings )['effective_disabled'] ) )
+        {
+            return new Sentient_Forms_Validation_Run_Result();
+        }
+
+        $plan = $this->plugin->get_mapping_dependency_planner()->build_execution_plan(
+            $settings,
+            Sentient_Forms_Form_Source_Lifecycles::VALIDATION
+        );
+        $mapping_outcomes      = [];
+        $resolved_mappings     = [];
+        $execution_results     = [];
+        $errors                = [];
+        $field_errors          = [];
+        $form_error            = null;
+        $spam_classifications  = [];
+        $execution_request_ids = [];
+
+        foreach ( (array) ( $plan['cycle_ids'] ?? [] ) as $cycle_id )
+        {
+            if ( is_scalar( $cycle_id ) )
+            {
+                $mapping_outcomes[ (string) $cycle_id ] = 'skipped';
+            }
+        }
+
+        foreach ( (array) ( $plan['order'] ?? [] ) as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
+            {
+                continue;
+            }
+
+            $mapping = $this->runtime_settings_resolver->resolve_mapping( $node['mapping'], $form_source, $form_id );
+            $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
+            $resolved_mappings[ (string) $mapping_id ] = $mapping;
+            $action_id = $this->central_action_id( $mapping );
+            if ( '' === $action_id )
+            {
+                continue;
+            }
+
+            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+                $action_id,
+                $form,
+                $entry,
+                [
+                    'hook'        => $native_hook,
+                    'form_source' => $form_source,
+                    'action_id'   => (string) $mapping_id,
+                    'mapping_id'  => (string) $mapping_id,
+                ]
+            );
+        }
+
+        foreach ( (array) ( $plan['order'] ?? [] ) as $mapping_id )
+        {
+            $mapping_key = (string) $mapping_id;
+            $node        = $plan['nodes'][ $mapping_id ] ?? null;
+            if (
+                ! is_array( $node )
+                || ! isset( $node['mapping'] )
+                || ! is_array( $node['mapping'] )
+                || empty( $node['enabled'] )
+                || empty( $node['hook_enabled'] )
+                || $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::VALIDATION )
+            )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'skipped';
+                continue;
+            }
+
+            $mapping  = $resolved_mappings[ $mapping_key ] ?? [];
+            $action_id = $this->central_action_id( $mapping );
+            if ( '' === $action_id )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'failed';
+                continue;
+            }
+
+            $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+            if ( null !== $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes, false ) )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'skipped';
+                continue;
+            }
+            if ( $this->should_skip_for_upstream_spam( $dependency_ids, $resolved_mappings, $execution_results, $mapping ) )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'skipped';
+                continue;
+            }
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $mapping, $entry ) )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'skipped';
+                continue;
+            }
+
+            $dependency_context = $this->dependency_context(
+                $mapping_key,
+                $dependency_ids,
+                $mapping_outcomes,
+                $execution_request_ids,
+                $mapping
+            );
+            $dependency_context['native_validation_context'] = $normalized['native_context'] ?? $native_context;
+            $request_id = $execution_request_ids[ $mapping_key ] ?? '';
+            $result     = $this->validation_execution_cache[ $request_id ] ?? null;
+            if ( ! array_key_exists( $request_id, $this->validation_execution_cache ) )
+            {
+                $result = $this->execute_validation_mapping(
+                    $action_id,
+                    $form_source,
+                    $form_id,
+                    $native_hook,
+                    $form,
+                    $entry,
+                    $mapping_key,
+                    $mapping,
+                    $dependency_context
+                );
+                if ( '' !== $request_id )
+                {
+                    $this->validation_execution_cache[ $request_id ] = $result;
+                }
+            }
+
+            if ( is_wp_error( $result ) )
+            {
+                $mapping_outcomes[ $mapping_key ] = 'failed';
+                $errors[ $mapping_key ] = [
+                    'code'    => $this->safe_error_code( $result, 'validation_action_failed' ),
+                    'message' => __( 'Validation action failed open.', 'sentient-forms' ),
+                ];
+                $this->log_validation_failure(
+                    $form_source,
+                    $form_id,
+                    $mapping_key,
+                    $mapping,
+                    $request_id,
+                    $errors[ $mapping_key ]['code']
+                );
+                continue;
+            }
+
+            $mapping_outcomes[ $mapping_key ] = 'succeeded';
+            $execution_results[ $mapping_key ] = $result;
+            $classification = is_array( $result ) ? $this->extract_spam_classification( $result ) : '';
+            if ( '' !== $classification )
+            {
+                $spam_classifications[ $mapping_key ] = $classification;
+            }
+
+            $validation = is_array( $result ) ? $this->extract_validation_payload( $result ) : null;
+            if ( is_array( $validation ) && false === ( $validation['is_valid'] ?? true ) )
+            {
+                $message = sanitize_text_field( (string) ( $validation['message'] ?? '' ) );
+                if ( '' !== $message && null === $form_error )
+                {
+                    $form_error = $message;
+                }
+                foreach ( (array) ( $validation['fields'] ?? [] ) as $field_error )
+                {
+                    if ( ! is_array( $field_error ) )
+                    {
+                        continue;
+                    }
+                    $field_id     = isset( $field_error['field_id'] ) && is_scalar( $field_error['field_id'] )
+                        ? sanitize_text_field( (string) $field_error['field_id'] )
+                        : '';
+                    $field_message = isset( $field_error['message'] ) && is_scalar( $field_error['message'] )
+                        ? sanitize_text_field( (string) $field_error['message'] )
+                        : '';
+                    if ( '' !== $field_id && '' !== $field_message )
+                    {
+                        $field_errors[] = [ 'field_id' => $field_id, 'message' => $field_message ];
+                    }
+                }
+            }
+
+            $this->log_validation_success(
+                $form_source,
+                $form_id,
+                $mapping_key,
+                $mapping,
+                $request_id,
+                is_array( $result ) ? $result : [],
+                is_array( $validation ) && false === ( $validation['is_valid'] ?? true )
+            );
+        }
+
+        return new Sentient_Forms_Validation_Run_Result(
+            $mapping_outcomes,
+            $resolved_mappings,
+            $execution_results,
+            $errors,
+            $form_error,
+            $field_errors,
+            $spam_classifications,
+            $execution_request_ids
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $form
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $dependency_context
+     *
+     * @return array<string, mixed>|bool|WP_Error
+     */
+    private function execute_validation_mapping(
+        string $action_id,
+        string $form_source,
+        string $form_id,
+        string $native_hook,
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $mapping,
+        array $dependency_context
+    ): array | bool | WP_Error
+    {
+        if ( $this->is_local_first_mapping( $mapping ) )
+        {
+            $local_mapping_id = absint( $mapping['local_form_mapping_id'] ?? 0 );
+            if ( $local_mapping_id <= 0 )
+            {
+                return new WP_Error( 'sentient_forms_missing_local_mapping_id', __( 'Local form mapping id is missing.', 'sentient-forms' ) );
+            }
+
+            return $this->get_local_execution_service()->execute_mapping(
+                $local_mapping_id,
+                $form,
+                $entry,
+                [
+                    'hook'                  => $native_hook,
+                    'form_source'           => $form_source,
+                    'mapping_id'            => $mapping_id,
+                    'local_mapping_id'      => $mapping_id,
+                    'local_form_mapping_id' => $local_mapping_id,
+                    'form_id'               => $form_id,
+                    'entry_id'              => $entry['id'] ?? null,
+                    'central_action_id'     => $action_id,
+                ] + $dependency_context
+            );
+        }
+
+        return $this->execute_synchronous_mapping(
+            $action_id,
+            $form_source,
+            $form_id,
+            $native_hook,
+            $form,
+            $entry,
+            $mapping_id,
+            $mapping,
+            '',
+            $dependency_context
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     *
+     * @return array<string, mixed>|null
+     */
+    private function extract_validation_payload( array $result ): ?array
+    {
+        $candidates = [
+            $result['validation'] ?? null,
+            $result['result']['validation'] ?? null,
+            $result['evaluation_payload']['validation'] ?? null,
+            $result['result']['evaluation_payload']['validation'] ?? null,
+            $result['result_data']['structured_output'] ?? null,
+            $result['result']['result_data']['structured_output'] ?? null,
+            $result['structured'] ?? null,
+            $result['result']['structured'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output'] ?? null,
+            $result['result']['evaluation_payload']['result_data']['structured_output'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_array( $candidate ) || ! array_key_exists( 'is_valid', $candidate ) )
+            {
+                continue;
+            }
+
+            return [
+                'is_valid' => rest_sanitize_boolean( $candidate['is_valid'] ),
+                'message'  => isset( $candidate['message'] ) && is_scalar( $candidate['message'] )
+                    ? sanitize_text_field( (string) $candidate['message'] )
+                    : '',
+                'fields'   => isset( $candidate['fields'] ) && is_array( $candidate['fields'] )
+                    ? $candidate['fields']
+                    : [],
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine whether a completed validation response has a trusted structure.
+     *
+     * An explicit validity marker is authoritative when present. Responses without
+     * a marker must match a content-validation or spam-classification shape that
+     * this runner can safely interpret.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function validation_result_has_trusted_structure( array $result ): bool
+    {
+        $marker_paths = [
+            [],
+            [ 'result' ],
+            [ 'result_data' ],
+            [ 'result', 'result_data' ],
+            [ 'evaluation_payload' ],
+            [ 'evaluation_payload', 'result' ],
+            [ 'evaluation_payload', 'result_data' ],
+            [ 'result', 'evaluation_payload' ],
+            [ 'result', 'evaluation_payload', 'result' ],
+            [ 'result', 'evaluation_payload', 'result_data' ],
+        ];
+        foreach ( $marker_paths as $path )
+        {
+            $container = $result;
+            foreach ( $path as $key )
+            {
+                if ( ! isset( $container[ $key ] ) || ! is_array( $container[ $key ] ) )
+                {
+                    continue 2;
+                }
+                $container = $container[ $key ];
+            }
+
+            if ( array_key_exists( 'structured_output_valid', $container ) )
+            {
+                return rest_sanitize_boolean( $container['structured_output_valid'] );
+            }
+        }
+
+        if ( null !== $this->extract_validation_payload( $result ) )
+        {
+            return true;
+        }
+
+        return in_array( $this->extract_spam_classification( $result ), [ 'ham', 'likely_spam', 'spam' ], true );
+    }
+
+    private function safe_error_code( WP_Error $error, string $fallback ): string
+    {
+        $code = sanitize_key( (string) $error->get_error_code() );
+
+        return '' !== $code ? $code : $fallback;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     */
+    private function log_validation_failure(
+        string $form_source,
+        string $form_id,
+        string $mapping_id,
+        array $mapping,
+        string $execution_request_id,
+        string $error_code
+    ): void
+    {
+        if ( '' !== $execution_request_id && isset( $this->validation_logged_request_ids[ $execution_request_id ] ) )
+        {
+            return;
+        }
+        if ( '' !== $execution_request_id )
+        {
+            $this->validation_logged_request_ids[ $execution_request_id ] = true;
+        }
+
+        $this->plugin->get_logger()->info(
+            'validation action failed open',
+            [
+                'hook'           => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                'form_source'    => $form_source,
+                'form_id'        => $form_id,
+                'mapping_id'     => $mapping_id,
+                'error_code'     => $error_code,
+            ]
+        );
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        Sentient_Forms_Action_Log_Controller::log_execution(
+            [
+                'form_source'          => $form_source,
+                'form_id'              => $form_id,
+                'action_code'          => $this->central_action_id( $mapping ),
+                'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'status'               => 'error',
+                'error_code'           => $error_code,
+                'error_message'        => __( 'Validation action failed open.', 'sentient-forms' ),
+                'execution_request_id' => $execution_request_id,
+                'mapping_id'           => $mapping_id,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $result
+     */
+    private function log_validation_success(
+        string $form_source,
+        string $form_id,
+        string $mapping_id,
+        array $mapping,
+        string $execution_request_id,
+        array $result,
+        bool $blocked
+    ): void
+    {
+        if ( '' !== $execution_request_id && isset( $this->validation_logged_request_ids[ $execution_request_id ] ) )
+        {
+            return;
+        }
+        if ( '' !== $execution_request_id )
+        {
+            $this->validation_logged_request_ids[ $execution_request_id ] = true;
+        }
+
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        $meta           = isset( $result['meta'] ) && is_array( $result['meta'] )
+            ? $result['meta']
+            : ( isset( $result['result']['meta'] ) && is_array( $result['result']['meta'] ) ? $result['result']['meta'] : [] );
+        $credits_used   = absint( $meta['credits_debited'] ?? $meta['credits_used'] ?? 0 );
+        $summary        = '' !== $classification
+            ? sprintf(
+                /* translators: %s: safe classification slug. */
+                __( 'Validation action completed with classification: %s.', 'sentient-forms' ),
+                $classification
+            )
+            : __( 'Validation action completed.', 'sentient-forms' );
+
+        Sentient_Forms_Action_Log_Controller::log_execution(
+            [
+                'form_source'             => $form_source,
+                'form_id'                 => $form_id,
+                'action_code'             => $this->central_action_id( $mapping ),
+                'action_label'            => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'status'                  => $blocked ? 'blocked' : 'success',
+                'result_summary'          => wp_trim_words( $summary, 20, '...' ),
+                'classification'          => $classification,
+                'credits_used'            => $credits_used,
+                'execution_request_id'    => $execution_request_id,
+                'mapping_id'              => $mapping_id,
+                'structured_output_valid' => $this->validation_result_has_trusted_structure( $result ),
+            ]
+        );
     }
 
     /**
@@ -1766,6 +2273,15 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $result['result_data']['classification'] ?? null,
             $result['result_data']['structured_output']['classification'] ?? null,
             $result['structured_output']['classification'] ?? null,
+            $result['structured']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output']['classification'] ?? null,
+            $result['result']['classification'] ?? null,
+            $result['result']['structured']['classification'] ?? null,
+            $result['result']['result_data']['classification'] ?? null,
+            $result['result']['result_data']['structured_output']['classification'] ?? null,
+            $result['result']['evaluation_payload']['result_data']['classification'] ?? null,
+            $result['result']['evaluation_payload']['result_data']['structured_output']['classification'] ?? null,
         ];
         foreach ( $candidates as $candidate )
         {
@@ -1842,10 +2358,15 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      */
     private function normalize_local_first_form_mapping( array $row ): ?array
     {
-        $id = absint( $row['id'] ?? 0 );
+        $id        = absint( $row['id'] ?? 0 );
+        $lifecycle = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $row['hook'] ?? '' );
         if (
             $id <= 0
-            || Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION !== Sentient_Forms_Form_Source_Lifecycles::normalize_id( $row['hook'] ?? '' )
+            || ! in_array(
+                $lifecycle,
+                [ Sentient_Forms_Form_Source_Lifecycles::VALIDATION, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ],
+                true
+            )
             || 'custom_action' !== sanitize_key( (string) ( $row['action_kind'] ?? '' ) )
         )
         {
@@ -1866,7 +2387,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
         {
             $settings['trigger_sources'] = [
-                Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => [ 'type' => 'hook_root' ],
+                $lifecycle => [ 'type' => 'hook_root' ],
             ];
         }
 
@@ -1880,6 +2401,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
         $settings['linked_action_status'] = $identity['linked_action_status'];
         $settings['repair_state']         = $identity['repair_state'];
+        $mark_as_spam                     = $this->local_spam_effect_enabled( $settings['effect_mapping_json'] ?? [] );
 
         return [
             'local_mapping_id'           => 'local_first_' . $id,
@@ -1889,14 +2411,45 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             'action_kind'                => 'custom_action',
             'action_name_label'          => $identity['action_label'],
             'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
-            'trigger_hooks'              => [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ],
+            'trigger_hooks'              => [ $lifecycle ],
             'execution_mode'             => $execution_mode,
             'execution_priority'         => $id,
-            'mark_as_spam'               => false,
+            'mark_as_spam'               => $mark_as_spam,
             'linked_action_status'       => $identity['linked_action_status'],
             'repair_state'               => $identity['repair_state'],
             'settings'                   => $settings,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $effects
+     */
+    private function local_spam_effect_enabled( array $effects ): bool
+    {
+        if ( isset( $effects['spam'] ) )
+        {
+            if ( is_array( $effects['spam'] ) )
+            {
+                if ( array_key_exists( 'enabled', $effects['spam'] ) )
+                {
+                    return rest_sanitize_boolean( $effects['spam']['enabled'] );
+                }
+
+                foreach ( [ 'classification_path', 'confidence_path', 'min_confidence', 'mark_as_spam' ] as $control_key )
+                {
+                    if ( array_key_exists( $control_key, $effects['spam'] ) )
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            return rest_sanitize_boolean( $effects['spam'] );
+        }
+
+        return ! empty( $effects['mark_as_spam'] );
     }
 
     /**

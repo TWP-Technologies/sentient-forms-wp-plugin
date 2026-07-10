@@ -15,7 +15,7 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Gravity_Forms_Adapter
  * Adapter for Gravity Forms integration
  */
-class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
+class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'gform_after_submission';
     private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
@@ -103,6 +103,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private array $validation_execution_request_ids_by_form = [];
 
+    /** @var array<int, Sentient_Forms_Validation_Run_Result> */
+    private array $validation_run_results_by_form = [];
+
     /**
      * Shared-runner outcomes created at Gravity's pre-delivery saved-entry seam.
      *
@@ -147,6 +150,103 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_accepted_submission_native_hook(): string
     {
         return self::NATIVE_AFTER_SUBMISSION_HOOK;
+    }
+
+    public function get_validation_native_hook(): string
+    {
+        return 'gform_validation';
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_validation( mixed $native_validation, mixed $native_context = null ): array | WP_Error
+    {
+        if ( ! is_array( $native_validation ) || ! isset( $native_validation['form'] ) || ! is_array( $native_validation['form'] ) )
+        {
+            return new WP_Error( 'sentient_forms_gravity_forms_invalid_validation', __( 'Gravity Forms validation payload is invalid.', 'sentient-forms' ) );
+        }
+
+        $form    = $native_validation['form'];
+        $form_id = absint( $form['id'] ?? 0 );
+        if ( $form_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_gravity_forms_invalid_validation', __( 'Gravity Forms validation payload is missing its form identity.', 'sentient-forms' ) );
+        }
+
+        return [
+            'form_id'        => (string) $form_id,
+            'form'           => $form,
+            'entry'          => $this->prepare_entry_from_submission(),
+            'native_context' => $native_context,
+        ];
+    }
+
+    public function apply_validation_result(
+        mixed $native_validation,
+        Sentient_Forms_Validation_Run_Result $result
+    ): mixed
+    {
+        if ( ! is_array( $native_validation ) )
+        {
+            return $native_validation;
+        }
+
+        $form_error = $result->get_form_error();
+        if ( null !== $form_error && '' !== $form_error )
+        {
+            $native_validation = $this->inject_validation_message( $native_validation, $form_error, [] );
+        }
+        if ( [] !== $result->get_field_errors() )
+        {
+            $native_validation = $this->inject_field_validation_messages( $native_validation, $result->get_field_errors() );
+        }
+
+        return $native_validation;
+    }
+
+    public function apply_validation_entry_effects(
+        array $entry,
+        array $form,
+        Sentient_Forms_Validation_Run_Result $result
+    ): void
+    {
+        $entry_id = absint( $entry['id'] ?? 0 );
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        foreach ( $result->get_spam_classifications() as $mapping_id => $classification )
+        {
+            if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+            {
+                continue;
+            }
+
+            $mappings = $result->get_resolved_mappings();
+            $mapping  = $mappings[ $mapping_id ] ?? null;
+            $execution_result = $result->get_execution_result( $mapping_id );
+            if (
+                ! is_array( $mapping )
+                || ! is_array( $execution_result )
+                || 'local_first' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) )
+            )
+            {
+                continue;
+            }
+
+            $structured = $execution_result['result_data']['structured_output'] ?? null;
+            if ( is_array( $structured ) )
+            {
+                $execution_result['result_data'] = array_merge(
+                    is_array( $execution_result['result_data'] ?? null ) ? $execution_result['result_data'] : [],
+                    $structured
+                );
+            }
+
+            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $mapping, $execution_result );
+        }
     }
 
     /**
@@ -324,7 +424,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function register_hooks(): void
     {
         // Register hooks for all forms
-        add_filter( 'gform_validation', [ $this, 'handle_validation' ], 10, 1 );
+        add_filter( 'gform_validation', [ $this, 'handle_validation' ], 10, 2 );
         add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_accepted_submission' ], 10, 2 );
         add_filter( 'gform_entry_post_save', [ $this, 'handle_validation_entry_post_save' ], 10, 2 );
 
@@ -441,6 +541,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function handle_validation_entry_post_save( array $entry, array $form ): array
     {
         $form_id = absint( $form['id'] ?? 0 );
+        $validation_result = $form_id > 0 ? ( $this->validation_run_results_by_form[ $form_id ] ?? null ) : null;
+        if ( $validation_result instanceof Sentient_Forms_Validation_Run_Result )
+        {
+            unset( $this->validation_run_results_by_form[ $form_id ] );
+            $this->apply_validation_entry_effects( $entry, $form, $validation_result );
+        }
         $execution_request_ids = $form_id > 0
             ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
             : [];
@@ -949,286 +1055,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      *
      * @return array The modified validation result.
      */
-    public function handle_validation( array $validation_result ): array
+    public function handle_validation( array $validation_result, mixed $native_context = null ): array
     {
-        $form    = $validation_result[ 'form' ];
-        $form_id = $form[ 'id' ];
-        $logger  = $this->plugin->get_logger();
-        $correlation_id = $logger->correlation_id( $form['sentient_forms_request_id'] ?? null );
-
-        // Get form settings
-        $settings = $this->get_form_settings( $form_id );
-
-        $disable_flags = $this->get_execution_disable_flags( $settings );
-
-        // CB-FORMS-001 / CB-FORMS-002: Skip all actions when effective execution disable is enabled.
-        if ( ! empty( $disable_flags['effective_disabled'] ) )
+        $result  = $this->get_workflow_runner()->run_validation( $this, $validation_result, $native_context );
+        $form_id = absint( $validation_result['form']['id'] ?? 0 );
+        if ( $form_id > 0 )
         {
-            $logger->info(
-                'form execution disabled, skipping all validation actions',
-                [
-                    'form_id'           => $form_id,
-                    'sf_disabled'       => ! empty( $disable_flags['sf_disabled'] ),
-                    'global_disabled'   => ! empty( $disable_flags['global_disabled'] ),
-                    'provider_disabled' => ! empty( $disable_flags['provider_disabled'] ),
-                ]
-            );
-            return $validation_result;
-        }
-
-        $entry            = $this->prepare_entry_from_submission();
-        $planner          = $this->plugin->get_mapping_dependency_planner();
-        $plan             = $planner->build_execution_plan( $settings, 'gform_validation' );
-        $mapping_outcomes = [];
-        $mapping_classifications = [];
-
-        if ( ! empty( $plan['cycle_ids'] ) )
-        {
-            $logger->error(
-                'validation dependency cycle detected; skipping blocked mappings',
-                [
-                    'hook'       => 'gform_validation',
-                    'form_id'    => $form_id,
-                    'cycle_ids'  => $plan['cycle_ids'],
-                ]
-            );
-            foreach ( $plan['cycle_ids'] as $cycle_id )
+            $this->validation_run_results_by_form[ $form_id ] = $result;
+            foreach ( $result->get_execution_request_ids() as $execution_request_id )
             {
-                $mapping_outcomes[ $cycle_id ] = 'skipped';
+                $this->remember_validation_execution_request_id( $form_id, $execution_request_id );
             }
         }
 
-        foreach ( $plan['order'] as $mapping_id )
-        {
-            $node = $plan['nodes'][ $mapping_id ] ?? null;
-            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
-            {
-                continue;
-            }
-
-            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
-            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
-            $should_async = $this->is_mapping_async( $action_settings );
-
-            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                continue;
-            }
-
-            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_validation' ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'validation skipped due to unbound trigger source',
-                    [
-                        'hook'           => 'gform_validation',
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping(
-                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
-                $mapping_outcomes,
-                $should_async,
-            );
-            if ( null !== $blocked_by_dependency )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'validation skipped due to dependency outcome',
-                    [
-                        'hook'                   => 'gform_validation',
-                        'mapping_id'             => $mapping_id,
-                        'blocked_by_dependency'  => $blocked_by_dependency,
-                        'dependency_outcome'     => $mapping_outcomes[ $blocked_by_dependency ] ?? null,
-                        'form_id'                => $form_id,
-                        'correlation_id'         => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            $action_id = (string) ( $action_settings['central_action_id'] ?? '' );
-            if ( '' === $action_id )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'failed';
-                continue;
-            }
-
-            $action = $this->plugin->get_action( $action_id );
-
-            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'validation skipped by mapping conditions',
-                    [
-                        'hook'           => 'gform_validation',
-                        'action_id'      => $action_id,
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            $upstream_spam_skip = $this->resolve_upstream_spam_skip_classification(
-                $action_settings,
-                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
-                $mapping_classifications,
-                $plan['nodes'],
-                $form_id,
-            );
-            if ( null !== $upstream_spam_skip )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'validation skipped because upstream spam check classified submission as spam',
-                    [
-                        'hook'           => 'gform_validation',
-                        'action_id'      => $action_id,
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'correlation_id' => $correlation_id,
-                        'classification' => $upstream_spam_skip,
-                    ]
-                );
-                continue;
-            }
-
-            $logger->info(
-                'validation start',
-                [
-                    'hook'           => 'gform_validation',
-                    'action_id'      => $action_id,
-                    'mapping_id'     => $mapping_id,
-                    'form_id'        => $form_id,
-                    'correlation_id' => $correlation_id,
-                ]
-            );
-
-            $data  = [
-                'form'              => $form,
-                'entry'             => $entry,
-                'validation_result' => $validation_result,
-            ];
-
-            $entry_id        = $entry['id'] ?? ( $data['entry']['id'] ?? 0 );
-            $runtime_form_id = $form['id'] ?? 0;
-            $local_failed    = false;
-
-            if ( $this->is_local_first_mapping( $action_settings ) )
-            {
-                $result = $this->execute_local_first_validation_mapping(
-                    $form,
-                    $entry,
-                    $mapping_id,
-                    $action_settings,
-                );
-
-                if ( is_wp_error( $result ) )
-                {
-                    $local_failed = true;
-                    $logger->info(
-                        'local-first validation wp_error',
-                        [
-                            'hook'           => 'gform_validation',
-                            'action_id'      => $action_id,
-                            'mapping_id'     => $mapping_id,
-                            'form_id'        => $runtime_form_id,
-                            'correlation_id' => $correlation_id,
-                            'error_code'     => $result->get_error_code(),
-                        ]
-                    );
-                }
-
-                $validation_result = $this->apply_local_first_validation_response( $validation_result, $result, $action_settings );
-                $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
-
-                $mapping_outcomes[ $mapping_id ] = $local_failed ? 'failed' : 'succeeded';
-
-                $logger->info(
-                    'validation complete',
-                    [
-                        'hook'           => 'gform_validation',
-                        'action_id'      => $action_id,
-                        'mapping_id'     => $mapping_id,
-                        'outcome'        => $mapping_outcomes[ $mapping_id ],
-                        'form_id'        => $runtime_form_id,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-
-                continue;
-            }
-
-            if ( $action )
-            {
-                $result = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
-
-                if ( is_wp_error( $result ) )
-                {
-                    $local_failed = true;
-                    $logger->info(
-                        'validation wp_error',
-                        [
-                            'hook'           => 'gform_validation',
-                            'action_id'      => $action_id,
-                            'mapping_id'     => $mapping_id,
-                            'form_id'        => $runtime_form_id,
-                            'correlation_id' => $correlation_id,
-                            'error_code'     => $result->get_error_code(),
-                        ]
-                    );
-                    $validation_result = $this->inject_validation_message(
-                        $validation_result,
-                        $result->get_error_message(),
-                        $action_settings,
-                    );
-                }
-                elseif ( isset( $result[ 'validation_result' ] ) )
-                {
-                    $validation_result = $result[ 'validation_result' ];
-                }
-
-                $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
-            }
-
-            $cps_execution_status = 'success';
-            $cps_response         = null;
-            $validation_result    = $this->maybe_execute_cps_validation(
-                $validation_result,
-                $form,
-                $entry,
-                $action_id,
-                $action_settings,
-                $cps_execution_status,
-                $cps_response,
-            );
-            $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $cps_response );
-
-            $mapping_outcomes[ $mapping_id ] = ( $local_failed || 'failed' === $cps_execution_status ) ? 'failed' : 'succeeded';
-
-            $logger->info(
-                'validation complete',
-                [
-                    'hook'           => 'gform_validation',
-                    'action_id'      => $action_id,
-                    'mapping_id'     => $mapping_id,
-                    'outcome'        => $mapping_outcomes[ $mapping_id ],
-                    'form_id'        => $runtime_form_id,
-                    'correlation_id' => $correlation_id,
-                ]
-            );
-        }
-
-        return $validation_result;
+        return $this->apply_validation_result( $validation_result, $result );
     }
 
     /**
@@ -2039,25 +1879,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // blocking all form submissions.
         if ( is_wp_error( $response ) )
         {
-            $fail_open = $action_settings['fail_open'] ?? true; // Default to fail-open
-
             sentient_forms_debug_log(
                 'Sentient Forms CPS validation error.',
                 [
-                    'fail_open'     => (bool) $fail_open,
-                    'error_code'    => $response->get_error_code(),
-                    'error_message' => $response->get_error_message(),
+                    'fail_open'  => true,
+                    'error_code' => sanitize_key( (string) $response->get_error_code() ),
                 ]
             );
 
-            // If fail_open is enabled (default), don't block the submission
-            if ( $fail_open )
-            {
-                return $validation_result;
-            }
-
-            // Only inject error message if explicitly configured to fail-closed
-            return $this->inject_validation_message( $validation_result, $response->get_error_message(), $action_settings );
+            return $validation_result;
         }
 
         $validation = $this->extract_cps_validation_payload( $response, $action_settings );
@@ -2091,20 +1921,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         if ( is_wp_error( $response ) )
         {
-            $fail_open = $action_settings['fail_open'] ?? true;
-
             sentient_forms_debug_log(
                 'Sentient Forms local-first validation error.',
                 [
-                    'fail_open'     => (bool) $fail_open,
-                    'error_code'    => $response->get_error_code(),
-                    'error_message' => $response->get_error_message(),
+                    'fail_open'  => true,
+                    'error_code' => sanitize_key( (string) $response->get_error_code() ),
                 ]
             );
 
-            return $fail_open
-                ? $validation_result
-                : $this->inject_validation_message( $validation_result, $response->get_error_message(), $action_settings );
+            return $validation_result;
         }
 
         $validation = $this->extract_local_first_validation_payload( $response );
