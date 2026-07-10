@@ -4020,6 +4020,35 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
     }
 
+    public function test_success_does_not_recreate_legacy_option_backed_action_results(): void
+    {
+        $options = $this->plugin->get_options();
+        unset( $options['action_results'] );
+        $this->plugin->update_options( $options );
+
+        $this->plugin->get_async_handler()->complete_remote_cps_async_success(
+            'req-no-legacy-action-results',
+            [
+                'form_source'       => 'elementor_pro_forms',
+                'form_id'           => '4:no-legacy-results',
+                'submission_uuid'   => '77777777-8888-4999-8aaa-bbbbbbbbbbbb',
+                'action_id'         => 'map_summary',
+                'central_action_id' => 'entry_summary_v1',
+                'local_mapping_id'  => 'map_summary',
+                'action_name_label' => 'Entry Summary',
+            ],
+            [
+                'provider' => 'openrouter',
+                'model'    => 'openrouter/auto',
+                'result'   => [
+                    'content' => 'Canonical execution-event result.',
+                ],
+            ]
+        );
+
+        $this->assertArrayNotHasKey( 'action_results', $this->plugin->get_options() );
+    }
+
 	public function test_process_local_mapping_executes_openrouter_mapping_from_identifiers(): void
 	{
 		Sentient_Forms_Installer::maybe_upgrade();

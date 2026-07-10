@@ -654,6 +654,48 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'currency', $context['metadata']['metering'] );
     }
 
+    public function test_maybe_upgrade_retires_legacy_option_backed_action_results(): void
+    {
+        $original = get_option( 'sentient_forms_settings', null );
+
+        try
+        {
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'enforce_nonce_verification' => false,
+                    'action_results'             => [
+                        'entry_summary_v1' => [
+                            [
+                                'timestamp' => time() - DAY_IN_SECONDS,
+                                'result'    => [ 'cost' => 0.001 ],
+                            ],
+                        ],
+                    ],
+                ],
+                false
+            );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $settings = get_option( 'sentient_forms_settings', [] );
+            $this->assertIsArray( $settings );
+            $this->assertArrayNotHasKey( 'action_results', $settings );
+            $this->assertFalse( $settings['enforce_nonce_verification'] );
+        }
+        finally
+        {
+            if ( null === $original )
+            {
+                delete_option( 'sentient_forms_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_settings', $original, false );
+            }
+        }
+    }
+
     public function test_managed_usage_scrub_selects_rows_with_provider_payload_only(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';

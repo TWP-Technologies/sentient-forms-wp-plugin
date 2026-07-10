@@ -123,6 +123,11 @@ class Sentient_Forms_Installer
             return;
         }
 
+        if ( ! self::retire_option_backed_action_results() )
+        {
+            return;
+        }
+
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
         {
@@ -160,6 +165,23 @@ class Sentient_Forms_Installer
         {
             update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
         }
+    }
+
+    /**
+     * Remove the superseded rolling result cache after canonical execution
+     * events became the only runtime result history.
+     */
+    private static function retire_option_backed_action_results(): bool
+    {
+        $settings = get_option( 'sentient_forms_settings', null );
+        if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
+        {
+            return true;
+        }
+
+        unset( $settings['action_results'] );
+
+        return update_option( 'sentient_forms_settings', $settings, false );
     }
 
     /**
