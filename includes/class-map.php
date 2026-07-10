@@ -62,6 +62,7 @@ return [
 	'Sentient_Forms_Form_Entry_Search_Service' => __DIR__ . '/services/class-sentient-forms-form-entry-search-service.php',
 	'Sentient_Forms_Form_Mappings_Repository' => __DIR__ . '/repositories/class-sentient-forms-form-mappings-repository.php',
 	'Sentient_Forms_Form_Source_Config_Migrator' => __DIR__ . '/services/class-sentient-forms-form-source-config-migrator.php',
+	'Sentient_Forms_Form_Source_Discovery_Adapter_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-form-source-discovery-adapter.php',
 	'Sentient_Forms_Form_Source_Lifecycles' => __DIR__ . '/services/class-sentient-forms-form-source-lifecycles.php',
 	'Sentient_Forms_Form_Sources' => __DIR__ . '/rest-api/class-form-sources.php',
 	'Sentient_Forms_Form_Suggestions_Controller' => __DIR__ . '/rest-api/controllers/class-form-suggestions-controller.php',

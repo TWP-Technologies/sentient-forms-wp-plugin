@@ -9,7 +9,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Form_Source_Adapter' ) )
             private string $name,
             private bool $active,
             private array $descriptor
-        ) {
+        )
+        {
         }
 
         public function get_id(): string
@@ -93,6 +94,65 @@ if ( ! class_exists( 'Sentient_Forms_Test_Form_Source_Adapter' ) )
 
 class AdapterRegistryTest extends WP_UnitTestCase
 {
+    public function test_legacy_adapter_contract_extends_minimal_form_source_discovery_contract(): void
+    {
+        $this->assertTrue( interface_exists( 'Sentient_Forms_Form_Source_Discovery_Adapter_Interface' ) );
+        $this->assertTrue(
+            is_subclass_of(
+                Sentient_Forms_Adapter_Interface::class,
+                Sentient_Forms_Form_Source_Discovery_Adapter_Interface::class
+            )
+        );
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        foreach ( $registry->get_all_adapters() as $adapter )
+        {
+            $this->assertInstanceOf( Sentient_Forms_Form_Source_Discovery_Adapter_Interface::class, $adapter );
+        }
+    }
+
+    public function test_registry_is_authoritative_for_registered_form_source_membership(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'fake_source',
+                'Fake Source',
+                true,
+                []
+            )
+        );
+
+        $this->assertSame( array_keys( $registry->get_all_adapters() ), $registry->get_registered_source_ids() );
+        $this->assertTrue( $registry->has_registered_source( 'fake_source' ) );
+
+        $registry->unregister_adapter( 'gravity_forms' );
+
+        $this->assertFalse( $registry->has_registered_source( 'gravity_forms' ) );
+        $this->assertNotContains( 'gravity_forms', $registry->get_registered_source_ids() );
+    }
+
+    public function test_form_sources_delegates_listing_and_membership_to_registry(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'fake_source',
+                'Fake Source',
+                true,
+                []
+            )
+        );
+        $registry->unregister_adapter( 'gravity_forms' );
+
+        $this->assertSame(
+            $registry->get_registered_source_ids(),
+            Sentient_Forms_Form_Sources::get_supported_sources( $registry )
+        );
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'fake_source', $registry ) );
+        $this->assertFalse( Sentient_Forms_Form_Sources::is_supported_source( 'gravity_forms', $registry ) );
+    }
+
     public function test_registered_adapters_are_async_capable(): void
     {
         $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();

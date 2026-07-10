@@ -98,6 +98,26 @@ class Sentient_Forms_Form_Adapter_Registry
     }
 
     /**
+     * Retrieve canonical identifiers for every registered Form Source.
+     *
+     * Registration through this registry is the only source of membership.
+     *
+     * @return array<int, string>
+     */
+    public function get_registered_source_ids(): array
+    {
+        return array_keys( $this->adapters );
+    }
+
+    /**
+     * Determine whether a Form Source is registered.
+     */
+    public function has_registered_source( string $id ): bool
+    {
+        return isset( $this->adapters[ sanitize_key( strtolower( $id ) ) ] );
+    }
+
+    /**
      * Retrieve capability descriptors for every registered Form Source.
      *
      * @return array<string, array<string, mixed>>
