@@ -34,6 +34,38 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         }
     }
 
+    public function test_bundled_actions_expose_canonical_lifecycle_hooks_that_match_their_definitions(): void
+    {
+        $expected_lifecycles = [
+            'spam_detection_v1'         => [ 'validation', 'after_submission' ],
+            'content_validation_v1'      => [ 'validation' ],
+            'entry_summary_v1'           => [ 'after_submission' ],
+            'sentiment_urgency_v1'       => [ 'after_submission' ],
+            'missing_information_v1'     => [ 'after_submission' ],
+            'pain_point_intent_v1'       => [ 'after_submission' ],
+            'routing_recommendation_v1'  => [ 'after_submission' ],
+            'toxicity_moderation_v1'     => [ 'after_submission' ],
+            'lead_grading_v1'            => [ 'after_submission' ],
+            'suggested_reply_v1'          => [ 'after_submission' ],
+            'clarification_assistant_v1' => [ 'real_time' ],
+        ];
+
+        $this->assertSame( array_keys( $expected_lifecycles ), Sentient_Forms_Bundled_Action_Templates::codes() );
+
+        foreach ( $expected_lifecycles as $template_code => $expected )
+        {
+            $definition = Sentient_Forms_Bundled_Action_Templates::get( $template_code );
+
+            $this->assertIsArray( $definition, $template_code );
+            $this->assertSame( $expected, $definition['hooks'] ?? null, $template_code );
+            $this->assertSame(
+                $expected,
+                $definition['definition_json']['supported_execution_modes'] ?? null,
+                $template_code
+            );
+        }
+    }
+
     public function test_bundled_effects_include_gravity_forms_entry_note_evidence_for_accepted_submissions(): void
     {
         $spam = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
