@@ -106,7 +106,8 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
             $native_correlation_hash = null;
         }
 
-        $created = $this->ledger->create(
+        $captured_at = current_time( 'mysql', true );
+        $created     = $this->ledger->create(
             [
                 'submission_uuid'        => $submission_uuid,
                 'form_source'            => $form_source,
@@ -114,6 +115,7 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
                 'native_entry_id'        => '' !== $native_entry_id ? $native_entry_id : null,
                 'native_entry_url'       => isset( $payload['native_entry_url'] ) ? esc_url_raw( (string) $payload['native_entry_url'] ) : null,
                 'source_submitted_at'    => isset( $payload['source_submitted_at'] ) ? sanitize_text_field( (string) $payload['source_submitted_at'] ) : null,
+                'captured_at'            => $captured_at,
                 'logical_fields_json'    => $logical_fields,
                 'provider_metadata_json' => $metadata,
                 'file_refs_json'         => $file_refs,
@@ -121,7 +123,7 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
                     'redacted_fields' => array_values( array_unique( $redacted_fields ) ),
                     'file_ref_count'  => is_array( $file_refs ) ? count( $file_refs ) : 0,
                 ],
-                'expires_at'             => isset( $payload['expires_at'] ) ? sanitize_text_field( (string) $payload['expires_at'] ) : null,
+                'expires_at'             => Sentient_Forms_Local_Data_Governance::default_submission_ledger_expires_at( $captured_at ),
             ]
         );
 

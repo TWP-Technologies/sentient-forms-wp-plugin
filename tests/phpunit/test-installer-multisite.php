@@ -30,6 +30,8 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
         {
             $this->reset_blog_lifecycle_state( (int) $blog_id );
         }
+        $this->set_blog_option_value( $main_blog_id, 'sentient_forms_submission_ledger_retention_days', 7 );
+        $this->set_blog_option_value( (int) $second_blog_id, 'sentient_forms_submission_ledger_retention_days', 0 );
 
         try
         {
@@ -39,8 +41,11 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
             {
                 $this->assert_blog_tables_exist( (int) $blog_id, true );
                 $this->assertSame( SENTIENT_FORMS_DB_VERSION, $this->get_blog_option_value( (int) $blog_id, 'sentient_forms_db_version' ) );
+                $this->assertSame( '2026.07.10.v1', $this->get_blog_option_value( (int) $blog_id, 'sentient_forms_submission_ledger_retention_backfill_version' ) );
                 $this->assertTrue( $this->blog_retention_scheduled( (int) $blog_id ) );
             }
+            $this->assertSame( 7, $this->get_blog_option_value( $main_blog_id, 'sentient_forms_submission_ledger_retention_days' ) );
+            $this->assertSame( 0, $this->get_blog_option_value( (int) $second_blog_id, 'sentient_forms_submission_ledger_retention_days' ) );
 
             Sentient_Forms_Installer::deactivate( true );
 
@@ -211,6 +216,10 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
 
                 delete_option( 'sentient_forms_db_version' );
                 delete_option( 'sentient_forms_delete_data_on_uninstall' );
+                delete_option( 'sentient_forms_submission_ledger_retention_days' );
+                delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+                delete_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+                delete_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' );
                 Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
             }
         );
