@@ -80,6 +80,7 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
                 if ( ! is_array( $descriptor ) || null === $adapter )
                 {
                     throw new LogicException(
+                        // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal identifier built from a canonical source slug, not rendered output.
                         'sentient_forms_action_source_manifest_invalid_canonical_adapter:' . $form_source . ':descriptor'
                     );
                 }
@@ -105,12 +106,14 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
             if ( null === $adapter )
             {
                 throw new LogicException(
+                    // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal identifier built from a canonical source slug, not rendered output.
                     'sentient_forms_action_source_manifest_invalid_canonical_adapter:' . $form_source . ':missing'
                 );
             }
             if ( $expected_class !== get_class( $adapter ) )
             {
                 throw new LogicException(
+                    // phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal identifier built from a canonical source slug, not rendered output.
                     'sentient_forms_action_source_manifest_invalid_canonical_adapter:' . $form_source . ':unexpected_class'
                 );
             }

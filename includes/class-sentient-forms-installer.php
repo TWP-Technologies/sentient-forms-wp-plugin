@@ -269,6 +269,7 @@ class Sentient_Forms_Installer
         global $wpdb;
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The immutable migration snapshot must observe the current maximum row ID; caching could omit rows captured before the snapshot boundary.
         $max_id = $wpdb->get_var(
             $wpdb->prepare(
                 'SELECT COALESCE(MAX(id), 0) FROM %i',
@@ -369,6 +370,7 @@ class Sentient_Forms_Installer
         global $wpdb;
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Each migration batch must read the durable cursor range after the preceding write; a cached range could skip or repeat rows.
         $ids = $wpdb->get_col(
             $wpdb->prepare(
                 'SELECT id FROM %i WHERE id > %d AND id <= %d ORDER BY id ASC LIMIT %d',
@@ -395,6 +397,7 @@ class Sentient_Forms_Installer
 
         if ( 0 === $snapshot['retention_days'] )
         {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- This activation/upgrade migration writes a plugin-owned custom table; WordPress has no cache API for these rows.
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i SET expires_at = NULL WHERE id > %d AND id <= %d AND id <= %d',
@@ -407,6 +410,7 @@ class Sentient_Forms_Installer
         }
         else
         {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- This activation/upgrade migration writes a plugin-owned custom table; WordPress has no cache API for these rows.
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i
