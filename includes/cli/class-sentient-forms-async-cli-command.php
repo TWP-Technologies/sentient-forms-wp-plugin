@@ -48,63 +48,63 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             WP_CLI\Utils\format_items( 'table', $rows, [ 'job_id', 'status', 'hook', 'queue', 'action', 'attempt', 'run_at', 'last_error' ] );
         }
 
-		public function clear(): void
-		{
-			$this->get_store()->clear();
-			WP_CLI::success( 'Cleared background job metadata.' );
-		}
+        public function clear(): void
+        {
+            $this->get_store()->clear();
+            WP_CLI::success( 'Cleared background job metadata.' );
+        }
 
-		public function settings( array $args, array $assoc_args ): void
-		{
-			$service = $this->get_async_settings_service();
-			if ( empty( $assoc_args ) )
-			{
-				$settings = $service->get_settings();
-				WP_CLI\Utils\format_items(
-					'table',
-					[
-						[
-							'max_attempts' => $settings['max_attempts'],
-							'base_delay'   => $settings['base_delay_seconds'],
-							'max_delay'    => $settings['max_delay_seconds'],
-							'updated_at'   => $settings['updated_at'] ? gmdate( 'c', (int) $settings['updated_at'] ) : '',
-							'updated_by'   => $settings['updated_by'] ?? '',
-						],
-					],
-					[ 'max_attempts', 'base_delay', 'max_delay', 'updated_at', 'updated_by' ]
-				);
-				return;
-			}
+        public function settings( array $args, array $assoc_args ): void
+        {
+            $service = $this->get_async_settings_service();
+            if ( empty( $assoc_args ) )
+            {
+                $settings = $service->get_settings();
+                WP_CLI\Utils\format_items(
+                    'table',
+                    [
+                        [
+                            'max_attempts' => $settings['max_attempts'],
+                            'base_delay'   => $settings['base_delay_seconds'],
+                            'max_delay'    => $settings['max_delay_seconds'],
+                            'updated_at'   => $settings['updated_at'] ? gmdate( 'c', (int) $settings['updated_at'] ) : '',
+                            'updated_by'   => $settings['updated_by'] ?? '',
+                        ],
+                    ],
+                    [ 'max_attempts', 'base_delay', 'max_delay', 'updated_at', 'updated_by' ]
+                );
+                return;
+            }
 
-			$payload = [];
-			if ( isset( $assoc_args['max-attempts'] ) )
-			{
-				$payload['max_attempts'] = absint( $assoc_args['max-attempts'] );
-			}
-			if ( isset( $assoc_args['base-delay'] ) )
-			{
-				$payload['base_delay_seconds'] = absint( $assoc_args['base-delay'] );
-			}
-			if ( isset( $assoc_args['max-delay'] ) )
-			{
-				$payload['max_delay_seconds'] = absint( $assoc_args['max-delay'] );
-			}
+            $payload = [];
+            if ( isset( $assoc_args['max-attempts'] ) )
+            {
+                $payload['max_attempts'] = absint( $assoc_args['max-attempts'] );
+            }
+            if ( isset( $assoc_args['base-delay'] ) )
+            {
+                $payload['base_delay_seconds'] = absint( $assoc_args['base-delay'] );
+            }
+            if ( isset( $assoc_args['max-delay'] ) )
+            {
+                $payload['max_delay_seconds'] = absint( $assoc_args['max-delay'] );
+            }
 
-			if ( empty( $payload ) )
-			{
-				WP_CLI::error( 'Provide at least one setting to update (max-attempts, base-delay, max-delay).' );
-			}
+            if ( empty( $payload ) )
+            {
+                WP_CLI::error( 'Provide at least one setting to update (max-attempts, base-delay, max-delay).' );
+            }
 
-			$settings = $service->update_settings( $payload, 'wp_cli' );
-			WP_CLI::success(
-				sprintf(
-					'Background settings updated (max attempts %d, base %ds, max %ds).',
-					$settings['max_attempts'],
-					$settings['base_delay_seconds'],
-					$settings['max_delay_seconds']
-				)
-			);
-		}
+            $settings = $service->update_settings( $payload, 'wp_cli' );
+            WP_CLI::success(
+                sprintf(
+                    'Background settings updated (max attempts %d, base %ds, max %ds).',
+                    $settings['max_attempts'],
+                    $settings['base_delay_seconds'],
+                    $settings['max_delay_seconds']
+                )
+            );
+        }
 
         public function requeue( array $args ): void
         {
@@ -188,8 +188,8 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             WP_CLI::success( sprintf( 'Requeued job %s.', $job_id ) );
         }
 
-		public function purge( array $args, array $assoc_args ): void
-		{
+        public function purge( array $args, array $assoc_args ): void
+        {
             $status_arg = $assoc_args['status'] ?? 'success,failed';
             $statuses   = array_filter( array_map( 'trim', explode( ',', $status_arg ) ) );
 
@@ -301,15 +301,15 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             return Sentient_Forms_Plugin::instance()->get_async_metadata_store();
         }
 
-		private function get_handler(): Sentient_Forms_Async_Handler
-		{
-			return Sentient_Forms_Plugin::instance()->get_async_handler();
-		}
+        private function get_handler(): Sentient_Forms_Async_Handler
+        {
+            return Sentient_Forms_Plugin::instance()->get_async_handler();
+        }
 
-		private function get_async_settings_service(): Sentient_Forms_Async_Settings_Service
-		{
-			return Sentient_Forms_Plugin::instance()->get_async_settings_service();
-		}
+        private function get_async_settings_service(): Sentient_Forms_Async_Settings_Service
+        {
+            return Sentient_Forms_Plugin::instance()->get_async_settings_service();
+        }
 
         /**
          * @return list<string>
@@ -340,81 +340,81 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             return array_values( array_unique( $statuses ) );
         }
 
-		public function status(): void
-		{
-			$service = Sentient_Forms_Plugin::instance()->get_async_health_service();
-			$summary = $service->evaluate();
-			WP_CLI::line( sprintf( 'Background queue depth: %d', $summary['queue_depth'] ?? 0 ) );
-			if ( ! empty( $summary['oldest_run_at'] ) )
-			{
-				WP_CLI::line( 'Oldest scheduled background run: ' . gmdate( 'c', (int) $summary['oldest_run_at'] ) );
-			}
+        public function status(): void
+        {
+            $service = Sentient_Forms_Plugin::instance()->get_async_health_service();
+            $summary = $service->evaluate();
+            WP_CLI::line( sprintf( 'Background queue depth: %d', $summary['queue_depth'] ?? 0 ) );
+            if ( ! empty( $summary['oldest_run_at'] ) )
+            {
+                WP_CLI::line( 'Oldest scheduled background run: ' . gmdate( 'c', (int) $summary['oldest_run_at'] ) );
+            }
 
-			$warnings = $summary['warnings'] ?? [];
-			if ( empty( $warnings ) )
-			{
-				WP_CLI::success( 'No background-processing warnings detected.' );
-				return;
-			}
+            $warnings = $summary['warnings'] ?? [];
+            if ( empty( $warnings ) )
+            {
+                WP_CLI::success( 'No background-processing warnings detected.' );
+                return;
+            }
 
-			$rows = array_map(
-				static function ( array $warning ): array {
-					return [
-						'code'    => $warning['code'] ?? '',
-						'level'   => $warning['level'] ?? '',
-						'message' => $warning['message'] ?? '',
-					];
-				},
-				$warnings
-			);
+            $rows = array_map(
+                static function ( array $warning ): array {
+                    return [
+                        'code'    => $warning['code'] ?? '',
+                        'level'   => $warning['level'] ?? '',
+                        'message' => $warning['message'] ?? '',
+                    ];
+                },
+                $warnings
+            );
 
-			WP_CLI\Utils\format_items( 'table', $rows, [ 'code', 'level', 'message' ] );
-		}
+            WP_CLI\Utils\format_items( 'table', $rows, [ 'code', 'level', 'message' ] );
+        }
 
-		public function list_requests( array $args, array $assoc_args ): void
-		{
-			$limit  = isset( $assoc_args['limit'] ) ? max( 1, (int) $assoc_args['limit'] ) : 20;
-			$status = $assoc_args['status'] ?? null;
-			$record_type = $assoc_args['record-type'] ?? 'job';
-			$store  = Sentient_Forms_Plugin::instance()->get_async_request_store();
-			$rows   = $store->list( [ 'limit' => $limit, 'status' => $status, 'record_type' => $record_type ] );
-			if ( empty( $rows ) )
-			{
-				WP_CLI::success( 'No background requests recorded.' );
-				return;
-			}
+        public function list_requests( array $args, array $assoc_args ): void
+        {
+            $limit  = isset( $assoc_args['limit'] ) ? max( 1, (int) $assoc_args['limit'] ) : 20;
+            $status = $assoc_args['status'] ?? null;
+            $record_type = $assoc_args['record-type'] ?? 'job';
+            $store  = Sentient_Forms_Plugin::instance()->get_async_request_store();
+            $rows   = $store->list( [ 'limit' => $limit, 'status' => $status, 'record_type' => $record_type ] );
+            if ( empty( $rows ) )
+            {
+                WP_CLI::success( 'No background requests recorded.' );
+                return;
+            }
 
-			$formatted = array_map(
-				static function ( array $row ): array {
-					return [
-						'hash'       => $row['request_hash'],
-						'action'     => $row['action_id'],
-						'adapter'    => $row['adapter'] ?? '',
-						'status'     => $row['status'],
-						'first_seen' => $row['first_seen_at'],
-						'last_seen'  => $row['last_seen_at'],
-						'last_error' => $row['last_error'] ?? '',
-					];
-				},
-				$rows
-			);
+            $formatted = array_map(
+                static function ( array $row ): array {
+                    return [
+                        'hash'       => $row['request_hash'],
+                        'action'     => $row['action_id'],
+                        'adapter'    => $row['adapter'] ?? '',
+                        'status'     => $row['status'],
+                        'first_seen' => $row['first_seen_at'],
+                        'last_seen'  => $row['last_seen_at'],
+                        'last_error' => $row['last_error'] ?? '',
+                    ];
+                },
+                $rows
+            );
 
-			WP_CLI\Utils\format_items( 'table', $formatted, [ 'hash', 'action', 'adapter', 'status', 'first_seen', 'last_seen', 'last_error' ] );
-		}
+            WP_CLI\Utils\format_items( 'table', $formatted, [ 'hash', 'action', 'adapter', 'status', 'first_seen', 'last_seen', 'last_error' ] );
+        }
 
-		public function purge_requests( array $args, array $assoc_args ): void
-		{
-			if ( empty( $assoc_args['older-than'] ) )
-			{
-				WP_CLI::error( 'Provide --older-than=<minutes>.' );
-			}
+        public function purge_requests( array $args, array $assoc_args ): void
+        {
+            if ( empty( $assoc_args['older-than'] ) )
+            {
+                WP_CLI::error( 'Provide --older-than=<minutes>.' );
+            }
 
-			$minutes = max( 1, (int) $assoc_args['older-than'] );
-			$timestamp = time() - ( $minutes * MINUTE_IN_SECONDS );
-			$store   = Sentient_Forms_Plugin::instance()->get_async_request_store();
-			$removed = $store->purge_older_than( $timestamp );
-			WP_CLI::success( sprintf( 'Purged %d request(s).', $removed ) );
-		}
+            $minutes = max( 1, (int) $assoc_args['older-than'] );
+            $timestamp = time() - ( $minutes * MINUTE_IN_SECONDS );
+            $store   = Sentient_Forms_Plugin::instance()->get_async_request_store();
+            $removed = $store->purge_older_than( $timestamp );
+            WP_CLI::success( sprintf( 'Purged %d request(s).', $removed ) );
+        }
 
         private function requeue_via_action_scheduler( array $job ): bool
         {
@@ -452,109 +452,109 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             }
         }
 
-		private function find_requeued_job_id( string $source_job_id ): ?string
-		{
-			foreach ( $this->get_store()->all() as $job )
-			{
-				if ( ( $job['context']['requeued_from'] ?? null ) === $source_job_id )
-				{
-					return $job['job_id'];
-				}
-			}
+        private function find_requeued_job_id( string $source_job_id ): ?string
+        {
+            foreach ( $this->get_store()->all() as $job )
+            {
+                if ( ( $job['context']['requeued_from'] ?? null ) === $source_job_id )
+                {
+                    return $job['job_id'];
+                }
+            }
 
-			return null;
-		}
+            return null;
+        }
 
-		public function logs_tail( array $args, array $assoc_args ): void
-		{
-			$lines = isset( $assoc_args['lines'] ) ? max( 1, (int) $assoc_args['lines'] ) : 200;
-			$logger = Sentient_Forms_Plugin::instance()->get_logger();
-			$path   = $logger->get_log_path();
+        public function logs_tail( array $args, array $assoc_args ): void
+        {
+            $lines = isset( $assoc_args['lines'] ) ? max( 1, (int) $assoc_args['lines'] ) : 200;
+            $logger = Sentient_Forms_Plugin::instance()->get_logger();
+            $path   = $logger->get_log_path();
 
-			if ( ! $logger->is_enabled() )
-			{
-				WP_CLI::warning( 'Logging is disabled (set SENTIENT_FORMS_LOG_ENABLED=1 to enable).' );
-			}
+            if ( ! $logger->is_enabled() )
+            {
+                WP_CLI::warning( 'Logging is disabled (set SENTIENT_FORMS_LOG_ENABLED=1 to enable).' );
+            }
 
-			if ( ! file_exists( $path ) )
-			{
-				WP_CLI::warning( sprintf( 'No log file found at %s', $path ) );
-				return;
-			}
+            if ( ! file_exists( $path ) )
+            {
+                WP_CLI::warning( sprintf( 'No log file found at %s', $path ) );
+                return;
+            }
 
-			$rows = @file( $path, FILE_IGNORE_NEW_LINES );
-			if ( false === $rows )
-			{
-				WP_CLI::error( 'Unable to read log file.' );
-			}
+            $rows = @file( $path, FILE_IGNORE_NEW_LINES );
+            if ( false === $rows )
+            {
+                WP_CLI::error( 'Unable to read log file.' );
+            }
 
-			$tail = array_slice( $rows, -$lines );
-			foreach ( $tail as $row )
-			{
-				WP_CLI::line( $row );
-			}
-		}
+            $tail = array_slice( $rows, -$lines );
+            foreach ( $tail as $row )
+            {
+                WP_CLI::line( $row );
+            }
+        }
 
-		public function logs_bundle(): void
-		{
-			$logger = Sentient_Forms_Plugin::instance()->get_logger();
-			$dir    = $logger->get_log_dir();
-			$path   = $logger->get_log_path();
+        public function logs_bundle(): void
+        {
+            $logger = Sentient_Forms_Plugin::instance()->get_logger();
+            $dir    = $logger->get_log_dir();
+            $path   = $logger->get_log_path();
 
-			if ( ! file_exists( $path ) )
-			{
-				WP_CLI::error( 'No logs to bundle; file not found.' );
-			}
+            if ( ! file_exists( $path ) )
+            {
+                WP_CLI::error( 'No logs to bundle; file not found.' );
+            }
 
-			$files = glob( $dir . '/sf.log*' ) ?: [];
-			if ( empty( $files ) )
-			{
-				WP_CLI::error( 'No log files matched sf.log*' );
-			}
+            $files = glob( $dir . '/sf.log*' ) ?: [];
+            if ( empty( $files ) )
+            {
+                WP_CLI::error( 'No log files matched sf.log*' );
+            }
 
-			$bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.zip';
+            $bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.zip';
 
-			if ( class_exists( 'ZipArchive' ) )
-			{
-				$zip = new ZipArchive();
-				if ( true !== $zip->open( $bundle, ZipArchive::CREATE ) )
-				{
-					WP_CLI::error( 'Unable to create zip bundle.' );
-				}
+            if ( class_exists( 'ZipArchive' ) )
+            {
+                $zip = new ZipArchive();
+                if ( true !== $zip->open( $bundle, ZipArchive::CREATE ) )
+                {
+                    WP_CLI::error( 'Unable to create zip bundle.' );
+                }
 
-				foreach ( $files as $file )
-				{
-					$zip->addFile( $file, basename( $file ) );
-				}
+                foreach ( $files as $file )
+                {
+                    $zip->addFile( $file, basename( $file ) );
+                }
 
-				$zip->close();
-				WP_CLI::success( sprintf( 'Bundle created: %s', $bundle ) );
-				return;
-			}
+                $zip->close();
+                WP_CLI::success( sprintf( 'Bundle created: %s', $bundle ) );
+                return;
+            }
 
-			// Fallback: gzip the main log only.
-			$content = file_get_contents( $path );
-			if ( false === $content )
-			{
-				WP_CLI::error( 'Unable to read log file for gzip fallback.' );
-			}
+            // Fallback: gzip the main log only.
+            $content = file_get_contents( $path );
+            if ( false === $content )
+            {
+                WP_CLI::error( 'Unable to read log file for gzip fallback.' );
+            }
 
-			$bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.gz';
-			file_put_contents( $bundle, gzencode( $content, 6 ) );
-			WP_CLI::success( sprintf( 'Bundle created (gzip fallback): %s', $bundle ) );
-		}
+            $bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.gz';
+            file_put_contents( $bundle, gzencode( $content, 6 ) );
+            WP_CLI::success( sprintf( 'Bundle created (gzip fallback): %s', $bundle ) );
+        }
     }
 
-	$sentient_forms_async_cli = new Sentient_Forms_Async_CLI_Command();
-	WP_CLI::add_command( 'sentient-forms async list', [ $sentient_forms_async_cli, 'list_jobs' ] );
-	WP_CLI::add_command( 'sentient-forms async clear', [ $sentient_forms_async_cli, 'clear' ] );
-	WP_CLI::add_command( 'sentient-forms async requeue', [ $sentient_forms_async_cli, 'requeue' ] );
-	WP_CLI::add_command( 'sentient-forms async purge', [ $sentient_forms_async_cli, 'purge' ] );
-	WP_CLI::add_command( 'sentient-forms async reconcile', [ $sentient_forms_async_cli, 'reconcile' ] );
-	WP_CLI::add_command( 'sentient-forms async settings', [ $sentient_forms_async_cli, 'settings' ] );
-	WP_CLI::add_command( 'sentient-forms async status', [ $sentient_forms_async_cli, 'status' ] );
+    $sentient_forms_async_cli = new Sentient_Forms_Async_CLI_Command();
+    WP_CLI::add_command( 'sentient-forms async list', [ $sentient_forms_async_cli, 'list_jobs' ] );
+    WP_CLI::add_command( 'sentient-forms async clear', [ $sentient_forms_async_cli, 'clear' ] );
+    WP_CLI::add_command( 'sentient-forms async requeue', [ $sentient_forms_async_cli, 'requeue' ] );
+    WP_CLI::add_command( 'sentient-forms async purge', [ $sentient_forms_async_cli, 'purge' ] );
+    WP_CLI::add_command( 'sentient-forms async reconcile', [ $sentient_forms_async_cli, 'reconcile' ] );
+    WP_CLI::add_command( 'sentient-forms async settings', [ $sentient_forms_async_cli, 'settings' ] );
+    WP_CLI::add_command( 'sentient-forms async status', [ $sentient_forms_async_cli, 'status' ] );
     WP_CLI::add_command( 'sentient-forms async-requests list', [ $sentient_forms_async_cli, 'list_requests' ] );
     WP_CLI::add_command( 'sentient-forms async-requests purge', [ $sentient_forms_async_cli, 'purge_requests' ] );
-	WP_CLI::add_command( 'sentient-forms logs tail', [ $sentient_forms_async_cli, 'logs_tail' ] );
-	WP_CLI::add_command( 'sentient-forms logs bundle', [ $sentient_forms_async_cli, 'logs_bundle' ] );
+    WP_CLI::add_command( 'sentient-forms logs tail', [ $sentient_forms_async_cli, 'logs_tail' ] );
+    WP_CLI::add_command( 'sentient-forms logs bundle', [ $sentient_forms_async_cli, 'logs_bundle' ] );
 }

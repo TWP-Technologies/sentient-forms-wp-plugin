@@ -3164,29 +3164,29 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-	            $input_ids = [];
-	            if ( isset( $field->inputs ) && is_array( $field->inputs ) )
-	            {
-	                foreach ( $field->inputs as $input )
-	                {
-	                    $input_id = is_array( $input ) && isset( $input['id'] )
-	                        ? sanitize_text_field( (string) $input['id'] )
-	                        : ( is_object( $input ) && isset( $input->id ) ? sanitize_text_field( (string) $input->id ) : '' );
-	                    if ( '' !== $input_id )
-	                    {
-	                        $input_ids[] = $input_id;
-	                    }
-	                }
-	            }
+                $input_ids = [];
+                if ( isset( $field->inputs ) && is_array( $field->inputs ) )
+                {
+                    foreach ( $field->inputs as $input )
+                    {
+                        $input_id = is_array( $input ) && isset( $input['id'] )
+                            ? sanitize_text_field( (string) $input['id'] )
+                            : ( is_object( $input ) && isset( $input->id ) ? sanitize_text_field( (string) $input->id ) : '' );
+                        if ( '' !== $input_id )
+                        {
+                            $input_ids[] = $input_id;
+                        }
+                    }
+                }
 
-	            $manifest[] = [
-	                'field_id'   => $field_id,
-	                'label'      => isset( $field->label ) ? sanitize_text_field( (string) $field->label ) : '',
-	                'type'       => $field_type,
-	                'input_ids'  => array_values( array_unique( $input_ids ) ),
+                $manifest[] = [
+                    'field_id'   => $field_id,
+                    'label'      => isset( $field->label ) ? sanitize_text_field( (string) $field->label ) : '',
+                    'type'       => $field_type,
+                    'input_ids'  => array_values( array_unique( $input_ids ) ),
 	                // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Gravity Forms field objects expose pageNumber.
-	                'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
-	            ];
+                    'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
+                ];
         }
 
         return $manifest;
@@ -5818,7 +5818,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      *
      * @return string
      */
-	    private function render_post_execution_template( string $template, int $entry_id, array $context, array $result ): string
+        private function render_post_execution_template( string $template, int $entry_id, array $context, array $result ): string
     {
         $entry = $this->get_entry_record( $entry_id ) ?? [];
 
@@ -5828,11 +5828,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             {
                 $key = strtolower( trim( (string) $matches[1] ) );
 
-	                if ( str_starts_with( $key, 'field:' ) )
-	                {
-	                    $field_selector = substr( $key, strlen( 'field:' ) );
-	                    return $this->resolve_post_execution_field_placeholder( $field_selector, $entry, $context );
-	                }
+                    if ( str_starts_with( $key, 'field:' ) )
+                    {
+                        $field_selector = substr( $key, strlen( 'field:' ) );
+                        return $this->resolve_post_execution_field_placeholder( $field_selector, $entry, $context );
+                    }
 
                 $payload = $this->extract_execution_result_payload( $result );
                 $values  = [
@@ -5847,10 +5847,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     'structured_output' => wp_json_encode( $this->extract_nested_post_execution_value( $payload, 'structured_output' ) ),
                 ];
 
-	                if ( array_key_exists( $key, $values ) )
-	                {
-	                    return $this->stringify_post_execution_value( $values[ $key ] );
-	                }
+                    if ( array_key_exists( $key, $values ) )
+                    {
+                        return $this->stringify_post_execution_value( $values[ $key ] );
+                    }
 
                 $value = $this->extract_nested_post_execution_value( $payload, $key );
                 if ( null !== $value )
@@ -5862,203 +5862,203 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 return null === $value ? '' : $this->stringify_post_execution_value( $value );
             },
             $template
-	        );
-	    }
+            );
+        }
 
-	    /**
-	     * Resolve field merge tags from either a concrete Gravity Forms field id or a selector.
-	     *
-	     * @param string $selector Field selector after the "field:" prefix.
-	     * @param array  $entry    Gravity Forms entry values.
-	     * @param array  $context  Runtime action context.
-	     *
-	     * @return string
-	     */
-	    private function resolve_post_execution_field_placeholder( string $selector, array $entry, array $context ): string
-	    {
-	        $selector = trim( strtolower( $selector ) );
-	        if ( '' === $selector )
-	        {
-	            return '';
-	        }
+        /**
+         * Resolve field merge tags from either a concrete Gravity Forms field id or a selector.
+         *
+         * @param string $selector Field selector after the "field:" prefix.
+         * @param array  $entry    Gravity Forms entry values.
+         * @param array  $context  Runtime action context.
+         *
+         * @return string
+         */
+        private function resolve_post_execution_field_placeholder( string $selector, array $entry, array $context ): string
+        {
+            $selector = trim( strtolower( $selector ) );
+            if ( '' === $selector )
+            {
+                return '';
+            }
 
-	        $form = $this->resolve_post_execution_form_context( $context );
-	        if ( str_starts_with( $selector, 'type:' ) )
-	        {
-	            return $this->resolve_post_execution_field_by_type(
-	                substr( $selector, strlen( 'type:' ) ),
-	                $entry,
-	                $form
-	            );
-	        }
+            $form = $this->resolve_post_execution_form_context( $context );
+            if ( str_starts_with( $selector, 'type:' ) )
+            {
+                return $this->resolve_post_execution_field_by_type(
+                    substr( $selector, strlen( 'type:' ) ),
+                    $entry,
+                    $form
+                );
+            }
 
-	        if ( str_starts_with( $selector, 'label_contains:' ) )
-	        {
-	            return $this->resolve_post_execution_field_by_label(
-	                substr( $selector, strlen( 'label_contains:' ) ),
-	                $entry,
-	                $form
-	            );
-	        }
+            if ( str_starts_with( $selector, 'label_contains:' ) )
+            {
+                return $this->resolve_post_execution_field_by_label(
+                    substr( $selector, strlen( 'label_contains:' ) ),
+                    $entry,
+                    $form
+                );
+            }
 
-	        return $this->stringify_post_execution_value( $entry[ $selector ] ?? '' );
-	    }
+            return $this->stringify_post_execution_value( $entry[ $selector ] ?? '' );
+        }
 
-	    /**
-	     * @param array $context Runtime action context.
-	     *
-	     * @return array<string, mixed>
-	     */
-	    private function resolve_post_execution_form_context( array $context ): array
-	    {
-	        if ( isset( $context['form'] ) && is_array( $context['form'] ) )
-	        {
-	            return $context['form'];
-	        }
+        /**
+         * @param array $context Runtime action context.
+         *
+         * @return array<string, mixed>
+         */
+        private function resolve_post_execution_form_context( array $context ): array
+        {
+            if ( isset( $context['form'] ) && is_array( $context['form'] ) )
+            {
+                return $context['form'];
+            }
 
-	        $form_id = absint( $context['form_id'] ?? 0 );
-	        if ( $form_id > 0 && class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_form' ] ) )
-	        {
-	            $form = GFAPI::get_form( $form_id );
-	            return is_array( $form ) ? $form : [];
-	        }
+            $form_id = absint( $context['form_id'] ?? 0 );
+            if ( $form_id > 0 && class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_form' ] ) )
+            {
+                $form = GFAPI::get_form( $form_id );
+                return is_array( $form ) ? $form : [];
+            }
 
-	        return [];
-	    }
+            return [];
+        }
 
-	    /**
-	     * @param array<string, mixed> $entry Gravity Forms entry values.
-	     * @param array<string, mixed> $form  Gravity Forms form metadata.
-	     */
-	    private function resolve_post_execution_field_by_type( string $selector, array $entry, array $form ): string
-	    {
-	        $parts = explode( '.', strtolower( trim( $selector ) ), 2 );
-	        $type  = sanitize_key( $parts[0] ?? '' );
-	        $part  = sanitize_key( $parts[1] ?? '' );
-	        if ( '' === $type )
-	        {
-	            return '';
-	        }
+        /**
+         * @param array<string, mixed> $entry Gravity Forms entry values.
+         * @param array<string, mixed> $form  Gravity Forms form metadata.
+         */
+        private function resolve_post_execution_field_by_type( string $selector, array $entry, array $form ): string
+        {
+            $parts = explode( '.', strtolower( trim( $selector ) ), 2 );
+            $type  = sanitize_key( $parts[0] ?? '' );
+            $part  = sanitize_key( $parts[1] ?? '' );
+            if ( '' === $type )
+            {
+                return '';
+            }
 
-	        foreach ( $this->post_execution_form_fields( $form ) as $field )
-	        {
-	            if ( $this->post_execution_field_type( $field ) !== $type )
-	            {
-	                continue;
-	            }
+            foreach ( $this->post_execution_form_fields( $form ) as $field )
+            {
+                if ( $this->post_execution_field_type( $field ) !== $type )
+                {
+                    continue;
+                }
 
-	            return $this->post_execution_field_value_from_entry(
-	                $this->post_execution_field_id( $field ),
-	                $entry,
-	                $type,
-	                $part
-	            );
-	        }
+                return $this->post_execution_field_value_from_entry(
+                    $this->post_execution_field_id( $field ),
+                    $entry,
+                    $type,
+                    $part
+                );
+            }
 
-	        return '';
-	    }
+            return '';
+        }
 
-	    /**
-	     * @param array<string, mixed> $entry Gravity Forms entry values.
-	     * @param array<string, mixed> $form  Gravity Forms form metadata.
-	     */
-	    private function resolve_post_execution_field_by_label( string $label_fragment, array $entry, array $form ): string
-	    {
-	        $needle = strtolower( trim( $label_fragment ) );
-	        if ( '' === $needle )
-	        {
-	            return '';
-	        }
+        /**
+         * @param array<string, mixed> $entry Gravity Forms entry values.
+         * @param array<string, mixed> $form  Gravity Forms form metadata.
+         */
+        private function resolve_post_execution_field_by_label( string $label_fragment, array $entry, array $form ): string
+        {
+            $needle = strtolower( trim( $label_fragment ) );
+            if ( '' === $needle )
+            {
+                return '';
+            }
 
-	        foreach ( $this->post_execution_form_fields( $form ) as $field )
-	        {
-	            $label = strtolower( $this->post_execution_field_label( $field ) );
-	            if ( '' === $label || ! str_contains( $label, $needle ) )
-	            {
-	                continue;
-	            }
+            foreach ( $this->post_execution_form_fields( $form ) as $field )
+            {
+                $label = strtolower( $this->post_execution_field_label( $field ) );
+                if ( '' === $label || ! str_contains( $label, $needle ) )
+                {
+                    continue;
+                }
 
-	            return $this->post_execution_field_value_from_entry(
-	                $this->post_execution_field_id( $field ),
-	                $entry,
-	                $this->post_execution_field_type( $field ),
-	                ''
-	            );
-	        }
+                return $this->post_execution_field_value_from_entry(
+                    $this->post_execution_field_id( $field ),
+                    $entry,
+                    $this->post_execution_field_type( $field ),
+                    ''
+                );
+            }
 
-	        return '';
-	    }
+            return '';
+        }
 
-	    /**
-	     * @param array<string, mixed> $form Gravity Forms form metadata.
-	     * @return array<int, mixed>
-	     */
-	    private function post_execution_form_fields( array $form ): array
-	    {
-	        return isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
-	    }
+        /**
+         * @param array<string, mixed> $form Gravity Forms form metadata.
+         * @return array<int, mixed>
+         */
+        private function post_execution_form_fields( array $form ): array
+        {
+            return isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        }
 
-	    private function post_execution_field_id( mixed $field ): string
-	    {
-	        if ( is_array( $field ) )
-	        {
-	            return isset( $field['id'] ) ? (string) $field['id'] : '';
-	        }
+        private function post_execution_field_id( mixed $field ): string
+        {
+            if ( is_array( $field ) )
+            {
+                return isset( $field['id'] ) ? (string) $field['id'] : '';
+            }
 
-	        return is_object( $field ) && isset( $field->id ) ? (string) $field->id : '';
-	    }
+            return is_object( $field ) && isset( $field->id ) ? (string) $field->id : '';
+        }
 
-	    private function post_execution_field_type( mixed $field ): string
-	    {
-	        if ( is_array( $field ) )
-	        {
-	            return isset( $field['type'] ) ? sanitize_key( (string) $field['type'] ) : '';
-	        }
+        private function post_execution_field_type( mixed $field ): string
+        {
+            if ( is_array( $field ) )
+            {
+                return isset( $field['type'] ) ? sanitize_key( (string) $field['type'] ) : '';
+            }
 
-	        return is_object( $field ) && isset( $field->type ) ? sanitize_key( (string) $field->type ) : '';
-	    }
+            return is_object( $field ) && isset( $field->type ) ? sanitize_key( (string) $field->type ) : '';
+        }
 
-	    private function post_execution_field_label( mixed $field ): string
-	    {
-	        if ( is_array( $field ) )
-	        {
-	            return isset( $field['label'] ) ? (string) $field['label'] : '';
-	        }
+        private function post_execution_field_label( mixed $field ): string
+        {
+            if ( is_array( $field ) )
+            {
+                return isset( $field['label'] ) ? (string) $field['label'] : '';
+            }
 
-	        return is_object( $field ) && isset( $field->label ) ? (string) $field->label : '';
-	    }
+            return is_object( $field ) && isset( $field->label ) ? (string) $field->label : '';
+        }
 
-	    /**
-	     * @param array<string, mixed> $entry Gravity Forms entry values.
-	     */
-	    private function post_execution_field_value_from_entry( string $field_id, array $entry, string $field_type, string $part ): string
-	    {
-	        if ( '' === $field_id )
-	        {
-	            return '';
-	        }
+        /**
+         * @param array<string, mixed> $entry Gravity Forms entry values.
+         */
+        private function post_execution_field_value_from_entry( string $field_id, array $entry, string $field_type, string $part ): string
+        {
+            if ( '' === $field_id )
+            {
+                return '';
+            }
 
-	        if ( 'name' === $field_type )
-	        {
-	            $first = $this->stringify_post_execution_value( $entry[ $field_id . '.3' ] ?? $entry[ $field_id . '.1' ] ?? '' );
-	            $last  = $this->stringify_post_execution_value( $entry[ $field_id . '.6' ] ?? $entry[ $field_id . '.2' ] ?? '' );
-	            if ( 'first' === $part )
-	            {
-	                return $first;
-	            }
-	            if ( 'last' === $part )
-	            {
-	                return $last;
-	            }
-	            $full = trim( $this->stringify_post_execution_value( $entry[ $field_id ] ?? '' ) );
-	            return '' !== $full ? $full : trim( $first . ' ' . $last );
-	        }
+            if ( 'name' === $field_type )
+            {
+                $first = $this->stringify_post_execution_value( $entry[ $field_id . '.3' ] ?? $entry[ $field_id . '.1' ] ?? '' );
+                $last  = $this->stringify_post_execution_value( $entry[ $field_id . '.6' ] ?? $entry[ $field_id . '.2' ] ?? '' );
+                if ( 'first' === $part )
+                {
+                    return $first;
+                }
+                if ( 'last' === $part )
+                {
+                    return $last;
+                }
+                $full = trim( $this->stringify_post_execution_value( $entry[ $field_id ] ?? '' ) );
+                return '' !== $full ? $full : trim( $first . ' ' . $last );
+            }
 
-	        return $this->stringify_post_execution_value( $entry[ $field_id ] ?? '' );
-	    }
+            return $this->stringify_post_execution_value( $entry[ $field_id ] ?? '' );
+        }
 
-	    /**
-	     * Extract the most useful result payload for placeholders.
+        /**
+         * Extract the most useful result payload for placeholders.
      *
      * @param array $result CPS/local action result.
      *

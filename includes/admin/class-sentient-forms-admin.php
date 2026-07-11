@@ -35,9 +35,9 @@ class Sentient_Forms_Admin
     /** @var WP_Error|null */
     private $asset_error = null;
     private ?string $dev_notice = null;
-	private ?string $spa_app_module_url = null;
-	private ?string $spa_start_module_url = null;
-	private ?string $spa_bootstrap_script = null;
+    private ?string $spa_app_module_url = null;
+    private ?string $spa_start_module_url = null;
+    private ?string $spa_bootstrap_script = null;
 
     /**
      * Constructor.
@@ -62,7 +62,7 @@ class Sentient_Forms_Admin
         add_action( 'admin_menu', [ $this, 'admin_menu' ] );
 
         // Ensure admin_url paths include /wp-admin/ for environments where it may be omitted (avoids /admin.php 404s).
-		add_filter( 'admin_url', [ $this, 'ensure_admin_path_prefix' ], 9, 3 );
+        add_filter( 'admin_url', [ $this, 'ensure_admin_path_prefix' ], 9, 3 );
 
         // Enqueue admin-specific scripts and styles.
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
@@ -209,15 +209,15 @@ SVG;
         }
 
         $script_handle = 'sentient-forms-admin-app';
-		$start_entry   = $this->assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
-		if ( is_wp_error( $start_entry ) )
-		{
-			$this->asset_error = $start_entry;
-			add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
-			return;
-		}
-		$app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
-		$start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
+        $start_entry   = $this->assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+        if ( is_wp_error( $start_entry ) )
+        {
+            $this->asset_error = $start_entry;
+            add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
+            return;
+        }
+        $app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
+        $start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
 
         wp_enqueue_style( 'wp-components' );
 
@@ -230,106 +230,106 @@ SVG;
             );
         }
 
-		$this->spa_app_module_url   = $app_module_url;
-		$this->spa_start_module_url = $start_module_url;
+        $this->spa_app_module_url   = $app_module_url;
+        $this->spa_start_module_url = $start_module_url;
 
-		$config                 = $this->build_spa_bootstrap_payload();
-		$asset_base             = rtrim( $config['assetBaseUrl'] ?? '', '/' );
-		$svelte_runtime_key     = $this->assets->get_sveltekit_runtime_key();
-		$bootstrap_js           = 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';';
-		$bootstrap_js          .= "\n" . sprintf(
-			'window.%1$s = { base: new URL(".", location).pathname.slice(0, -1), assets: %2$s };',
-			$svelte_runtime_key,
-			wp_json_encode( $asset_base )
-		);
-		$bootstrap_js .= "\n" . 'window.sentientFormsAppReady = "bootstrapping";';
-		$bootstrap_js .= "\n" . '(function(){ ["#adminmenu", "#wpadminbar", "#screen-meta-links", "#wpfooter"].forEach(function(selector){ var node = document.querySelector(selector); if (node) { node.setAttribute("data-sveltekit-reload", ""); } }); })();';
-		$bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
+        $config                 = $this->build_spa_bootstrap_payload();
+        $asset_base             = rtrim( $config['assetBaseUrl'] ?? '', '/' );
+        $svelte_runtime_key     = $this->assets->get_sveltekit_runtime_key();
+        $bootstrap_js           = 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';';
+        $bootstrap_js          .= "\n" . sprintf(
+            'window.%1$s = { base: new URL(".", location).pathname.slice(0, -1), assets: %2$s };',
+            $svelte_runtime_key,
+            wp_json_encode( $asset_base )
+        );
+        $bootstrap_js .= "\n" . 'window.sentientFormsAppReady = "bootstrapping";';
+        $bootstrap_js .= "\n" . '(function(){ ["#adminmenu", "#wpadminbar", "#screen-meta-links", "#wpfooter"].forEach(function(selector){ var node = document.querySelector(selector); if (node) { node.setAttribute("data-sveltekit-reload", ""); } }); })();';
+        $bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
 
-		$is_dev = ! empty( $config['devMode'] );
-		if ( $is_dev ) {
-			$bootstrap_js .= "\n" . sprintf(
-				'import("%s/@vite/client").catch((e) => console.warn("Vite client load failed", e));',
-				rtrim( $asset_base, '/' )
-			);
-		}
+        $is_dev = ! empty( $config['devMode'] );
+        if ( $is_dev ) {
+            $bootstrap_js .= "\n" . sprintf(
+                'import("%s/@vite/client").catch((e) => console.warn("Vite client load failed", e));',
+                rtrim( $asset_base, '/' )
+            );
+        }
 
-		$runtime_import = $is_dev
-			? rtrim( $asset_base, '/' ) . '/node_modules/@sveltejs/kit/src/runtime/client/entry.js'
-			: $start_module_url;
-		$app_import = $is_dev
-			? rtrim( $asset_base, '/' ) . $this->get_dev_app_entry_path()
-			: $app_module_url;
+        $runtime_import = $is_dev
+            ? rtrim( $asset_base, '/' ) . '/node_modules/@sveltejs/kit/src/runtime/client/entry.js'
+            : $start_module_url;
+        $app_import = $is_dev
+            ? rtrim( $asset_base, '/' ) . $this->get_dev_app_entry_path()
+            : $app_module_url;
 
-		$this->spa_bootstrap_script = $bootstrap_js;
+        $this->spa_bootstrap_script = $bootstrap_js;
 
-		// Store dev/prod module URLs for enqueue output.
-		$this->spa_start_module_url = $runtime_import;
-		$this->spa_app_module_url   = $app_import;
-	}
+        // Store dev/prod module URLs for enqueue output.
+        $this->spa_start_module_url = $runtime_import;
+        $this->spa_app_module_url   = $app_import;
+    }
 
-	private function get_dev_app_entry_path(): string
-	{
-		if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) ) )
-		{
-			$configured = constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
-		}
-		else
-		{
-			$configured = getenv( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
-		}
+    private function get_dev_app_entry_path(): string
+    {
+        if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) ) )
+        {
+            $configured = constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
+        }
+        else
+        {
+            $configured = getenv( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
+        }
 
-		if ( is_string( $configured ) && '' !== trim( $configured ) )
-		{
-			return '/' . ltrim( trim( $configured ), '/' );
-		}
+        if ( is_string( $configured ) && '' !== trim( $configured ) )
+        {
+            return '/' . ltrim( trim( $configured ), '/' );
+        }
 
-		return '/@fs/app/.svelte-kit/generated/client/app.js';
-	}
+        return '/@fs/app/.svelte-kit/generated/client/app.js';
+    }
 
-	public function force_module_type_for_spa( string $tag, string $handle, string $src ): string
-	{
-		if ( 'sentient-forms-admin-app' !== $handle )
-		{
-			return $tag;
-		}
+    public function force_module_type_for_spa( string $tag, string $handle, string $src ): string
+    {
+        if ( 'sentient-forms-admin-app' !== $handle )
+        {
+            return $tag;
+        }
 
-		if ( str_contains( $tag, 'type="module"' ) || str_contains( $tag, "type='module'" ) )
-		{
-			return $tag;
-		}
+        if ( str_contains( $tag, 'type="module"' ) || str_contains( $tag, "type='module'" ) )
+        {
+            return $tag;
+        }
 
-		return str_replace( '<' . 'script ', '<' . 'script type="module" ', $tag );
-	}
+        return str_replace( '<' . 'script ', '<' . 'script type="module" ', $tag );
+    }
 
-	private function build_spa_bootstrap_payload(): array
-	{
-		$initial_route = $this->determine_initial_route();
-		$admin_url     = admin_url( 'admin.php' );
-		$admin_path    = wp_parse_url( $admin_url, PHP_URL_PATH ) ?: '/wp-admin/admin.php';
-		$admin_base    = rtrim( preg_replace( '#/admin\.php$#', '', $admin_path ), '/' ) . '/';
+    private function build_spa_bootstrap_payload(): array
+    {
+        $initial_route = $this->determine_initial_route();
+        $admin_url     = admin_url( 'admin.php' );
+        $admin_path    = wp_parse_url( $admin_url, PHP_URL_PATH ) ?: '/wp-admin/admin.php';
+        $admin_base    = rtrim( preg_replace( '#/admin\.php$#', '', $admin_path ), '/' ) . '/';
 
-		return [
-			'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
-			'restNonce'     => wp_create_nonce( 'wp_rest' ),
-			'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
-			'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
-			'siteUrl'       => get_site_url(),
-			'adminPhpPath'  => $admin_path,
-			'adminBasePath' => $admin_base,
-			'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
-			'pluginVersion' => SENTIENT_FORMS_VERSION,
-			'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '', false ), '/' ),
-			'devMode'       => $this->assets->is_dev_mode(),
-			'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '', false ), '/' ) : null,
-			'license'       => $this->build_license_bootstrap_payload(),
-			'telemetry'     => $this->build_telemetry_bootstrap_payload(),
-			'initialRoute'  => $initial_route,
-			'formSources'   => $this->collect_form_sources(),
-			'currentUser'   => [
-				'id'        => get_current_user_id(),
-				'canManage' => current_user_can( 'manage_options' ),
-			],
+        return [
+            'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
+            'restNonce'     => wp_create_nonce( 'wp_rest' ),
+            'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
+            'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
+            'siteUrl'       => get_site_url(),
+            'adminPhpPath'  => $admin_path,
+            'adminBasePath' => $admin_base,
+            'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+            'pluginVersion' => SENTIENT_FORMS_VERSION,
+            'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '', false ), '/' ),
+            'devMode'       => $this->assets->is_dev_mode(),
+            'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '', false ), '/' ) : null,
+            'license'       => $this->build_license_bootstrap_payload(),
+            'telemetry'     => $this->build_telemetry_bootstrap_payload(),
+            'initialRoute'  => $initial_route,
+            'formSources'   => $this->collect_form_sources(),
+            'currentUser'   => [
+                'id'        => get_current_user_id(),
+                'canManage' => current_user_can( 'manage_options' ),
+            ],
             'i18n'          => [
                 'errorOccurred'     => __( 'An error occurred. Please try again.', 'sentient-forms' ),
                 'unsavedChanges'    => __( 'You have unsaved changes. Are you sure you want to leave?', 'sentient-forms' ),
@@ -344,9 +344,9 @@ SVG;
         ];
     }
 
-	private function build_license_bootstrap_payload(): array
-	{
-		$license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+    private function build_license_bootstrap_payload(): array
+    {
+        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
         $license_key  = $license_data['license_key'] ?? '';
 
         $masked_key = '';
@@ -357,165 +357,165 @@ SVG;
                 : str_repeat( '*', strlen( $license_key ) );
         }
 
-		return [
-			'status'            => $license_data['license_status'] ?? 'inactive',
-			'licenseKeyMasked'  => $masked_key,
-			'proxyKeyPresent'   => ! empty( $license_data['proxy_api_key'] ),
-			'tier'              => $license_data['tier'] ?: null,
-			'expiresAt'         => $license_data['expiry_date'] ?: null,
-			'lastSynced'        => $license_data['last_synced'] ?: null,
-			'licenseId'         => $license_data['license_id'] ?: null,
-			'siteId'            => $license_data['site_id'] ?: null,
-		];
-	}
+        return [
+            'status'            => $license_data['license_status'] ?? 'inactive',
+            'licenseKeyMasked'  => $masked_key,
+            'proxyKeyPresent'   => ! empty( $license_data['proxy_api_key'] ),
+            'tier'              => $license_data['tier'] ?: null,
+            'expiresAt'         => $license_data['expiry_date'] ?: null,
+            'lastSynced'        => $license_data['last_synced'] ?: null,
+            'licenseId'         => $license_data['license_id'] ?: null,
+            'siteId'            => $license_data['site_id'] ?: null,
+        ];
+    }
 
-	private function build_telemetry_bootstrap_payload(): array
-	{
-		$settings = Sentient_Forms_Plugin::instance()->get_telemetry_settings();
+    private function build_telemetry_bootstrap_payload(): array
+    {
+        $settings = Sentient_Forms_Plugin::instance()->get_telemetry_settings();
 
-		return [
-			'optIn'     => ! empty( $settings['telemetry_opt_in'] ),
-			'updatedAt' => $settings['updated_at'] ?? null,
-		];
-	}
+        return [
+            'optIn'     => ! empty( $settings['telemetry_opt_in'] ),
+            'updatedAt' => $settings['updated_at'] ?? null,
+        ];
+    }
 
-	private function build_hash_router_bootstrap_js(): string
-	{
-		return implode(
-			"\n",
-			[
-				'(function () {',
-				'	try {',
-				'		var config = window.sentientFormsConfig || {};',
-				"		var adminPhpPath = typeof config.adminPhpPath === 'string' && config.adminPhpPath.length ? config.adminPhpPath : '/wp-admin/admin.php';",
-				"		var adminBasePath = typeof config.adminBasePath === 'string' && config.adminBasePath.length ? config.adminBasePath : '/wp-admin/';",
-				'		var basePath = new URL(".", location).pathname;',
-				'		if (!basePath.endsWith("/")) {',
-				'			basePath = basePath + "/";',
-				'		}',
-				'		var searchParams = new URLSearchParams(window.location.search || "");',
-				'		var pageParam = searchParams.get("page") || "";',
-				'		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {',
-				"			var pathname = window.location.pathname || '';",
-				'			var pathMatchesAdmin = pathname === adminPhpPath;',
-				'			var pathMatchesBase = pathname === adminBasePath;',
-				'			var pathMatchesIndex = pathname === adminBasePath + "index.php";',
-				'			if (!pathMatchesAdmin && !pathMatchesBase && !pathMatchesIndex) {',
-				'				var replacementUrl = adminPhpPath + (window.location.search || "") + (window.location.hash || "");',
-				'				history.replaceState({}, document.title, replacementUrl);',
-				'				pathname = adminPhpPath;',
-				'			}',
-				'		}',
-				"		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';",
-				"		var hasExplicitHash = existingHash.length > 1 && existingHash !== '#/';",
-				"		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');",
-				"		if (route.startsWith('#')) {",
-				'			route = route.slice(1);',
-				'		}',
-				"		if (!route.startsWith('/')) {",
-				"			route = '/' + route;",
-				'		}',
-				"		var targetHash = '#' + route;",
-				'		if (!hasExplicitHash && window.location.hash !== targetHash) {',
-				'			window.location.hash = targetHash;',
-				'		}',
-				'	} catch (error) {',
-				"		console.error('Sentient Forms router bootstrap failed', error);",
-				'	}',
-				'})();',
-			]
-		);
-	}
+    private function build_hash_router_bootstrap_js(): string
+    {
+        return implode(
+            "\n",
+            [
+                '(function () {',
+                '	try {',
+                '		var config = window.sentientFormsConfig || {};',
+                "		var adminPhpPath = typeof config.adminPhpPath === 'string' && config.adminPhpPath.length ? config.adminPhpPath : '/wp-admin/admin.php';",
+                "		var adminBasePath = typeof config.adminBasePath === 'string' && config.adminBasePath.length ? config.adminBasePath : '/wp-admin/';",
+                '		var basePath = new URL(".", location).pathname;',
+                '		if (!basePath.endsWith("/")) {',
+                '			basePath = basePath + "/";',
+                '		}',
+                '		var searchParams = new URLSearchParams(window.location.search || "");',
+                '		var pageParam = searchParams.get("page") || "";',
+                '		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {',
+                "			var pathname = window.location.pathname || '';",
+                '			var pathMatchesAdmin = pathname === adminPhpPath;',
+                '			var pathMatchesBase = pathname === adminBasePath;',
+                '			var pathMatchesIndex = pathname === adminBasePath + "index.php";',
+                '			if (!pathMatchesAdmin && !pathMatchesBase && !pathMatchesIndex) {',
+                '				var replacementUrl = adminPhpPath + (window.location.search || "") + (window.location.hash || "");',
+                '				history.replaceState({}, document.title, replacementUrl);',
+                '				pathname = adminPhpPath;',
+                '			}',
+                '		}',
+                "		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';",
+                "		var hasExplicitHash = existingHash.length > 1 && existingHash !== '#/';",
+                "		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');",
+                "		if (route.startsWith('#')) {",
+                '			route = route.slice(1);',
+                '		}',
+                "		if (!route.startsWith('/')) {",
+                "			route = '/' + route;",
+                '		}',
+                "		var targetHash = '#' + route;",
+                '		if (!hasExplicitHash && window.location.hash !== targetHash) {',
+                '			window.location.hash = targetHash;',
+                '		}',
+                '	} catch (error) {',
+                "		console.error('Sentient Forms router bootstrap failed', error);",
+                '	}',
+                '})();',
+            ]
+        );
+    }
 
-	/**
-	 * Some local environments (or misconfigured proxies) can yield admin_url() values missing /wp-admin/,
-	 * which 404 at Apache before WordPress executes. Guard against that by forcing the prefix when absent.
-	 *
-	 * @param string $url  The generated admin URL.
-	 * @param string $path Requested path.
-	 * @param int    $blog_id Site blog id (unused).
-	 *
-	 * @return string Corrected admin URL.
-	 */
-	public function ensure_admin_path_prefix( string $url, string $path = '', $blog_id = null ): string
-	{
-		$parsed = wp_parse_url( $url );
-		if ( empty( $parsed['path'] ) ) {
-			return $url;
-		}
+    /**
+     * Some local environments (or misconfigured proxies) can yield admin_url() values missing /wp-admin/,
+     * which 404 at Apache before WordPress executes. Guard against that by forcing the prefix when absent.
+     *
+     * @param string $url  The generated admin URL.
+     * @param string $path Requested path.
+     * @param int    $blog_id Site blog id (unused).
+     *
+     * @return string Corrected admin URL.
+     */
+    public function ensure_admin_path_prefix( string $url, string $path = '', $blog_id = null ): string
+    {
+        $parsed = wp_parse_url( $url );
+        if ( empty( $parsed['path'] ) ) {
+            return $url;
+        }
 
-		$path_value = $parsed['path'];
-		// If /wp-admin/ already present, leave untouched.
-		if ( str_contains( $path_value, '/wp-admin/' ) ) {
-			return $url;
-		}
+        $path_value = $parsed['path'];
+        // If /wp-admin/ already present, leave untouched.
+        if ( str_contains( $path_value, '/wp-admin/' ) ) {
+            return $url;
+        }
 
-		// Only adjust typical admin endpoints; avoid altering other admin_url usages unexpectedly.
-		$basename = basename( $path_value );
-		$admin_targets = [ 'admin.php', 'index.php', 'plugins.php', 'options-general.php' ];
-		if ( ! in_array( $basename, $admin_targets, true ) ) {
-			return $url;
-		}
+        // Only adjust typical admin endpoints; avoid altering other admin_url usages unexpectedly.
+        $basename = basename( $path_value );
+        $admin_targets = [ 'admin.php', 'index.php', 'plugins.php', 'options-general.php' ];
+        if ( ! in_array( $basename, $admin_targets, true ) ) {
+            return $url;
+        }
 
-		$corrected_path = '/wp-admin/' . ltrim( $path_value, '/' );
-		$rebuilt = ( $parsed['scheme'] ?? 'http' ) . '://' . ( $parsed['host'] ?? 'localhost' );
-		if ( isset( $parsed['port'] ) ) {
-			$rebuilt .= ':' . $parsed['port'];
-		}
-		$rebuilt .= $corrected_path;
-		if ( ! empty( $parsed['query'] ) ) {
-			$rebuilt .= '?' . $parsed['query'];
-		}
-		if ( ! empty( $parsed['fragment'] ) ) {
-			$rebuilt .= '#' . $parsed['fragment'];
-		}
+        $corrected_path = '/wp-admin/' . ltrim( $path_value, '/' );
+        $rebuilt = ( $parsed['scheme'] ?? 'http' ) . '://' . ( $parsed['host'] ?? 'localhost' );
+        if ( isset( $parsed['port'] ) ) {
+            $rebuilt .= ':' . $parsed['port'];
+        }
+        $rebuilt .= $corrected_path;
+        if ( ! empty( $parsed['query'] ) ) {
+            $rebuilt .= '?' . $parsed['query'];
+        }
+        if ( ! empty( $parsed['fragment'] ) ) {
+            $rebuilt .= '#' . $parsed['fragment'];
+        }
 
-		return $rebuilt;
-	}
+        return $rebuilt;
+    }
 
-	private function determine_initial_route(): string
-	{
+    private function determine_initial_route(): string
+    {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin routing based on the current plugin page.
-		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : 'sentient-forms';
+        $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : 'sentient-forms';
 
-		return match ( $page ) {
-			'sentient-forms-actions',
-			'sentient-forms-form-config' => '/actions',
-			'sentient-forms-license'     => '/licensing',
-			default                      => '/dashboard',
-		};
-	}
+        return match ( $page ) {
+            'sentient-forms-actions',
+            'sentient-forms-form-config' => '/actions',
+            'sentient-forms-license'     => '/licensing',
+            default                      => '/dashboard',
+        };
+    }
 
-	private function collect_form_sources(): array
-	{
-		$plugin   = Sentient_Forms_Plugin::instance();
-		$registry = $plugin ? $plugin->get_form_adapter_registry() : null;
+    private function collect_form_sources(): array
+    {
+        $plugin   = Sentient_Forms_Plugin::instance();
+        $registry = $plugin ? $plugin->get_form_adapter_registry() : null;
 
-		if ( ! $registry ) {
-			return [];
-		}
+        if ( ! $registry ) {
+            return [];
+        }
 
-		$sources = [];
-		foreach ( $registry->get_all_adapters() as $adapter ) {
-			$descriptor = method_exists( $registry, 'get_capability_descriptor' )
-				? $registry->get_capability_descriptor( $adapter->get_id() )
-				: null;
-			$descriptor = is_array( $descriptor ) ? $descriptor : [];
-			$requirements = is_array( $descriptor['requirements'] ?? null ) ? $descriptor['requirements'] : [];
+        $sources = [];
+        foreach ( $registry->get_all_adapters() as $adapter ) {
+            $descriptor = method_exists( $registry, 'get_capability_descriptor' )
+                ? $registry->get_capability_descriptor( $adapter->get_id() )
+                : null;
+            $descriptor = is_array( $descriptor ) ? $descriptor : [];
+            $requirements = is_array( $descriptor['requirements'] ?? null ) ? $descriptor['requirements'] : [];
 
-			$sources[] = [
-				'slug'                => (string) ( $descriptor['slug'] ?? $adapter->get_id() ),
-				'label'               => (string) ( $descriptor['label'] ?? $adapter->get_name() ),
-				'isActive'            => (bool) ( $descriptor['is_active'] ?? $adapter->is_active() ),
-				'availability'        => (string) ( $descriptor['availability'] ?? ( $adapter->is_active() ? 'available' : 'inactive' ) ),
-				'availabilityMessage' => (string) ( $descriptor['availability_message'] ?? '' ),
-				'requiresPro'         => ! empty( $requirements['requires_pro'] ),
-				'descriptor'          => $descriptor,
-			];
-		}
+            $sources[] = [
+                'slug'                => (string) ( $descriptor['slug'] ?? $adapter->get_id() ),
+                'label'               => (string) ( $descriptor['label'] ?? $adapter->get_name() ),
+                'isActive'            => (bool) ( $descriptor['is_active'] ?? $adapter->is_active() ),
+                'availability'        => (string) ( $descriptor['availability'] ?? ( $adapter->is_active() ? 'available' : 'inactive' ) ),
+                'availabilityMessage' => (string) ( $descriptor['availability_message'] ?? '' ),
+                'requiresPro'         => ! empty( $requirements['requires_pro'] ),
+                'descriptor'          => $descriptor,
+            ];
+        }
 
-		return $sources;
-	}
+        return $sources;
+    }
 
     public function render_asset_error_notice(): void
     {
@@ -642,10 +642,10 @@ SVG;
             '<div class="wrap"><div id="sentient-forms-admin-app" data-view="%s">',
             esc_attr( $view )
         );
-		if ( $this->spa_bootstrap_script && $this->spa_start_module_url && $this->spa_app_module_url ) {
-			wp_print_inline_script_tag(
-				sprintf(
-					'%3$s
+        if ( $this->spa_bootstrap_script && $this->spa_start_module_url && $this->spa_app_module_url ) {
+            wp_print_inline_script_tag(
+                sprintf(
+                    '%3$s
 const mount = document.currentScript.parentElement;
 if (!mount) {
 	throw new Error("Sentient Forms mount element missing");
@@ -664,14 +664,14 @@ Promise.all([
 	console.error("Sentient Forms SPA failed to start", error);
 	window.sentientFormsAppReady = "failed";
 });',
-					wp_json_encode( $this->spa_start_module_url ),
-					wp_json_encode( $this->spa_app_module_url ),
-					$this->spa_bootstrap_script
-				)
-			);
-			}
+                    wp_json_encode( $this->spa_start_module_url ),
+                    wp_json_encode( $this->spa_app_module_url ),
+                    $this->spa_bootstrap_script
+                )
+            );
+            }
 
-		echo '</div></div>';
+        echo '</div></div>';
     }
 
 

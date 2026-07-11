@@ -47,10 +47,12 @@ final class Sentient_Forms_Action_Source_Compatibility_Snapshot_Verifier
     }
 
     /**
-     * Compute SHA-256 over sorted, path-framed, newline-normalized sources.
+     * Compute SHA-256 over sorted, path-framed, token-normalized sources.
      *
-     * Each path and content block is framed as `<byte-length>:<bytes>`. Source
-     * CRLF and lone CR line endings normalize to LF before content framing.
+     * PHP whitespace is not part of the executable compatibility contract, so
+     * formatting-only changes must not invalidate the checked projection. Each
+     * lexical token is framed to avoid collisions; strings and comments remain
+     * byte-sensitive after portable newline normalization.
      */
     public static function source_sha256( string $plugin_root ): string
     {
@@ -74,12 +76,43 @@ final class Sentient_Forms_Action_Source_Compatibility_Snapshot_Verifier
                     'sentient_forms_action_source_projection_unreadable_source:' . $path
                 );
             }
-            $normalized = str_replace( [ "\r\n", "\r" ], "\n", $contents );
+            $normalized = self::canonical_source( $contents );
             hash_update( $hash, strlen( $path ) . ':' . $path );
             hash_update( $hash, strlen( $normalized ) . ':' . $normalized );
         }
 
         return hash_final( $hash );
+    }
+
+    private static function canonical_source( string $contents ): string
+    {
+        $canonical = '';
+        foreach ( token_get_all( str_replace( [ "\r\n", "\r" ], "\n", $contents ) ) as $token )
+        {
+            if ( is_string( $token ) )
+            {
+                $canonical .= 'c' . strlen( $token ) . ':' . $token;
+                continue;
+            }
+
+            [ $token_id, $text ] = $token;
+            if ( T_WHITESPACE === $token_id )
+            {
+                continue;
+            }
+            if ( T_OPEN_TAG === $token_id )
+            {
+                $text = '<?php';
+            }
+            elseif ( T_OPEN_TAG_WITH_ECHO === $token_id )
+            {
+                $text = '<?=';
+            }
+
+            $canonical .= 't' . $token_id . ':' . strlen( $text ) . ':' . $text;
+        }
+
+        return $canonical;
     }
 
     public static function verify_snapshot( string $plugin_root, ?string $snapshot_path = null ): string

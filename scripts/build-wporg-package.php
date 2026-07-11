@@ -136,25 +136,12 @@ function materialize_locked_runtime_dependencies( string $plugin_root ): string
             '--no-plugins',
             '--no-autoloader',
         ] );
-        $descriptors = [
-            1 => [ 'pipe', 'w' ],
-            2 => [ 'pipe', 'w' ],
-        ];
-        $process = proc_open( $command, $descriptors, $pipes );
-        if ( ! is_resource( $process ) )
-        {
-            throw new RuntimeException( 'Unable to start Composer for locked runtime dependencies.' );
-        }
-        $stdout = stream_get_contents( $pipes[1] );
-        $stderr = stream_get_contents( $pipes[2] );
-        fclose( $pipes[1] );
-        fclose( $pipes[2] );
-        $status = proc_close( $process );
-        if ( 0 !== $status )
+        $result = run_locked_composer_install( $command );
+        if ( 0 !== $result['status'] )
         {
             throw new RuntimeException(
                 "Locked production dependency install failed.\n"
-                . trim( (string) $stdout . "\n" . (string) $stderr )
+                . trim( $result['stdout'] . "\n" . $result['stderr'] )
             );
         }
 
@@ -165,6 +152,171 @@ function materialize_locked_runtime_dependencies( string $plugin_root ): string
         remove_runtime_dependency_directory( $directory );
         throw $error;
     }
+}
+
+/**
+ * Run Composer with bounded file captures so one noisy stream cannot deadlock the other.
+ *
+ * @param list<string> $command
+ * @return array{status:int,stdout:string,stderr:string}
+ */
+function run_locked_composer_install( array $command ): array
+{
+    $stdout_path = tempnam( sys_get_temp_dir(), 'sentient-forms-composer-stdout-' );
+    $stderr_path = tempnam( sys_get_temp_dir(), 'sentient-forms-composer-stderr-' );
+    if ( false === $stdout_path || false === $stderr_path )
+    {
+        if ( is_string( $stdout_path ) )
+        {
+            @unlink( $stdout_path );
+        }
+        if ( is_string( $stderr_path ) )
+        {
+            @unlink( $stderr_path );
+        }
+        throw new RuntimeException( 'Unable to create Composer diagnostic capture files.' );
+    }
+
+    $process = null;
+    try
+    {
+        $process = proc_open(
+            $command,
+            [
+                1 => [ 'file', $stdout_path, 'w' ],
+                2 => [ 'file', $stderr_path, 'w' ],
+            ],
+            $pipes
+        );
+        if ( ! is_resource( $process ) )
+        {
+            throw new RuntimeException( 'Unable to start Composer for locked runtime dependencies.' );
+        }
+
+        $timeout_seconds = composer_install_timeout_seconds();
+        $deadline        = microtime( true ) + $timeout_seconds;
+        $observed_exit   = null;
+        while ( true )
+        {
+            $process_status = proc_get_status( $process );
+            if ( ! $process_status['running'] )
+            {
+                $observed_exit = $process_status['exitcode'];
+                break;
+            }
+            if ( microtime( true ) >= $deadline )
+            {
+                terminate_composer_process( $process );
+                proc_close( $process );
+                $process = null;
+                throw new RuntimeException(
+                    sprintf( 'Locked production dependency install timed out after %d seconds.', $timeout_seconds )
+                );
+            }
+            usleep( 50000 );
+        }
+
+        $close_status = proc_close( $process );
+        $process      = null;
+        $status       = is_int( $observed_exit ) && $observed_exit >= 0 ? $observed_exit : $close_status;
+
+        return [
+            'status' => $status,
+            'stdout' => redact_composer_diagnostic( read_bounded_composer_diagnostic( $stdout_path ) ),
+            'stderr' => redact_composer_diagnostic( read_bounded_composer_diagnostic( $stderr_path ) ),
+        ];
+    }
+    finally
+    {
+        if ( is_resource( $process ) )
+        {
+            terminate_composer_process( $process );
+            proc_close( $process );
+        }
+        @unlink( $stdout_path );
+        @unlink( $stderr_path );
+    }
+}
+
+function composer_install_timeout_seconds(): int
+{
+    $configured = getenv( 'SENTIENT_FORMS_COMPOSER_TIMEOUT_SECONDS' );
+    if ( false === $configured || '' === trim( $configured ) )
+    {
+        return 300;
+    }
+    if ( ! ctype_digit( trim( $configured ) ) )
+    {
+        throw new RuntimeException( 'SENTIENT_FORMS_COMPOSER_TIMEOUT_SECONDS must be an integer.' );
+    }
+
+    $seconds = (int) $configured;
+    if ( $seconds < 1 || $seconds > 900 )
+    {
+        throw new RuntimeException( 'SENTIENT_FORMS_COMPOSER_TIMEOUT_SECONDS must be between 1 and 900.' );
+    }
+    return $seconds;
+}
+
+/**
+ * Terminate Composer and give it a bounded grace period before forcing termination.
+ *
+ * @param resource $process
+ */
+function terminate_composer_process( $process ): void
+{
+    @proc_terminate( $process );
+    $deadline = microtime( true ) + 2.0;
+    do
+    {
+        $status = proc_get_status( $process );
+        if ( ! $status['running'] )
+        {
+            return;
+        }
+        usleep( 50000 );
+    }
+    while ( microtime( true ) < $deadline );
+
+    @proc_terminate( $process, 9 );
+}
+
+function read_bounded_composer_diagnostic( string $path, int $limit = 16384 ): string
+{
+    $size = filesize( $path );
+    if ( false === $size || 0 === $size )
+    {
+        return '';
+    }
+    if ( $size <= $limit )
+    {
+        return (string) file_get_contents( $path );
+    }
+
+    $handle = fopen( $path, 'rb' );
+    if ( false === $handle )
+    {
+        return '';
+    }
+    $half  = intdiv( $limit, 2 );
+    $first = (string) fread( $handle, $half );
+    fseek( $handle, -$half, SEEK_END );
+    $last = (string) fread( $handle, $half );
+    fclose( $handle );
+
+    return $first . "\n...[Composer diagnostic truncated]...\n" . $last;
+}
+
+function redact_composer_diagnostic( string $diagnostic ): string
+{
+    $patterns = [
+        '#(https?://)[^/\s:@]+:[^@\s/]+@#i' => '$1[redacted]@',
+        '/\b(authorization|api[_-]?key|password|secret|token)\s*[:=]\s*\S+/i' => '$1=[redacted]',
+        '/\b(?:sk|pk)_[A-Za-z0-9_-]{12,}\b/' => '[redacted-key]',
+        '/\bBearer\s+\S+/i' => 'Bearer [redacted]',
+    ];
+
+    return (string) preg_replace( array_keys( $patterns ), array_values( $patterns ), $diagnostic );
 }
 
 /**

@@ -139,9 +139,9 @@ class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
 
-	protected function setUp(): void
-	{
-		parent::setUp();
+    protected function setUp(): void
+    {
+        parent::setUp();
 
         $this->plugin = Sentient_Forms_Plugin::instance();
         $this->plugin->set_license_data( [ 'proxy_api_key' => 'test-key' ] );
@@ -181,7 +181,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->get_async_metadata_store()->clear();
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_async_runtime_tables();
-		delete_option( 'sentient_forms_async_settings' );
+        delete_option( 'sentient_forms_async_settings' );
         GFAPI::$entries         = [];
         GFAPI::$forms           = [];
         GFAPI::$get_entry_calls = 0;
@@ -954,13 +954,13 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $removed = $store->purge( static fn( array $job ): bool => 'success' === $job['status'] );
         $this->assertSame( 1, $removed );
         $this->assertSame( [], $store->all() );
-	}
+    }
 
     public function test_async_handler_uses_configured_retry_policy(): void
-	{
+    {
         $this->plugin->get_async_settings_service()->update_settings(
             [ 'max_attempts' => 5, 'base_delay_seconds' => 120, 'max_delay_seconds' => 900 ]
-		);
+        );
         $this->assertTrue(
             $this->plugin->get_async_handler()->schedule_local_mapping(
                 77,
@@ -1054,63 +1054,63 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'queued', $store->get( $request_id )['status'] ?? null );
     }
 
-	public function test_schedule_local_mapping_enqueues_identifier_only_payload(): void
-	{
-		Sentient_Forms_Installer::maybe_upgrade();
-		$this->truncate_local_first_runtime_tables();
-		$submission_uuid = '33333333-4444-4555-8666-777777777777';
+    public function test_schedule_local_mapping_enqueues_identifier_only_payload(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $submission_uuid = '33333333-4444-4555-8666-777777777777';
 
-		$scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
-			77,
-			[
-				'id'     => 321,
-				'title'  => 'Local Async Form',
-				'fields' => [ 'large form payload should not be queued' ],
-			],
-			[
-				'id' => 654,
-				'1'  => 'private field value should not be queued',
-			],
-			[
-				'form_source'          => 'gravity_forms',
-					'form_id'              => 321,
-					'entry_id'             => 654,
-					'action_id'            => 'local_first_77',
-					'execution_request_id' => null,
-					'submission_uuid'      => $submission_uuid,
-				]
-			);
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            77,
+            [
+                'id'     => 321,
+                'title'  => 'Local Async Form',
+                'fields' => [ 'large form payload should not be queued' ],
+            ],
+            [
+                'id' => 654,
+                '1'  => 'private field value should not be queued',
+            ],
+            [
+                'form_source'          => 'gravity_forms',
+                    'form_id'              => 321,
+                    'entry_id'             => 654,
+                    'action_id'            => 'local_first_77',
+                    'execution_request_id' => null,
+                    'submission_uuid'      => $submission_uuid,
+                ]
+            );
 
-		$this->assertTrue( $scheduled );
-		$this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertTrue( $scheduled );
+        $this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 
-		$job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
-		$this->assertSame( 'sentient_forms_process_local_mapping', $job['hook'] );
-		$this->assertSame( 'sentient_forms_async', $job['group'] );
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $job['hook'] );
+        $this->assertSame( 'sentient_forms_async', $job['group'] );
 
-		$payload = $job['args'][0] ?? [];
-			$this->assertSame( 77, $payload['local_mapping_id'] ?? null );
-			$this->assertSame( '321', $payload['form_id'] ?? null );
-			$this->assertSame( '654', $payload['entry_id'] ?? null );
-			$this->assertNotEmpty( $payload['execution_request_id'] ?? '' );
-			$this->assertSame( $payload['execution_request_id'], $payload['context']['execution_request_id'] ?? null );
-			$this->assertSame( $submission_uuid, $payload['context']['submission_uuid'] ?? null );
-			$this->assertArrayNotHasKey( 'form', $payload );
-			$this->assertArrayNotHasKey( 'entry', $payload );
+        $payload = $job['args'][0] ?? [];
+            $this->assertSame( 77, $payload['local_mapping_id'] ?? null );
+            $this->assertSame( '321', $payload['form_id'] ?? null );
+            $this->assertSame( '654', $payload['entry_id'] ?? null );
+            $this->assertNotEmpty( $payload['execution_request_id'] ?? '' );
+            $this->assertSame( $payload['execution_request_id'], $payload['context']['execution_request_id'] ?? null );
+            $this->assertSame( $submission_uuid, $payload['context']['submission_uuid'] ?? null );
+            $this->assertArrayNotHasKey( 'form', $payload );
+            $this->assertArrayNotHasKey( 'entry', $payload );
 
-		$metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
-		$this->assertSame( 'queued', $metadata['status'] ?? null );
-		$this->assertArrayNotHasKey( 'form', $metadata['payload'] ?? [] );
-		$this->assertArrayNotHasKey( 'entry', $metadata['payload'] ?? [] );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
+        $this->assertSame( 'queued', $metadata['status'] ?? null );
+        $this->assertArrayNotHasKey( 'form', $metadata['payload'] ?? [] );
+        $this->assertArrayNotHasKey( 'entry', $metadata['payload'] ?? [] );
 
-			global $wpdb;
-			$events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
-			$event  = $events->get_by_request_id( (string) $payload['execution_request_id'] );
-		$this->assertIsArray( $event );
-		$this->assertSame( 'queued', $event['status'] ?? null );
-		$this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
-		$this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
-	}
+            global $wpdb;
+            $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+            $event  = $events->get_by_request_id( (string) $payload['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'queued', $event['status'] ?? null );
+        $this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+    }
 
     public function test_bulk_local_mapping_scheduling_preserves_identifier_only_payloads_under_backlog(): void
     {
@@ -1360,285 +1360,285 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'success', $request['status'] ?? null );
     }
 
-	public function test_process_local_mapping_retries_transient_openrouter_failure(): void
-	{
-		Sentient_Forms_Installer::maybe_upgrade();
-		$this->truncate_local_first_runtime_tables();
+    public function test_process_local_mapping_retries_transient_openrouter_failure(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-		global $wpdb;
+        global $wpdb;
 
-		$credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
-		$consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
-		$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-		$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-		$vault          = new Sentient_Forms_Provider_Credential_Vault();
-		$encrypted      = $vault->encrypt( 'sk-or-local-async-retry-secret' );
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-local-async-retry-secret' );
 
-		$this->assertIsString( $encrypted );
+        $this->assertIsString( $encrypted );
 
-		$credential_id = $credentials->create(
-			[
-				'provider'          => 'openrouter',
-				'label'             => 'Async retry OpenRouter key',
-				'auth_mode'         => 'manual_key',
-				'encrypted_secret'  => $encrypted,
-				'status'            => 'valid',
-				'last_validated_at' => current_time( 'mysql' ),
-			]
-		);
-		$this->assertIsInt( $credential_id );
-		$this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Async retry OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
 
-		$action_id = $custom_actions->create(
-			[
-				'code'                 => 'local_async_retry_summary',
-				'display_name'         => 'Local Async Retry Summary',
-				'definition_json'      => [
-					'prompt_template' => 'Summarize {{name}}.',
-				],
-				'model_selection_json' => [
-					'provider'      => 'openrouter',
-					'model'         => 'openrouter/auto',
-					'credential_id' => $credential_id,
-				],
-				'status'               => 'active',
-			]
-		);
-		$this->assertIsInt( $action_id );
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'local_async_retry_summary',
+                'display_name'         => 'Local Async Retry Summary',
+                'definition_json'      => [
+                    'prompt_template' => 'Summarize {{name}}.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
 
-		$mapping_id = $mappings->create(
-			[
-				'form_source'         => 'gravity_forms',
-				'form_id'             => '322',
-				'hook'                => 'gform_after_submission',
-				'action_kind'         => 'custom_action',
-				'action_id'           => $action_id,
-				'input_bindings_json' => [
-					'name' => '1',
-				],
-				'execution_mode'      => 'async',
-				'effect_mapping_json' => [
-					'store_result' => true,
-				],
-				'enabled'             => true,
-			]
-		);
-		$this->assertIsInt( $mapping_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '322',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name' => '1',
+                ],
+                'execution_mode'      => 'async',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
 
-		GFAPI::$forms[322] = [
-			'id'     => 322,
-			'title'  => 'Async Retry Form',
-			'fields' => [],
-		];
-		GFAPI::$entries[655] = [
-			'id'      => 655,
-			'form_id' => 322,
-			'1'       => 'Retry Lead',
-		];
+        GFAPI::$forms[322] = [
+            'id'     => 322,
+            'title'  => 'Async Retry Form',
+            'fields' => [],
+        ];
+        GFAPI::$entries[655] = [
+            'id'      => 655,
+            'form_id' => 322,
+            '1'       => 'Retry Lead',
+        ];
 
-		add_filter(
-			'pre_http_request',
-			static function ( $preempt, array $args, string $url ): mixed {
-				if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
-				{
-					return [
-						'headers'  => [],
-						'body'     => wp_json_encode( [ 'error' => [ 'message' => 'Provider temporarily unavailable.' ] ] ),
-						'response' => [
-							'code'    => 500,
-							'message' => 'Server Error',
-						],
-						'cookies'  => [],
-					];
-				}
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ): mixed {
+                if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+                {
+                    return [
+                        'headers'  => [],
+                        'body'     => wp_json_encode( [ 'error' => [ 'message' => 'Provider temporarily unavailable.' ] ] ),
+                        'response' => [
+                            'code'    => 500,
+                            'message' => 'Server Error',
+                        ],
+                        'cookies'  => [],
+                    ];
+                }
 
-				return $preempt;
-			},
-			9,
-			3
-		);
+                return $preempt;
+            },
+            9,
+            3
+        );
 
-		$handler   = $this->plugin->get_async_handler();
-		$scheduled = $handler->schedule_local_mapping(
-			$mapping_id,
-			[ 'id' => 322 ],
-			[ 'id' => 655 ],
-			[
-				'form_source'          => 'gravity_forms',
-				'form_id'              => 322,
-				'entry_id'             => 655,
-				'action_id'            => 'local_first_' . $mapping_id,
+        $handler   = $this->plugin->get_async_handler();
+        $scheduled = $handler->schedule_local_mapping(
+            $mapping_id,
+            [ 'id' => 322 ],
+            [ 'id' => 655 ],
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => 322,
+                'entry_id'             => 655,
+                'action_id'            => 'local_first_' . $mapping_id,
                 'central_action_id'    => 'local_async_retry_summary',
-				'execution_request_id' => 'local-async-request-retry',
-				'backoff_base_delay'   => 5,
-				'backoff_max_delay'    => 5,
-			]
-		);
-		$this->assertTrue( $scheduled );
+                'execution_request_id' => 'local-async-request-retry',
+                'backoff_base_delay'   => 5,
+                'backoff_max_delay'    => 5,
+            ]
+        );
+        $this->assertTrue( $scheduled );
 
-		$first_job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
-		$first_payload = $first_job['args'][0] ?? [];
+        $first_job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $first_payload = $first_job['args'][0] ?? [];
 
-		$before_retry = time();
-		$handler->process_local_mapping( $first_payload );
+        $before_retry = time();
+        $handler->process_local_mapping( $first_payload );
 
-		$jobs = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
-		$this->assertGreaterThanOrEqual( 2, count( $jobs ) );
+        $jobs = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $this->assertGreaterThanOrEqual( 2, count( $jobs ) );
 
-		$retry_job     = end( $jobs );
-		$retry_payload = $retry_job['args'][0] ?? [];
-		$this->assertSame( 'sentient_forms_process_local_mapping', $retry_job['hook'] );
-		$this->assertSame( 'local-async-request-retry', $retry_payload['execution_request_id'] ?? null );
-		$this->assertSame( 2, (int) ( $retry_payload['context']['attempt'] ?? 0 ) );
-		$this->assertGreaterThanOrEqual( $before_retry + 5, (int) ( $retry_job['run_at'] ?? 0 ) );
+        $retry_job     = end( $jobs );
+        $retry_payload = $retry_job['args'][0] ?? [];
+        $this->assertSame( 'sentient_forms_process_local_mapping', $retry_job['hook'] );
+        $this->assertSame( 'local-async-request-retry', $retry_payload['execution_request_id'] ?? null );
+        $this->assertSame( 2, (int) ( $retry_payload['context']['attempt'] ?? 0 ) );
+        $this->assertGreaterThanOrEqual( $before_retry + 5, (int) ( $retry_job['run_at'] ?? 0 ) );
 
-		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-retry' );
-		$this->assertSame( 'queued', $request['status'] ?? null );
-		$this->assertStringContainsString( 'Provider temporarily unavailable', (string) ( $request['last_error'] ?? '' ) );
+        $request = $this->plugin->get_async_request_store()->get( 'local-async-request-retry' );
+        $this->assertSame( 'queued', $request['status'] ?? null );
+        $this->assertStringContainsString( 'Provider temporarily unavailable', (string) ( $request['last_error'] ?? '' ) );
 
-		$metadata = $this->plugin->get_async_metadata_store()->get( $first_payload['context']['job_id'] );
-		$this->assertSame( 'retry_scheduled', $metadata['status'] ?? null );
-	}
+        $metadata = $this->plugin->get_async_metadata_store()->get( $first_payload['context']['job_id'] );
+        $this->assertSame( 'retry_scheduled', $metadata['status'] ?? null );
+    }
 
-	public function test_process_local_mapping_does_not_retry_missing_auth_transport_failure(): void
-	{
-		Sentient_Forms_Installer::maybe_upgrade();
-		$this->truncate_local_first_runtime_tables();
+    public function test_process_local_mapping_does_not_retry_missing_auth_transport_failure(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-		global $wpdb;
+        global $wpdb;
 
-		$credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
-		$consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
-		$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-		$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-		$events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
-		$vault          = new Sentient_Forms_Provider_Credential_Vault();
-		$encrypted      = $vault->encrypt( 'sk-or-local-async-terminal-secret' );
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-local-async-terminal-secret' );
 
-		$this->assertIsString( $encrypted );
+        $this->assertIsString( $encrypted );
 
-		$credential_id = $credentials->create(
-			[
-				'provider'          => 'openrouter',
-				'label'             => 'Async terminal OpenRouter key',
-				'auth_mode'         => 'manual_key',
-				'encrypted_secret'  => $encrypted,
-				'status'            => 'valid',
-				'last_validated_at' => current_time( 'mysql' ),
-			]
-		);
-		$this->assertIsInt( $credential_id );
-		$this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Async terminal OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
 
-		$action_id = $custom_actions->create(
-			[
-				'code'                 => 'local_async_terminal_summary',
-				'display_name'         => 'Local Async Terminal Summary',
-				'definition_json'      => [
-					'prompt_template' => 'Summarize {{name}}.',
-				],
-				'model_selection_json' => [
-					'provider'      => 'openrouter',
-					'model'         => 'openrouter/auto',
-					'credential_id' => $credential_id,
-				],
-				'status'               => 'active',
-			]
-		);
-		$this->assertIsInt( $action_id );
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'local_async_terminal_summary',
+                'display_name'         => 'Local Async Terminal Summary',
+                'definition_json'      => [
+                    'prompt_template' => 'Summarize {{name}}.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
 
-		$mapping_id = $mappings->create(
-			[
-				'form_source'         => 'gravity_forms',
-				'form_id'             => '323',
-				'hook'                => 'gform_after_submission',
-				'action_kind'         => 'custom_action',
-				'action_id'           => $action_id,
-				'input_bindings_json' => [
-					'name' => '1',
-				],
-				'execution_mode'      => 'async',
-				'effect_mapping_json' => [
-					'store_result' => true,
-				],
-				'enabled'             => true,
-			]
-		);
-		$this->assertIsInt( $mapping_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '323',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name' => '1',
+                ],
+                'execution_mode'      => 'async',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
 
-		GFAPI::$forms[323] = [
-			'id'     => 323,
-			'title'  => 'Async Terminal Form',
-			'fields' => [],
-		];
-		GFAPI::$entries[656] = [
-			'id'      => 656,
-			'form_id' => 323,
-			'1'       => 'Terminal Lead',
-		];
+        GFAPI::$forms[323] = [
+            'id'     => 323,
+            'title'  => 'Async Terminal Form',
+            'fields' => [],
+        ];
+        GFAPI::$entries[656] = [
+            'id'      => 656,
+            'form_id' => 323,
+            '1'       => 'Terminal Lead',
+        ];
 
-		add_filter(
-			'pre_http_request',
-			static function ( $preempt, array $args, string $url ): mixed {
-				if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
-				{
-					return new WP_Error(
-						'http_request_failed',
-						'Missing Authentication header',
-						[ 'status' => 401 ]
-					);
-				}
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ): mixed {
+                if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+                {
+                    return new WP_Error(
+                        'http_request_failed',
+                        'Missing Authentication header',
+                        [ 'status' => 401 ]
+                    );
+                }
 
-				return $preempt;
-			},
-			9,
-			3
-		);
+                return $preempt;
+            },
+            9,
+            3
+        );
 
-		$handler   = $this->plugin->get_async_handler();
-		$scheduled = $handler->schedule_local_mapping(
-			$mapping_id,
-			[ 'id' => 323 ],
-			[ 'id' => 656 ],
-			[
-				'form_source'          => 'gravity_forms',
-				'form_id'              => 323,
-				'entry_id'             => 656,
-				'action_id'            => 'local_first_' . $mapping_id,
+        $handler   = $this->plugin->get_async_handler();
+        $scheduled = $handler->schedule_local_mapping(
+            $mapping_id,
+            [ 'id' => 323 ],
+            [ 'id' => 656 ],
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => 323,
+                'entry_id'             => 656,
+                'action_id'            => 'local_first_' . $mapping_id,
                 'central_action_id'    => 'local_async_terminal_summary',
-				'execution_request_id' => 'local-async-request-terminal',
-				'backoff_base_delay'   => 5,
-				'backoff_max_delay'    => 5,
-			]
-		);
-		$this->assertTrue( $scheduled );
+                'execution_request_id' => 'local-async-request-terminal',
+                'backoff_base_delay'   => 5,
+                'backoff_max_delay'    => 5,
+            ]
+        );
+        $this->assertTrue( $scheduled );
 
-		$jobs            = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
-		$initial_job_cnt = count( $jobs );
-		$payload         = end( $jobs )['args'][0] ?? [];
+        $jobs            = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $initial_job_cnt = count( $jobs );
+        $payload         = end( $jobs )['args'][0] ?? [];
 
-		$handler->process_local_mapping( $payload );
+        $handler->process_local_mapping( $payload );
 
-		$this->assertCount( $initial_job_cnt, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertCount( $initial_job_cnt, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 
-		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-terminal' );
-		$this->assertSame( 'failed', $request['status'] ?? null );
-		$this->assertStringContainsString( 'Missing Authentication header', (string) ( $request['last_error'] ?? '' ) );
+        $request = $this->plugin->get_async_request_store()->get( 'local-async-request-terminal' );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertStringContainsString( 'Missing Authentication header', (string) ( $request['last_error'] ?? '' ) );
 
-		$metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
-		$this->assertSame( 'failed', $metadata['status'] ?? null );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
+        $this->assertSame( 'failed', $metadata['status'] ?? null );
 
-		$event = $events->get_by_request_id( 'local-async-request-terminal' );
-		$this->assertIsArray( $event );
-		$this->assertSame( 'failed', $event['status'] ?? null );
-		$this->assertSame( 'openrouter_http_error', $event['error_code'] ?? null );
-		$this->assertSame( 'Missing Authentication header', $event['error_message'] ?? null );
+        $event = $events->get_by_request_id( 'local-async-request-terminal' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'openrouter_http_error', $event['error_code'] ?? null );
+        $this->assertSame( 'Missing Authentication header', $event['error_message'] ?? null );
 
-		$notes = gform_get_meta( 656, 'sentient_forms_notes' );
-		$this->assertIsArray( $notes );
-		$this->assertCount( 1, $notes );
-		$this->assertStringContainsString( 'Missing Authentication header', (string) ( $notes[0]['content'] ?? '' ) );
-	}
+        $notes = gform_get_meta( 656, 'sentient_forms_notes' );
+        $this->assertIsArray( $notes );
+        $this->assertCount( 1, $notes );
+        $this->assertStringContainsString( 'Missing Authentication header', (string) ( $notes[0]['content'] ?? '' ) );
+    }
 
     public function test_managed_local_mapping_keeps_provider_identity_across_queued_and_failed_events(): void
     {
@@ -1723,25 +1723,25 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'google/gemini-3-flash-preview', $failed_event['model'] ?? null );
     }
 
-	private function truncate_local_first_runtime_tables(): void
-	{
-		global $wpdb;
+    private function truncate_local_first_runtime_tables(): void
+    {
+        global $wpdb;
 
-		foreach (
-			[
-				'sentient_provider_credentials',
-				'sentient_external_service_consents',
-				'sentient_custom_actions',
-				'sentient_form_mappings',
-				'sentient_execution_events',
-				'sentient_submission_ledger_settings',
-				'sentient_submission_ledger',
-			] as $table
-		)
-		{
-			$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
-		}
-	}
+        foreach (
+            [
+                'sentient_provider_credentials',
+                'sentient_external_service_consents',
+                'sentient_custom_actions',
+                'sentient_form_mappings',
+                'sentient_execution_events',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
+            ] as $table
+        )
+        {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
+    }
 
     /**
      * @return array<int, array<string, mixed>>

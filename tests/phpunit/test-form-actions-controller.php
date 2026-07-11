@@ -1,174 +1,174 @@
 <?php
 
 if ( ! class_exists( 'GFAPI' ) ) {
-	class GFAPI {
-		/** @var array<int,array<string,mixed>> */
-		public static array $entries = [];
-		/** @var array<int,array<string,mixed>> */
-		public static array $forms = [];
+    class GFAPI {
+        /** @var array<int,array<string,mixed>> */
+        public static array $entries = [];
+        /** @var array<int,array<string,mixed>> */
+        public static array $forms = [];
 
-		public static function get_entry( $entry_id ) {
-			$entry_id = (int) $entry_id;
-			if ( isset( self::$entries[ $entry_id ] ) ) {
-				return self::$entries[ $entry_id ];
-			}
+        public static function get_entry( $entry_id ) {
+            $entry_id = (int) $entry_id;
+            if ( isset( self::$entries[ $entry_id ] ) ) {
+                return self::$entries[ $entry_id ];
+            }
 
-			return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
-		}
+            return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+        }
 
-		public static function get_form( $form_id ) {
-			$form_id = (int) $form_id;
-			return self::$forms[ $form_id ] ?? false;
-		}
+        public static function get_form( $form_id ) {
+            $form_id = (int) $form_id;
+            return self::$forms[ $form_id ] ?? false;
+        }
 
-		public static function get_forms(): array {
-			return array_values( self::$forms );
-		}
+        public static function get_forms(): array {
+            return array_values( self::$forms );
+        }
 
-		public static function update_form( $form, $form_id = null ) {
-			$form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
-				? (int) $form['id']
-				: (int) $form_id;
+        public static function update_form( $form, $form_id = null ) {
+            $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
+                ? (int) $form['id']
+                : (int) $form_id;
 
-			if ( $form_id <= 0 ) {
-				return new WP_Error( 'missing_form_id', 'Missing form id.' );
-			}
+            if ( $form_id <= 0 ) {
+                return new WP_Error( 'missing_form_id', 'Missing form id.' );
+            }
 
-			if ( is_array( $form ) ) {
-				$form['id'] = $form_id;
-			}
+            if ( is_array( $form ) ) {
+                $form['id'] = $form_id;
+            }
 
-			self::$forms[ $form_id ] = $form;
+            self::$forms[ $form_id ] = $form;
 
-			return true;
-		}
-	}
+            return true;
+        }
+    }
 }
 
 if ( ! class_exists( 'GFForms' ) ) {
-	class GFForms {}
+    class GFForms {}
 }
 
 if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) ) {
-	class Sentient_Forms_Test_Gf_Meta_Store {
-		/** @var array<int,array<string,mixed>> */
-		private static array $meta = [];
+    class Sentient_Forms_Test_Gf_Meta_Store {
+        /** @var array<int,array<string,mixed>> */
+        private static array $meta = [];
 
-		public static function reset(): void {
-			self::$meta = [];
-		}
+        public static function reset(): void {
+            self::$meta = [];
+        }
 
-		public static function set_meta( int $entry_id, string $key, mixed $value ): void {
-			if ( ! isset( self::$meta[ $entry_id ] ) ) {
-				self::$meta[ $entry_id ] = [];
-			}
-			self::$meta[ $entry_id ][ $key ] = $value;
-		}
+        public static function set_meta( int $entry_id, string $key, mixed $value ): void {
+            if ( ! isset( self::$meta[ $entry_id ] ) ) {
+                self::$meta[ $entry_id ] = [];
+            }
+            self::$meta[ $entry_id ][ $key ] = $value;
+        }
 
-		public static function get_meta( int $entry_id, string $key ): mixed {
-			return self::$meta[ $entry_id ][ $key ] ?? null;
-		}
+        public static function get_meta( int $entry_id, string $key ): mixed {
+            return self::$meta[ $entry_id ][ $key ] ?? null;
+        }
 
-		public static function update_meta( int $entry_id, string $key, mixed $value ): void {
-			self::set_meta( $entry_id, $key, $value );
-		}
-	}
+        public static function update_meta( int $entry_id, string $key, mixed $value ): void {
+            self::set_meta( $entry_id, $key, $value );
+        }
+    }
 }
 
 if ( ! function_exists( 'gform_get_meta' ) ) {
-	function gform_get_meta( $entry_id, $meta_key ) {
-		return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
-	}
+    function gform_get_meta( $entry_id, $meta_key ) {
+        return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
+    }
 }
 
 if ( ! function_exists( 'gform_update_meta' ) ) {
-	function gform_update_meta( $entry_id, $meta_key, $value ) {
-		Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
-	}
+    function gform_update_meta( $entry_id, $meta_key, $value ) {
+        Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
+    }
 }
 
 if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
-	class Sentient_Forms_Test_Opaque_Form_Source_Adapter implements Sentient_Forms_Adapter_Interface {
-		/** @var array<int,string> */
-		public array $form_exists_calls = [];
-		/** @var array<int,string> */
-		public array $field_calls = [];
+    class Sentient_Forms_Test_Opaque_Form_Source_Adapter implements Sentient_Forms_Adapter_Interface {
+        /** @var array<int,string> */
+        public array $form_exists_calls = [];
+        /** @var array<int,string> */
+        public array $field_calls = [];
 
-		public function get_id(): string {
-			return 'opaque_forms';
-		}
+        public function get_id(): string {
+            return 'opaque_forms';
+        }
 
-		public function get_name(): string {
-			return 'Opaque Forms';
-		}
+        public function get_name(): string {
+            return 'Opaque Forms';
+        }
 
-		public function is_active(): bool {
-			return true;
-		}
+        public function is_active(): bool {
+            return true;
+        }
 
-		public function get_forms(): array {
-			return [
-				[ 'id' => '42:form-alpha_2026', 'name' => 'Alpha 2026' ],
-				[ 'id' => '42_form-alpha_2026', 'name' => 'Underscore Alpha 2026' ],
-				[ 'id' => '42.form-alpha_2026', 'name' => 'Dotted Alpha 2026' ],
-			];
-		}
+        public function get_forms(): array {
+            return [
+                [ 'id' => '42:form-alpha_2026', 'name' => 'Alpha 2026' ],
+                [ 'id' => '42_form-alpha_2026', 'name' => 'Underscore Alpha 2026' ],
+                [ 'id' => '42.form-alpha_2026', 'name' => 'Dotted Alpha 2026' ],
+            ];
+        }
 
-		public function get_form_fields( $form_id ): array {
-			$form_id             = (string) $form_id;
-			$this->field_calls[] = $form_id;
+        public function get_form_fields( $form_id ): array {
+            $form_id             = (string) $form_id;
+            $this->field_calls[] = $form_id;
 
-			if ( ! in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true ) ) {
-				return [];
-			}
+            if ( ! in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true ) ) {
+                return [];
+            }
 
-			return [
-				[
-					'id'               => 'email',
-					'label'            => 'Email',
-					'type'             => 'email',
-					'adminLabel'       => '',
-					'storage_eligible' => true,
-					'required'         => true,
-				],
-			];
-		}
+            return [
+                [
+                    'id'               => 'email',
+                    'label'            => 'Email',
+                    'type'             => 'email',
+                    'adminLabel'       => '',
+                    'storage_eligible' => true,
+                    'required'         => true,
+                ],
+            ];
+        }
 
-		public function get_entry_data( $entry_id, $form_id = null ) {
-			return null;
-		}
+        public function get_entry_data( $entry_id, $form_id = null ) {
+            return null;
+        }
 
-		public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool {
-			return false;
-		}
+        public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool {
+            return false;
+        }
 
-		public function mark_entry_as_spam( mixed $entry_id ): bool {
-			return false;
-		}
+        public function mark_entry_as_spam( mixed $entry_id ): bool {
+            return false;
+        }
 
-		public function reject_submission( mixed $entry_id, string $message ): bool {
-			return false;
-		}
+        public function reject_submission( mixed $entry_id, string $message ): bool {
+            return false;
+        }
 
-		public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool {
-			return false;
-		}
+        public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool {
+            return false;
+        }
 
-		public function get_action_hook_for_event( string $event_name ): ?string {
-			return null;
-		}
+        public function get_action_hook_for_event( string $event_name ): ?string {
+            return null;
+        }
 
-		public function get_form_object( int $form_id ): object | array | null {
-			return null;
-		}
+        public function get_form_object( int $form_id ): object | array | null {
+            return null;
+        }
 
-		public function form_exists( mixed $form_id ): bool {
-			$form_id                   = (string) $form_id;
-			$this->form_exists_calls[] = $form_id;
+        public function form_exists( mixed $form_id ): bool {
+            $form_id                   = (string) $form_id;
+            $this->form_exists_calls[] = $form_id;
 
-			return in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true );
-		}
-	}
+            return in_array( $form_id, [ '42:form-alpha_2026', '42_form-alpha_2026', '42.form-alpha_2026' ], true );
+        }
+    }
 }
 
 class Tests_Form_Actions_Controller extends WP_UnitTestCase {

@@ -9,7 +9,7 @@ import{A as e,At as t,B as n,Bt as r,C as i,D as a,E as o,Et as s,Ft as c,G as l
             })));
           }
         }
-        
+
         if (${n}.value === undefined) {
           if (${o} in input) {
             newResult[${o}] = undefined;
@@ -17,7 +17,7 @@ import{A as e,At as t,B as n,Bt as r,C as i,D as a,E as o,Et as s,Ft as c,G as l
         } else {
           newResult[${o}] = ${n}.value;
         }
-        
+
       `):c?t.write(`
         if (${n}.issues.length) {
           payload.issues = payload.issues.concat(${n}.issues.map(iss => ({
@@ -25,7 +25,7 @@ import{A as e,At as t,B as n,Bt as r,C as i,D as a,E as o,Et as s,Ft as c,G as l
             path: iss.path ? [${o}, ...iss.path] : [${o}]
           })));
         }
-        
+
         if (${n}.value === undefined) {
           if (${o} in input) {
             newResult[${o}] = undefined;
@@ -33,7 +33,7 @@ import{A as e,At as t,B as n,Bt as r,C as i,D as a,E as o,Et as s,Ft as c,G as l
         } else {
           newResult[${o}] = ${n}.value;
         }
-        
+
       `):t.write(`
         const ${n}_present = ${o} in input;
         if (${n}.issues.length) {

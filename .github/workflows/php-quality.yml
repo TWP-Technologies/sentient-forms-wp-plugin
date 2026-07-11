@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Verify cache inputs
         run: test -f composer.lock
@@ -63,8 +65,12 @@ jobs:
         run: composer install --no-interaction --prefer-dist
 
       - name: Run PHPCS
+        env:
+          SENTIENT_FORMS_QA_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           composer encoding-check
+          php scripts/tests/check-changed-file-quality.php
+          php scripts/tests/check-wporg-package-builder-process.php
           composer phpcs
 
   phpunit:

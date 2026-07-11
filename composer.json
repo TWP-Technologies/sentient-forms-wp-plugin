@@ -10,7 +10,10 @@
         "wp-coding-standards/wpcs": "^3.0"
     },
     "scripts": {
-        "phpcs": "vendor/bin/phpcs --standard=phpcs-rulesets/SentientForms.xml",
+        "phpcs": [
+            "vendor/bin/phpcs --standard=phpcs-rulesets/SentientForms.xml",
+            "@php scripts/check-changed-file-quality.php"
+        ],
         "phpcbf": "vendor/bin/phpcbf --standard=phpcs-rulesets/SentientForms.xml",
         "encoding-check": "php scripts/check-text-encoding.php --source-tree",
         "encoding-check-package": "php scripts/check-text-encoding.php",

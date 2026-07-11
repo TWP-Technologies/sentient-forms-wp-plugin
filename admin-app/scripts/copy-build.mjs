@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,85 +17,107 @@ const manifestDest = path.join(outputDir, 'manifest.json');
 const pluginFile = path.join(projectRoot, '..', 'sentient-forms.php');
 const sourceMetadataDest = path.join(outputDir, 'SOURCE.md');
 const runtimeMetadataDest = path.join(outputDir, 'runtime.json');
+const generatedTextExtensions = new Set(['.css', '.html', '.js', '.json', '.md', '.svg']);
 
 const ensureDir = async (dir) => {
-  try {
-    await mkdir(dir, { recursive: true });
-  } catch (error) {
-    if (error.code !== 'EEXIST') {
-      throw error;
-    }
-  }
+	try {
+		await mkdir(dir, { recursive: true });
+	} catch (error) {
+		if (error.code !== 'EEXIST') {
+			throw error;
+		}
+	}
 };
 
 const copyRecursive = async (src, dest) => cp(src, dest, { recursive: true });
 
+const collectGeneratedTextFiles = async (directory) => {
+	const entries = await readdir(directory, { withFileTypes: true });
+	const files = [];
+	for (const entry of entries) {
+		const absolute = path.join(directory, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...(await collectGeneratedTextFiles(absolute)));
+		} else if (entry.isFile() && generatedTextExtensions.has(path.extname(entry.name))) {
+			files.push(absolute);
+		}
+	}
+	return files;
+};
+
+const normalizeGeneratedWhitespaceOnlyLines = async (directory) => {
+	for (const file of await collectGeneratedTextFiles(directory)) {
+		const contents = await readFile(file, 'utf8');
+		const normalized = contents.replace(/^[\t ]+(?=\r?$)/gm, '');
+		if (normalized !== contents) {
+			await writeFile(file, normalized);
+		}
+	}
+};
+
 const resetDir = async (dir) => {
-  await rm(dir, { recursive: true, force: true });
-  await ensureDir(dir);
+	await rm(dir, { recursive: true, force: true });
+	await ensureDir(dir);
 };
 
 const collectManifestAssetPaths = (manifest) => {
-  const files = new Set();
+	const files = new Set();
 
-  for (const entry of Object.values(manifest)) {
-    if (!entry || typeof entry !== 'object') {
-      continue;
-    }
+	for (const entry of Object.values(manifest)) {
+		if (!entry || typeof entry !== 'object') {
+			continue;
+		}
 
-    const { file, css } = entry;
+		const { file, css } = entry;
 
-    if (typeof file === 'string' && file.length > 0) {
-      files.add(file);
-    }
+		if (typeof file === 'string' && file.length > 0) {
+			files.add(file);
+		}
 
-    if (Array.isArray(css)) {
-      for (const candidate of css) {
-        if (typeof candidate === 'string' && candidate.length > 0) {
-          files.add(candidate);
-        }
-      }
-    }
-  }
+		if (Array.isArray(css)) {
+			for (const candidate of css) {
+				if (typeof candidate === 'string' && candidate.length > 0) {
+					files.add(candidate);
+				}
+			}
+		}
+	}
 
-  return [...files];
+	return [...files];
 };
 
 const assertManifestAssetsExist = async (outputRoot, manifest) => {
-  const missing = collectManifestAssetPaths(manifest).filter(
-    (relativePath) => !existsSync(path.join(outputRoot, relativePath))
-  );
+	const missing = collectManifestAssetPaths(manifest).filter(
+		(relativePath) => !existsSync(path.join(outputRoot, relativePath))
+	);
 
-  if (missing.length > 0) {
-    throw new Error(
-      `Copied build assets do not match manifest references: ${missing.join(', ')}`
-    );
-  }
+	if (missing.length > 0) {
+		throw new Error(`Copied build assets do not match manifest references: ${missing.join(', ')}`);
+	}
 };
 
 const parsePluginConstant = (contents, constantName) => {
-  const pattern = new RegExp(
-    `const\\s+${constantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*['"]([^'"]+)['"]\\s*;`
-  );
-  return contents.match(pattern)?.[1] ?? null;
+	const pattern = new RegExp(
+		`const\\s+${constantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*['"]([^'"]+)['"]\\s*;`
+	);
+	return contents.match(pattern)?.[1] ?? null;
 };
 
 const writeSourceMetadata = async () => {
-  const pluginContents = await readFile(pluginFile, 'utf8');
-  const version =
-    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
-  const sourceReference =
-    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
-    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE') ??
-    'admin-app';
+	const pluginContents = await readFile(pluginFile, 'utf8');
+	const version = parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
+	const sourceReference =
+		parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
+		parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE') ??
+		'admin-app';
 
-  const sourceLine = /^https?:\/\//i.test(sourceReference)
-    ? `Public source for this release: ${sourceReference}`
-    : `Source included in the WordPress.org package: ${sourceReference}`;
+	const sourceLine = /^https?:\/\//i.test(sourceReference)
+		? `Public source for this release: ${sourceReference}`
+		: `Source included in the WordPress.org package: ${sourceReference}`;
 
-  await writeFile(
-    sourceMetadataDest,
-    `# Sentient Forms Admin App Source
+	await writeFile(
+		sourceMetadataDest,
+		`# Sentient Forms Admin App Source
 
 The JavaScript and CSS files in this directory are generated from the SvelteKit admin app source for Sentient Forms ${version}.
 
@@ -109,47 +131,45 @@ bun install --frozen-lockfile
 bun run build:wp
 \`\`\`
 `
-  );
+	);
 };
 
 const writeRuntimeMetadata = async () => {
-  const indexHtmlSrc = path.join(buildDir, 'index.html');
-  if (!existsSync(indexHtmlSrc)) {
-    throw new Error(`SvelteKit fallback HTML not found: ${indexHtmlSrc}`);
-  }
+	const indexHtmlSrc = path.join(buildDir, 'index.html');
+	if (!existsSync(indexHtmlSrc)) {
+		throw new Error(`SvelteKit fallback HTML not found: ${indexHtmlSrc}`);
+	}
 
-  const indexHtml = await readFile(indexHtmlSrc, 'utf8');
-  const sveltekitRuntimeKey = indexHtml.match(/__sveltekit_[a-z0-9]+/)?.[0] ?? null;
-  if (sveltekitRuntimeKey === null) {
-    throw new Error('Could not extract SvelteKit runtime key from fallback HTML.');
-  }
+	const indexHtml = await readFile(indexHtmlSrc, 'utf8');
+	const sveltekitRuntimeKey = indexHtml.match(/__sveltekit_[a-z0-9]+/)?.[0] ?? null;
+	if (sveltekitRuntimeKey === null) {
+		throw new Error('Could not extract SvelteKit runtime key from fallback HTML.');
+	}
 
-  await writeFile(
-    runtimeMetadataDest,
-    `${JSON.stringify({ sveltekitRuntimeKey }, null, 2)}\n`
-  );
+	await writeFile(runtimeMetadataDest, `${JSON.stringify({ sveltekitRuntimeKey }, null, 2)}\n`);
 };
 
 const main = async () => {
-  if (!existsSync(clientDir)) {
-    throw new Error(`Client build directory not found: ${clientDir}`);
-  }
-  if (!existsSync(manifestSrc)) {
-    throw new Error(`Vite manifest not found: ${manifestSrc}`);
-  }
+	if (!existsSync(clientDir)) {
+		throw new Error(`Client build directory not found: ${clientDir}`);
+	}
+	if (!existsSync(manifestSrc)) {
+		throw new Error(`Vite manifest not found: ${manifestSrc}`);
+	}
 
-  await resetDir(outputDir);
-  await copyRecursive(clientDir, path.join(outputDir, '_app'));
+	await resetDir(outputDir);
+	await copyRecursive(clientDir, path.join(outputDir, '_app'));
 
-  const manifest = await readFile(manifestSrc, 'utf8');
-  await writeFile(manifestDest, manifest);
-  await writeRuntimeMetadata();
-  await writeSourceMetadata();
-  await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
-  console.log('[copy-build] Assets copied to', outputDir);
+	const manifest = await readFile(manifestSrc, 'utf8');
+	await writeFile(manifestDest, manifest);
+	await writeRuntimeMetadata();
+	await writeSourceMetadata();
+	await normalizeGeneratedWhitespaceOnlyLines(outputDir);
+	await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
+	console.log('[copy-build] Assets copied to', outputDir);
 };
 
 main().catch((error) => {
-  console.error('[copy-build] Failed to copy build assets:', error);
-  process.exit(1);
+	console.error('[copy-build] Failed to copy build assets:', error);
+	process.exit(1);
 });

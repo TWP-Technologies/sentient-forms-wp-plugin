@@ -296,8 +296,19 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
             $paths,
             [ $manifest_path => $lf_manifest . "\n/* projection mutation */\n" ]
         );
+        $whitespace_only = $this->independent_projection_source_sha256(
+            $paths,
+            [
+                $manifest_path => str_replace(
+                    'final class Sentient_Forms_Action_Source_Compatibility_Manifest',
+                    "final  \n\n class Sentient_Forms_Action_Source_Compatibility_Manifest",
+                    $lf_manifest
+                ),
+            ]
+        );
 
         $this->assertSame( $lf_digest, $crlf_digest );
+        $this->assertSame( $expected, $whitespace_only );
         $this->assertNotSame( $expected, $mutated );
     }
 
@@ -343,12 +354,43 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
         foreach ( $paths as $path )
         {
             $contents   = $overrides[ $path ] ?? (string) file_get_contents( $root . '/' . $path );
-            $normalized = str_replace( [ "\r\n", "\r" ], "\n", $contents );
+            $normalized = $this->independent_canonical_projection_source( $contents );
             hash_update( $hash, strlen( $path ) . ':' . $path );
             hash_update( $hash, strlen( $normalized ) . ':' . $normalized );
         }
 
         return hash_final( $hash );
+    }
+
+    private function independent_canonical_projection_source( string $contents ): string
+    {
+        $canonical = '';
+        foreach ( token_get_all( str_replace( [ "\r\n", "\r" ], "\n", $contents ) ) as $token )
+        {
+            if ( is_string( $token ) )
+            {
+                $canonical .= 'c' . strlen( $token ) . ':' . $token;
+                continue;
+            }
+
+            [ $token_id, $text ] = $token;
+            if ( T_WHITESPACE === $token_id )
+            {
+                continue;
+            }
+            if ( T_OPEN_TAG === $token_id )
+            {
+                $text = '<?php';
+            }
+            elseif ( T_OPEN_TAG_WITH_ECHO === $token_id )
+            {
+                $text = '<?=';
+            }
+
+            $canonical .= 't' . $token_id . ':' . strlen( $text ) . ':' . $text;
+        }
+
+        return $canonical;
     }
 
     public function test_validation_and_realtime_exceptions_are_explicit_and_capability_truthful(): void

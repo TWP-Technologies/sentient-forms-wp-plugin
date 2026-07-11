@@ -1321,16 +1321,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             'id' => 14,
             'title' => 'Realtime',
             'fields' => [
-	                (object) [
-	                    'id' => 1,
-	                    'label' => 'Name',
-	                    'type' => 'name',
-	                    'pageNumber' => 1,
-	                    'inputs' => [
-	                        [ 'id' => '1.3' ],
-	                        [ 'id' => '1.6' ],
-	                    ],
-	                ],
+                    (object) [
+                        'id' => 1,
+                        'label' => 'Name',
+                        'type' => 'name',
+                        'pageNumber' => 1,
+                        'inputs' => [
+                            [ 'id' => '1.3' ],
+                            [ 'id' => '1.6' ],
+                        ],
+                    ],
                 (object) [
                     'id' => 4,
                     'label' => 'Details',
@@ -1352,15 +1352,15 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                             'checkpoint_field_ids' => [ '1' ],
                             'debounce_ms' => 700,
                             'cooldown_ms' => 9000,
-	                            'manual_refresh_enabled' => true,
-	                            'storage_target_field_id' => '4',
-		                            'blocking_mode' => 'require_answers',
-		                            'refresh_mode' => 'checkpoint',
-		                            'initial_panel_state' => 'hidden_until_interaction',
-		                            'hidden_field_exposure_mode' => 'label_hidden_value',
-		                            'pre_submit_run_enabled' => true,
-		                            'pre_submit_timeout_ms' => 3500,
-		                        ],
+                                'manual_refresh_enabled' => true,
+                                'storage_target_field_id' => '4',
+                                    'blocking_mode' => 'require_answers',
+                                    'refresh_mode' => 'checkpoint',
+                                    'initial_panel_state' => 'hidden_until_interaction',
+                                    'hidden_field_exposure_mode' => 'label_hidden_value',
+                                    'pre_submit_run_enabled' => true,
+                                    'pre_submit_timeout_ms' => 3500,
+                                ],
                     ],
                 ],
             ],
@@ -1382,17 +1382,17 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $runtime['mappings'] ?? [] );
         $this->assertSame( 700, $runtime['mappings'][0]['debounce_ms'] ?? null );
         $this->assertSame( 9000, $runtime['mappings'][0]['cooldown_ms'] ?? null );
-	        $this->assertSame( [ '1' ], $runtime['mappings'][0]['checkpoint_field_ids'] ?? [] );
-	        $this->assertSame( '4', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
-		        $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
-		        $this->assertSame( 'checkpoint', $runtime['mappings'][0]['refresh_mode'] ?? null );
-		        $this->assertSame( 'hidden_until_interaction', $runtime['mappings'][0]['initial_panel_state'] ?? null );
-		        $this->assertSame( 'label_hidden_value', $runtime['mappings'][0]['hidden_field_exposure_mode'] ?? null );
-		        $this->assertTrue( $runtime['mappings'][0]['pre_submit_run_enabled'] ?? false );
-		        $this->assertSame( 3500, $runtime['mappings'][0]['pre_submit_timeout_ms'] ?? null );
-		        $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
-	        $this->assertSame( [ '1.3', '1.6' ], $runtime['field_manifest'][0]['input_ids'] ?? [] );
-	    }
+            $this->assertSame( [ '1' ], $runtime['mappings'][0]['checkpoint_field_ids'] ?? [] );
+            $this->assertSame( '4', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
+                $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
+                $this->assertSame( 'checkpoint', $runtime['mappings'][0]['refresh_mode'] ?? null );
+                $this->assertSame( 'hidden_until_interaction', $runtime['mappings'][0]['initial_panel_state'] ?? null );
+                $this->assertSame( 'label_hidden_value', $runtime['mappings'][0]['hidden_field_exposure_mode'] ?? null );
+                $this->assertTrue( $runtime['mappings'][0]['pre_submit_run_enabled'] ?? false );
+                $this->assertSame( 3500, $runtime['mappings'][0]['pre_submit_timeout_ms'] ?? null );
+                $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
+            $this->assertSame( [ '1.3', '1.6' ], $runtime['field_manifest'][0]['input_ids'] ?? [] );
+        }
 
     public function test_get_form_settings_prefers_top_level_mapping_over_stale_actions_wrapper(): void
     {
@@ -3035,7 +3035,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         // This test verifies the threshold logic in format_spam_detection_note context
         // The actual marking occurs in maybe_mark_entry_as_spam_from_result which requires more mocking
         // For unit test, we verify confidence extraction and note formatting work correctly
-        
+
         $confidence_method = new ReflectionMethod( $this->adapter, 'extract_spam_confidence' );
         $confidence_method->setAccessible( true );
 
@@ -3045,10 +3045,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'confidence' => 0.65,
             ],
         ];
-        
+
         $confidence = $confidence_method->invoke( $this->adapter, $result );
         $threshold = 0.80;
-        
+
         // Verify that confidence below threshold would NOT mark as spam
         $this->assertLessThan( $threshold, $confidence );
     }
@@ -3067,10 +3067,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'confidence' => 0.80,
             ],
         ];
-        
+
         $confidence = $confidence_method->invoke( $this->adapter, $result );
         $threshold = 0.80;
-        
+
         // Verify that confidence >= threshold would mark as spam
         $this->assertGreaterThanOrEqual( $threshold, $confidence );
     }
@@ -3090,12 +3090,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'llm_output' => '**spam**\n\nThis is spam because...',
             ],
         ];
-        
+
         $confidence = $confidence_method->invoke( $this->adapter, $result );
-        
+
         // Should be null, which the threshold logic treats as 1.0
         $this->assertNull( $confidence );
-        
+
         // For backward compatibility, null confidence is treated as 1.0
         // This ensures legacy CPS responses still mark spam correctly
     }
