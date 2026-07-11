@@ -30,36 +30,69 @@ Normalize raw text to LF before calculating marker offsets for generated patches
 
 ---
 
-## [ERR-20260717-004] phpunit-bat-filter-regex-quoting
+## [ERR-20260710-009] phpunit-suite-timeout
 
-**Logged**: 2026-07-17T06:35:00-05:00
+**Logged**: 2026-07-11T00:06:00-05:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The complete WordPress integration suite exceeded the shell runner's five-minute timeout before PHPUnit emitted a terminal result.
+
+### Error
+```text
+command timed out after 300764 milliseconds
+```
+
+### Context
+- Command: `php vendor/phpunit/phpunit/phpunit --testsuite 'Sentient Forms'`.
+- Focused suites, syntax, PHPCS, encoding, and readme validation were already green.
+- The timeout is not a passing or failing PHPUnit result, so it cannot support a green claim.
+
+### Suggested Fix
+Rerun the exact suite once with a ten-minute bound and preserve PHPUnit's process exit code and terminal summary.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: phpunit.xml.dist
+
+### Resolution
+- **Resolved**: 2026-07-11T00:06:00-05:00
+- **Notes**: Retried once with the same command and a bounded ten-minute timeout.
+
+---
+
+## [ERR-20260710-008] powershell-select-string-last
+
+**Logged**: 2026-07-10T23:58:00-05:00
 **Priority**: low
 **Status**: resolved
 **Area**: tests
 
 ### Summary
-A grouped PHPUnit filter passed through the Windows batch shim was split at the regex alternation before PHPUnit started.
+The local PowerShell `Select-String` command does not support a `-Last` parameter, so a PHPUnit summary wrapper failed after launching the test.
 
 ### Error
 ```text
-'attested_' is not recognized as an internal or external command
+A parameter cannot be found that matches parameter name 'Last'.
 ```
 
 ### Context
-- The focused filter contained parentheses and a pipe character.
-- PowerShell invoked `vendor\\bin\\phpunit.bat`, adding a second `cmd.exe` parsing layer.
+- The wrapper piped PHPUnit output directly into `Select-String -Last 8`.
+- The wrapper obscured the test exit result; this was not a product-code failure.
+- No product or runtime state changed.
 
 ### Suggested Fix
-For regex filters on Windows, invoke `php vendor\\phpunit\\phpunit\\phpunit --filter '<regex>'` directly instead of the batch shim.
+Capture command output first, filter with `Select-String`, then use `Select-Object -Last 8`; preserve the underlying process exit code separately when it matters.
 
 ### Metadata
 - Reproducible: yes
-- Related Files: phpunit.xml, tests/phpunit/test-gravity-forms-adapter.php
-- See Also: ERR-20260717-003
+- Related Files: tests/phpunit/test-telemetry-service.php
 
 ### Resolution
-- **Resolved**: 2026-07-17T06:36:00-05:00
-- **Notes**: The direct PHP runner executed all six intended regression tests successfully.
+- **Resolved**: 2026-07-10T23:58:00-05:00
+- **Notes**: Replaced the unsupported parameter with a compatible output-capture wrapper.
 
 ---
 
@@ -269,6 +302,7 @@ Class test-form-actions-controller could not be found in ...\tests\phpunit\test-
 ### Context
 - The supervisor attempted to pass several individual test files to `vendor/bin/phpunit`, then repeated the pattern with one file.
 - The `.bat` wrapper also passed pipe characters in a filter expression through `cmd.exe` unless the PHP entry point was invoked directly.
+- The pattern recurred when a later focused review tried to pass multiple test files as one PHPUnit suite; the authoritative serial full suite was used instead.
 - No repository or runtime state changed.
 
 ### Suggested Fix
@@ -276,6 +310,8 @@ Invoke `php vendor/phpunit/phpunit/phpunit --filter '<class expression>'` and ca
 
 ### Metadata
 - Reproducible: yes
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-11
 - Related Files: tests/phpunit/test-form-actions-controller.php
 - See Also: ERR-20260710-006
 
@@ -284,106 +320,69 @@ Invoke `php vendor/phpunit/phpunit/phpunit --filter '<class expression>'` and ca
 - **Notes**: The class-filtered runs passed with 219 tests / 1,582 assertions and 146 tests / 1,095 assertions.
 
 ---
+## [ERR-20260711-001] concurrent_phpunit_shared_database_collision
 
-## [ERR-20260717-001] phpunit-polyfill-autoloader-invocation
-
-**Logged**: 2026-07-17T02:20:00-05:00
-**Priority**: low
+**Logged**: 2026-07-11T01:34:55-05:00
+**Priority**: medium
 **Status**: resolved
 **Area**: tests
 
 ### Summary
-The PHPUnit polyfill autoloader was invoked as though it were the test runner, producing exit code 0 while executing no tests.
+Parallel targeted PHPUnit processes used the same WordPress test database and clobbered the shared `wptests_` tables.
 
 ### Error
 ```text
-php vendor/yoast/phpunit-polyfills/phpunitpolyfills-autoload.php --filter <class>
-Exit code: 0, no PHPUnit result or log file
+WordPress test bootstrap failed because `wptests_options` disappeared while sibling PHPUnit suites were running concurrently.
 ```
 
 ### Context
-- A focused rerun used the polyfill bootstrap file instead of the repository's PHPUnit executable.
-- Because the bootstrap exits successfully, checking only the process exit code could have created a false green.
-- No repository or runtime state changed beyond this learning entry.
+- A read-only independent review launched multiple targeted PHP suites in parallel against the same configured WordPress test database.
+- WordPress core test bootstrap installs and tears down the shared prefixed schema, so these suites are not concurrency-safe without isolated databases or prefixes.
+- The failure is test-harness contention, not a product assertion failure; no product or runtime state changed.
 
 ### Suggested Fix
-Invoke `php vendor/phpunit/phpunit/phpunit --configuration phpunit.xml --filter '<class expression>'`, and require the captured log to contain the PHPUnit test summary in addition to exit code 0. Inspect the checkout's actual configuration filename rather than assuming the common `.dist` suffix.
+Run WordPress PHPUnit suites serially by default. Parallelize them only when every process has an isolated database or unique table prefix and independent bootstrap lifecycle.
+
+### Resolution
+- **Resolved**: 2026-07-11T01:34:55-05:00
+- **Notes**: The reviewer stopped parallel PHP execution; subsequent verification must use one serial suite at a time.
 
 ### Metadata
 - Reproducible: yes
-- Related Files: phpunit.xml
-- See Also: ERR-20260710-007
-
-### Resolution
-- **Resolved**: 2026-07-17T02:20:00-05:00
-- **Notes**: Corrected both the runner and the checkout-specific configuration filename, then added an explicit summary-presence check to the focused rerun.
+- Related Files: tests/bootstrap.php, tests/wp-tests-config.php, phpunit.xml
+- See Also: ERR-20260710-006
 
 ---
+## [ERR-20260711-002] powershell_get_item_multiple_literal_paths
 
-## [ERR-20260717-003] validation-command-assumptions
-
-**Logged**: 2026-07-17T02:58:09-05:00
+**Logged**: 2026-07-11T03:55:00-05:00
 **Priority**: low
 **Status**: resolved
-**Area**: tests
+**Area**: config
 
 ### Summary
-Three read-only validation commands assumed a source path, PHPUnit file invocation, or shell timeout behavior that this checkout does not provide.
+A projection-source diagnostic passed multiple paths to `Get-Item` as positional arguments instead of one `-LiteralPath` array.
 
 ### Error
 ```text
-rg: includes/services/class-sentient-forms-local-execution-service.php: The system cannot find the file specified.
-Class test-bundled-action-templates could not be found
-command timed out after 1022 milliseconds
+A positional parameter cannot be found that accepts argument 'includes/services/class-sentient-forms-action-policy-resolver.php'.
 ```
 
 ### Context
-- The local execution service filename includes `-action-`, and a combined lookup failed when given the shorter guessed path.
-- This WordPress PHPUnit suite discovers tests through `phpunit.xml`; passing a hyphenated test filename directly made PHPUnit derive a nonexistent class name.
-- A one-second shell timeout terminates the child process; it is not an asynchronous launch mechanism.
+- The earlier status and source-search output was still useful, but the final mtime inventory failed.
+- The projection verifier itself was unaffected and later proved source/snapshot equality on a frozen source set.
+- No product or runtime state changed.
 
 ### Suggested Fix
-Resolve filenames with `rg --files` before targeting them, invoke focused WordPress tests through the configured suite plus `--filter`, and use a long child timeout with an early-yielding orchestration cell for long-running suites.
+Assign paths to an array and call `Get-Item -LiteralPath $paths` when reading more than one explicit path in PowerShell.
+
+### Resolution
+- **Resolved**: 2026-07-11T03:55:00-05:00
+- **Notes**: The agent captured all 19 source mtimes with a proper array and froze the source set before the final full suite.
 
 ### Metadata
 - Reproducible: yes
-- Related Files: includes/services/class-sentient-forms-local-action-execution-service.php, phpunit.xml
-- See Also: ERR-20260717-001, ERR-20260710-007
-
-### Resolution
-- **Resolved**: 2026-07-17T02:58:09-05:00
-- **Notes**: Reissued each lookup/test with the checkout-resolved path and configured suite; the final full run completed with 1,191 tests and 9,828 assertions.
-
----
-
-## [ERR-20260717-002] powershell-rg-alternation-quoting
-
-**Logged**: 2026-07-17T02:24:00-05:00
-**Priority**: low
-**Status**: resolved
-**Area**: tests
-
-### Summary
-A PowerShell-quoted ripgrep alternation lost its closing quoted branch and reached ripgrep as an invalid regular expression.
-
-### Error
-```text
-rg: regex parse error: unclosed group
-```
-
-### Context
-- The lookup only needed one literal action code.
-- The unnecessary alternation increased quoting risk without adding evidence.
-
-### Suggested Fix
-Use `rg -F` for literal identifiers; introduce a regular expression only when matching behavior actually requires one.
-
-### Metadata
-- Reproducible: yes
-- Related Files: includes/class-sentient-forms-bundled-action-templates.php
-
-### Resolution
-- **Resolved**: 2026-07-17T02:24:00-05:00
-- **Notes**: Reissued the lookup with `rg -F` and obtained the canonical schema definition.
+- Related Files: scripts/check-action-source-compatibility-snapshot.php, contracts/action-source-compatibility.v1.json
+- See Also: ERR-20260710-005
 
 ---
