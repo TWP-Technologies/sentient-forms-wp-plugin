@@ -28,7 +28,6 @@ $include_paths = [
     'assets',
     'includes',
     'languages',
-    'vendor/woocommerce/action-scheduler',
     'CHANGELOG.md',
     'sentient-forms.php',
 ];
@@ -49,42 +48,204 @@ if ( ! mkdir( $package_dir, 0775, true ) && ! is_dir( $package_dir ) )
     exit( 1 );
 }
 
-foreach ( $include_paths as $relative )
+$runtime_dependency_root = materialize_locked_runtime_dependencies( $plugin_root );
+try
 {
-    $source = $plugin_root . '/' . $relative;
-    if ( ! file_exists( $source ) )
+    foreach ( $include_paths as $relative )
     {
-        continue;
+        $source = $plugin_root . '/' . $relative;
+        if ( ! file_exists( $source ) )
+        {
+            continue;
+        }
+
+        $target = $package_dir . '/' . $relative;
+        if ( is_dir( $source ) )
+        {
+            copy_directory( $source, $target );
+            continue;
+        }
+
+        copy_file( $source, $target );
     }
 
-    $target = $package_dir . '/' . $relative;
-    if ( is_dir( $source ) )
+    $action_scheduler = $runtime_dependency_root . '/vendor/woocommerce/action-scheduler';
+    if ( ! is_file( $action_scheduler . '/action-scheduler.php' ) )
     {
-        copy_directory( $source, $target );
-        continue;
+        throw new RuntimeException( 'Locked Composer install did not materialize Action Scheduler.' );
+    }
+    copy_directory( $action_scheduler, $package_dir . '/vendor/woocommerce/action-scheduler' );
+
+    write_runtime_composer_manifest( $plugin_root . '/composer.json', $package_dir . '/composer.json' );
+
+    foreach ( [ 'languages' ] as $required_directory )
+    {
+        $required_path = $package_dir . '/' . $required_directory;
+        if ( ! is_dir( $required_path ) && ! mkdir( $required_path, 0775, true ) )
+        {
+            throw new RuntimeException( "Unable to create required package directory: {$required_path}" );
+        }
     }
 
-    copy_file( $source, $target );
+    if ( ! is_dir( $package_dir . '/assets/dist' ) )
+    {
+        throw new RuntimeException( 'Package is missing built admin assets. Run bun run build:wp first.' );
+    }
 }
-
-write_runtime_composer_manifest( $plugin_root . '/composer.json', $package_dir . '/composer.json' );
-
-foreach ( [ 'languages' ] as $required_directory )
+finally
 {
-    $required_path = $package_dir . '/' . $required_directory;
-    if ( ! is_dir( $required_path ) && ! mkdir( $required_path, 0775, true ) )
-    {
-        throw new RuntimeException( "Unable to create required package directory: {$required_path}" );
-    }
-}
-
-if ( ! is_dir( $package_dir . '/assets/dist' ) )
-{
-    fwrite( STDERR, "Package is missing built admin assets. Run bun run build:wp first.\n" );
-    exit( 1 );
+    remove_runtime_dependency_directory( $runtime_dependency_root );
 }
 
 echo "Built WordPress.org package directory:\n{$package_dir}\n";
+
+/**
+ * Install production dependencies from the committed lockfile in an isolated tree.
+ */
+function materialize_locked_runtime_dependencies( string $plugin_root ): string
+{
+    foreach ( [ 'composer.json', 'composer.lock' ] as $manifest )
+    {
+        if ( ! is_file( $plugin_root . '/' . $manifest ) )
+        {
+            throw new RuntimeException( "Package source is missing {$manifest}." );
+        }
+    }
+
+    $directory = rtrim( sys_get_temp_dir(), DIRECTORY_SEPARATOR )
+        . DIRECTORY_SEPARATOR
+        . 'sentient-forms-runtime-'
+        . bin2hex( random_bytes( 12 ) );
+    if ( ! mkdir( $directory, 0700, true ) )
+    {
+        throw new RuntimeException( "Unable to create runtime dependency directory: {$directory}" );
+    }
+
+    try
+    {
+        copy_file( $plugin_root . '/composer.json', $directory . '/composer.json' );
+        copy_file( $plugin_root . '/composer.lock', $directory . '/composer.lock' );
+        $command = array_merge( resolve_composer_command(), [
+            'install',
+            '--working-dir=' . $directory,
+            '--no-dev',
+            '--prefer-dist',
+            '--no-interaction',
+            '--no-progress',
+            '--no-scripts',
+            '--no-plugins',
+            '--no-autoloader',
+        ] );
+        $descriptors = [
+            1 => [ 'pipe', 'w' ],
+            2 => [ 'pipe', 'w' ],
+        ];
+        $process = proc_open( $command, $descriptors, $pipes );
+        if ( ! is_resource( $process ) )
+        {
+            throw new RuntimeException( 'Unable to start Composer for locked runtime dependencies.' );
+        }
+        $stdout = stream_get_contents( $pipes[1] );
+        $stderr = stream_get_contents( $pipes[2] );
+        fclose( $pipes[1] );
+        fclose( $pipes[2] );
+        $status = proc_close( $process );
+        if ( 0 !== $status )
+        {
+            throw new RuntimeException(
+                "Locked production dependency install failed.\n"
+                . trim( (string) $stdout . "\n" . (string) $stderr )
+            );
+        }
+
+        return $directory;
+    }
+    catch ( Throwable $error )
+    {
+        remove_runtime_dependency_directory( $directory );
+        throw $error;
+    }
+}
+
+/**
+ * Resolve Composer without relying on Windows PATHEXT shell behavior.
+ *
+ * @return list<string>
+ */
+function resolve_composer_command(): array
+{
+    $configured = getenv( 'COMPOSER_BINARY' ) ?: 'composer';
+    $lowercase  = strtolower( $configured );
+    if ( str_ends_with( $lowercase, '.phar' ) )
+    {
+        if ( ! is_file( $configured ) )
+        {
+            throw new RuntimeException( "COMPOSER_BINARY does not exist: {$configured}" );
+        }
+        return [ PHP_BINARY, $configured ];
+    }
+    if ( 'Windows' === PHP_OS_FAMILY
+        && ( str_ends_with( $lowercase, '.bat' ) || str_ends_with( $lowercase, '.cmd' ) ) )
+    {
+        $sibling_phar = dirname( $configured ) . DIRECTORY_SEPARATOR . 'composer.phar';
+        if ( is_file( $sibling_phar ) )
+        {
+            return [ PHP_BINARY, $sibling_phar ];
+        }
+        throw new RuntimeException(
+            'COMPOSER_BINARY batch wrappers require a sibling composer.phar for shell-free execution.'
+        );
+    }
+    if ( 'Windows' !== PHP_OS_FAMILY || 'composer' !== $lowercase )
+    {
+        return [ $configured ];
+    }
+
+    foreach ( explode( PATH_SEPARATOR, getenv( 'PATH' ) ?: '' ) as $path )
+    {
+        $candidate = rtrim( trim( $path, '"' ), DIRECTORY_SEPARATOR )
+            . DIRECTORY_SEPARATOR
+            . 'composer.phar';
+        if ( is_file( $candidate ) )
+        {
+            return [ PHP_BINARY, $candidate ];
+        }
+    }
+
+    throw new RuntimeException(
+        'Unable to locate composer.phar on PATH; set COMPOSER_BINARY to an executable or PHAR path.'
+    );
+}
+
+/**
+ * Remove an isolated runtime dependency materialization.
+ */
+function remove_runtime_dependency_directory( string $path ): void
+{
+    if ( ! is_dir( $path ) )
+    {
+        return;
+    }
+    if ( ! str_starts_with( basename( $path ), 'sentient-forms-runtime-' ) )
+    {
+        throw new RuntimeException( "Refusing to remove unexpected dependency path: {$path}" );
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator( $path, FilesystemIterator::SKIP_DOTS ),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ( $iterator as $item )
+    {
+        if ( $item->isDir() )
+        {
+            rmdir( $item->getPathname() );
+            continue;
+        }
+        unlink( $item->getPathname() );
+    }
+    rmdir( $path );
+}
 
 /**
  * Copy a directory recursively while excluding non-runtime artifacts.
