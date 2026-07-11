@@ -333,7 +333,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             'feature_access'                    => 'active_subscription',
             'execution_requirement'             => 'provider_flexible',
             'required_form_source_capabilities' => [],
-            'required_managed_capabilities'     => [],
+            'required_managed_capabilities'     => [ 'bounded_output' ],
             'eligible_lifecycles'                => [ 'after_submission' ],
             'metering_class'                     => 'standard',
         ];
@@ -351,6 +351,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $first );
         $this->assertSame( 'openrouter', $first['provider'] ?? null );
         $this->assertSame( 1, $calls, 'Subscription status and managed capacity must reuse one parsed CPS snapshot.' );
+        $this->assertArrayNotHasKey( 'managed_capability_policy', $client->chat_calls[0]['payload'] ?? [] );
 
         $status = 'canceled';
         $second = $service->execute_mapping(
@@ -2104,6 +2105,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
         $this->assertSame( 'gemini-3-flash-preview', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
+        $this->assertArrayNotHasKey( 'managed_capability_policy', $payload );
     }
 
     public function test_managed_runtime_model_selection_can_require_zdr_privacy_route(): void
@@ -2190,6 +2192,231 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $event = $this->events->get_by_request_id( 'runtime-managed-zdr-req' );
         $this->assertIsArray( $event );
         $this->assertSame( $expected_assertion, $event['result_json']['privacy_route_assertion'] ?? null );
+    }
+
+    public function test_managed_request_emits_composed_base_and_facet_capability_policy(): void
+    {
+        $this->seed_openrouter_model_cache();
+        $fixture = $this->create_local_openrouter_mapping( true, null, [ 'max_tokens' => 256 ] );
+        $managed = $this->create_ready_managed_service_credential();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'managed-composed-capabilities',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'output'               => [ 'text' => 'Managed capability run succeeded.' ],
+                'token_usage'          => [
+                    'input_tokens'  => 10,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 15,
+                ],
+                'metering'             => [
+                    'event_id'        => '77777777-7777-4777-8777-777777777777',
+                    'free_usage'      => false,
+                    'debited_credits' => 1,
+                ],
+                'privacy_route_assertion' => [
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                ],
+            ]
+        );
+        $service = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+        $catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [
+                'managed_privacy' => [
+                    'code'                              => 'managed_privacy',
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'managed_only',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [ 'privacy_zdr' ],
+                    'lifecycle_restrictions'            => [ 'after_submission' ],
+                    'metering_class'                    => 'standard',
+                ],
+            ]
+        );
+        $policy = ( new Sentient_Forms_Action_Policy_Resolver( $catalog ) )->resolve(
+            [
+                'feature_access'                    => 'unrestricted',
+                'execution_requirement'             => 'provider_flexible',
+                'required_form_source_capabilities' => [],
+                'required_managed_capabilities'     => [ 'bounded_output' ],
+                'eligible_lifecycles'                => [ 'after_submission' ],
+                'metering_class'                    => 'standard',
+            ],
+            [ 'managed_privacy' ]
+        );
+        $this->assertIsArray( $policy );
+
+        $billing = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'managed-composed-capabilities',
+                    'effective_action_policy' => $policy,
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                            'require_zdr'   => true,
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame(
+            [
+                'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                'required_capabilities' => [ 'bounded_output', 'privacy_zdr' ],
+            ],
+            $managed_proxy->execute_calls[0]['payload']['managed_capability_policy'] ?? null
+        );
+    }
+
+    public function test_managed_requirement_inconsistent_with_request_fails_before_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service = $this->create_service( $openrouter, $managed_proxy );
+        $billing = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'managed-unsatisfied-capability',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'active_subscription',
+                        'execution_requirement'             => 'managed_only',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [ 'privacy_zdr' ],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_unsatisfied_capability', $result->get_error_code() );
+        $this->assertSame( 'privacy_zdr', $result->get_error_data()['capability'] ?? null );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+        $this->assertSame( [], $openrouter->chat_calls );
+    }
+
+    /**
+     * @dataProvider malformed_internal_managed_capability_requirements
+     */
+    public function test_malformed_internal_managed_capability_requirements_fail_before_transport(
+        bool $field_present,
+        mixed $required_capabilities
+    ): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service = $this->create_service( $openrouter, $managed_proxy );
+        $policy = [
+            'feature_access'                    => 'active_subscription',
+            'execution_requirement'             => 'managed_only',
+            'required_form_source_capabilities' => [],
+            'eligible_lifecycles'                => [ 'after_submission' ],
+            'metering_class'                     => 'standard',
+        ];
+        if ( $field_present )
+        {
+            $policy['required_managed_capabilities'] = $required_capabilities;
+        }
+
+        $billing = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'managed-malformed-capability-context',
+                    'effective_action_policy' => $policy,
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_capability_policy', $result->get_error_code() );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+        $this->assertSame( [], $openrouter->chat_calls );
+    }
+
+    public function malformed_internal_managed_capability_requirements(): array
+    {
+        return [
+            'missing field' => [ false, null ],
+            'non-array field' => [ true, 'privacy_zdr' ],
+        ];
     }
 
     public function test_managed_zdr_fallback_success_records_safe_privacy_metadata(): void

@@ -234,15 +234,12 @@ final class Sentient_Forms_Action_Policy_Resolver
             return $form_source_capabilities;
         }
 
-        $managed_capabilities = $this->normalize_identifier_list(
-            $policy['required_managed_capabilities'] ?? null,
-            'required_managed_capabilities',
-            'facet',
-            $facet_code
+        $managed_capabilities = Sentient_Forms_Managed_Capability_Policy::normalize_required_capabilities(
+            $policy['required_managed_capabilities'] ?? null
         );
         if ( is_wp_error( $managed_capabilities ) )
         {
-            return $managed_capabilities;
+            return $this->invalid_policy_error( 'facet', 'required_managed_capabilities', $facet_code );
         }
 
         $lifecycle_restrictions = $this->normalize_identifier_list(
@@ -324,14 +321,12 @@ final class Sentient_Forms_Action_Policy_Resolver
             return $form_source_capabilities;
         }
 
-        $managed_capabilities = $this->normalize_identifier_list(
-            $policy['required_managed_capabilities'] ?? null,
-            'required_managed_capabilities',
-            'base'
+        $managed_capabilities = Sentient_Forms_Managed_Capability_Policy::normalize_required_capabilities(
+            $policy['required_managed_capabilities'] ?? null
         );
         if ( is_wp_error( $managed_capabilities ) )
         {
-            return $managed_capabilities;
+            return $this->invalid_policy_error( 'base', 'required_managed_capabilities' );
         }
 
         $lifecycles = $this->normalize_identifier_list(

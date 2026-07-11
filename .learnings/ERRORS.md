@@ -29,6 +29,71 @@ Normalize raw text to LF before calculating marker offsets for generated patches
 - **Notes**: Retry normalizes line endings before marker lookup.
 
 ---
+## [ERR-20260711-004] stale_class_map_generator_reference
+
+**Logged**: 2026-07-11T15:26:00-05:00
+**Priority**: medium
+**Status**: resolved
+**Area**: config
+
+### Summary
+The generated class-map header referenced a nonexistent filename, and the real generator emitted tab-indented output rejected by the changed-file quality gate.
+
+### Error
+```text
+Could not open input file: build/generate-classmap.php
+Generic.WhiteSpace.DisallowTabIndent: 133 errors after regeneration
+```
+
+### Context
+- The actual generator is `build/generate-class-map.php`.
+- Regenerating after adding a class reintroduced whitespace defects that the deterministic quality guard correctly rejects.
+- The generated map remained semantically valid, but could not be handed off in a quality-green state.
+
+### Suggested Fix
+Keep the generated header and usage examples aligned with the real filename, and have the generator emit space indentation.
+
+### Resolution
+- **Resolved**: 2026-07-11T15:26:00-05:00
+- **Notes**: Corrected the generator references/output indentation and regenerated the class map before rerunning the real guard.
+
+### Metadata
+- Reproducible: yes
+- Related Files: build/generate-class-map.php, includes/class-map.php, scripts/check-changed-file-quality.php
+
+---
+## [ERR-20260711-003] powershell_reserved_error_variable
+
+**Logged**: 2026-07-11T15:08:00-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: config
+
+### Summary
+A contract-hash verification attempted to assign to PowerShell's reserved automatic `$Error` variable.
+
+### Error
+```text
+Cannot overwrite variable Error because it is read-only or constant.
+```
+
+### Context
+- The intended schema copies completed before the hash-variable assignment failed.
+- The command used `$error` for the execute-error schema digest; PowerShell variable names are case-insensitive, so this collided with `$Error`.
+- No unintended product or runtime state changed.
+
+### Suggested Fix
+Use descriptive non-reserved names such as `$errorSchemaHash` for PowerShell verification variables.
+
+### Resolution
+- **Resolved**: 2026-07-11T15:08:00-05:00
+- **Notes**: Reran exact-copy hash verification with non-reserved variable names.
+
+### Metadata
+- Reproducible: yes
+- Related Files: contracts/cps-v2/managed/execute-error.schema.json, contracts/cps-v2/snapshot-hashes.json
+
+---
 
 ## [ERR-20260710-009] phpunit-suite-timeout
 

@@ -166,6 +166,34 @@
           "const": "deny"
         }
       }
+    },
+    "managed_capability_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "required_capabilities"
+      ],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "const": "sentient_forms_managed_capability_policy.v1"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "server_tools",
+              "web_search",
+              "privacy_zdr",
+              "bounded_output"
+            ]
+          }
+        }
+      }
     }
   }
 }

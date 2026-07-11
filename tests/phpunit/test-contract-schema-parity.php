@@ -70,6 +70,36 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         }
     }
 
+    public function test_managed_capability_policy_contract_matches_the_cps_v2_vocabulary(): void
+    {
+        $request = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-request.schema.json' );
+        $policy  = $request['properties']['managed_capability_policy'] ?? null;
+
+        $this->assertIsArray( $policy );
+        $this->assertFalse( $policy['additionalProperties'] ?? true );
+        $this->assertSame( [ 'schema', 'required_capabilities' ], $policy['required'] ?? null );
+        $this->assertSame(
+            'sentient_forms_managed_capability_policy.v1',
+            $policy['properties']['schema']['const'] ?? null
+        );
+        $this->assertSame(
+            [ 'server_tools', 'web_search', 'privacy_zdr', 'bounded_output' ],
+            $policy['properties']['required_capabilities']['items']['enum'] ?? null
+        );
+        $this->assertSame(
+            Sentient_Forms_Managed_Capability_Policy::allowed_capabilities(),
+            $policy['properties']['required_capabilities']['items']['enum'] ?? null
+        );
+        $this->assertSame( 4, $policy['properties']['required_capabilities']['maxItems'] ?? null );
+        $this->assertTrue( $policy['properties']['required_capabilities']['uniqueItems'] ?? false );
+
+        $error      = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-error.schema.json' );
+        $capability = $error['properties']['error']['properties']['meta']['properties']['capability'] ?? null;
+        $this->assertIsArray( $capability );
+        $this->assertSame( 'string', $capability['type'] ?? null );
+        $this->assertSame( 128, $capability['maxLength'] ?? null );
+    }
+
     private function decode_json_file( string $path ): array
     {
         $this->assertFileExists( $path, 'Required public CPS contract snapshot is missing: ' . $path );

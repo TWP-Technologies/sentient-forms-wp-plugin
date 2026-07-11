@@ -253,8 +253,13 @@ class Sentient_Forms_Local_Action_Execution_Service
                 $context,
                 $managed_context['site_id'],
                 $execution_request_id,
-                $structured_output_contract
+                $structured_output_contract,
+                $managed_policy
             );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
         }
 
         $payload_digest       = hash( 'sha256', (string) wp_json_encode( $payload ) );
@@ -1923,11 +1928,11 @@ class Sentient_Forms_Local_Action_Execution_Service
      * Recheck managed-only and infrastructure capability constraints at the CPS
      * dispatch boundary rather than trusting an earlier UI or runner decision.
      */
-    private function recheck_managed_dispatch_policy( ?array $effective_policy ): true | WP_Error
+    private function recheck_managed_dispatch_policy( ?array $effective_policy ): array | WP_Error
     {
         if ( null === $effective_policy )
         {
-            return true;
+            return [];
         }
         if ( ! $this->model_selection_service->managed_account_is_active() )
         {
@@ -1937,26 +1942,11 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
-        $available = apply_filters(
-            'sentient_forms_managed_infrastructure_capabilities',
-            [ 'base_limit', 'tool_budget' ],
-            $effective_policy
-        );
-        $available = is_array( $available ) ? array_values( array_unique( array_map( 'sanitize_key', $available ) ) ) : [];
-        $required  = is_array( $effective_policy['required_managed_capabilities'] ?? null )
-            ? array_values( array_unique( array_map( 'sanitize_key', $effective_policy['required_managed_capabilities'] ) ) )
-            : [];
-        $missing = array_values( array_diff( $required, $available ) );
-        if ( [] !== $missing )
-        {
-            return new WP_Error(
-                'sentient_forms_managed_capability_unavailable',
-                __( 'Managed execution cannot provide a required Action capability.', 'sentient-forms' ),
-                [ 'missing_capabilities' => $missing ]
-            );
-        }
+        $required = array_key_exists( 'required_managed_capabilities', $effective_policy )
+            ? $effective_policy['required_managed_capabilities']
+            : null;
 
-        return true;
+        return Sentient_Forms_Managed_Capability_Policy::normalize_required_capabilities( $required );
     }
 
     private function is_bundled_action_code( string $action_code ): bool
@@ -2299,7 +2289,6 @@ class Sentient_Forms_Local_Action_Execution_Service
      * @param array<string, mixed>               $payload
      * @param array<string, mixed>               $context
      * @param array<string, mixed>               $normalized_result
-     *
      * @return array<string, mixed>
      */
     private function structured_output_failure_result_json(
@@ -2572,8 +2561,9 @@ class Sentient_Forms_Local_Action_Execution_Service
     /**
      * @param array<int, array{role?: string, content?: mixed}>                 $messages
      * @param array{schema: array<string, mixed>, source: string}|null|WP_Error $structured_output_contract
+     * @param array<int, string>                                                $required_managed_capabilities
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|WP_Error
      */
     private function build_managed_payload(
         string $model,
@@ -2587,8 +2577,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $context,
         string $site_id,
         string $execution_request_id,
-        array | WP_Error | null $structured_output_contract
-    ): array
+        array | WP_Error | null $structured_output_contract,
+        array $required_managed_capabilities
+    ): array | WP_Error
     {
         $payload = [
             'site_id'              => $site_id,
@@ -2644,6 +2635,35 @@ class Sentient_Forms_Local_Action_Execution_Service
         if ( $this->managed_privacy_route_required( $model_selection, $context ) )
         {
             $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
+        }
+
+        $provider_payload = $this->build_provider_payload(
+            $model,
+            $messages,
+            $definition,
+            $model_selection,
+            $structured_output_contract,
+            $action
+        );
+        foreach ( [ 'tools', 'tool_choice' ] as $field )
+        {
+            if ( array_key_exists( $field, $provider_payload ) )
+            {
+                $payload[ $field ] = $provider_payload[ $field ];
+            }
+        }
+
+        $capability_policy = Sentient_Forms_Managed_Capability_Policy::build_for_request(
+            $required_managed_capabilities,
+            $payload
+        );
+        if ( is_wp_error( $capability_policy ) )
+        {
+            return $capability_policy;
+        }
+        if ( null !== $capability_policy )
+        {
+            $payload['managed_capability_policy'] = $capability_policy;
         }
 
         return $payload;

@@ -88,6 +88,190 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] );
         $this->assertSame( 123, $payload['metadata']['mapping_id'] );
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
+        $this->assertArrayNotHasKey( 'managed_capability_policy', $payload );
+    }
+
+    public function test_execute_sends_only_a_satisfied_nonempty_managed_capability_policy(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [ 'args' => $args, 'url' => $url ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [ 'code' => 200, 'message' => 'OK' ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'                  => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id'     => 'managed-capabilities-1',
+                'model'                    => 'openai/gpt-4.1-mini',
+                'prompt'                   => 'Research and summarize this entry.',
+                'max_output_tokens'        => 512,
+                'tools'                    => [ [ 'type' => 'openrouter:web_search' ] ],
+                'tool_choice'              => 'required',
+                'privacy_route_policy'     => [
+                    'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                    'require_zdr'     => true,
+                    'data_collection' => 'deny',
+                ],
+                'managed_capability_policy' => [
+                    'required_capabilities' => [ 'server_tools', 'web_search', 'privacy_zdr', 'bounded_output' ],
+                    'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame(
+            [
+                'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                'required_capabilities' => [ 'server_tools', 'web_search', 'privacy_zdr', 'bounded_output' ],
+            ],
+            $payload['managed_capability_policy'] ?? null
+        );
+    }
+
+    /**
+     * @dataProvider invalid_managed_capability_policies
+     */
+    public function test_execute_rejects_unknown_or_unsatisfied_managed_capability_policy_before_transport(
+        array $policy,
+        string $expected_error
+    ): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function () use ( &$calls ): WP_Error {
+                ++$calls;
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'                  => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id'     => 'managed-capabilities-invalid',
+                'model'                    => 'openai/gpt-4.1-mini',
+                'prompt'                   => 'Summarize this entry.',
+                'managed_capability_policy' => $policy,
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( $expected_error, $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function invalid_managed_capability_policies(): array
+    {
+        return [
+            'unknown capability' => [
+                [
+                    'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                    'required_capabilities' => [ 'wordpress_action_semantics' ],
+                ],
+                'sentient_managed_unknown_capability',
+            ],
+            'request does not enable capability' => [
+                [
+                    'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                    'required_capabilities' => [ 'privacy_zdr' ],
+                ],
+                'sentient_managed_unsatisfied_capability',
+            ],
+        ];
+    }
+
+    public function test_execute_normalizes_canonical_empty_capability_policy_to_wire_omission(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [ 'args' => $args, 'url' => $url ];
+                return [
+                    'headers'  => [],
+                    'response' => [ 'code' => 200, 'message' => 'OK' ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $result = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )->execute(
+            'proxy-secret',
+            [
+                'site_id'                  => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id'     => 'managed-capabilities-empty',
+                'model'                    => 'openai/gpt-4.1-mini',
+                'prompt'                   => 'Summarize this entry.',
+                'managed_capability_policy' => [
+                    'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                    'required_capabilities' => [],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertArrayNotHasKey( 'managed_capability_policy', $payload );
+    }
+
+    /**
+     * @dataProvider invalid_managed_tool_choices
+     */
+    public function test_execute_rejects_invalid_tool_choice_before_capability_satisfiability_and_transport(
+        mixed $tool_choice
+    ): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function () use ( &$calls ): WP_Error {
+                ++$calls;
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $result = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )->execute(
+            'proxy-secret',
+            [
+                'site_id'                  => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id'     => 'managed-invalid-tool-choice',
+                'model'                    => 'openai/gpt-4.1-mini',
+                'prompt'                   => 'Research this entry.',
+                'tools'                    => [ [ 'type' => 'openrouter:web_search' ] ],
+                'tool_choice'              => $tool_choice,
+                'managed_capability_policy' => [
+                    'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                    'required_capabilities' => [ 'server_tools' ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_tool_choice', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function invalid_managed_tool_choices(): array
+    {
+        return [
+            'unsupported scalar' => [ 'off' ],
+            'non scalar'         => [ [ 'required' ] ],
+        ];
     }
 
     public function test_exact_v1_base_url_fails_closed(): void

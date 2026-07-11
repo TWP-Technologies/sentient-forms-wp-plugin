@@ -31,6 +31,7 @@ class Sentient_Forms_Managed_Proxy_Client
         'tools'                => true,
         'tool_choice'          => true,
         'privacy_route_policy' => true,
+        'managed_capability_policy' => true,
     ];
 
     private string $base_url;
@@ -373,12 +374,45 @@ class Sentient_Forms_Managed_Proxy_Client
             }
         }
 
-        if ( isset( $payload['tool_choice'] ) && is_scalar( $payload['tool_choice'] ) )
+        if ( array_key_exists( 'tool_choice', $payload ) )
         {
-            $tool_choice = sanitize_key( (string) $payload['tool_choice'] );
-            if ( in_array( $tool_choice, [ 'auto', 'required', 'none' ], true ) )
+            if ( ! is_scalar( $payload['tool_choice'] ) )
             {
-                $normalized['tool_choice'] = $tool_choice;
+                return new WP_Error(
+                    'sentient_managed_invalid_tool_choice',
+                    __( 'Managed execution tool choice must be auto, required, or none.', 'sentient-forms' )
+                );
+            }
+
+            $tool_choice = sanitize_key( (string) $payload['tool_choice'] );
+            if ( ! in_array( $tool_choice, [ 'auto', 'required', 'none' ], true ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_invalid_tool_choice',
+                    __( 'Managed execution tool choice must be auto, required, or none.', 'sentient-forms' )
+                );
+            }
+
+            $normalized['tool_choice'] = $tool_choice;
+        }
+
+        if ( array_key_exists( 'managed_capability_policy', $payload ) )
+        {
+            $managed_capability_policy = Sentient_Forms_Managed_Capability_Policy::normalize_envelope(
+                $payload['managed_capability_policy'],
+                $normalized
+            );
+            if ( is_wp_error( $managed_capability_policy ) )
+            {
+                return $managed_capability_policy;
+            }
+            if ( null === $managed_capability_policy )
+            {
+                unset( $normalized['managed_capability_policy'] );
+            }
+            else
+            {
+                $normalized['managed_capability_policy'] = $managed_capability_policy;
             }
         }
 

@@ -334,6 +334,7 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
             'includes/interfaces/interface-sentient-forms-validation-adapter.php',
             'includes/rest-api/class-form-sources.php',
             'includes/services/class-sentient-forms-action-facet-catalog.php',
+            'includes/services/class-sentient-forms-managed-capability-policy.php',
             'includes/services/class-sentient-forms-action-policy-resolver.php',
             'includes/services/class-sentient-forms-form-source-lifecycles.php',
             'scripts/check-action-source-compatibility-snapshot.php',

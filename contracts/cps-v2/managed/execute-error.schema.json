@@ -33,6 +33,11 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
+            "capability": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
             "privacy_route_failure": {
               "type": "object",
               "additionalProperties": false,

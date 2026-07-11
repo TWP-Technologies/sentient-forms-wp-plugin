@@ -96,6 +96,7 @@ return [
 	'Sentient_Forms_Local_Workspace_Controller' => __DIR__ . '/rest-api/controllers/class-local-workspace-controller.php',
 	'Sentient_Forms_Logger' => __DIR__ . '/logging/class-sentient-forms-logger.php',
 	'Sentient_Forms_Managed_Base_Url' => __DIR__ . '/services/class-sentient-forms-managed-base-url.php',
+	'Sentient_Forms_Managed_Capability_Policy' => __DIR__ . '/services/class-sentient-forms-managed-capability-policy.php',
 	'Sentient_Forms_Managed_Proxy_Client' => __DIR__ . '/providers/class-sentient-forms-managed-proxy-client.php',
 	'Sentient_Forms_Managed_Service_Client' => __DIR__ . '/api/class-sentient-forms-managed-service-client.php',
 	'Sentient_Forms_Managed_Usage_Sanitizer' => __DIR__ . '/services/class-sentient-forms-managed-usage-sanitizer.php',
