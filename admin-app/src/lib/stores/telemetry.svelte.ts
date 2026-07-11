@@ -2,26 +2,23 @@ import { writable } from 'svelte/store';
 import { createClientFromConfig, type SentientFormsApiClient } from '$lib/api/client';
 import type { TelemetrySettingsResponse } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export interface TelemetryState {
 	loading: boolean;
 	saving: boolean;
 	optIn: boolean;
 	updatedAt: string | null;
-	syncedAt: string | null;
-	remoteUpdatedAt: string | null;
 	lastError: string | null;
 }
 
-const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.telemetry;
+const runtime = readRuntimeConfigSafely()?.telemetry;
 const initialState: TelemetryState = {
 	loading: false,
 	saving: false,
 	optIn: runtime?.optIn ?? false,
 	updatedAt: runtime?.updatedAt ?? null,
-	syncedAt: runtime?.syncedAt ?? null,
-	remoteUpdatedAt: runtime?.remoteUpdatedAt ?? null,
-	lastError: runtime?.lastError ?? null
+	lastError: null
 };
 
 function mapResponse(payload: TelemetrySettingsResponse): TelemetryState {
@@ -30,9 +27,7 @@ function mapResponse(payload: TelemetrySettingsResponse): TelemetryState {
 		saving: false,
 		optIn: Boolean(payload.telemetry_opt_in),
 		updatedAt: payload.updated_at ?? null,
-		syncedAt: payload.synced_at ?? null,
-		remoteUpdatedAt: payload.remote_updated_at ?? null,
-		lastError: payload.last_error ?? null
+		lastError: null
 	};
 }
 
@@ -42,7 +37,7 @@ export function createTelemetryStore(client: SentientFormsApiClient = createClie
 	return {
 		subscribe,
 		async load() {
-			update((state) => ({ ...state, loading: true }));
+			update((state) => ({ ...state, loading: true, lastError: null }));
 			try {
 				const response = await client.getTelemetrySettings({ showNotifications: false });
 				const mapped = mapResponse(response);
@@ -50,22 +45,32 @@ export function createTelemetryStore(client: SentientFormsApiClient = createClie
 				return mapped;
 			} catch (error) {
 				console.error('Failed to load telemetry settings', error);
-				update((state) => ({ ...state, loading: false }));
+				update((state) => ({
+					...state,
+					loading: false,
+					lastError: 'Unable to load the local diagnostic preference.'
+				}));
 				return null;
 			}
 		},
 		async setOptIn(next: boolean) {
-			update((state) => ({ ...state, saving: true }));
+			update((state) => ({ ...state, saving: true, lastError: null }));
 			try {
 				const response = await client.updateTelemetrySettings(next, { showNotifications: true });
 				const mapped = mapResponse(response);
 				set(mapped);
-				notifications.success(next ? 'Telemetry enabled' : 'Telemetry disabled');
+				notifications.success(
+					next ? 'Local diagnostic events enabled' : 'Local diagnostic events disabled'
+				);
 				return mapped;
 			} catch (error) {
 				console.error('Failed to update telemetry', error);
-				update((state) => ({ ...state, saving: false }));
-				notifications.error('Unable to update telemetry preference');
+				update((state) => ({
+					...state,
+					saving: false,
+					lastError: 'Unable to save the local diagnostic preference.'
+				}));
+				notifications.error('Unable to update local diagnostic preference');
 				return null;
 			}
 		},

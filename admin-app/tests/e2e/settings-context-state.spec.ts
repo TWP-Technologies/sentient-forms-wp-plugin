@@ -35,7 +35,21 @@ test.describe('Settings context state templates', () => {
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
+				})
 			})
 		);
 
@@ -57,12 +71,11 @@ test.describe('Settings context state templates', () => {
 
 		await page.route(
 			(url) => url.pathname.endsWith('/wp-json/sentient-forms/v1/models'),
-			(route) => route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					success: true,
-					data: {
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
 						models: [
 							{
 								id: 'openai/gpt-5.5',
@@ -91,9 +104,8 @@ test.describe('Settings context state templates', () => {
 								auto_upgrade: true
 							}
 						]
-					}
+					})
 				})
-			})
 		);
 	});
 
@@ -781,42 +793,39 @@ test.describe('Settings context state templates', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [
-							{
-								id: 'openai/gpt-5.5',
-								display_name: 'OpenAI: GPT-5.5',
-								provider: 'openrouter',
-								speed_tier: 'balanced',
-								cost_tier: 'medium',
-								capabilities: {
-									reasoning: true,
-									tools: true,
-									structured: true,
+					models: [
+						{
+							id: 'openai/gpt-5.5',
+							display_name: 'OpenAI: GPT-5.5',
+							provider: 'openrouter',
+							speed_tier: 'balanced',
+							cost_tier: 'medium',
+							capabilities: {
+								reasoning: true,
+								tools: true,
+								structured: true,
+								web_search: true,
+								server_tools: {
 									web_search: true,
-									server_tools: {
-										web_search: true,
-										web_fetch: false,
-										datetime: false
-									},
-									long_context: true
+									web_fetch: false,
+									datetime: false
 								},
-								context_window: 400000,
-								tags: ['reasoning', 'structured-output'],
-								supported_parameters: ['reasoning', 'tools']
-							}
-						],
-						presets: [
-							{
-								code: 'sf_research',
-								display_name: 'Research',
-								category: 'local',
-								resolved_model_id: 'openai/gpt-5.5',
-								auto_upgrade: true
-							}
-						]
-					}
+								long_context: true
+							},
+							context_window: 400000,
+							tags: ['reasoning', 'structured-output'],
+							supported_parameters: ['reasoning', 'tools']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_research',
+							display_name: 'Research',
+							category: 'local',
+							resolved_model_id: 'openai/gpt-5.5',
+							auto_upgrade: true
+						}
+					]
 				})
 			})
 		);
@@ -911,32 +920,29 @@ test.describe('Settings context state templates', () => {
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					success: true,
-					data: [
-						{
-							id: 2,
-							provider: 'sentient_managed',
-							label: 'Sentient Forms Managed Service',
-							auth_mode: 'sentient_proxy',
-							constant_name: null,
-							status: 'valid',
-							status_json: {
-								managed_consent: {
-									state: 'accepted',
-									consent_id: 88,
-									disclosure_version: '2026-04-sentient-managed-proxy-v1',
-									accepted_at: '2026-06-22T00:00:00Z',
-									revoked_at: null
-								}
-							},
-							last_validated_at: '2026-06-22T00:00:00Z',
-							created_at: '2026-06-22T00:00:00Z',
-							updated_at: '2026-06-22T00:00:00Z',
-							secret_configured: true
-						}
-					]
-				})
+				body: JSON.stringify([
+					{
+						id: 2,
+						provider: 'sentient_managed',
+						label: 'Sentient Forms Managed Service',
+						auth_mode: 'sentient_proxy',
+						constant_name: null,
+						status: 'valid',
+						status_json: {
+							managed_consent: {
+								state: 'accepted',
+								consent_id: 88,
+								disclosure_version: '2026-04-sentient-managed-proxy-v1',
+								accepted_at: '2026-06-22T00:00:00Z',
+								revoked_at: null
+							}
+						},
+						last_validated_at: '2026-06-22T00:00:00Z',
+						created_at: '2026-06-22T00:00:00Z',
+						updated_at: '2026-06-22T00:00:00Z',
+						secret_configured: true
+					}
+				])
 			})
 		);
 
@@ -946,25 +952,21 @@ test.describe('Settings context state templates', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			})
 		);
 		await page.route(
 			(url) => url.pathname.endsWith('/wp-json/sentient-forms/v1/models'),
-			(route) => route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					success: true,
-					data: {
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
 						models: [
 							{
 								id: 'openai/gpt-5.5',
@@ -1008,9 +1010,8 @@ test.describe('Settings context state templates', () => {
 							}
 						],
 						presets: []
-					}
+					})
 				})
-			})
 		);
 
 		await page.route('**/wp-json/sentient-forms/v1/site-context**', (route) =>
@@ -1083,24 +1084,21 @@ test.describe('Settings context state templates', () => {
 				return route.fulfill({
 					status: 200,
 					contentType: 'application/json',
-					body: JSON.stringify({
-						success: true,
-						data: [
-							{
-								id: 1,
-								provider: 'openrouter',
-								label: 'Production OpenRouter key',
-								auth_mode: 'manual_key',
-								constant_name: null,
-								status: 'valid',
-								status_json: null,
-								last_validated_at: '2026-06-18T00:00:00Z',
-								created_at: '2026-06-18T00:00:00Z',
-								updated_at: '2026-06-18T00:00:00Z',
-								secret_configured: true
-							}
-						]
-					})
+					body: JSON.stringify([
+						{
+							id: 1,
+							provider: 'openrouter',
+							label: 'Production OpenRouter key',
+							auth_mode: 'manual_key',
+							constant_name: null,
+							status: 'valid',
+							status_json: null,
+							last_validated_at: '2026-06-18T00:00:00Z',
+							created_at: '2026-06-18T00:00:00Z',
+							updated_at: '2026-06-18T00:00:00Z',
+							secret_configured: true
+						}
+					])
 				});
 			}
 		);
@@ -1111,70 +1109,67 @@ test.describe('Settings context state templates', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [
-							{
-								id: 'nvidia/nemotron-3-super-120b-a12b:free',
-								display_name: 'NVIDIA: Nemotron 3 Super (free)',
-								provider: 'openrouter',
-								speed_tier: 'balanced',
-								cost_tier: 'free',
-								capabilities: {
-									reasoning: false,
-									tools: false,
-									structured: true,
+					models: [
+						{
+							id: 'nvidia/nemotron-3-super-120b-a12b:free',
+							display_name: 'NVIDIA: Nemotron 3 Super (free)',
+							provider: 'openrouter',
+							speed_tier: 'balanced',
+							cost_tier: 'free',
+							capabilities: {
+								reasoning: false,
+								tools: false,
+								structured: true,
+								web_search: false,
+								server_tools: {
 									web_search: false,
-									server_tools: {
-										web_search: false,
-										web_fetch: false,
-										datetime: false
-									}
-								},
-								context_window: 128000,
-								tags: ['free'],
-								supported_parameters: []
+									web_fetch: false,
+									datetime: false
+								}
 							},
-							{
-								id: '~google/gemini-pro-latest',
-								display_name: 'Google: Gemini 3.1 Pro Preview (latest alias)',
-								provider: 'openrouter',
-								speed_tier: 'balanced',
-								cost_tier: 'high',
-								capabilities: {
-									reasoning: true,
-									tools: true,
-									structured: true,
+							context_window: 128000,
+							tags: ['free'],
+							supported_parameters: []
+						},
+						{
+							id: '~google/gemini-pro-latest',
+							display_name: 'Google: Gemini 3.1 Pro Preview (latest alias)',
+							provider: 'openrouter',
+							speed_tier: 'balanced',
+							cost_tier: 'high',
+							capabilities: {
+								reasoning: true,
+								tools: true,
+								structured: true,
+								web_search: true,
+								server_tools: {
 									web_search: true,
-									server_tools: {
-										web_search: true,
-										web_fetch: false,
-										datetime: false
-									},
-									long_context: true
+									web_fetch: false,
+									datetime: false
 								},
-								context_window: 1048576,
-								tags: ['reasoning', 'structured-output', 'web-search'],
-								supported_parameters: ['reasoning', 'tools']
-							}
-						],
-						presets: [
-							{
-								code: 'sf_free',
-								display_name: 'Free',
-								category: 'local',
-								resolved_model_id: 'nvidia/nemotron-3-super-120b-a12b:free',
-								auto_upgrade: true
+								long_context: true
 							},
-							{
-								code: 'sf_research',
-								display_name: 'Research',
-								category: 'local',
-								resolved_model_id: '~google/gemini-pro-latest',
-								auto_upgrade: true
-							}
-						]
-					}
+							context_window: 1048576,
+							tags: ['reasoning', 'structured-output', 'web-search'],
+							supported_parameters: ['reasoning', 'tools']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_free',
+							display_name: 'Free',
+							category: 'local',
+							resolved_model_id: 'nvidia/nemotron-3-super-120b-a12b:free',
+							auto_upgrade: true
+						},
+						{
+							code: 'sf_research',
+							display_name: 'Research',
+							category: 'local',
+							resolved_model_id: '~google/gemini-pro-latest',
+							auto_upgrade: true
+						}
+					]
 				})
 			})
 		);

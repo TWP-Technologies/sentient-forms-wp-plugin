@@ -1,7 +1,13 @@
-import type { SentientFormsConfig } from '$lib/api/http';
+import { readRuntimeConfig, type SentientFormsConfig } from '$lib/schemas/runtime-config';
 import { safeParseFormActionConfigPayload } from '$lib/schemas/action-config';
-import { parseProviderPathPolicy } from '$lib/schemas/provider-path-policy';
-import { z } from 'zod';
+import { z, type ZodType } from 'zod';
+import {
+	endpointRegistry,
+	parseRegisteredEndpointRequest,
+	type EndpointName,
+	type RegisteredEndpointRequest,
+	type RegisteredEndpointResponse
+} from '$lib/api/endpoint-schemas';
 import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
@@ -19,7 +25,6 @@ import {
 } from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
 import type {
-	ActionDefinition,
 	ActionDefaultsBatchResponse,
 	ApiErrorPayload,
 	AsyncSettingsResponse,
@@ -31,62 +36,45 @@ import type {
 	AsyncHealthResponse,
 	CloneTemplateMappingRequest,
 	CreateFormMappingRequest,
-	CustomAction,
 	CustomActionCreatePayload,
 	CustomActionFilters,
-	CustomActionQuota,
 	CustomActionUpdatePayload,
 	DashboardSummaryResponse,
 	DuplicateFormActionRequest,
 	DuplicateFormActionResponse,
-	ExecutionStatus,
 	FormActionConfig,
 	FormActionConfigResponse,
 	FormActionsBootstrapResponse,
 	FormDisableStateResponse,
-	FormActionLinkage,
 	FormActionMutationPayload,
 	FormAllActionConfigsResponse,
-	FormExecutionStatus,
-	FormFieldInfo,
 	FormsOverviewResponse,
-	SubmissionLedgerRecord,
 	SubmissionLedgerRecordsResponse,
 	SubmissionLedgerSettingsResponse,
 	RequestTraceRequest,
 	RequestTraceResponse,
 	WorkflowPlanResponse,
-	FormMapping,
-	FormSummary,
 	CapabilitiesResponse,
 	LicenseActivationRequest,
-	LicenseActivationResponsePayload,
 	LicenseActivationResult,
 	LicenseInfoResponse,
 	LeadProfileResponse,
 	LeadProfileGeneratePayload,
 	LeadProfileSavePayload,
 	LeadScoringCorrectionPayload,
-	LeadValueDashboard,
 	LeadValueEntrySearchResponse,
 	LeadValueHistoricalRunCreatePayload,
 	LeadValueHistoricalRunResponse,
-	LocalActionTemplate,
 	LocalCustomActionCreatePayload,
-	LocalCustomActionRecord,
-	LocalExecutionEvent,
 	LocalFormMappingCreatePayload,
-	LocalFormMappingRecord,
 	LocalMigrationApprovedResetRequest,
 	LocalMigrationApprovedResetResponse,
 	LocalMigrationDryRunResponse,
 	LocalMigrationImportApplyResponse,
+	LocalMigrationImportApplyRequest,
 	LocalMigrationImportDryRunResponse,
 	LocalMigrationImportRequest,
-	LocalMigrationReadinessReport,
-	LocalProviderCredential,
 	LocalProviderCredentialDeleteResponse,
-	LocalSupportBundle,
 	ManagedCheckoutCompleteRequest,
 	ManagedCheckoutCompleteResponse,
 	ManagedCheckoutStartRequest,
@@ -95,11 +83,8 @@ import type {
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
 	OpenRouterValidateRequest,
-	OpenRouterValidateResponse,
 	SentientManagedRevokeRequest,
-	SentientManagedRevokeResponse,
 	SentientManagedSetupRequest,
-	SentientManagedSetupResponse,
 	SpamGuidanceEntrySearchResponse,
 	SpamGuidanceEntryStatusFilter,
 	SpamGuidanceExampleAppendPayload,
@@ -119,6 +104,8 @@ export interface ClientConfig {
 	cacheContext?: () => string | undefined;
 }
 
+type RuntimeClientOverrides = Pick<ClientConfig, 'fetchImpl' | 'notifyErrors' | 'cacheContext'>;
+
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	body?: unknown;
 	showNotifications?: boolean;
@@ -128,6 +115,13 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	forceRefresh?: boolean;
 	dedupe?: boolean;
 	invalidateCacheTags?: string[] | false;
+}
+
+interface RuntimeResponseContract {
+	schema: ZodType;
+	name: string;
+	errorSchema?: ZodType;
+	errorName?: string;
 }
 
 interface SubmissionLedgerRecordsRequestOptions extends RequestOptions {
@@ -160,318 +154,16 @@ interface AdminApiInFlightEntry {
 	tags: string[];
 }
 
-const ledgerFormIdSchema = z.union([z.string(), z.number()]).transform((value) => String(value));
-const nullableScalarStringSchema = z
-	.union([z.string(), z.number(), z.null()])
-	.transform((value) => (value === null ? null : String(value)));
-const jsonRecordSchema = z.record(z.string(), z.unknown());
-const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? {});
-const nullableJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? null);
-const submissionLedgerActionRunSchema = z.object({
-	execution_request_id: z.string(),
-	mapping_id: z.coerce.number().int().nullable().optional().transform((value) => value ?? null),
-	status: z.string(),
-	provider: nullableScalarStringSchema,
-	model: nullableScalarStringSchema,
-	last_result: nullableJsonRecordSchema,
-	last_error_code: nullableScalarStringSchema,
-	last_error_message: nullableScalarStringSchema,
-	created_at: z.string().nullable().optional().transform((value) => value ?? null),
-	updated_at: z.string().nullable().optional().transform((value) => value ?? null)
-});
-const nullishJsonRecordArraySchema = z
-	.array(jsonRecordSchema)
-	.nullish()
-	.transform((value) => value ?? []);
-const httpsUrlSchema = z.string().refine((value) => {
-	try {
-		return new URL(value).protocol === 'https:';
-	} catch {
-		return false;
-	}
-}, 'Expected an HTTPS URL');
-const managedCheckoutStartResponseSchema = z
-	.object({
-		checkout_intent_id: z.string(),
-		checkout_session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		plan_code: z.string().optional(),
-		billing_interval: z.string().optional(),
-		status: z.string().optional(),
-		consent_recorded: z.boolean().optional(),
-		consent_id: z.number().int().optional(),
-		disclosure_version: z.string().optional()
+const adminApiCacheEntrySchema = z
+	.strictObject({
+		expiresAt: z.number(),
+		tags: z.array(z.string()),
+		value: z.json()
 	})
-	.passthrough();
-const billingCheckoutSessionResponseSchema = z
-	.object({
-		session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		customer_id: z.string(),
-		subscription_id: z.string().nullable().optional()
-	})
-	.passthrough();
-const billingPortalSessionResponseSchema = z
-	.object({
-		session_id: z.string(),
-		portal_url: httpsUrlSchema,
-		customer_id: z.string()
-	})
-	.passthrough();
-const topUpCheckoutSessionResponseSchema = z
-	.object({
-		session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		customer_id: z.string(),
-		top_up_credits: z.number().int(),
-		pack_code: z.string()
-	})
-	.passthrough();
-const submissionLedgerRecordSchema = z.object({
-	id: z.coerce.number().int(),
-	submission_uuid: z.string(),
-	form_source: z.string(),
-	form_id: ledgerFormIdSchema,
-	native_entry_id: nullableScalarStringSchema,
-	native_entry_url: z.string().nullable(),
-	source_submitted_at: z.string().nullable(),
-	captured_at: z.string(),
-	logical_fields: jsonRecordSchema,
-	provider_metadata: nullishJsonRecordSchema,
-	file_refs: nullishJsonRecordArraySchema,
-	redaction_summary: nullishJsonRecordSchema,
-	action_runs: z.array(submissionLedgerActionRunSchema).nullish().transform((value) => value ?? []),
-	expires_at: z.string().nullable(),
-	detail_endpoint: z.string()
-});
-const submissionLedgerSettingsResponseSchema = z.object({
-	form_source: z.string(),
-	form_id: ledgerFormIdSchema,
-	enabled: z.boolean(),
-	enabled_at: z.string().nullable(),
-	enabled_by_user_id: z.number().int().nullable(),
-	disabled_at: z.string().nullable(),
-	disabled_by_user_id: z.number().int().nullable(),
-	settings_source: z.string(),
-	ledger_records_endpoint: z.string(),
-	record_count: z.number().int().optional()
-});
-const submissionLedgerRecordsResponseSchema = z
-	.object({
-		form_source: z.string(),
-		form_id: ledgerFormIdSchema,
-		records: z.array(submissionLedgerRecordSchema).optional(),
-		submissions: z.array(submissionLedgerRecordSchema).optional(),
-		total: z.number().int().optional(),
-		count: z.number().int().optional(),
-		per_page: z.number().int(),
-		offset: z.number().int()
-	})
-	.transform((payload) => {
-		const records = payload.records ?? payload.submissions ?? [];
-		return {
-			form_source: payload.form_source,
-			form_id: payload.form_id,
-			records,
-			total: payload.total ?? payload.count ?? records.length,
-			per_page: payload.per_page,
-			offset: payload.offset
-		};
+	.refine((entry) => Object.prototype.hasOwnProperty.call(entry, 'value'), {
+		message: 'Cache entry value is required.',
+		path: ['value']
 	});
-const spamGuidanceFieldSummarySchema = z.object({
-	field_id: z.string(),
-	label: z.string(),
-	value: z.string()
-});
-const spamGuidanceEntrySearchEntrySchema = z
-	.object({
-		id: z.union([z.string(), z.number()]).transform((value) => String(value)),
-		source_type: z.enum(['native', 'ledger']),
-		submission_uuid: nullableScalarStringSchema.optional(),
-		native_entry_id: nullableScalarStringSchema.optional(),
-		native_entry_url: z.string().nullable().optional(),
-		date_created: z.string().nullable().optional(),
-		status: z.string().nullable().optional(),
-		field_summary: z.array(spamGuidanceFieldSummarySchema)
-	})
-	.passthrough();
-const spamGuidanceEntrySearchResponseSchema = z
-	.object({
-		form_source: z.string(),
-		form_id: ledgerFormIdSchema,
-		availability: z
-			.object({
-				source: z.enum(['native', 'ledger']),
-				native_read: z.boolean(),
-				ledger_read: z.boolean(),
-				ledger_enabled: z.boolean().optional(),
-				unavailable_reason: z.string().nullable().optional(),
-				native_unavailable_reason: z.string().nullable().optional()
-			})
-			.passthrough(),
-		entries: z.array(spamGuidanceEntrySearchEntrySchema)
-	})
-	.passthrough();
-const spamGuidanceExampleSourceSchema = z
-	.object({
-		kind: z.enum(['manual', 'entry']),
-		form_source: z.string().optional(),
-		form_id: z.string().optional(),
-		entry_id: z.string().optional(),
-		native_entry_id: z.string().nullable().optional(),
-		selected_at: z.string().optional(),
-		selected_by_user_id: z.number().int().nullable().optional()
-	})
-	.passthrough();
-const spamGuidanceExampleSchemaForResponse = z
-	.object({
-		text: z.string(),
-		rationale: z.string(),
-		source: spamGuidanceExampleSourceSchema.optional()
-	})
-	.passthrough();
-const spamGuidanceAppendResponseSchema = z
-	.object({
-		target_scope: z.enum(['form', 'mapping', 'action']),
-		label: z.enum(['ham', 'spam']),
-		config: z
-			.object({
-				spam_positive_examples: z.array(spamGuidanceExampleSchemaForResponse).optional(),
-				spam_negative_examples: z.array(spamGuidanceExampleSchemaForResponse).optional()
-			})
-			.passthrough()
-	})
-	.passthrough();
-const formExecutionStatusSchema = z
-	.object({
-		status: z.enum(['unknown', 'success', 'error']),
-		message: z.string().nullable(),
-		entry_id: z.number().int().nullable().optional(),
-		last_error_code: z.string().nullable(),
-		last_result: z.unknown().optional(),
-		updated_at: z.string().nullable().optional()
-	})
-	.passthrough();
-const formDisableStateResponseSchema = z
-	.object({
-		sf_disabled: z.boolean(),
-		global_disabled: z.boolean(),
-		provider_disabled: z.boolean(),
-		effective_disabled: z.boolean()
-	})
-	.passthrough();
-const formActionsBootstrapResponseSchema = z
-	.object({
-		form_source: z.string(),
-		form_id: z.union([z.string(), z.number()]),
-		form: jsonRecordSchema.nullable().optional(),
-		form_source_descriptor: jsonRecordSchema.nullable().optional(),
-		actions: z.array(jsonRecordSchema),
-		execution_status: formExecutionStatusSchema,
-		disabled_state: formDisableStateResponseSchema,
-		ledger_settings: submissionLedgerSettingsResponseSchema.optional(),
-		generated_at: z.string()
-	})
-	.passthrough();
-const dashboardSummaryResponseSchema = z
-	.object({
-		generated_at: z.string(),
-		providers: z.array(jsonRecordSchema),
-		templates: z.array(jsonRecordSchema),
-		custom_actions: z.array(jsonRecordSchema),
-		recent_events: z.array(jsonRecordSchema),
-		section_errors: z
-			.array(
-				z
-					.object({
-						section: z.string(),
-						code: z.string(),
-						message: z.string()
-					})
-					.passthrough()
-			)
-			.optional(),
-		license: jsonRecordSchema.optional(),
-		async_health: jsonRecordSchema.optional()
-	})
-	.passthrough();
-const openRouterModelCacheItemSchema = z
-	.object({
-		id: z.string(),
-		name: z.string(),
-		free: z.boolean(),
-		context_length: z.number().int().nullable(),
-		input_modalities: z.array(z.string()),
-		output_modalities: z.array(z.string()),
-		supported_parameters: z.array(z.string()),
-		pricing: z.record(z.string(), z.string()),
-		fetched_at: z.string().nullable(),
-		expires_at: z.string().nullable(),
-		stale: z.boolean(),
-		zdr_eligible: z.boolean().nullable().optional(),
-		zdr_source: z.string().nullable().optional(),
-		zdr_checked_at: z.string().nullable().optional(),
-		tags: z.array(z.string()).optional()
-	})
-	.passthrough();
-const openRouterModelsResponseSchema = z
-	.object({
-		provider: z.literal('openrouter'),
-		source: z.literal('local_cache'),
-		total_cached: z.number().int(),
-		total_returned: z.number().int(),
-		free_count: z.number().int(),
-		stale_count: z.number().int(),
-		zdr_filtered: z.boolean().optional(),
-		models: z.array(openRouterModelCacheItemSchema),
-		refresh_consent: jsonRecordSchema.optional(),
-		consent_recorded: z.boolean().optional(),
-		consent_id: z.number().int().optional(),
-		stored: z.number().int().optional()
-	})
-	.passthrough();
-const localMigrationImportFindingSchema = z
-	.object({
-		code: z.string(),
-		message: z.string(),
-		severity: z.string().optional(),
-		entity: z.string().optional(),
-		field: z.string().optional(),
-		value: z.string().optional()
-	})
-	.passthrough();
-const localMigrationImportReportSchema = z
-	.object({
-		schema_version: z.string(),
-		source: z.string(),
-		source_version: z.string(),
-		generated_at: z.string(),
-		exported_at: z.string().nullable(),
-		ready_to_import: z.boolean(),
-		counts: z.record(z.string(), z.number()),
-		changes: z.record(z.string(), z.union([z.number(), z.record(z.string(), z.number())])),
-		conflicts: z.array(localMigrationImportFindingSchema),
-		warnings: z.array(localMigrationImportFindingSchema),
-		mapping: jsonRecordSchema
-	})
-	.passthrough();
-const localMigrationImportDryRunResponseSchema = z
-	.object({
-		run_id: z.number().int(),
-		status: z.string(),
-		dry_run: z.literal(true),
-		report: localMigrationImportReportSchema
-	})
-	.passthrough();
-const localMigrationImportApplyResponseSchema = z
-	.object({
-		run_id: z.number().int(),
-		status: z.string(),
-		dry_run: z.literal(false),
-		report: localMigrationImportReportSchema,
-		applied: z.record(z.string(), z.number())
-	})
-	.passthrough();
 
 const adminApiMemoryCache = new Map<string, AdminApiCacheEntry>();
 const adminApiInFlight = new Map<string, AdminApiInFlightEntry>();
@@ -854,18 +546,15 @@ function readSessionCacheEntry(key: string): AdminApiCacheEntry | null {
 	}
 
 	try {
-		const parsed = JSON.parse(raw) as Partial<AdminApiCacheEntry>;
-		if (typeof parsed.expiresAt === 'number' && Array.isArray(parsed.tags) && 'value' in parsed) {
-			return {
-				expiresAt: parsed.expiresAt,
-				tags: parsed.tags.filter((tag): tag is string => typeof tag === 'string'),
-				value: parsed.value
-			};
+		const parsed = adminApiCacheEntrySchema.safeParse(JSON.parse(raw));
+		if (parsed.success) {
+			return parsed.data;
 		}
 	} catch {
-		deleteSessionCacheEntry(key);
+		// Fall through to the shared eviction path.
 	}
 
+	deleteSessionCacheEntry(key);
 	return null;
 }
 
@@ -923,14 +612,37 @@ export class ApiClientError extends Error {
 		this.status = status;
 		this.payload = payload;
 		if (isApiErrorPayload(payload)) {
+			const directCode = typeof payload.code === 'string' ? payload.code.trim() : '';
 			const topLevelCode = typeof payload.error_code === 'string' ? payload.error_code.trim() : '';
 			const nestedCode = typeof payload.error?.code === 'string' ? payload.error.code.trim() : '';
-			if (topLevelCode.length > 0) {
+			if (directCode.length > 0) {
+				this.code = directCode;
+			} else if (topLevelCode.length > 0) {
 				this.code = topLevelCode;
 			} else if (nestedCode.length > 0) {
 				this.code = nestedCode;
 			}
 		}
+	}
+}
+
+export interface ApiContractIssue {
+	code: string;
+	path: Array<string | number>;
+	message: string;
+}
+
+export class ApiContractError extends Error {
+	readonly endpoint: string;
+	readonly schema: string;
+	readonly issues: ApiContractIssue[];
+
+	constructor(endpoint: string, schema: string, issues: ApiContractIssue[]) {
+		super(`The response from ${endpoint} did not match the ${schema} contract.`);
+		this.name = 'ApiContractError';
+		this.endpoint = endpoint;
+		this.schema = schema;
+		this.issues = issues;
 	}
 }
 
@@ -957,8 +669,8 @@ export class SentientFormsApiClient {
 		payload: LicenseActivationRequest,
 		options: RequestOptions = {}
 	): Promise<LicenseActivationResult> {
-		const response = await this.request<RestEnvelope<LicenseActivationResponsePayload>>(
-			'license/activate',
+		const response: RegisteredEndpointResponse<'license.activate'> = await this.requestEndpoint(
+			'license.activate',
 			{
 				method: 'POST',
 				body: {
@@ -970,25 +682,21 @@ export class SentientFormsApiClient {
 			}
 		);
 
-		const data = this.unwrap<LicenseActivationResponsePayload>(response);
+		const data = response;
 		return {
-			success: Boolean(data.success ?? true),
-			message: String(data.message ?? 'License activated successfully.'),
-			status: String(data.status ?? 'active'),
-			proxyApiKey: typeof data.proxy_api_key === 'string' ? data.proxy_api_key : undefined,
-			tier:
-				typeof data.tier === 'string' || (data.tier && typeof data.tier === 'object')
-					? data.tier
-					: undefined,
-			expiryDate: typeof data.expiry_date === 'string' ? data.expiry_date : undefined,
-			licenseId: typeof data.license_id === 'string' ? data.license_id : undefined,
-			siteId: typeof data.site_id === 'string' ? data.site_id : undefined
+			success: true,
+			message: 'License activated successfully.',
+			status: data.status,
+			tier: data.tier ?? undefined,
+			expiryDate: data.expires_at,
+			licenseId: data.license_id ?? undefined,
+			siteId: data.site_id ?? undefined
 		};
 	}
 
 	async getLicenseInfo(options: RequestOptions = {}): Promise<LicenseInfoResponse> {
-		const response = await this.request<RestEnvelope<LicenseInfoResponse>>(
-			'license',
+		const response = await this.requestEndpoint(
+			'license.read',
 			withCacheDefaults(options, {
 				ttlMs: 60_000,
 				tags: ['license'],
@@ -999,11 +707,17 @@ export class SentientFormsApiClient {
 	}
 
 	async deactivateLicense(options: RequestOptions = {}): Promise<void> {
-		await this.request('license/deactivate', { method: 'POST', ...options });
+		const response: RegisteredEndpointResponse<'license.deactivate'> = await this.requestEndpoint(
+			'license.deactivate',
+			{ method: 'POST', ...options }
+		);
+		void response;
 	}
 
-	async bootstrapLicense(options: RequestOptions = {}): Promise<LicenseInfoResponse> {
-		const response = await this.request<RestEnvelope<LicenseInfoResponse>>('license/bootstrap', {
+	async bootstrapLicense(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'license.bootstrap'>> {
+		const response = await this.requestEndpoint('license.bootstrap', {
 			method: 'POST',
 			...options
 		});
@@ -1017,8 +731,8 @@ export class SentientFormsApiClient {
 		if (forceServerRefresh) {
 			clearSentientFormsApiCache(['billing']);
 		}
-		const response = await this.request<RestEnvelope<BillingStateResponse>>(
-			forceServerRefresh ? 'license/billing-state?force_refresh=1' : 'license/billing-state',
+		const response = await this.requestEndpoint(
+			'billing.state',
 			withCacheDefaults(
 				{ ...requestOptions, ...(forceServerRefresh ? { forceRefresh: true } : {}) },
 				{
@@ -1026,7 +740,8 @@ export class SentientFormsApiClient {
 					tags: ['license', 'billing'],
 					storage: 'session'
 				}
-			)
+			),
+			forceServerRefresh ? 'license/billing-state?force_refresh=1' : undefined
 		);
 		return this.unwrap(response);
 	}
@@ -1035,48 +750,35 @@ export class SentientFormsApiClient {
 		payload: BillingCheckoutSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingCheckoutSessionResponse> {
-		const response = await this.request<RestEnvelope<BillingCheckoutSessionResponse>>(
-			'license/billing/checkout-session',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return billingCheckoutSessionResponseSchema.parse(
-			this.unwrap(response)
-		) as BillingCheckoutSessionResponse;
+		const response = await this.requestEndpoint('billing.checkout.create', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return response;
 	}
 
 	async startManagedCheckout(
 		payload: ManagedCheckoutStartRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutStartResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutStartResponse>>(
-			'license/managed-checkout/start',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return managedCheckoutStartResponseSchema.parse(
-			this.unwrap(response)
-		) as ManagedCheckoutStartResponse;
+		const response = await this.requestEndpoint('billing.managedCheckout.start', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return response;
 	}
 
 	async completeManagedCheckout(
 		payload: ManagedCheckoutCompleteRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutCompleteResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutCompleteResponse>>(
-			'license/managed-checkout/complete',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
+		const response = await this.requestEndpoint('billing.managedCheckout.complete', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
 		return this.unwrap(response);
 	}
 
@@ -1084,49 +786,36 @@ export class SentientFormsApiClient {
 		payload: BillingPortalSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingPortalSessionResponse> {
-		const response = await this.request<RestEnvelope<BillingPortalSessionResponse>>(
-			'license/billing/portal-session',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return billingPortalSessionResponseSchema.parse(
-			this.unwrap(response)
-		) as BillingPortalSessionResponse;
+		const response = await this.requestEndpoint('billing.portal.create', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return response;
 	}
 
 	async createTopUpCheckoutSession(
 		payload: TopUpCheckoutSessionRequest,
 		options: RequestOptions = {}
 	): Promise<TopUpCheckoutSessionResponse> {
-		const response = await this.request<RestEnvelope<TopUpCheckoutSessionResponse>>(
-			'license/billing/top-up-session',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return topUpCheckoutSessionResponseSchema.parse(
-			this.unwrap(response)
-		) as TopUpCheckoutSessionResponse;
+		const response = await this.requestEndpoint('billing.topUp.create', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return response;
 	}
 
 	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
-		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>(
-			'telemetry',
-			options
-		);
+		const response = await this.requestEndpoint('telemetry.read', options);
 		return this.unwrap(response);
 	}
 
 	async updateTelemetrySettings(
 		optIn: boolean,
 		options: RequestOptions = {}
-	): Promise<TelemetrySettingsResponse> {
-		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', {
+	): Promise<RegisteredEndpointResponse<'telemetry.update'>> {
+		const response = await this.requestEndpoint('telemetry.update', {
 			method: 'PUT',
 			body: { telemetry_opt_in: optIn },
 			...options
@@ -1135,16 +824,13 @@ export class SentientFormsApiClient {
 	}
 
 	async getAsyncSettings(options: RequestOptions = {}): Promise<AsyncSettingsResponse> {
-		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>(
-			'async-settings',
-			options
-		);
+		const response = await this.requestEndpoint('asyncSettings.read', options);
 		return this.unwrap(response);
 	}
 
 	async getSettings(options: RequestOptions = {}): Promise<PluginSettingsResponse> {
-		const response = await this.request<RestEnvelope<PluginSettingsResponse>>(
-			'settings',
+		const response = await this.requestEndpoint(
+			'settings.read',
 			withCacheDefaults(options, {
 				ttlMs: 60_000,
 				tags: ['settings'],
@@ -1155,36 +841,22 @@ export class SentientFormsApiClient {
 	}
 
 	async updateSettings(
-		payload: Partial<PluginSettingsResponse>,
+		payload: RegisteredEndpointRequest<'settings.update'>,
 		options: RequestOptions = {}
 	): Promise<PluginSettingsResponse> {
-		const response = await this.request<
-			RestEnvelope<PluginSettingsResponse | { settings: PluginSettingsResponse }>
-		>('settings', {
+		const response = await this.requestEndpoint('settings.update', {
 			method: 'PUT',
 			body: payload,
 			...options
 		});
-		const data = this.unwrap<PluginSettingsResponse | { settings: PluginSettingsResponse }>(
-			response
-		);
-		if (
-			data &&
-			typeof data === 'object' &&
-			'settings' in data &&
-			data.settings &&
-			typeof data.settings === 'object'
-		) {
-			return data.settings;
-		}
-
-		return data as PluginSettingsResponse;
+		const data = this.unwrap<RegisteredEndpointResponse<'settings.update'>>(response);
+		return 'settings' in data ? data.settings : data;
 	}
 
 	async updateAsyncSettings(
 		payload: AsyncSettingsPayload,
 		options: RequestOptions = {}
-	): Promise<AsyncSettingsResponse> {
+	): Promise<RegisteredEndpointResponse<'asyncSettings.update'>> {
 		const body: Record<string, number> = {};
 		if (typeof payload.maxAttempts === 'number') {
 			body.max_attempts = payload.maxAttempts;
@@ -1196,7 +868,7 @@ export class SentientFormsApiClient {
 			body.max_delay_seconds = payload.maxDelaySeconds;
 		}
 
-		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>('async-settings', {
+		const response = await this.requestEndpoint('asyncSettings.update', {
 			method: 'PUT',
 			body,
 			...options
@@ -1206,8 +878,8 @@ export class SentientFormsApiClient {
 	}
 
 	async getAsyncHealth(options: RequestOptions = {}): Promise<AsyncHealthResponse> {
-		const response = await this.request<RestEnvelope<AsyncHealthResponse>>(
-			'async-health',
+		const response = await this.requestEndpoint(
+			'asyncHealth.read',
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
 				tags: ['async-health']
@@ -1229,7 +901,7 @@ export class SentientFormsApiClient {
 			clearAll?: boolean;
 		} = {},
 		requestOptions: RequestOptions = {}
-	): Promise<{ removed: number; message: string }> {
+	): Promise<RegisteredEndpointResponse<'asyncHealth.purge'>> {
 		const params = new URLSearchParams();
 		if (options.status) {
 			params.set('status', options.status);
@@ -1243,17 +915,18 @@ export class SentientFormsApiClient {
 
 		const query = params.toString();
 		const path = query ? `async-health?${query}` : 'async-health';
-		const response = await this.request<RestEnvelope<{ removed: number; message: string }>>(path, {
-			method: 'DELETE',
-			...requestOptions
-		});
+		const response = await this.requestEndpoint(
+			'asyncHealth.purge',
+			{ method: 'DELETE', ...requestOptions },
+			path
+		);
 		return this.unwrap(response);
 	}
 
 	async getLocalProviderCredentials(
 		options: RequestOptions = {}
-	): Promise<LocalProviderCredential[]> {
-		return this.request<LocalProviderCredential[]>('local/providers/credentials', {
+	): Promise<RegisteredEndpointResponse<'providers.credentials.list'>> {
+		return this.requestEndpoint('providers.credentials.list', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['providers'],
 			cacheStorage: 'session',
@@ -1266,20 +939,21 @@ export class SentientFormsApiClient {
 		id: number,
 		options: RequestOptions = {}
 	): Promise<LocalProviderCredentialDeleteResponse> {
-		return this.request<LocalProviderCredentialDeleteResponse>(
-			`local/providers/credentials/${encodeURIComponent(String(id))}`,
+		return this.requestEndpoint(
+			'providers.credentials.delete',
 			{
 				method: 'DELETE',
 				...options
-			}
+			},
+			`local/providers/credentials/${encodeURIComponent(String(id))}`
 		);
 	}
 
 	async validateOpenRouterKey(
 		payload: OpenRouterValidateRequest,
 		options: RequestOptions = {}
-	): Promise<OpenRouterValidateResponse> {
-		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/validate', {
+	): Promise<RegisteredEndpointResponse<'provider.openrouter.validate'>> {
+		return this.requestEndpoint('provider.openrouter.validate', {
 			method: 'POST',
 			body: payload,
 			...options
@@ -1289,8 +963,8 @@ export class SentientFormsApiClient {
 	async saveOpenRouterConstant(
 		payload: OpenRouterConstantRequest,
 		options: RequestOptions = {}
-	): Promise<OpenRouterValidateResponse> {
-		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/constant', {
+	): Promise<RegisteredEndpointResponse<'provider.openrouter.constant'>> {
+		return this.requestEndpoint('provider.openrouter.constant', {
 			method: 'POST',
 			body: payload,
 			...options
@@ -1300,8 +974,8 @@ export class SentientFormsApiClient {
 	async setupSentientManagedProvider(
 		payload: SentientManagedSetupRequest,
 		options: RequestOptions = {}
-	): Promise<SentientManagedSetupResponse> {
-		return this.request<SentientManagedSetupResponse>('local/providers/sentient-managed/setup', {
+	): Promise<RegisteredEndpointResponse<'provider.sentientManaged.setup'>> {
+		return this.requestEndpoint('provider.sentientManaged.setup', {
 			method: 'POST',
 			body: payload,
 			...options
@@ -1311,8 +985,8 @@ export class SentientFormsApiClient {
 	async revokeSentientManagedProvider(
 		payload: SentientManagedRevokeRequest,
 		options: RequestOptions = {}
-	): Promise<SentientManagedRevokeResponse> {
-		return this.request<SentientManagedRevokeResponse>('local/providers/sentient-managed/revoke', {
+	): Promise<RegisteredEndpointResponse<'provider.sentientManaged.revoke'>> {
+		return this.requestEndpoint('provider.sentientManaged.revoke', {
 			method: 'POST',
 			body: payload,
 			...options
@@ -1336,30 +1010,33 @@ export class SentientFormsApiClient {
 			? `local/providers/openrouter/models?${suffix}`
 			: 'local/providers/openrouter/models';
 
-		const response = await this.request<OpenRouterModelsResponse>(path, {
-			showNotifications: false,
-			...options
-		});
-		return openRouterModelsResponseSchema.parse(response) as unknown as OpenRouterModelsResponse;
+		const response = await this.requestEndpoint(
+			'provider.openrouter.models',
+			{
+				showNotifications: false,
+				...options
+			},
+			path
+		);
+		return response;
 	}
 
 	async refreshOpenRouterModels(
 		payload: OpenRouterModelsRefreshRequest,
 		options: RequestOptions = {}
-	): Promise<OpenRouterModelsResponse> {
-		const response = await this.request<OpenRouterModelsResponse>(
-			'local/providers/openrouter/models/refresh',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return openRouterModelsResponseSchema.parse(response) as unknown as OpenRouterModelsResponse;
+	): Promise<RegisteredEndpointResponse<'provider.openrouter.modelsRefresh'>> {
+		const response = await this.requestEndpoint('provider.openrouter.modelsRefresh', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return response;
 	}
 
-	async getLocalActionTemplates(options: RequestOptions = {}): Promise<LocalActionTemplate[]> {
-		return this.request<LocalActionTemplate[]>('local/action-templates', {
+	async getLocalActionTemplates(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'local.actionTemplates.list'>> {
+		return this.requestEndpoint('local.actionTemplates.list', {
 			cacheTtlMs: 300_000,
 			cacheTags: ['templates'],
 			cacheStorage: 'session',
@@ -1371,25 +1048,29 @@ export class SentientFormsApiClient {
 	async getLocalCustomActions(
 		status = 'active',
 		options: RequestOptions = {}
-	): Promise<LocalCustomActionRecord[]> {
+	): Promise<RegisteredEndpointResponse<'local.customActions.list'>> {
 		const params = new URLSearchParams({ status });
 
-		return this.request<LocalCustomActionRecord[]>(`local/custom-actions?${params}`, {
-			cacheTtlMs: 60_000,
-			cacheTags: ['actions', 'custom-actions'],
-			cacheStorage: 'session',
-			showNotifications: false,
-			...options
-		});
+		return this.requestEndpoint(
+			'local.customActions.list',
+			{
+				cacheTtlMs: 60_000,
+				cacheTags: ['actions', 'custom-actions'],
+				cacheStorage: 'session',
+				showNotifications: false,
+				...options
+			},
+			`local/custom-actions?${params}`
+		);
 	}
 
 	async createLocalCustomAction(
 		payload: LocalCustomActionCreatePayload,
 		options: RequestOptions = {}
-	): Promise<LocalCustomActionRecord> {
-		return this.request<LocalCustomActionRecord>('local/custom-actions', {
+	): Promise<RegisteredEndpointResponse<'local.customActions.create'>> {
+		return this.requestEndpoint('local.customActions.create', {
 			method: 'POST',
-			body: payload,
+			body: parseRegisteredEndpointRequest('local.customActions.create', payload),
 			...options
 		});
 	}
@@ -1398,25 +1079,29 @@ export class SentientFormsApiClient {
 		formSource: string,
 		formId: string | number,
 		options: RequestOptions = {}
-	): Promise<LocalFormMappingRecord[]> {
+	): Promise<RegisteredEndpointResponse<'local.formMappings.list'>> {
 		const params = new URLSearchParams({
 			form_source: formSource,
 			form_id: String(formId)
 		});
 
-		return this.request<LocalFormMappingRecord[]>(`local/form-mappings?${params}`, {
-			showNotifications: false,
-			...options
-		});
+		return this.requestEndpoint(
+			'local.formMappings.list',
+			{
+				showNotifications: false,
+				...options
+			},
+			`local/form-mappings?${params}`
+		);
 	}
 
 	async createLocalFormMapping(
 		payload: LocalFormMappingCreatePayload,
 		options: RequestOptions = {}
-	): Promise<LocalFormMappingRecord> {
-		return this.request<LocalFormMappingRecord>('local/form-mappings', {
+	): Promise<RegisteredEndpointResponse<'local.formMappings.create'>> {
+		return this.requestEndpoint('local.formMappings.create', {
 			method: 'POST',
-			body: payload,
+			body: parseRegisteredEndpointRequest('local.formMappings.create', payload),
 			...options
 		});
 	}
@@ -1424,15 +1109,19 @@ export class SentientFormsApiClient {
 	async getLocalExecutionEvents(
 		limit = 5,
 		options: RequestOptions = {}
-	): Promise<LocalExecutionEvent[]> {
+	): Promise<RegisteredEndpointResponse<'local.executionEvents.list'>> {
 		const params = new URLSearchParams({ limit: String(limit) });
 
-		return this.request<LocalExecutionEvent[]>(`local/execution-events?${params}`, {
-			cacheTtlMs: 30_000,
-			cacheTags: ['execution-events', 'dashboard'],
-			showNotifications: false,
-			...options
-		});
+		return this.requestEndpoint(
+			'local.executionEvents.list',
+			{
+				cacheTtlMs: 30_000,
+				cacheTags: ['execution-events', 'dashboard'],
+				showNotifications: false,
+				...options
+			},
+			`local/execution-events?${params}`
+		);
 	}
 
 	async getLeadProfile(
@@ -1440,9 +1129,10 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		options: RequestOptions = {}
 	): Promise<LeadProfileResponse> {
-		return this.request<LeadProfileResponse>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`,
-			{ showNotifications: false, ...options }
+		return this.requestEndpoint(
+			'lead.profile.read',
+			{ showNotifications: false, ...options },
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`
 		);
 	}
 
@@ -1451,14 +1141,15 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		payload: LeadProfileSavePayload,
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse> {
-		return this.request<LeadProfileResponse>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`,
+	): Promise<RegisteredEndpointResponse<'lead.profile.save'>> {
+		return this.requestEndpoint(
+			'lead.profile.save',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('lead.profile.save', payload),
 				...options
-			}
+			},
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`
 		);
 	}
 
@@ -1466,14 +1157,15 @@ export class SentientFormsApiClient {
 		profileId: number,
 		payload: LeadProfileGeneratePayload = {},
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse> {
-		return this.request<LeadProfileResponse>(
-			`lead-value/profiles/${encodeURIComponent(String(profileId))}/generate`,
+	): Promise<RegisteredEndpointResponse<'lead.profile.generate'>> {
+		return this.requestEndpoint(
+			'lead.profile.generate',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('lead.profile.generate', payload),
 				...options
-			}
+			},
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/generate`
 		);
 	}
 
@@ -1481,27 +1173,29 @@ export class SentientFormsApiClient {
 		profileId: number,
 		payload: { async?: boolean; force?: boolean } = {},
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse & { self_improvement?: Record<string, unknown> }> {
-		return this.request<LeadProfileResponse & { self_improvement?: Record<string, unknown> }>(
-			`lead-value/profiles/${encodeURIComponent(String(profileId))}/self-improve`,
+	): Promise<RegisteredEndpointResponse<'lead.profile.selfImprove'>> {
+		return this.requestEndpoint(
+			'lead.profile.selfImprove',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('lead.profile.selfImprove', payload),
 				...options
-			}
+			},
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/self-improve`
 		);
 	}
 
 	async refreshLeadProfileAssistant(
 		profileId: number,
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse & { assistant?: Record<string, unknown> }> {
-		return this.request<LeadProfileResponse & { assistant?: Record<string, unknown> }>(
-			`lead-value/profiles/${encodeURIComponent(String(profileId))}/assistant`,
+	): Promise<RegisteredEndpointResponse<'lead.profile.assistant'>> {
+		return this.requestEndpoint(
+			'lead.profile.assistant',
 			{
 				method: 'POST',
 				...options
-			}
+			},
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/assistant`
 		);
 	}
 
@@ -1515,9 +1209,10 @@ export class SentientFormsApiClient {
 		if (params.q) query.set('q', params.q);
 		if (params.limit) query.set('limit', String(params.limit));
 		const suffix = query.toString() ? `?${query}` : '';
-		return this.request<LeadValueEntrySearchResponse>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/search${suffix}`,
-			{ showNotifications: false, ...options }
+		return this.requestEndpoint(
+			'lead.entries.search',
+			{ showNotifications: false, ...options },
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/search${suffix}`
 		);
 	}
 
@@ -1537,19 +1232,18 @@ export class SentientFormsApiClient {
 		if (typeof options.limit === 'number') params.set('limit', String(options.limit));
 		if (options.status) params.set('status', options.status);
 		const { q: _q, limit: _limit, status: _status, ...requestOptions } = options;
-		const response = await this.request<RestEnvelope<unknown>>(
-			`spam-guidance/forms/${slug}/${formIdSegment}/entries/search${params.toString() ? `?${params}` : ''}`,
+		const response = await this.requestEndpoint(
+			'spamGuidance.entries.search',
 			withCacheDefaults(
 				{ showNotifications: false, ...requestOptions },
 				{
 					ttlMs: 15_000,
 					tags: ['spam-guidance', 'submission-ledger', formCacheTag(formSourceSlug, formId)]
 				}
-			)
+			),
+			`spam-guidance/forms/${slug}/${formIdSegment}/entries/search${params.toString() ? `?${params}` : ''}`
 		);
-		return spamGuidanceEntrySearchResponseSchema.parse(
-			this.unwrap(response)
-		) as SpamGuidanceEntrySearchResponse;
+		return this.unwrap(response);
 	}
 
 	async appendSpamGuidanceExample(
@@ -1560,11 +1254,11 @@ export class SentientFormsApiClient {
 	): Promise<SpamGuidanceExampleAppendResponse> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<unknown>>(
-			`spam-guidance/forms/${slug}/${formIdSegment}/examples`,
+		const response = await this.requestEndpoint(
+			'spamGuidance.examples.append',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('spamGuidance.examples.append', payload),
 				invalidateCacheTags: [
 					'spam-guidance',
 					'action-defaults',
@@ -1572,11 +1266,10 @@ export class SentientFormsApiClient {
 					formCacheTag(formSourceSlug, formId)
 				],
 				...options
-			}
+			},
+			`spam-guidance/forms/${slug}/${formIdSegment}/examples`
 		);
-		return spamGuidanceAppendResponseSchema.parse(
-			this.unwrap(response)
-		) as SpamGuidanceExampleAppendResponse;
+		return this.unwrap(response);
 	}
 
 	async correctLeadScoringEntry(
@@ -1585,14 +1278,15 @@ export class SentientFormsApiClient {
 		entryId: string | number,
 		payload: LeadScoringCorrectionPayload,
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse & { entry?: unknown; dashboard?: LeadValueDashboard }> {
-		return this.request<LeadProfileResponse & { entry?: unknown; dashboard?: LeadValueDashboard }>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/correction`,
+	): Promise<RegisteredEndpointResponse<'lead.entry.correct'>> {
+		return this.requestEndpoint(
+			'lead.entry.correct',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('lead.entry.correct', payload),
 				...options
-			}
+			},
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/correction`
 		);
 	}
 
@@ -1601,13 +1295,14 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		entryId: string | number,
 		options: RequestOptions = {}
-	): Promise<{ execution?: unknown; entry?: unknown; dashboard?: LeadValueDashboard }> {
-		return this.request<{ execution?: unknown; entry?: unknown; dashboard?: LeadValueDashboard }>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/suggested-reply`,
+	): Promise<RegisteredEndpointResponse<'lead.entry.suggestReply'>> {
+		return this.requestEndpoint(
+			'lead.entry.suggestReply',
 			{
 				method: 'POST',
 				...options
-			}
+			},
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/suggested-reply`
 		);
 	}
 
@@ -1616,46 +1311,49 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		params: { page?: number; per_page?: number; q?: string } = {},
 		options: RequestOptions = {}
-	): Promise<LeadValueDashboard> {
+	): Promise<RegisteredEndpointResponse<'lead.dashboard.form'>> {
 		const query = new URLSearchParams();
 		if (params.page) query.set('page', String(params.page));
 		if (params.per_page) query.set('per_page', String(params.per_page));
 		if (params.q) query.set('q', params.q);
 		const suffix = query.toString() ? `?${query}` : '';
-		return this.request<LeadValueDashboard>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/dashboard${suffix}`,
-			{ showNotifications: false, ...options }
+		return this.requestEndpoint(
+			'lead.dashboard.form',
+			{ showNotifications: false, ...options },
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/dashboard${suffix}`
 		);
 	}
 
 	async getLeadScoringDashboard(
 		params: { page?: number; per_page?: number; q?: string } = {},
 		options: RequestOptions = {}
-	): Promise<LeadValueDashboard> {
+	): Promise<RegisteredEndpointResponse<'lead.dashboard.all'>> {
 		const query = new URLSearchParams();
 		if (params.page) query.set('page', String(params.page));
 		if (params.per_page) query.set('per_page', String(params.per_page));
 		if (params.q) query.set('q', params.q);
 		const suffix = query.toString() ? `?${query}` : '';
-		return this.request<LeadValueDashboard>(`lead-value/dashboard${suffix}`, {
-			showNotifications: false,
-			...options
-		});
+		return this.requestEndpoint(
+			'lead.dashboard.all',
+			{ showNotifications: false, ...options },
+			`lead-value/dashboard${suffix}`
+		);
 	}
 
 	async importLeadProfile(
 		formSource: string,
 		formId: string | number,
-		payload: { source_profile_id: number; include_examples?: boolean },
+		payload: RegisteredEndpointRequest<'lead.profile.import'>,
 		options: RequestOptions = {}
-	): Promise<LeadProfileResponse> {
-		return this.request<LeadProfileResponse>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile/import`,
+	): Promise<RegisteredEndpointResponse<'lead.profile.import'>> {
+		return this.requestEndpoint(
+			'lead.profile.import',
 			{
 				method: 'POST',
 				body: payload,
 				...options
-			}
+			},
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile/import`
 		);
 	}
 
@@ -1663,10 +1361,11 @@ export class SentientFormsApiClient {
 		formSource: string,
 		formId: string | number,
 		options: RequestOptions = {}
-	): Promise<{ runs: LeadValueHistoricalRunResponse['run'][] }> {
-		return this.request<{ runs: LeadValueHistoricalRunResponse['run'][] }>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`,
-			{ showNotifications: false, ...options }
+	): Promise<RegisteredEndpointResponse<'lead.historicalRuns.list'>> {
+		return this.requestEndpoint(
+			'lead.historicalRuns.list',
+			{ showNotifications: false, ...options },
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`
 		);
 	}
 
@@ -1676,55 +1375,57 @@ export class SentientFormsApiClient {
 		payload: LeadValueHistoricalRunCreatePayload,
 		options: RequestOptions = {}
 	): Promise<LeadValueHistoricalRunResponse> {
-		return this.request<LeadValueHistoricalRunResponse>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`,
+		return this.requestEndpoint(
+			'lead.historicalRuns.create',
 			{
 				method: 'POST',
-				body: payload,
+				body: parseRegisteredEndpointRequest('lead.historicalRuns.create', payload),
 				...options
-			}
+			},
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`
 		);
 	}
 
 	async startLeadValueHistoricalRun(
 		runId: number,
-		payload: { confirm_costs?: boolean } = {},
+		payload: RegisteredEndpointRequest<'lead.historicalRuns.start'> = {},
 		options: RequestOptions = {}
-	): Promise<LeadValueHistoricalRunResponse> {
-		return this.request<LeadValueHistoricalRunResponse>(
-			`lead-value/historical-runs/${encodeURIComponent(String(runId))}/start`,
+	): Promise<RegisteredEndpointResponse<'lead.historicalRuns.start'>> {
+		return this.requestEndpoint(
+			'lead.historicalRuns.start',
 			{
 				method: 'POST',
 				body: payload,
 				...options
-			}
+			},
+			`lead-value/historical-runs/${encodeURIComponent(String(runId))}/start`
 		);
 	}
 
-	async getLocalSupportBundle(options: RequestOptions = {}): Promise<LocalSupportBundle> {
-		return this.request<LocalSupportBundle>('local/support-bundle', {
+	async getLocalSupportBundle(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'local.supportBundle.read'>> {
+		return this.requestEndpoint('local.supportBundle.read', {
 			showNotifications: false,
 			...options
 		});
 	}
 
 	async getDashboardSummary(options: RequestOptions = {}): Promise<DashboardSummaryResponse> {
-		const response = await this.request<RestEnvelope<DashboardSummaryResponse>>(
-			'admin/dashboard-summary',
+		const response = await this.requestEndpoint(
+			'dashboard.summary',
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
 				tags: ['dashboard', 'providers', 'actions', 'execution-events', 'license']
 			})
 		);
-		return dashboardSummaryResponseSchema.parse(
-			this.unwrap(response)
-		) as unknown as DashboardSummaryResponse;
+		return this.unwrap(response);
 	}
 
 	async getLocalMigrationReadiness(
 		options: RequestOptions = {}
-	): Promise<LocalMigrationReadinessReport> {
-		return this.request<LocalMigrationReadinessReport>('local/migration/readiness', {
+	): Promise<RegisteredEndpointResponse<'migration.readiness'>> {
+		return this.requestEndpoint('migration.readiness', {
 			showNotifications: false,
 			...options
 		});
@@ -1733,7 +1434,7 @@ export class SentientFormsApiClient {
 	async createLocalMigrationDryRun(
 		options: RequestOptions = {}
 	): Promise<LocalMigrationDryRunResponse> {
-		return this.request<LocalMigrationDryRunResponse>('local/migration/dry-run', {
+		return this.requestEndpoint('migration.dryRun', {
 			method: 'POST',
 			...options
 		});
@@ -1743,50 +1444,40 @@ export class SentientFormsApiClient {
 		payload: LocalMigrationImportRequest,
 		options: RequestOptions = {}
 	): Promise<LocalMigrationImportDryRunResponse> {
-		const response = await this.request<LocalMigrationImportDryRunResponse>(
-			'local/migration/import/dry-run',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return localMigrationImportDryRunResponseSchema.parse(
-			response
-		) as LocalMigrationImportDryRunResponse;
-	}
-
-	async runLocalMigrationImportApply(
-		payload: LocalMigrationImportRequest,
-		options: RequestOptions = {}
-	): Promise<LocalMigrationImportApplyResponse> {
-		const response = await this.request<LocalMigrationImportApplyResponse>(
-			'local/migration/import/apply',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return localMigrationImportApplyResponseSchema.parse(
-			response
-		) as LocalMigrationImportApplyResponse;
-	}
-
-	async runLocalMigrationApprovedReset(
-		payload: LocalMigrationApprovedResetRequest,
-		options: RequestOptions = {}
-	): Promise<LocalMigrationApprovedResetResponse> {
-		return this.request<LocalMigrationApprovedResetResponse>('local/migration/approved-reset', {
+		return this.requestEndpoint('migration.import.dryRun', {
 			method: 'POST',
 			body: payload,
 			...options
 		});
 	}
 
-	async getActionDefinitions(options: RequestOptions = {}): Promise<ActionDefinition[]> {
-		const response = await this.request<RestEnvelope<ActionDefinition[]>>(
-			'actions/definitions',
+	async runLocalMigrationImportApply(
+		payload: LocalMigrationImportApplyRequest,
+		options: RequestOptions = {}
+	): Promise<LocalMigrationImportApplyResponse> {
+		return this.requestEndpoint('migration.import.apply', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async runLocalMigrationApprovedReset(
+		payload: LocalMigrationApprovedResetRequest,
+		options: RequestOptions = {}
+	): Promise<LocalMigrationApprovedResetResponse> {
+		return this.requestEndpoint('migration.approvedReset', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async getActionDefinitions(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'actions.definitions'>> {
+		const response = await this.requestEndpoint(
+			'actions.definitions',
 			withCacheDefaults(options, {
 				ttlMs: 300_000,
 				tags: ['actions', 'definitions'],
@@ -1796,15 +1487,19 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
-	async getForms(formSourceSlug: string, options: RequestOptions = {}): Promise<FormSummary[]> {
+	async getForms(
+		formSourceSlug: string,
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'forms.list'>> {
 		const slug = encodeURIComponent(formSourceSlug);
-		const response = await this.request<RestEnvelope<FormSummary[]>>(
-			`${slug}/forms`,
+		const response = await this.requestEndpoint(
+			'forms.list',
 			withCacheDefaults(options, {
 				ttlMs: 60_000,
 				tags: ['forms', `forms:${formSourceSlug}`],
 				storage: 'session'
-			})
+			}),
+			`${slug}/forms`
 		);
 		return this.unwrap(response);
 	}
@@ -1814,8 +1509,8 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormsOverviewResponse> {
 		const slug = encodeURIComponent(formSourceSlug);
-		const response = await this.request<RestEnvelope<FormsOverviewResponse>>(
-			`${slug}/forms/overview`,
+		const response = await this.requestEndpoint(
+			'forms.overview',
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
 				tags: [
@@ -1826,7 +1521,8 @@ export class SentientFormsApiClient {
 					'execution-status',
 					`forms:${formSourceSlug}`
 				]
-			})
+			}),
+			`${slug}/forms/overview`
 		);
 		return this.unwrap(response);
 	}
@@ -1864,8 +1560,8 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormActionsBootstrapResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/bootstrap`,
+		const response = await this.requestEndpoint(
+			'forms.actions.bootstrap',
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
 				tags: [
@@ -1878,15 +1574,10 @@ export class SentientFormsApiClient {
 					'action-defaults',
 					formCacheTag(formSourceSlug, formId)
 				]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/actions/bootstrap`
 		);
-		const data = formActionsBootstrapResponseSchema.parse(
-			this.unwrap(response)
-		) as unknown as FormActionsBootstrapResponse;
-		return {
-			...data,
-			provider_path_policy: parseProviderPathPolicy(data.provider_path_policy)
-		};
+		return response;
 	}
 
 	async getSubmissionLedgerSettings(
@@ -1896,16 +1587,15 @@ export class SentientFormsApiClient {
 	): Promise<SubmissionLedgerSettingsResponse> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
-			`${slug}/forms/${formIdSegment}/ledger-settings`,
+		const response = await this.requestEndpoint(
+			'forms.ledger.settings.read',
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
 				tags: ['submission-ledger', 'settings', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/ledger-settings`
 		);
-		return submissionLedgerSettingsResponseSchema.parse(
-			this.unwrap(response)
-		) as SubmissionLedgerSettingsResponse;
+		return this.unwrap(response);
 	}
 
 	async updateSubmissionLedgerSettings(
@@ -1913,20 +1603,19 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		enabled: boolean,
 		options: RequestOptions = {}
-	): Promise<SubmissionLedgerSettingsResponse> {
+	): Promise<RegisteredEndpointResponse<'forms.ledger.settings.update'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
-			`${slug}/forms/${formIdSegment}/ledger-settings`,
+		const response = await this.requestEndpoint(
+			'forms.ledger.settings.update',
 			{
 				method: 'PUT',
 				body: { enabled },
 				...options
-			}
+			},
+			`${slug}/forms/${formIdSegment}/ledger-settings`
 		);
-		return submissionLedgerSettingsResponseSchema.parse(
-			this.unwrap(response)
-		) as SubmissionLedgerSettingsResponse;
+		return this.unwrap(response);
 	}
 
 	async getSubmissionLedgerRecords(
@@ -1973,16 +1662,15 @@ export class SentientFormsApiClient {
 			sort: _sort,
 			...requestOptions
 		} = options;
-		const response = await this.request<RestEnvelope<unknown>>(
-			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`,
+		const response = await this.requestEndpoint(
+			'forms.ledger.records.list',
 			withCacheDefaults(requestOptions, {
 				ttlMs: 15_000,
 				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`
 		);
-		return submissionLedgerRecordsResponseSchema.parse(
-			this.unwrap(response)
-		) as SubmissionLedgerRecordsResponse;
+		return this.unwrap(response);
 	}
 
 	async getSubmissionLedgerRecord(
@@ -1990,25 +1678,26 @@ export class SentientFormsApiClient {
 		formId: string | number,
 		submissionUuid: string,
 		options: RequestOptions = {}
-	): Promise<SubmissionLedgerRecord> {
+	): Promise<RegisteredEndpointResponse<'forms.ledger.records.read'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
 		const uuid = encodeURIComponent(submissionUuid);
-		const response = await this.request<RestEnvelope<SubmissionLedgerRecord>>(
-			`${slug}/forms/${formIdSegment}/submissions/${uuid}`,
+		const response = await this.requestEndpoint(
+			'forms.ledger.records.read',
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
 				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/submissions/${uuid}`
 		);
-		return submissionLedgerRecordSchema.parse(this.unwrap(response)) as SubmissionLedgerRecord;
+		return this.unwrap(response);
 	}
 
 	async getFormActions(
 		formSourceSlug: string,
 		formId: FormSourceFormId,
 		options: RequestOptions = {}
-	): Promise<FormActionLinkage[]> {
+	): Promise<RegisteredEndpointResponse<'forms.actions.list'>> {
 		// Guard against undefined parameters during hydration race conditions
 		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormActions called with invalid params:', {
@@ -2019,12 +1708,13 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
-			`${slug}/forms/${formIdSegment}/actions`,
+		const response = await this.requestEndpoint(
+			'forms.actions.list',
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
 				tags: ['actions', 'form-actions', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/actions`
 		);
 		return this.unwrap(response);
 	}
@@ -2058,9 +1748,10 @@ export class SentientFormsApiClient {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
 		const scope = encodeURIComponent(hookScope);
-		const response = await this.request<RestEnvelope<WorkflowPlanResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/workflow-plan?hook_scope=${scope}`,
-			options
+		const response = await this.requestEndpoint(
+			'forms.workflowPlan.read',
+			options,
+			`${slug}/forms/${formIdSegment}/actions/workflow-plan?hook_scope=${scope}`
 		);
 		return this.unwrap(response);
 	}
@@ -2100,13 +1791,14 @@ export class SentientFormsApiClient {
 
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<RequestTraceResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/request-trace`,
+		const response = await this.requestEndpoint(
+			'forms.requestTrace.run',
 			{
 				method: 'POST',
 				body: payload,
 				...options
-			}
+			},
+			`${slug}/forms/${formIdSegment}/actions/request-trace`
 		);
 		return this.unwrap(response);
 	}
@@ -2129,12 +1821,13 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/disable`,
+		const response = await this.requestEndpoint(
+			'forms.disabled.read',
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
 				tags: ['settings', 'form-actions', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/actions/disable`
 		);
 		return this.unwrap(response);
 	}
@@ -2147,16 +1840,17 @@ export class SentientFormsApiClient {
 		formId: FormSourceFormId,
 		disabled: boolean,
 		options: RequestOptions = {}
-	): Promise<FormDisableStateResponse> {
+	): Promise<RegisteredEndpointResponse<'forms.disabled.update'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/disable`,
+		const response = await this.requestEndpoint(
+			'forms.disabled.update',
 			{
 				...options,
 				method: 'PUT',
 				body: { sf_disabled: disabled }
-			}
+			},
+			`${slug}/forms/${formIdSegment}/actions/disable`
 		);
 		return this.unwrap(response);
 	}
@@ -2169,7 +1863,7 @@ export class SentientFormsApiClient {
 		formSourceSlug: string,
 		formId: FormSourceFormId,
 		options: RequestOptions = {}
-	): Promise<FormFieldInfo[]> {
+	): Promise<RegisteredEndpointResponse<'forms.fields.list'>> {
 		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormFields called with invalid params:', {
 				formSourceSlug,
@@ -2179,13 +1873,14 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormFieldInfo[]>>(
-			`${slug}/forms/${formIdSegment}/actions/fields`,
+		const response = await this.requestEndpoint(
+			'forms.fields.list',
 			withCacheDefaults(options, {
 				ttlMs: 300_000,
 				tags: ['forms', formCacheTag(formSourceSlug, formId)],
 				storage: 'session'
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/actions/fields`
 		);
 		return this.unwrap(response);
 	}
@@ -2194,7 +1889,7 @@ export class SentientFormsApiClient {
 		formSourceSlug: string,
 		formId: FormSourceFormId,
 		options: RequestOptions = {}
-	): Promise<FormExecutionStatus> {
+	): Promise<RegisteredEndpointResponse<'forms.executionStatus.read'>> {
 		// Guard against undefined parameters during hydration race conditions
 		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', {
@@ -2212,18 +1907,19 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormExecutionStatus>>(
-			`${slug}/forms/${formIdSegment}/actions/status`,
+		const response = await this.requestEndpoint(
+			'forms.executionStatus.read',
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
 				tags: ['execution-status', formCacheTag(formSourceSlug, formId)]
-			})
+			}),
+			`${slug}/forms/${formIdSegment}/actions/status`
 		);
 		return this.unwrap(response);
 	}
 
 	async getCapabilities(options: RequestOptions = {}): Promise<CapabilitiesResponse> {
-		const response = await this.request<RestEnvelope<CapabilitiesResponse>>('meta/capabilities', {
+		const response = await this.requestEndpoint('meta.capabilities', {
 			cacheTtlMs: 300_000,
 			cacheTags: ['meta', 'capabilities'],
 			cacheStorage: 'session',
@@ -2238,12 +1934,17 @@ export class SentientFormsApiClient {
 		formId: FormSourceFormId,
 		payload: FormActionMutationPayload,
 		options: RequestOptions = {}
-	): Promise<FormActionLinkage> {
+	): Promise<RegisteredEndpointResponse<'forms.actions.create'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormActionLinkage>>(
-			`${slug}/forms/${formIdSegment}/actions`,
-			{ method: 'POST', body: payload, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actions.create',
+			{
+				method: 'POST',
+				body: parseRegisteredEndpointRequest('forms.actions.create', payload),
+				...options
+			},
+			`${slug}/forms/${formIdSegment}/actions`
 		);
 		return this.unwrap(response);
 	}
@@ -2257,9 +1958,10 @@ export class SentientFormsApiClient {
 	): Promise<DuplicateFormActionResponse> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<DuplicateFormActionResponse>>(
-			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}/duplicate`,
-			{ method: 'POST', body: payload, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actions.duplicate',
+			{ method: 'POST', body: payload, ...options },
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}/duplicate`
 		);
 		return this.unwrap(response);
 	}
@@ -2270,12 +1972,17 @@ export class SentientFormsApiClient {
 		localMappingId: string,
 		payload: FormActionMutationPayload,
 		options: RequestOptions = {}
-	): Promise<FormActionLinkage> {
+	): Promise<RegisteredEndpointResponse<'forms.actions.update'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormActionLinkage>>(
-			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`,
-			{ method: 'PUT', body: payload, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actions.update',
+			{
+				method: 'PUT',
+				body: parseRegisteredEndpointRequest('forms.actions.update', payload),
+				...options
+			},
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`
 		);
 		return this.unwrap(response);
 	}
@@ -2288,13 +1995,15 @@ export class SentientFormsApiClient {
 	): Promise<void> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		await this.request(
-			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`,
+		const response: RegisteredEndpointResponse<'forms.actions.delete'> = await this.requestEndpoint(
+			'forms.actions.delete',
 			{
 				method: 'DELETE',
 				...options
-			}
+			},
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`
 		);
+		void response;
 	}
 
 	// ==========================================================================
@@ -2319,9 +2028,10 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormAllActionConfigsResponse>>(
-			`forms/${slug}/${formIdSegment}/action-config`,
-			{ showNotifications: false, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actionConfigs.list',
+			{ showNotifications: false, ...options },
+			`forms/${slug}/${formIdSegment}/action-config`
 		);
 		return this.unwrap<FormAllActionConfigsResponse>(response).configs;
 	}
@@ -2345,9 +2055,10 @@ export class SentientFormsApiClient {
 		}
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
-			{ showNotifications: false, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actionConfigs.read',
+			{ showNotifications: false, ...options },
+			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
 	}
@@ -2366,11 +2077,12 @@ export class SentientFormsApiClient {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
 		const payload = this.validateFormActionConfigPayload(config);
-		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
-			{ method: 'POST', body: payload, ...options }
+		const response = await this.requestEndpoint(
+			'forms.actionConfigs.update',
+			{ method: 'POST', body: payload, ...options },
+			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`
 		);
-		return this.unwrap<FormActionConfigResponse>(response).config;
+		return this.unwrap<RegisteredEndpointResponse<'forms.actionConfigs.update'>>(response).config;
 	}
 
 	/**
@@ -2384,13 +2096,16 @@ export class SentientFormsApiClient {
 	): Promise<void> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		await this.request(
-			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
-			{
-				method: 'DELETE',
-				...options
-			}
-		);
+		const response: RegisteredEndpointResponse<'forms.actionConfigs.delete'> =
+			await this.requestEndpoint(
+				'forms.actionConfigs.delete',
+				{
+					method: 'DELETE',
+					...options
+				},
+				`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`
+			);
+		void response;
 	}
 
 	// ============================================================
@@ -2408,8 +2123,8 @@ export class SentientFormsApiClient {
 			console.warn('[ApiClient] getActionDefaults called without actionId');
 			return {};
 		}
-		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`actions/${encodeURIComponent(actionId)}/defaults`,
+		const response = await this.requestEndpoint(
+			'actions.defaults.read',
 			withCacheDefaults(
 				{ showNotifications: false, ...options },
 				{
@@ -2417,9 +2132,10 @@ export class SentientFormsApiClient {
 					tags: ['action-defaults'],
 					storage: 'session'
 				}
-			)
+			),
+			`actions/${encodeURIComponent(actionId)}/defaults`
 		);
-		return this.unwrap<FormActionConfigResponse>(response).config;
+		return this.unwrap<RegisteredEndpointResponse<'actions.defaults.read'>>(response).config;
 	}
 
 	/**
@@ -2437,8 +2153,8 @@ export class SentientFormsApiClient {
 		const defaults: Record<string, FormActionConfig> = {};
 		for (let index = 0; index < ids.length; index += ACTION_DEFAULTS_BATCH_LIMIT) {
 			const batchIds = ids.slice(index, index + ACTION_DEFAULTS_BATCH_LIMIT);
-			const response = await this.request<RestEnvelope<ActionDefaultsBatchResponse>>(
-				`actions/defaults?ids=${encodeURIComponent(batchIds.join(','))}`,
+			const response = await this.requestEndpoint(
+				'actions.defaults.batch',
 				withCacheDefaults(
 					{ showNotifications: false, ...options },
 					{
@@ -2446,7 +2162,8 @@ export class SentientFormsApiClient {
 						tags: ['action-defaults'],
 						storage: 'session'
 					}
-				)
+				),
+				`actions/defaults?ids=${encodeURIComponent(batchIds.join(','))}`
 			);
 			Object.assign(defaults, this.unwrap<ActionDefaultsBatchResponse>(response).defaults ?? {});
 		}
@@ -2463,11 +2180,12 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
 		const payload = this.validateFormActionConfigPayload(config);
-		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`actions/${encodeURIComponent(actionId)}/defaults`,
-			{ method: 'POST', body: payload, ...options }
+		const response = await this.requestEndpoint(
+			'actions.defaults.update',
+			{ method: 'POST', body: payload, ...options },
+			`actions/${encodeURIComponent(actionId)}/defaults`
 		);
-		return this.unwrap<FormActionConfigResponse>(response).config;
+		return this.unwrap<RegisteredEndpointResponse<'actions.defaults.update'>>(response).config;
 	}
 
 	private validateFormActionConfigPayload(
@@ -2487,7 +2205,7 @@ export class SentientFormsApiClient {
 	async getCustomActions(
 		filters: CustomActionFilters = {},
 		options: RequestOptions = {}
-	): Promise<{ actions: CustomAction[]; quota: CustomActionQuota }> {
+	): Promise<RegisteredEndpointResponse<'customActions.list'>> {
 		const params = new URLSearchParams();
 		if (filters.status) {
 			params.set('status', filters.status);
@@ -2501,16 +2219,20 @@ export class SentientFormsApiClient {
 
 		const query = params.toString();
 		const path = query ? `custom-actions?${query}` : 'custom-actions';
-		return this.request(path, { showNotifications: false, ...options });
+		return this.requestEndpoint(
+			'customActions.list',
+			{ showNotifications: false, ...options },
+			path
+		);
 	}
 
 	async createCustomAction(
 		payload: CustomActionCreatePayload,
 		options: RequestOptions = {}
-	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
-		return this.request('custom-actions', {
+	): Promise<RegisteredEndpointResponse<'customActions.create'>> {
+		return this.requestEndpoint('customActions.create', {
 			method: 'POST',
-			body: payload,
+			body: parseRegisteredEndpointRequest('customActions.create', payload),
 			...options
 		});
 	}
@@ -2519,32 +2241,44 @@ export class SentientFormsApiClient {
 		id: string,
 		payload: CustomActionUpdatePayload,
 		options: RequestOptions = {}
-	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
-		return this.request(`custom-actions/${encodeURIComponent(id)}`, {
-			method: 'PUT',
-			body: payload,
-			...options
-		});
+	): Promise<RegisteredEndpointResponse<'customActions.update'>> {
+		return this.requestEndpoint(
+			'customActions.update',
+			{
+				method: 'PUT',
+				body: parseRegisteredEndpointRequest('customActions.update', payload),
+				...options
+			},
+			`custom-actions/${encodeURIComponent(id)}`
+		);
 	}
 
 	async archiveCustomAction(
 		id: string,
 		options: RequestOptions = {}
-	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
-		return this.request(`custom-actions/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			...options
-		});
+	): Promise<RegisteredEndpointResponse<'customActions.archive'>> {
+		return this.requestEndpoint(
+			'customActions.archive',
+			{
+				method: 'DELETE',
+				...options
+			},
+			`custom-actions/${encodeURIComponent(id)}`
+		);
 	}
 
 	async reactivateCustomAction(
 		id: string,
 		options: RequestOptions = {}
-	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
-		return this.request(`custom-actions/${encodeURIComponent(id)}/reactivate`, {
-			method: 'POST',
-			...options
-		});
+	): Promise<RegisteredEndpointResponse<'customActions.reactivate'>> {
+		return this.requestEndpoint(
+			'customActions.reactivate',
+			{
+				method: 'POST',
+				...options
+			},
+			`custom-actions/${encodeURIComponent(id)}/reactivate`
+		);
 	}
 
 	// ==========================================================================
@@ -2555,35 +2289,43 @@ export class SentientFormsApiClient {
 	 * Get all form mappings for the current license.
 	 * CSM-001: local mapping storage
 	 */
-	async getFormMappings(options: RequestOptions = {}): Promise<FormMapping[]> {
-		const response = await this.request<{ success: boolean; data: FormMapping[] }>('mappings', {
+	async getFormMappings(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'mappings.list'>> {
+		const response = await this.requestEndpoint('mappings.list', {
 			showNotifications: false,
 			...options
 		});
-		return response.data;
+		return response;
 	}
 
 	/**
 	 * Get template mappings only (reusable across sites).
 	 * CSM-003: Save as Template
 	 */
-	async getFormMappingTemplates(options: RequestOptions = {}): Promise<FormMapping[]> {
-		const response = await this.request<{ success: boolean; data: FormMapping[] }>(
-			'mappings/templates',
-			{ showNotifications: false, ...options }
-		);
-		return response.data;
+	async getFormMappingTemplates(
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'mappings.templates'>> {
+		const response = await this.requestEndpoint('mappings.templates', {
+			showNotifications: false,
+			...options
+		});
+		return response;
 	}
 
 	/**
 	 * Get a single form mapping by ID.
 	 */
-	async getFormMapping(id: string, options: RequestOptions = {}): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(id)}`,
-			{ showNotifications: false, ...options }
+	async getFormMapping(
+		id: string,
+		options: RequestOptions = {}
+	): Promise<RegisteredEndpointResponse<'mappings.read'>> {
+		const response = await this.requestEndpoint(
+			'mappings.read',
+			{ showNotifications: false, ...options },
+			`mappings/${encodeURIComponent(id)}`
 		);
-		return response.data;
+		return response;
 	}
 
 	/**
@@ -2593,13 +2335,13 @@ export class SentientFormsApiClient {
 	async createFormMapping(
 		payload: CreateFormMappingRequest,
 		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>('mappings', {
+	): Promise<RegisteredEndpointResponse<'mappings.create'>> {
+		const response = await this.requestEndpoint('mappings.create', {
 			method: 'POST',
 			body: payload,
 			...options
 		});
-		return response.data;
+		return response;
 	}
 
 	/**
@@ -2609,22 +2351,28 @@ export class SentientFormsApiClient {
 		id: string,
 		payload: UpdateFormMappingRequest,
 		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(id)}`,
-			{ method: 'PUT', body: payload, ...options }
+	): Promise<RegisteredEndpointResponse<'mappings.update'>> {
+		const response = await this.requestEndpoint(
+			'mappings.update',
+			{ method: 'PUT', body: payload, ...options },
+			`mappings/${encodeURIComponent(id)}`
 		);
-		return response.data;
+		return response;
 	}
 
 	/**
 	 * Delete a form mapping.
 	 */
 	async deleteFormMapping(id: string, options: RequestOptions = {}): Promise<void> {
-		await this.request(`mappings/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			...options
-		});
+		const response: RegisteredEndpointResponse<'mappings.delete'> = await this.requestEndpoint(
+			'mappings.delete',
+			{
+				method: 'DELETE',
+				...options
+			},
+			`mappings/${encodeURIComponent(id)}`
+		);
+		void response;
 	}
 
 	/**
@@ -2635,12 +2383,13 @@ export class SentientFormsApiClient {
 		templateId: string,
 		payload: CloneTemplateMappingRequest,
 		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(templateId)}/clone`,
-			{ method: 'POST', body: payload, ...options }
+	): Promise<RegisteredEndpointResponse<'mappings.clone'>> {
+		const response = await this.requestEndpoint(
+			'mappings.clone',
+			{ method: 'POST', body: payload, ...options },
+			`mappings/${encodeURIComponent(templateId)}/clone`
 		);
-		return response.data;
+		return response;
 	}
 
 	async getExecutionStatus(
@@ -2648,20 +2397,70 @@ export class SentientFormsApiClient {
 		formId: FormSourceFormId,
 		entryId: number,
 		options: RequestOptions = {}
-	): Promise<ExecutionStatus> {
+	): Promise<RegisteredEndpointResponse<'forms.entryExecutionStatus.read'>> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const response = await this.request<RestEnvelope<ExecutionStatus>>(
-			`${slug}/forms/${formIdSegment}/actions/entries/${entryId}/status`,
-			options
+		const response = await this.requestEndpoint(
+			'forms.entryExecutionStatus.read',
+			options,
+			`${slug}/forms/${formIdSegment}/actions/entries/${entryId}/status`
 		);
 		return this.unwrap(response);
 	}
 
-	async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+	async requestParsed<TSchema extends ZodType>(
+		path: string,
+		schema: TSchema,
+		options: RequestOptions = {},
+		schemaName = schema.description ?? 'inline response',
+		errorSchema?: ZodType,
+		errorName = errorSchema?.description ?? 'endpoint error'
+	): Promise<z.output<TSchema>> {
+		return (await this.requestUnknown(path, options, {
+			schema,
+			name: schemaName,
+			errorSchema,
+			errorName
+		})) as z.output<TSchema>;
+	}
+
+	async requestEndpoint<TName extends EndpointName>(
+		name: TName,
+		options: RequestOptions = {},
+		pathOverride?: string
+	): Promise<RegisteredEndpointResponse<TName>> {
+		const definition = endpointRegistry[name];
+		const path = pathOverride ?? definition.path;
+		let body = options.body;
+
+		if ('request' in definition) {
+			body = this.parseContractPayload(path, body, {
+				schema: definition.request,
+				name: definition.request.description ?? `${name} request`
+			});
+		}
+
+		return (await this.requestParsed(
+			path,
+			definition.response,
+			{ ...options, body },
+			definition.response.description ?? `${name} response`,
+			definition.error,
+			definition.error.description ?? `${name} error`
+		)) as RegisteredEndpointResponse<TName>;
+	}
+
+	private async requestUnknown(
+		path: string,
+		options: RequestOptions = {},
+		contract?: RuntimeResponseContract
+	): Promise<unknown> {
 		let url: URL;
 		const base = new URL(this.baseUrl.toString());
 		const restRoute = base.searchParams.get('rest_route');
+		if (path.startsWith('//')) {
+			throw new Error('Sentient Forms REST requests must remain same-origin.');
+		}
 
 		if (restRoute) {
 			const [rawPath, rawQuery] = path.split('?');
@@ -2682,6 +2481,9 @@ export class SentientFormsApiClient {
 			url = base;
 		} else {
 			url = new URL(path, base);
+		}
+		if (url.origin !== base.origin) {
+			throw new Error('Sentient Forms REST requests must remain same-origin.');
 		}
 
 		const {
@@ -2704,12 +2506,20 @@ export class SentientFormsApiClient {
 		if (cacheKey && forceRefresh) {
 			retireAdminApiCacheKeyForForcedRefresh(cacheKey, normalizedCacheTags);
 		}
-		const cacheVersionSnapshot = cacheKey ? getCacheVersionSnapshot(normalizedCacheTags) : null;
+		let cacheVersionSnapshot = cacheKey ? getCacheVersionSnapshot(normalizedCacheTags) : null;
 
 		if (cacheKey && !forceRefresh) {
 			const cached = readAdminApiCache(cacheKey, cacheStorage);
 			if (cached) {
-				return cached.value as T;
+				try {
+					return this.parseContractPayload(path, cached.value, contract);
+				} catch (error) {
+					if (!(error instanceof ApiContractError)) {
+						throw error;
+					}
+					retireAdminApiCacheKeyForForcedRefresh(cacheKey, normalizedCacheTags);
+					cacheVersionSnapshot = getCacheVersionSnapshot(normalizedCacheTags);
+				}
 			}
 
 			const inFlight = adminApiInFlight.get(cacheKey);
@@ -2719,9 +2529,14 @@ export class SentientFormsApiClient {
 					showNotifications
 				);
 				try {
-					return (await inFlight.promise) as T;
+					return this.parseContractPayload(path, await inFlight.promise, contract);
 				} catch (error) {
-					throw coerceToApiClientError(error);
+					if (error instanceof ApiContractError) {
+						retireAdminApiCacheKeyForForcedRefresh(cacheKey, normalizedCacheTags);
+						cacheVersionSnapshot = getCacheVersionSnapshot(normalizedCacheTags);
+					} else {
+						throw coerceToApiClientError(error);
+					}
 				}
 			}
 		}
@@ -2747,11 +2562,19 @@ export class SentientFormsApiClient {
 				if (securityRoadblock) {
 					throw new ApiClientError(securityRoadblock.message, response.status, securityRoadblock);
 				}
-				throw new ApiClientError('Request failed', response.status, parsed);
+				const safeError = contract?.errorSchema
+					? this.parseContractPayload(path, parsed, {
+							schema: contract.errorSchema,
+							name: contract.errorName ?? 'endpoint error'
+						})
+					: parsed;
+				throw new ApiClientError('Request failed', response.status, safeError);
 			}
 
+			const trustedPayload = this.parseContractPayload(path, parsed, contract);
+
 			if (cacheKey && cacheVersionSnapshot && isCacheVersionSnapshotCurrent(cacheVersionSnapshot)) {
-				writeAdminApiCache(cacheKey, parsed, {
+				writeAdminApiCache(cacheKey, trustedPayload, {
 					ttlMs: cacheTtlMs,
 					tags: normalizedCacheTags,
 					storage: cacheStorage
@@ -2764,10 +2587,10 @@ export class SentientFormsApiClient {
 			}
 
 			if (response.status === 204) {
-				return undefined as T;
+				return undefined;
 			}
 
-			return parsed as T;
+			return trustedPayload;
 		})();
 
 		if (cacheKey && dedupe) {
@@ -2795,6 +2618,10 @@ export class SentientFormsApiClient {
 	}
 
 	private handleRequestError(error: unknown, parsed: unknown, showNotifications?: boolean): never {
+		if (error instanceof ApiContractError) {
+			throw error;
+		}
+
 		const clientError =
 			error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
 		if (isSecurityRoadblockPayload(clientError.payload)) {
@@ -2861,16 +2688,44 @@ export class SentientFormsApiClient {
 		}
 	}
 
-	private unwrap<T>(payload: unknown): T {
+	private parseContractPayload(
+		path: string,
+		payload: unknown,
+		contract?: RuntimeResponseContract
+	): unknown {
+		if (!contract) {
+			return payload;
+		}
+
+		const result = contract.schema.safeParse(payload);
+		if (result.success) {
+			return result.data;
+		}
+
+		throw new ApiContractError(
+			path,
+			contract.name,
+			result.error.issues.map((issue) => ({
+				code: issue.code,
+				path: issue.path.filter(
+					(segment): segment is string | number =>
+						typeof segment === 'string' || typeof segment === 'number'
+				),
+				message: issue.message
+			}))
+		);
+	}
+
+	private unwrap<T>(payload: T | RestEnvelope<T>): T {
 		if (isRestEnvelope<T>(payload)) {
 			return payload.data;
 		}
 
-		return payload as T;
+		return payload;
 	}
 }
 
-function isRestEnvelope<T>(payload: unknown): payload is RestEnvelope<T> {
+function isRestEnvelope<T>(payload: T | RestEnvelope<T>): payload is RestEnvelope<T> {
 	return Boolean(
 		payload && typeof payload === 'object' && 'success' in payload && 'data' in payload
 	);
@@ -2893,10 +2748,15 @@ function coerceToApiClientError(original: unknown, parsed?: unknown): ApiClientE
 }
 
 export function createClientFromConfig(
-	overrides: Partial<ClientConfig> = {}
+	overrides: Partial<RuntimeClientOverrides> = {}
 ): SentientFormsApiClient {
+	if ('baseUrl' in overrides || 'getNonce' in overrides) {
+		throw new Error(
+			'createClientFromConfig does not accept baseUrl or getNonce overrides; use validated runtime config.'
+		);
+	}
 	const config = resolveRuntimeConfig();
-	const getNonce = overrides.getNonce ?? (() => resolveRuntimeConfig().restNonce);
+	const getNonce = () => resolveRuntimeConfig().restNonce;
 	const cacheContext =
 		overrides.cacheContext ?? (() => buildRuntimeCacheContext(resolveRuntimeConfig()));
 
@@ -2940,10 +2800,7 @@ function defaultRuntimeConfig(): SentientFormsConfig {
 		},
 		telemetry: {
 			optIn: false,
-			updatedAt: null,
-			syncedAt: null,
-			remoteUpdatedAt: null,
-			lastError: null
+			updatedAt: null
 		},
 		i18n: {}
 	};
@@ -2980,11 +2837,5 @@ function resolveRuntimeConfig(): SentientFormsConfig {
 		return defaultRuntimeConfig();
 	}
 
-	if (!window.sentientFormsConfig) {
-		window.sentientFormsConfig = {
-			...defaultRuntimeConfig()
-		};
-	}
-
-	return window.sentientFormsConfig;
+	return readRuntimeConfig() ?? defaultRuntimeConfig();
 }

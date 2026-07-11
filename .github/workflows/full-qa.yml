@@ -127,7 +127,7 @@ jobs:
           WP_TESTS_DB_USER: sf_wp_user
           WP_TESTS_DB_PASSWORD: your_strong_user_password_here
           RUN_HEALTH_CHECK: '0'
-          SENTIENT_FORMS_CPS_BASE_URL: http://localhost:10081/v1
+          SENTIENT_FORMS_CPS_BASE_URL: http://localhost:10081/v2
           CI: 'true'
         run: ./scripts/run-full-qa.sh
 

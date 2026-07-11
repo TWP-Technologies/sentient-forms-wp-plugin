@@ -7,6 +7,21 @@ import {
 } from '$lib/schemas/custom-action';
 
 describe('custom action schema pricing authority', () => {
+	it('omits absent workflow metadata from validated JSON definitions', () => {
+		const parsed = customActionCreateSchema.parse({
+			template_id: null,
+			code: 'json-safe-definition',
+			display_name: 'JSON-safe definition',
+			action_kind: 'custom_definition',
+			definition: { prompt_template: 'Summarize the submission.' },
+			definition_version: 1,
+			supported_execution_modes: ['after_submission']
+		});
+
+		expect(parsed.definition).toEqual({ prompt_template: 'Summarize the submission.' });
+		expect(parsed.definition).not.toHaveProperty('workflow');
+	});
+
 	it('strips deprecated base_credit_cost from create payloads', () => {
 		const parsed = customActionCreateSchema.parse({
 			template_id: '550e8400-e29b-41d4-a716-446655440000',

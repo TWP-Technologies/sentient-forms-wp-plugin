@@ -4,6 +4,7 @@
 	import type {
 		ModelSelection,
 		PluginSettingsResponse,
+		SiteContextUpdateRequest,
 		SiteContextStatusResponse
 	} from '$lib/api/types';
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
@@ -17,6 +18,7 @@
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		buildSiteContextGenerateRequest,
 		compactSiteContextModelSelection,
 		normalizeSiteContextResponse,
 		siteContextGenerateDisabledMessage,
@@ -25,7 +27,7 @@
 		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 	type SiteContextBadgeVariant = 'neutral' | 'success' | 'warning';
@@ -40,7 +42,8 @@
 		label: string;
 		kicker: string;
 		description: string;
-		retentionLabel: string;
+		executionRetentionLabel: string;
+		ledgerRetentionLabel: string;
 		fullOutputLabel: string;
 		loggingLabel: string;
 	}
@@ -63,7 +66,8 @@
 			kicker: 'Recommended',
 			description:
 				'Good default for most sites. Keeps useful troubleshooting without saving full AI replies.',
-			retentionLabel: '90-day execution logs',
+			executionRetentionLabel: '90-day execution logs',
+			ledgerRetentionLabel: '90-day Submission Ledger',
 			fullOutputLabel: 'Full AI outputs off',
 			loggingLabel: 'On-site logging off'
 		},
@@ -73,7 +77,8 @@
 			kicker: 'Lower retention',
 			description:
 				'Cuts back local history while keeping enough detail to verify that actions are working.',
-			retentionLabel: '30-day execution logs',
+			executionRetentionLabel: '30-day execution logs',
+			ledgerRetentionLabel: '30-day Submission Ledger',
 			fullOutputLabel: 'Full AI outputs off',
 			loggingLabel: 'On-site logging off'
 		},
@@ -83,7 +88,8 @@
 			kicker: 'Minimum storage',
 			description:
 				'Stores the least local AI detail after actions finish. Best for sensitive intake flows.',
-			retentionLabel: '7-day execution logs',
+			executionRetentionLabel: '7-day execution logs',
+			ledgerRetentionLabel: '7-day Submission Ledger',
 			fullOutputLabel: 'Full AI outputs off',
 			loggingLabel: 'On-site logging off'
 		},
@@ -93,7 +99,8 @@
 			kicker: 'For tuning and support',
 			description:
 				'Keeps more local detail so you can inspect outputs, compare prompts, and debug setups faster.',
-			retentionLabel: '180-day execution logs',
+			executionRetentionLabel: '180-day execution logs',
+			ledgerRetentionLabel: '180-day Submission Ledger',
 			fullOutputLabel: 'Full AI outputs on',
 			loggingLabel: 'On-site logging on'
 		}
@@ -379,9 +386,7 @@
 	async function pollSiteContextGenerationStatus(): Promise<void> {
 		if (!open) return;
 		try {
-			const next = parseSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
-			);
+			const next = parseSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 			if (!open) return;
 			siteContextGenerationPollFailures = 0;
 			syncSiteContext(next, { preserveLocalEdits: true });
@@ -419,9 +424,7 @@
 		siteContextLoading = true;
 		siteContextError = null;
 		try {
-			syncSiteContext(
-				parseSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
-			);
+			syncSiteContext(parseSiteContextResponse(await wpRequestEndpoint('siteContext.read')));
 		} catch (error) {
 			console.error('Failed to load Site Context setup state', error);
 			siteContextError = readableError(error, 'Unable to load Site Context setup state.');
@@ -430,7 +433,7 @@
 		}
 	}
 
-	function siteContextPayload() {
+	function siteContextPayload(): SiteContextUpdateRequest {
 		const generationModelSelection = compactSiteContextModelSelection(siteContextModelSelection);
 		if (managedAccountReady && managedZdrRequired) {
 			generationModelSelection.require_zdr = true;
@@ -464,9 +467,9 @@
 		siteContextError = null;
 		siteContextApplyError = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+			const response = await wpRequestEndpoint('siteContext.update', {
 				method: 'PUT',
-				body: JSON.stringify(siteContextPayload()),
+				body: siteContextPayload(),
 				showNotifications: false
 			});
 			syncSiteContext(parseSiteContextResponse(response));
@@ -501,9 +504,9 @@
 		siteContextGenerating = true;
 		siteContextError = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
+			const response = await wpRequestEndpoint('siteContext.generate', {
 				method: 'POST',
-				body: JSON.stringify(siteContextPayload()),
+				body: buildSiteContextGenerateRequest(siteContextPayload()),
 				showNotifications: false
 			});
 			syncSiteContext(parseSiteContextResponse(response));
@@ -645,7 +648,8 @@
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-slate-600">{preset.description}</p>
 							<ul class="sf:mt-4 sf:space-y-2 sf:text-xs sf:text-slate-500">
-								<li>{preset.retentionLabel}</li>
+								<li>{preset.executionRetentionLabel}</li>
+								<li>{preset.ledgerRetentionLabel}</li>
 								<li>{preset.fullOutputLabel}</li>
 								<li>{preset.loggingLabel}</li>
 							</ul>
@@ -670,11 +674,20 @@
 								<Badge variant="info">{selectedDefinition.kicker}</Badge>
 							</div>
 						</div>
-						<div class="sf:grid sf:gap-3 sf:sm:grid-cols-3">
+						<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:lg:grid-cols-4">
 							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
 								<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution logs</p>
 								<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-									{selectedDefinition.retentionLabel}
+									{selectedDefinition.executionRetentionLabel}
+								</p>
+							</div>
+							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+								<p class="sf:text-xs sf:font-medium sf:text-slate-500">Submission Ledger</p>
+								<p
+									class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900"
+									data-testid="privacy-setup-ledger-retention-summary"
+								>
+									{selectedDefinition.ledgerRetentionLabel}
 								</p>
 							</div>
 							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
@@ -770,53 +783,49 @@
 				</div>
 			</div>
 
-			<StickyActionFooter
-				align="between"
-				class="sf:bg-white"
-				testId="privacy-setup-action-footer"
-			>
-					<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-3">
-						<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
-							<span
-								class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
-							>
-								5
-							</span>
-							<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
-								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to
-								use immediately.
-							</p>
+			<StickyActionFooter align="between" class="sf:bg-white" testId="privacy-setup-action-footer">
+				<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-3">
+					<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
+						<span
+							class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
+						>
+							5
+						</span>
+						<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
+							Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to use
+							immediately.
+						</p>
+					</div>
+					{#if footerApplyError}
+						<div
+							bind:this={applyErrorRegion}
+							tabindex="-1"
+							class="sf:focus-visible:outline-none"
+							data-testid="privacy-setup-apply-error"
+						>
+							<Alert variant="danger">
+								{footerApplyError}
+							</Alert>
 						</div>
-						{#if footerApplyError}
-							<div
-								bind:this={applyErrorRegion}
-								tabindex="-1"
-								class="sf:focus-visible:outline-none"
-								data-testid="privacy-setup-apply-error"
-							>
-								<Alert variant="danger">
-									{footerApplyError}
-								</Alert>
-							</div>
-						{/if}
-					</div>
-					<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
-						<Button
-							variant="secondary"
-							disabled={saving || siteContextSaving}
-							onclick={useBalancedDefaults}
-						>
-							Skip Setup
-						</Button>
-						<Button
-							class="sf:min-w-[9rem]"
-							loading={saving || siteContextSaving}
-							disabled={saving || siteContextSaving}
-							onclick={applySelectedPreset}
-						>
-							{saving || siteContextSaving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
-						</Button>
-					</div>
+					{/if}
+				</div>
+				<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
+					<Button
+						variant="secondary"
+						disabled={saving || siteContextSaving}
+						onclick={useBalancedDefaults}
+					>
+						Skip Setup
+					</Button>
+					<Button
+						class="sf:min-w-[9rem]"
+						loading={saving || siteContextSaving}
+						disabled={saving || siteContextSaving}
+						onclick={applySelectedPreset}
+					>
+						{saving || siteContextSaving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
+					</Button>
+				</div>
 			</StickyActionFooter>
 		</div>
 	</div>

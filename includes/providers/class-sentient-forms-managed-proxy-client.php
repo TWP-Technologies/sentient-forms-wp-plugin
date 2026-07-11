@@ -37,13 +37,24 @@ class Sentient_Forms_Managed_Proxy_Client
 
     private Sentient_Forms_Api_Client $client;
 
+    private ?WP_Error $configuration_error = null;
+
     public function __construct(
         ?string $base_url = null,
         int $timeout = 30,
         ?Sentient_Forms_Api_Client $client = null
     )
     {
-        $this->base_url = $this->resolve_base_url( $base_url );
+        try
+        {
+            $this->base_url = $this->resolve_base_url( $base_url );
+        }
+        catch ( InvalidArgumentException $exception )
+        {
+            $this->base_url           = self::DEFAULT_BASE_URL;
+            $this->configuration_error = $this->invalid_base_url_error( $exception );
+        }
+
         $this->client   = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
     }
 
@@ -57,6 +68,11 @@ class Sentient_Forms_Managed_Proxy_Client
      */
     public function execute( string $proxy_api_key, array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = trim( $proxy_api_key );
         if ( '' === $proxy_api_key )
         {
@@ -95,6 +111,11 @@ class Sentient_Forms_Managed_Proxy_Client
      */
     public function get_metering_summary( string $proxy_api_key, ?string $site_id = null ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = trim( $proxy_api_key );
         if ( '' === $proxy_api_key )
         {
@@ -138,12 +159,28 @@ class Sentient_Forms_Managed_Proxy_Client
      */
     public function health(): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         return $this->client->get( '/health' );
     }
 
     public function get_base_url(): string
     {
         return $this->base_url;
+    }
+
+    private function invalid_base_url_error( InvalidArgumentException $exception ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_managed_invalid_base_url',
+            __( 'The managed service URL is invalid. Configure a bare HTTP(S) origin with an optional exact /v2 path.', 'sentient-forms' ),
+            [
+                'reason' => $exception->getMessage(),
+            ]
+        );
     }
 
     /**
@@ -567,18 +604,7 @@ class Sentient_Forms_Managed_Proxy_Client
             $url = self::DEFAULT_BASE_URL;
         }
 
-        $url = untrailingslashit( trim( $url ) );
-        if ( str_ends_with( $url, '/v1' ) )
-        {
-            return substr( $url, 0, -3 ) . '/v2';
-        }
-
-        if ( ! str_ends_with( $url, '/v2' ) )
-        {
-            $url .= '/v2';
-        }
-
-        return $url;
+        return Sentient_Forms_Managed_Base_Url::normalize( $url );
     }
 
     private function resolve_managed_service_override(): ?string
@@ -639,6 +665,6 @@ class Sentient_Forms_Managed_Proxy_Client
 
         return defined( 'SENTIENT_FORMS_DEFAULT_CPS_BASE_URL' )
             ? SENTIENT_FORMS_DEFAULT_CPS_BASE_URL
-            : 'https://api.sentientforms.com/v1';
+            : self::DEFAULT_BASE_URL;
     }
 }

@@ -33,13 +33,12 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	let activateRequests = 0;
 	let deactivateRequests = 0;
 
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: status }),
+			body: JSON.stringify(status),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
@@ -60,7 +59,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 
 		return route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: status }),
+			body: JSON.stringify(status),
 			headers: { 'content-type': 'application/json' }
 		});
 	});
@@ -68,7 +67,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: status }),
+			body: JSON.stringify(status),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
@@ -89,7 +88,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 
 		return route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: status }),
+			body: JSON.stringify({ success: true }),
 			headers: { 'content-type': 'application/json' }
 		});
 	});
@@ -102,44 +101,41 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					credits: {
-						current_balance: 100,
-						tier_quota: 100,
-						ledger_delta: 0,
-						top_up_available: 0
+				provider: 'stripe',
+				credits: {
+					current_balance: 100,
+					tier_quota: 100,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
+				},
+				managed_usage: {
+					execution_count: 12,
+					succeeded_count: 11,
+					failed_count: 1,
+					token_usage: {
+						input_tokens: 3200,
+						output_tokens: 900,
+						total_tokens: 4100
 					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					},
-					managed_usage: {
-						execution_count: 12,
-						succeeded_count: 11,
-						failed_count: 1,
-						token_usage: {
-							input_tokens: 3200,
-							output_tokens: 900,
-							total_tokens: 4100
-						},
-						billing: {
-							billed_amount_microusd: 18000,
-							currency: 'USD'
-						}
+					billing: {
+						billed_amount_microusd: 18000,
+						currency: 'USD'
 					}
 				}
 			}),
@@ -204,8 +200,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 test('first-time managed checkout starts from the recommended license path with hash-safe return urls', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	const inactiveStatus = {
 		status: 'inactive',
@@ -223,14 +218,14 @@ test('first-time managed checkout starts from the recommended license path with 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			body: JSON.stringify(inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
 	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			body: JSON.stringify(inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
@@ -259,14 +254,11 @@ test('first-time managed checkout starts from the recommended license path with 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					checkout_intent_id: 'mci_test_123',
-					checkout_session_id: 'cs_test_123',
-					checkout_url: managedCheckoutRedirectUrl,
-					status: 'open',
-					provider: 'stripe'
-				}
+				checkout_intent_id: 'mci_test_123',
+				checkout_session_id: 'cs_test_123',
+				checkout_url: managedCheckoutRedirectUrl,
+				status: 'open',
+				provider: 'stripe'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -299,8 +291,7 @@ test('first-time managed checkout starts from the recommended license path with 
 test('managed checkout return with completed status resumes activation on the licensing route', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	const inactiveStatus = {
 		status: 'inactive',
@@ -318,14 +309,14 @@ test('managed checkout return with completed status resumes activation on the li
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			body: JSON.stringify(inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
 	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
 		route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			body: JSON.stringify(inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
@@ -345,13 +336,10 @@ test('managed checkout return with completed status resumes activation on the li
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					activation_ready: false,
-					status: 'pending_webhook',
-					checkout_intent_id: 'mci_test_123',
-					checkout_session_id: 'cs_test_123'
-				}
+				activation_ready: false,
+				status: 'pending_webhook',
+				checkout_intent_id: 'mci_test_123',
+				checkout_session_id: 'cs_test_123'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -370,8 +358,7 @@ test('managed checkout return with completed status resumes activation on the li
 test('managed checkout activation reloads the license before the forced billing refresh', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	const inactiveStatus = {
 		status: 'inactive',
@@ -404,10 +391,7 @@ test('managed checkout activation reloads the license before the forced billing 
 		requestSequence.push(checkoutCompleted ? 'license:active' : 'license:inactive');
 		return route.fulfill({
 			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: checkoutCompleted ? activeStatus : inactiveStatus
-			}),
+			body: JSON.stringify(checkoutCompleted ? activeStatus : inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		});
 	});
@@ -415,10 +399,7 @@ test('managed checkout activation reloads the license before the forced billing 
 		requestSequence.push(checkoutCompleted ? 'bootstrap:active' : 'bootstrap:inactive');
 		return route.fulfill({
 			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: checkoutCompleted ? activeStatus : inactiveStatus
-			}),
+			body: JSON.stringify(checkoutCompleted ? activeStatus : inactiveStatus),
 			headers: { 'content-type': 'application/json' }
 		});
 	});
@@ -440,13 +421,10 @@ test('managed checkout activation reloads the license before the forced billing 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					activation_ready: true,
-					status: 'active',
-					checkout_intent_id: 'mci_test_ready',
-					checkout_session_id: 'cs_test_ready'
-				}
+				activation_ready: true,
+				status: 'active',
+				checkout_intent_id: 'mci_test_ready',
+				checkout_session_id: 'cs_test_ready'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -462,48 +440,45 @@ test('managed checkout activation reloads the license before the forced billing 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'active',
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						site_limit: 1,
-						monthly_credit_quota: 1000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_checkout_ready',
-						status: 'active',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: '2030-02-01T00:00:00Z',
-						trial_end: null,
-						provider_price_id: 'price_starter'
-					},
-					credits: {
-						current_balance: 1000,
-						tier_quota: 1000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					}
+				provider: 'stripe',
+				license_status: 'active',
+				tier: {
+					code: 'starter',
+					display_name: 'Starter',
+					site_limit: 1,
+					monthly_credit_quota: 1000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_checkout_ready',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: '2030-02-01T00:00:00Z',
+					trial_end: null,
+					provider_price_id: 'price_starter'
+				},
+				credits: {
+					current_balance: 1000,
+					tier_quota: 1000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -526,25 +501,21 @@ test('managed checkout activation reloads the license before the forced billing 
 test('licensing screen uses billing-state credits without legacy credit refresh', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'free',
-					expires_at: null,
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-race',
-					site_id: 'site-race',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'free',
+				expires_at: null,
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-race',
+				site_id: 'site-race',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -558,46 +529,43 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'trial',
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						site_limit: 1,
-						monthly_credit_quota: 1000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_trial_123',
-						status: 'trialing',
-						quantity: 1,
-						cancel_at_period_end: false,
-						trial_end: '2030-01-15T00:00:00Z',
-						provider_price_id: 'price_starter'
-					},
-					credits: {
-						current_balance: 1000,
-						tier_quota: 1000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					}
+				provider: 'stripe',
+				license_status: 'trial',
+				tier: {
+					code: 'starter',
+					display_name: 'Starter',
+					site_limit: 1,
+					monthly_credit_quota: 1000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_trial_123',
+					status: 'trialing',
+					quantity: 1,
+					cancel_at_period_end: false,
+					trial_end: '2030-01-15T00:00:00Z',
+					provider_price_id: 'price_starter'
+				},
+				credits: {
+					current_balance: 1000,
+					tier_quota: 1000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -620,25 +588,50 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 });
 
 test('licensing screen explains the v2 managed billing boundary', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
+
+	await page.route('**/wp-json/sentient-forms/v1/settings', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				privacy_setup_profile: 'balanced',
+				privacy_setup_completed_at: '2030-01-01T00:00:00Z'
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'free',
-					expires_at: null,
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-v2-boundary',
-					site_id: 'site-v2-boundary',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'free',
+				expires_at: null,
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-v2-boundary',
+				site_id: 'site-v2-boundary',
+				site_url: 'https://example.test'
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'free',
+				expires_at: null,
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-v2-boundary',
+				site_id: 'site-v2-boundary',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -652,70 +645,67 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					service: 'sentient-managed',
-					status: 'active',
-					site_id: 'site-v2-boundary',
-					license_id: 'lic-v2-boundary',
-					plan: {
+				service: 'sentient-managed',
+				status: 'active',
+				site_id: 'site-v2-boundary',
+				license_id: 'lic-v2-boundary',
+				plan: {
+					code: 'pro',
+					display_name: 'Pro',
+					site_limit: 1,
+					monthly_credit_quota: 3000
+				},
+				account: {
+					license_status: 'active',
+					tier: {
 						code: 'pro',
 						display_name: 'Pro',
 						site_limit: 1,
 						monthly_credit_quota: 3000
-					},
-					account: {
-						license_status: 'active',
-						tier: {
-							code: 'pro',
-							display_name: 'Pro',
-							site_limit: 1,
-							monthly_credit_quota: 3000
-						}
+					}
+				},
+				billing: {
+					provider: 'stripe',
+					customer_id: 'cus_v2_boundary',
+					managed_enabled: true,
+					subscription: {
+						provider_subscription_id: 'sub_v2_boundary',
+						status: 'active',
+						quantity: 2,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_v2_pro'
+					}
+				},
+				allocation: {
+					seat_quantity: 2,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				managed_usage: {
+					execution_count: 8,
+					succeeded_count: 7,
+					failed_count: 1,
+					token_usage: {
+						input_tokens: 1234,
+						output_tokens: 567,
+						total_tokens: 1801
 					},
 					billing: {
-						provider: 'stripe',
-						customer_id: 'cus_v2_boundary',
-						managed_enabled: true,
-						subscription: {
-							provider_subscription_id: 'sub_v2_boundary',
-							status: 'active',
-							quantity: 2,
-							cancel_at_period_end: false,
-							current_period_start: '2030-01-01T00:00:00Z',
-							current_period_end: '2030-02-01T00:00:00Z',
-							trial_end: null,
-							provider_price_id: 'price_v2_pro'
-						}
-					},
-					allocation: {
-						seat_quantity: 2,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					managed_usage: {
-						execution_count: 8,
-						succeeded_count: 7,
-						failed_count: 1,
-						token_usage: {
-							input_tokens: 1234,
-							output_tokens: 567,
-							total_tokens: 1801
-						},
-						billing: {
-							billed_amount_microusd: 12500,
-							currency: 'USD'
-						}
-					},
-					billing_boundary: {
-						direct_openrouter_billed_by_sentient: false,
-						managed_proxy_billed_by_sentient: true
+						billed_amount_microusd: 12500,
+						currency: 'USD'
 					}
+				},
+				billing_boundary: {
+					direct_openrouter_billed_by_sentient: false,
+					managed_proxy_billed_by_sentient: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -747,25 +737,21 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 });
 
 test('starter and pro subscriptions do not expose purchasable top-ups', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'pro',
-					expires_at: null,
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-pro-no-top-up',
-					site_id: 'site-pro-no-top-up',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'pro',
+				expires_at: null,
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-pro-no-top-up',
+				site_id: 'site-pro-no-top-up',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -781,42 +767,39 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'active',
-					tier: {
-						code: 'pro',
-						display_name: 'Pro',
-						site_limit: 1,
-						monthly_credit_quota: 3000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_pro_no_top_up',
-						status: 'active',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: '2030-02-01T00:00:00Z',
-						trial_end: null,
-						provider_price_id: 'price_test_pro'
-					},
-					credits: {
-						current_balance: 2800,
-						tier_quota: 3000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					}
+				provider: 'stripe',
+				license_status: 'active',
+				tier: {
+					code: 'pro',
+					display_name: 'Pro',
+					site_limit: 1,
+					monthly_credit_quota: 3000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_pro_no_top_up',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: '2030-02-01T00:00:00Z',
+					trial_end: null,
+					provider_price_id: 'price_test_pro'
+				},
+				credits: {
+					current_balance: 2800,
+					tier_quota: 3000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -836,8 +819,7 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 test('business subscriptions expose canonical top-up packs and send pack code', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	let topUpRequests = 0;
 
@@ -845,18 +827,15 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'business',
-					expires_at: null,
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-business-top-up',
-					site_id: 'site-business-top-up',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'business',
+				expires_at: null,
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-business-top-up',
+				site_id: 'site-business-top-up',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -869,42 +848,39 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'active',
-					tier: {
-						code: 'business',
-						display_name: 'Business',
-						site_limit: 1,
-						monthly_credit_quota: 10000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_business_top_up',
-						status: 'active',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: '2030-02-01T00:00:00Z',
-						trial_end: null,
-						provider_price_id: 'price_test_business'
-					},
-					credits: {
-						current_balance: 9200,
-						tier_quota: 10000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					}
+				provider: 'stripe',
+				license_status: 'active',
+				tier: {
+					code: 'business',
+					display_name: 'Business',
+					site_limit: 1,
+					monthly_credit_quota: 10000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_business_top_up',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: '2030-02-01T00:00:00Z',
+					trial_end: null,
+					provider_price_id: 'price_test_business'
+				},
+				credits: {
+					current_balance: 9200,
+					tier_quota: 10000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -923,14 +899,11 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					session_id: 'cs_business_top_up',
-					checkout_url: businessTopUpRedirectUrl,
-					customer_id: 'cus_business_top_up',
-					top_up_credits: 5000,
-					pack_code: 'top_up_medium'
-				}
+				session_id: 'cs_business_top_up',
+				checkout_url: businessTopUpRedirectUrl,
+				customer_id: 'cus_business_top_up',
+				top_up_credits: 5000,
+				pack_code: 'top_up_medium'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -955,8 +928,7 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 });
 
 test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	let portalAttempts = 0;
 
@@ -964,18 +936,15 @@ test('existing subscriptions use subscription update portal for plan changes', a
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'trial',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'starter',
-					expires_at: '2030-01-15T00:00:00Z',
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-trial-next-cycle',
-					site_id: 'site-trial-next-cycle',
-					site_url: 'https://example.test'
-				}
+				status: 'trial',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'starter',
+				expires_at: '2030-01-15T00:00:00Z',
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-trial-next-cycle',
+				site_id: 'site-trial-next-cycle',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -989,48 +958,45 @@ test('existing subscriptions use subscription update portal for plan changes', a
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'trial',
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						site_limit: 1,
-						monthly_credit_quota: 1000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_trial_next_cycle_123',
-						status: 'trialing',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: null,
-						trial_end: '2030-01-15T00:00:00Z',
-						provider_price_id: 'price_test_starter'
-					},
-					credits: {
-						current_balance: 1200,
-						tier_quota: 1000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					}
+				provider: 'stripe',
+				license_status: 'trial',
+				tier: {
+					code: 'starter',
+					display_name: 'Starter',
+					site_limit: 1,
+					monthly_credit_quota: 1000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_trial_next_cycle_123',
+					status: 'trialing',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: null,
+					trial_end: '2030-01-15T00:00:00Z',
+					provider_price_id: 'price_test_starter'
+				},
+				credits: {
+					current_balance: 1200,
+					tier_quota: 1000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -1058,12 +1024,9 @@ test('existing subscriptions use subscription update portal for plan changes', a
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					session_id: 'bps_plan_management_123',
-					portal_url: planManagementPortalUrl,
-					customer_id: 'cus_test_123'
-				}
+				session_id: 'bps_plan_management_123',
+				portal_url: planManagementPortalUrl,
+				customer_id: 'cus_test_123'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -1089,8 +1052,7 @@ test('existing subscriptions use subscription update portal for plan changes', a
 test('larger subscriptions use the same subscription update portal for downgrades', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	let portalAttempts = 0;
 
@@ -1098,18 +1060,15 @@ test('larger subscriptions use the same subscription update portal for downgrade
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'pro',
-					expires_at: '2030-02-01T00:00:00Z',
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-pro-downgrade',
-					site_id: 'site-pro-downgrade',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'pro',
+				expires_at: '2030-02-01T00:00:00Z',
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-pro-downgrade',
+				site_id: 'site-pro-downgrade',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -1123,48 +1082,45 @@ test('larger subscriptions use the same subscription update portal for downgrade
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					license_status: 'active',
-					tier: {
-						code: 'pro',
-						display_name: 'Pro',
-						site_limit: 1,
-						monthly_credit_quota: 3000
-					},
-					subscription: {
-						provider_subscription_id: 'sub_pro_downgrade_123',
-						status: 'active',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: '2030-02-01T00:00:00Z',
-						trial_end: null,
-						provider_price_id: 'price_test_pro'
-					},
-					credits: {
-						current_balance: 2800,
-						tier_quota: 3000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					}
+				provider: 'stripe',
+				license_status: 'active',
+				tier: {
+					code: 'pro',
+					display_name: 'Pro',
+					site_limit: 1,
+					monthly_credit_quota: 3000
+				},
+				subscription: {
+					provider_subscription_id: 'sub_pro_downgrade_123',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: '2030-02-01T00:00:00Z',
+					trial_end: null,
+					provider_price_id: 'price_test_pro'
+				},
+				credits: {
+					current_balance: 2800,
+					tier_quota: 3000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -1188,12 +1144,9 @@ test('larger subscriptions use the same subscription update portal for downgrade
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					session_id: 'bps_plan_downgrade_123',
-					portal_url: planDowngradePortalUrl,
-					customer_id: 'cus_test_123'
-				}
+				session_id: 'bps_plan_downgrade_123',
+				portal_url: planDowngradePortalUrl,
+				customer_id: 'cus_test_123'
 			}),
 			headers: { 'content-type': 'application/json' }
 		});
@@ -1208,8 +1161,7 @@ test('larger subscriptions use the same subscription update portal for downgrade
 });
 
 test('licensing billing error state maps portal failures to actionable copy', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	let portalAttempts = 0;
 
@@ -1217,18 +1169,15 @@ test('licensing billing error state maps portal failures to actionable copy', as
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					status: 'active',
-					license_key_masked: 'LIC-****-****-****',
-					proxy_key_present: true,
-					tier: 'starter',
-					expires_at: '2030-01-01T00:00:00Z',
-					last_synced: '2030-01-01T00:00:00Z',
-					license_id: 'lic-portal',
-					site_id: 'site-portal',
-					site_url: 'https://example.test'
-				}
+				status: 'active',
+				license_key_masked: 'LIC-****-****-****',
+				proxy_key_present: true,
+				tier: 'starter',
+				expires_at: '2030-01-01T00:00:00Z',
+				last_synced: '2030-01-01T00:00:00Z',
+				license_id: 'lic-portal',
+				site_id: 'site-portal',
+				site_url: 'https://example.test'
 			}),
 			headers: { 'content-type': 'application/json' }
 		})
@@ -1242,42 +1191,39 @@ test('licensing billing error state maps portal failures to actionable copy', as
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				success: true,
-				data: {
-					provider: 'stripe',
-					customer_id: 'cus_test_123',
-					subscription: {
-						provider_subscription_id: 'sub_test_123',
-						status: 'active',
-						quantity: 1,
-						cancel_at_period_end: false,
-						current_period_start: '2030-01-01T00:00:00Z',
-						current_period_end: '2030-02-01T00:00:00Z',
-						trial_end: null,
-						provider_price_id: 'price_test_starter'
-					},
-					credits: {
-						current_balance: 1000,
-						tier_quota: 1000,
-						ledger_delta: 0,
-						top_up_available: 0
-					},
-					allocation: {
-						seat_quantity: 1,
-						tier_site_limit: 1,
-						allowed_sites: 1,
-						active_sites: 1,
-						over_limit: false,
-						blocked_new_activations: false,
-						grace_expires_at: null,
-						capacity_policy: 'tier_allowance_v2'
-					},
-					policy: {
-						paid_trial_days: 14,
-						free_plan_monthly_credits: 50,
-						free_plan_indefinite: true,
-						private_beta_trial_enabled: true
-					}
+				provider: 'stripe',
+				customer_id: 'cus_test_123',
+				subscription: {
+					provider_subscription_id: 'sub_test_123',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: '2030-01-01T00:00:00Z',
+					current_period_end: '2030-02-01T00:00:00Z',
+					trial_end: null,
+					provider_price_id: 'price_test_starter'
+				},
+				credits: {
+					current_balance: 1000,
+					tier_quota: 1000,
+					ledger_delta: 0,
+					top_up_available: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_allowance_v2'
+				},
+				policy: {
+					paid_trial_days: 14,
+					free_plan_monthly_credits: 50,
+					free_plan_indefinite: true,
+					private_beta_trial_enabled: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }

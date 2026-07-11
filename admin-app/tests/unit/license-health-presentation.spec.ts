@@ -147,7 +147,11 @@ describe('license-health-presentation', () => {
 	});
 
 	it('prefers tier display name over code and supports string tiers', () => {
-		expect(resolveTierDisplayName('pro')).toBe('pro');
+		expect(resolveTierDisplayName('starter')).toBe('Starter');
+		expect(resolveTierDisplayName('pro')).toBe('Pro');
+		expect(resolveTierDisplayName('business')).toBe('Business');
+		expect(resolveTierDisplayName('free')).toBe('Free');
+		expect(resolveTierDisplayName('partner_preview')).toBe('partner_preview');
 		expect(
 			resolveTierDisplayName({
 				code: 'starter',
@@ -160,7 +164,7 @@ describe('license-health-presentation', () => {
 				code: 'starter',
 				monthly_credit_quota: 100
 			})
-		).toBe('starter');
+		).toBe('Starter');
 		expect(resolveTierDisplayName(null)).toBeNull();
 	});
 });

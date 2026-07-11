@@ -10,8 +10,6 @@ if ( !defined( 'ABSPATH' ) )
 {
     exit;
 }
-
-
 /**
  * Class Sentient_Forms_Async_Handler
  * Handles asynchronous processing of actions
@@ -22,13 +20,26 @@ class Sentient_Forms_Async_Handler
 	private const BASE_BACKOFF_SECONDS = 60;
 	private const ACTION_SCHEDULER_GROUP = 'sentient_forms_async';
 	private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
-	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
-	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
-    private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
-    private const ADAPTER_COMPLETION_SETTING_KEYS = [
-        'spam_confidence_threshold',
-        'spam_result_display_mode',
-        'spam_indicators_display',
+    private const LOCAL_DIAGNOSTIC_SCHEMA = 'sentient_forms_local_async_diagnostic.v1';
+    private const LOCAL_DIAGNOSTIC_METADATA_KEYS = [
+        'action_id',
+        'action_code',
+        'execution_request_id',
+        'adapter',
+        'adapter_id',
+        'form_source',
+        'provider_path',
+        'provider',
+        'job_type',
+        'attempt',
+        'max_attempts',
+        'status',
+        'error_code',
+        'warning_code',
+        'reason',
+        'duration_ms',
+        'queue_wait_ms',
+        'run_at',
     ];
 
 	/**
@@ -142,176 +153,6 @@ class Sentient_Forms_Async_Handler
         }
     }
 
-    public function complete_remote_cps_async_success( string $execution_request_id, array $context, array $result ): void
-    {
-        $settings  = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
-        $action_id = sanitize_key( (string) ( $context['action_id'] ?? $context['central_action_id'] ?? 'sentient_forms_cps_async' ) );
-        if ( '' === $action_id )
-        {
-            $action_id = 'sentient_forms_cps_async';
-        }
-
-        $context = $this->normalize_context( $context, $action_id );
-        $this->handle_success(
-            [
-                'action_id'            => $action_id,
-                'data'                 => [],
-                'settings'             => $settings,
-                'execution_request_id' => $execution_request_id,
-                'context'              => $context,
-            ],
-            $result
-        );
-    }
-
-    public function complete_remote_cps_async_failure( string $execution_request_id, array $context, WP_Error $error ): void
-    {
-        $settings  = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
-        $action_id = sanitize_key( (string) ( $context['action_id'] ?? $context['central_action_id'] ?? 'sentient_forms_cps_async' ) );
-        if ( '' === $action_id )
-        {
-            $action_id = 'sentient_forms_cps_async';
-        }
-
-        $context                 = $this->normalize_context( $context, $action_id );
-        $context['attempt']      = 1;
-        $context['max_attempts'] = 1;
-        $this->handle_failure(
-            [
-                'action_id'            => $action_id,
-                'data'                 => [],
-                'settings'             => $settings,
-                'execution_request_id' => $execution_request_id,
-                'context'              => $context,
-            ],
-            $error
-        );
-    }
-
-	private function handle_success( array $job, array $result ): void
-	{
-		$this->log_success( $job['action_id'], $result );
-
-		$context_with_settings = $this->adapter_completion_context( $job );
-
-		if ( $this->should_record_provider_execution_event( $job ) )
-		{
-			$this->record_local_execution_event( $job, 'success', $result );
-		}
-
-		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
-		$this->notify_adapter_success( $context_with_settings, $result );
-		$this->emit_async_event( 'success', $job['context'], $result );
-		$this->record_managed_execution_event( $job, $result );
-		$this->maybe_schedule_evaluation_jobs( $job, $result );
-		$this->get_metadata_store()->update_status(
-			$job['context']['job_id'] ?? null,
-			'success',
-			[ 'completed_at' => time() ]
-		);
-		if ( ! empty( $job['execution_request_id'] ) )
-		{
-			$this->get_request_store()->mark_status( $job['execution_request_id'], 'success' );
-		}
-	}
-
-    /**
-     * Build the adapter-facing completion context while promoting only the
-     * allowlisted nested runtime settings required by Form Source adapters.
-     *
-     * @param array<string, mixed> $job Async job payload.
-     *
-     * @return array<string, mixed>
-     */
-    private function adapter_completion_context( array $job ): array
-    {
-        $context      = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $job_settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
-        $context      = array_merge( $context, $job_settings );
-        $settings     = isset( $job_settings['settings'] ) && is_array( $job_settings['settings'] )
-            ? $job_settings['settings']
-            : [];
-
-        foreach ( self::ADAPTER_COMPLETION_SETTING_KEYS as $key )
-        {
-            if ( array_key_exists( $key, $settings ) )
-            {
-                $context[ $key ] = $settings[ $key ];
-            }
-        }
-
-        return $context;
-    }
-
-    private function handle_failure( array $job, WP_Error $error ): void
-    {
-        $context = $job['context'];
-        $attempt = (int) $context['attempt'];
-        $max     = (int) $context['max_attempts'];
-
-		if ( $attempt < $max )
-		{
-			$context['attempt']    = $attempt + 1;
-			$context['last_error'] = $error->get_error_message();
-			$delay                 = $this->compute_backoff_delay( $attempt, $context );
-            $this->get_metadata_store()->update_status(
-                $context['job_id'] ?? null,
-                'retry_scheduled',
-                [
-                    'last_error' => $error->get_error_message(),
-                    'run_at'     => time() + $delay,
-                ]
-            );
-            unset( $context['job_id'] );
-			$this->schedule_action(
-				$job['action_id'],
-				$job['data'],
-				$job['settings'],
-				$context,
-				time() + $delay,
-			);
-			if ( ! empty( $job['execution_request_id'] ) )
-			{
-				$this->get_request_store()->mark_status( $job['execution_request_id'], 'queued', $error->get_error_message() );
-			}
-            $this->emit_async_event(
-                'retry_scheduled',
-                $context,
-                [
-                    'error' => $error->get_error_message(),
-                    'run_at' => time() + $delay,
-                ],
-            );
-            return;
-        }
-
-        $this->log_error( $error->get_error_message() );
-        do_action( 'sentient_forms_async_failure', $context, $error );
-        $this->notify_adapter_error( $context, $error );
-		if ( $this->should_record_provider_execution_event( $job ) )
-		{
-			$this->record_local_execution_event( $job, 'failed', null, $error );
-		}
-        $this->emit_async_event(
-            'failed',
-            $context,
-            [ 'error' => $error->get_error_message() ],
-        );
-		$this->get_metadata_store()->update_status(
-			$context['job_id'] ?? null,
-			'failed',
-			[
-				'last_error'   => $error->get_error_message(),
-				'completed_at' => time(),
-			]
-		);
-		if ( ! empty( $job['execution_request_id'] ) )
-		{
-			$this->get_request_store()->mark_status( $job['execution_request_id'], 'failed', $error->get_error_message() );
-		}
-        $this->record_managed_execution_failure_event( $job, $error );
-    }
-
 	private function should_record_provider_execution_event( array $job ): bool
 	{
 		$context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
@@ -391,20 +232,19 @@ class Sentient_Forms_Async_Handler
                 'evaluation_retry_scheduled',
                 $context,
                 [
-                    'error' => $error->get_error_message(),
-                    'run_at' => time() + $delay,
+                    'error_code' => sanitize_key( (string) $error->get_error_code() ),
+                    'run_at'     => time() + $delay,
                 ],
             );
             return;
         }
 
-        $this->log_error( $error->get_error_message() );
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
         $this->emit_async_event(
             'evaluation_failed',
             $context,
-            [ 'error' => $error->get_error_message() ],
+            [ 'error_code' => sanitize_key( (string) $error->get_error_code() ) ],
         );
 		$this->get_metadata_store()->update_status(
 			$context['job_id'] ?? null,
@@ -598,7 +438,6 @@ class Sentient_Forms_Async_Handler
 
 	private function normalize_context( array $context, string $action_id = '' ): array
 	{
-        $context        = $this->normalize_queued_form_source_identities( $context );
 		$config         = $this->get_retry_config();
 		$attempt        = isset( $context['attempt'] ) ? max( 1, (int) $context['attempt'] ) : 1;
 		$max_attempts   = isset( $context['max_attempts'] ) ? max( 1, (int) $context['max_attempts'] ) : $config['max_attempts'];
@@ -667,281 +506,9 @@ class Sentient_Forms_Async_Handler
         return $adapter instanceof Sentient_Forms_Async_Capable_Adapter_Interface ? $adapter : null;
     }
 
-    /**
-     * Resolve hierarchical settings for CPS-managed actions.
-     *
-     * Implements the waterfall resolution pattern:
-     * 1. Mapping-level settings (highest priority)
-     * 2. Form-level settings from wp_options
-     * 3. Action-level defaults from wp_options
-     *
-     * @param array $settings Mapping-level settings.
-     * @param array $context  Job context with form_source and form_id.
-     *
-     * @return array Resolved settings with inherited values merged in.
-     */
-    private function resolve_hierarchical_settings( array $settings, array $context ): array
-    {
-        $action_id = isset( $settings['central_action_id'] ) && is_scalar( $settings['central_action_id'] )
-            ? sanitize_key( (string) $settings['central_action_id'] )
-            : sanitize_key( (string) ( $context['action_id'] ?? '' ) );
-        if ( '' === $action_id )
-        {
-            return $settings;
-        }
-
-        $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = $this->normalize_provider_form_id( $context['form_id'] ?? '' );
-        $resolved    = $settings;
-
-        $action_defaults = $this->get_action_defaults_config( $action_id );
-        $form_config     = '' !== $form_id
-            ? $this->get_form_action_config( $form_source, $form_id, $action_id )
-            : [];
-
-        foreach ( [ 'model_selection', 'include_site_context', 'action_customization' ] as $field )
-        {
-            $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
-        }
-
-        if ( $this->is_spam_action_id( $action_id ) )
-        {
-            foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
-            {
-                $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
-            }
-
-            foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
-            {
-                $resolved = $this->merge_inherited_boolean_field( $resolved, $field, $form_config, $action_defaults );
-            }
-        }
-
-        return $resolved;
-    }
-
-    /**
-     * Load and normalize global action defaults for a specific action.
-     *
-     * @param string $action_id Action id.
-     *
-     * @return array<string, mixed>
-     */
-    private function get_action_defaults_config( string $action_id ): array
-    {
-        $config = get_option( self::ACTION_DEFAULTS_OPTION_PREFIX . sanitize_key( $action_id ), [] );
-
-        return $this->normalize_action_config_payload( $config );
-    }
-
-    /**
-     * Load and normalize form-level action config for a specific action.
-     *
-     * @param string $form_source Form source id.
-     * @param string $form_id     Provider-native form id.
-     * @param string $action_id   Action id.
-     *
-     * @return array<string, mixed>
-     */
-    private function get_form_action_config( string $form_source, string $form_id, string $action_id ): array
-    {
-        $configs = $this->get_form_action_config_options( $form_source, $form_id );
-
-        if ( ! is_array( $configs ) )
-        {
-            return [];
-        }
-
-        return $this->normalize_action_config_payload( $configs[ $action_id ] ?? [] );
-    }
-
     private function normalize_provider_form_id( mixed $form_id ): string
     {
         return Sentient_Forms_Provider_Form_Id_Keys::normalize( $form_id );
-    }
-
-    private function normalize_form_id_option_suffix( mixed $form_id ): string
-    {
-        return Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function get_form_action_config_options( string $form_source, mixed $form_id ): array
-    {
-        $source  = sanitize_key( $form_source );
-        $configs = get_option(
-            self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
-            null
-        );
-
-        if ( null === $configs )
-        {
-            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
-            {
-                $configs = get_option( self::FORM_ACTION_CONFIG_OPTION_PREFIX . $source . '_' . $suffix, null );
-                if ( null !== $configs )
-                {
-                    break;
-                }
-            }
-        }
-
-        return is_array( $configs ) ? $configs : [];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function get_form_actions_option( string $form_source, mixed $form_id ): array
-    {
-        $source  = sanitize_key( $form_source );
-        $actions = get_option(
-            'sentient_forms_actions_' . $source . '_' . $this->normalize_form_id_option_suffix( $form_id ),
-            null
-        );
-
-        if ( null === $actions )
-        {
-            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
-            {
-                $actions = get_option( 'sentient_forms_actions_' . $source . '_' . $suffix, null );
-                if ( null !== $actions )
-                {
-                    break;
-                }
-            }
-        }
-
-        return is_array( $actions ) ? $actions : [];
-    }
-
-    /**
-     * Normalize persisted action config payloads for runtime use.
-     *
-     * @param mixed $config Raw config value.
-     *
-     * @return array<string, mixed>
-     */
-    private function normalize_action_config_payload( $config ): array
-    {
-        if ( ! is_array( $config ) )
-        {
-            return [];
-        }
-
-        if ( empty( $config['model_selection'] ) && ! empty( $config['model_override'] ) && is_string( $config['model_override'] ) )
-        {
-            $config['model_selection'] = [
-                'primary'   => sanitize_text_field( $config['model_override'] ),
-                'backup'    => null,
-                'is_preset' => str_starts_with( (string) $config['model_override'], 'sf_' ),
-            ];
-        }
-
-        foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
-        {
-            if ( array_key_exists( $field, $config ) )
-            {
-                $config[ $field ] = rest_sanitize_boolean( $config[ $field ] );
-            }
-        }
-
-        return $config;
-    }
-
-    /**
-     * Merge a generic inheritable field into resolved settings when mapping scope does not define it.
-     *
-     * @param array<string, mixed> $resolved        Current resolved settings.
-     * @param string               $field           Field name.
-     * @param array<string, mixed> $form_config     Form-level config.
-     * @param array<string, mixed> $action_defaults Action-level defaults.
-     *
-     * @return array<string, mixed>
-     */
-    private function merge_inherited_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
-    {
-        if ( $this->has_inherited_value( $resolved, $field ) )
-        {
-            return $resolved;
-        }
-
-        if ( $this->has_inherited_value( $form_config, $field ) )
-        {
-            $resolved[ $field ] = $form_config[ $field ];
-            return $resolved;
-        }
-
-        if ( $this->has_inherited_value( $action_defaults, $field ) )
-        {
-            $resolved[ $field ] = $action_defaults[ $field ];
-        }
-
-        return $resolved;
-    }
-
-    /**
-     * Merge an inheritable boolean field into resolved settings when mapping scope does not define it.
-     *
-     * @param array<string, mixed> $resolved        Current resolved settings.
-     * @param string               $field           Field name.
-     * @param array<string, mixed> $form_config     Form-level config.
-     * @param array<string, mixed> $action_defaults Action-level defaults.
-     *
-     * @return array<string, mixed>
-     */
-    private function merge_inherited_boolean_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
-    {
-        if ( array_key_exists( $field, $resolved ) )
-        {
-            $resolved[ $field ] = rest_sanitize_boolean( $resolved[ $field ] );
-            return $resolved;
-        }
-
-        if ( array_key_exists( $field, $form_config ) )
-        {
-            $resolved[ $field ] = rest_sanitize_boolean( $form_config[ $field ] );
-            return $resolved;
-        }
-
-        if ( array_key_exists( $field, $action_defaults ) )
-        {
-            $resolved[ $field ] = rest_sanitize_boolean( $action_defaults[ $field ] );
-        }
-
-        return $resolved;
-    }
-
-    /**
-     * Determine whether a field contains a meaningful inherited value.
-     *
-     * @param array<string, mixed> $settings Settings array.
-     * @param string               $field    Field name.
-     *
-     * @return bool
-     */
-    private function has_inherited_value( array $settings, string $field ): bool
-    {
-        if ( ! array_key_exists( $field, $settings ) )
-        {
-            return false;
-        }
-
-        $value = $settings[ $field ];
-
-        if ( is_array( $value ) )
-        {
-            return ! empty( $value );
-        }
-
-        if ( is_string( $value ) )
-        {
-            return '' !== trim( $value );
-        }
-
-        return null !== $value;
     }
 
     /**
@@ -963,10 +530,13 @@ class Sentient_Forms_Async_Handler
      */
     public function init(): void
     {
-        // Register the action hook for processing actions
-        add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 5 );
         add_action( 'sentient_forms_evaluate_action', [ $this, 'process_evaluation' ], 10, 1 );
         add_action( self::LOCAL_MAPPING_HOOK, [ $this, 'process_local_mapping' ], 10, 1 );
+
+        if ( $this->plugin->get_logger()->is_enabled() )
+        {
+            add_action( 'sentient_forms_async_event', [ $this, 'write_local_diagnostic_event' ], 10, 1 );
+        }
 
         // Register the action hook for Action Scheduler
         if ( function_exists( 'as_schedule_single_action' ) )
@@ -999,80 +569,6 @@ class Sentient_Forms_Async_Handler
      *
      * @return bool Whether the action was scheduled.
      */
-    public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
-    {
-        // For CPS-managed actions, we don't require a local PHP action class.
-        // CPS-backed master and custom actions execute remotely, so scheduling can proceed.
-        $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
-        $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
-        
-        // Get the action instance (optional for CPS-managed actions)
-        $action = $this->plugin->get_action( $action_id );
-        if ( !$action && !$is_cps_managed_action )
-        {
-            return false;
-        }
-
-        $context['job_id'] = wp_generate_uuid4();
-
-        // Enforce runtime shape so stale local state cannot smuggle pricing hints.
-        $settings = $this->normalize_runtime_settings( $settings );
-
-        // CB-EXEC-003/004: Batch delay scheduling (pricing remains CPS-authoritative).
-        $batch_settings = $settings['batch_settings'] ?? null;
-        $batch_enabled  = ! empty( $batch_settings['enabled'] )
-            && $this->is_after_submission_batch_hook( $data['hook'] ?? ( $context['hook'] ?? '' ) );
-
-        if ( $batch_enabled )
-        {
-            $delay    = max( 10, (int) ( $batch_settings['delay_seconds'] ?? 60 ) );
-            $run_at   = $run_at ?? ( time() + $delay );
-
-            $context['batch_context'] = [
-                'batch_id' => wp_generate_uuid4(),
-                'delay'    => $delay,
-            ];
-        }
-
-        $payload = [
-            'action_id'            => $action_id,
-            'data'                 => $this->prepare_job_data( $data ),
-            'settings'             => $settings,
-            'execution_request_id' => $context['execution_request_id'] ?? null,
-            'context'              => $this->normalize_context(
-                array_merge(
-                    [
-                        'form_source' => $context['form_source'] ?? null,
-                        'job_type'    => $context['job_type'] ?? 'execution',
-                    ],
-                    $context,
-                ),
-                $action_id,
-            ),
-        ];
-
-        $run_at_ts = $run_at ?? time();
-        $scheduled = $this->enqueue_job(
-            'sentient_forms_process_action',
-            $payload,
-            $run_at_ts,
-        );
-
-        if ( $scheduled['scheduled'] )
-        {
-            $this->get_metadata_store()->record_job(
-                $payload['context']['job_id'],
-                'sentient_forms_process_action',
-                $payload,
-                $run_at_ts,
-                $scheduled['action_id'],
-                $this->get_scheduler_group(),
-            );
-        }
-
-        return $scheduled['scheduled'];
-    }
-
     /**
      * Schedule a local-first form mapping without storing raw form payloads in the queue.
      *
@@ -1135,7 +631,8 @@ class Sentient_Forms_Async_Handler
         );
 
         $attempt = (int) ( $job_context['attempt'] ?? 1 );
-        if ( $attempt <= 1 && $this->get_request_store()->should_block( $execution_request_id ) )
+        $rescheduling_existing_request = ! empty( $job_context['rescheduling_existing_request'] );
+        if ( $attempt <= 1 && ! $rescheduling_existing_request && $this->get_request_store()->should_block( $execution_request_id ) )
         {
             return false;
         }
@@ -1151,7 +648,7 @@ class Sentient_Forms_Async_Handler
         ];
         $payload_digest = $this->local_mapping_payload_digest( $payload );
 
-        $recorded = $this->get_request_store()->record(
+        $this->get_request_store()->record(
             $execution_request_id,
             [
                 'action_id'      => 'local_mapping_' . $local_mapping_id,
@@ -1160,10 +657,6 @@ class Sentient_Forms_Async_Handler
                 'payload_digest' => $payload_digest,
             ]
         );
-        if ( true !== $recorded )
-        {
-            return false;
-        }
 
         $this->record_local_execution_event( $payload, 'queued' );
 
@@ -1215,8 +708,6 @@ class Sentient_Forms_Async_Handler
         {
             $payload = $payload[0];
         }
-
-        $payload = $this->normalize_queued_form_source_identities( $payload );
 
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
         $context = $this->normalize_context( $context, 'sentient_forms_local_mapping' );
@@ -1397,22 +888,6 @@ class Sentient_Forms_Async_Handler
         );
 
         do_action( 'sentient_forms_async_success', $context, $result );
-        try
-        {
-            $this->notify_adapter_success( $context, $result );
-        } catch ( Throwable $throwable )
-        {
-            $this->plugin->get_logger()->error(
-                'async adapter success finalization failed',
-                [
-                    'form_source'    => sanitize_key( (string) ( $context['form_source'] ?? '' ) ),
-                    'form_id'       => sanitize_text_field( (string) ( $context['form_id'] ?? '' ) ),
-                    'entry_id'      => sanitize_text_field( (string) ( $context['entry_id'] ?? '' ) ),
-                    'mapping_id'    => sanitize_key( (string) ( $context['mapping_id'] ?? $context['local_mapping_id'] ?? $context['action_id'] ?? '' ) ),
-                    'exception_type' => get_class( $throwable ),
-                ]
-            );
-        }
         $this->emit_async_event( 'local_mapping_success', $context, $result );
 
         $this->get_metadata_store()->update_status(
@@ -1462,10 +937,6 @@ class Sentient_Forms_Async_Handler
             );
 
             unset( $context['job_id'] );
-            if ( '' !== $execution_request_id )
-            {
-                $this->get_request_store()->mark_status( $execution_request_id, 'retry_pending', $error->get_error_message() );
-            }
             $scheduled = $this->schedule_local_mapping(
                 absint( $payload['local_mapping_id'] ?? 0 ),
                 [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
@@ -1484,8 +955,8 @@ class Sentient_Forms_Async_Handler
                     'local_mapping_retry_scheduled',
                     $context,
                     [
-                        'error'  => $error->get_error_message(),
-                        'run_at' => $run_at,
+                        'error_code' => sanitize_key( (string) $error->get_error_code() ),
+                        'run_at'     => $run_at,
                     ]
                 );
                 return;
@@ -1512,7 +983,7 @@ class Sentient_Forms_Async_Handler
         $this->emit_async_event(
             'local_mapping_failed',
             $context,
-            [ 'error' => $error->get_error_message() ],
+            [ 'error_code' => sanitize_key( (string) $error->get_error_code() ) ],
         );
     }
 
@@ -1539,10 +1010,11 @@ class Sentient_Forms_Async_Handler
         );
         if ( '' !== $execution_request_id )
         {
-            $this->get_request_store()->mark_status( $execution_request_id, 'dependency_wait', $reason );
+            $this->get_request_store()->mark_status( $execution_request_id, 'queued', $reason );
         }
 
         unset( $context['job_id'] );
+        $context['rescheduling_existing_request'] = true;
         $scheduled = $this->schedule_local_mapping(
             absint( $payload['local_mapping_id'] ?? 0 ),
             [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
@@ -1684,13 +1156,6 @@ class Sentient_Forms_Async_Handler
     private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): void
     {
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
-        $preflight_effect_outcomes = isset( $context['native_effect_outcomes'] ) && is_array( $context['native_effect_outcomes'] )
-            ? $context['native_effect_outcomes']
-            : [];
-        $native_effect_outcomes = Sentient_Forms_Native_Effect_Outcomes::merge(
-            is_array( $result ) ? Sentient_Forms_Native_Effect_Outcomes::from_execution_result( $result ) : [],
-            $preflight_effect_outcomes
-        );
         $execution_request_id = sanitize_text_field(
             (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
         );
@@ -1698,6 +1163,13 @@ class Sentient_Forms_Async_Handler
         {
             return;
         }
+
+        $provider_identity = Sentient_Forms_Execution_Identity::resolve_provider_identity(
+            $payload,
+            $context,
+            $result,
+            $execution_request_id,
+        );
 
         $event = [
             'execution_request_id' => $execution_request_id,
@@ -1709,8 +1181,8 @@ class Sentient_Forms_Async_Handler
             'form_id'              => $payload['form_id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry_id'] ?? $context['entry_id'] ?? null,
             'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
-            'provider'             => $result['provider'] ?? $context['provider'] ?? 'openrouter',
-            'model'                => $result['model'] ?? $context['model'] ?? null,
+            'provider'             => $provider_identity['provider'],
+            'model'                => $provider_identity['model'],
             'status'               => $status,
             'payload_digest'       => $this->local_mapping_payload_digest( $payload ),
         ];
@@ -1721,18 +1193,10 @@ class Sentient_Forms_Async_Handler
             if ( is_array( $stored_result ) )
             {
                 $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $stored_result );
-                if ( [] !== $native_effect_outcomes )
-                {
-                    $stored_result['native_effect_outcomes'] = $native_effect_outcomes;
-                }
             }
             $event['result_json']      = $stored_result;
             $event['token_usage_json'] = is_array( $result['result']['usage'] ?? null ) ? $result['result']['usage'] : null;
         }
-        elseif ( [] !== $native_effect_outcomes )
-        {
-            $event['result_json'] = [ 'native_effect_outcomes' => $native_effect_outcomes ];
-        }
 
         if ( $error )
         {
@@ -1741,205 +1205,6 @@ class Sentient_Forms_Async_Handler
         }
 
         $this->get_execution_events_repository()->record( $event );
-    }
-
-    private function record_managed_execution_event( array $job, array $result, ?WP_Error $error = null ): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
-        {
-            return;
-        }
-
-        if ( ! $this->should_record_managed_execution_event( $job ) )
-        {
-            return;
-        }
-
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $execution_request_id = sanitize_text_field(
-            (string) ( $job['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
-        );
-        if ( '' === $execution_request_id )
-        {
-            return;
-        }
-
-        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
-        $provider = sanitize_key( (string) ( $result['provider'] ?? $context['provider'] ?? 'sentient_managed' ) );
-        $status   = $error ? 'failed' : sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) );
-        $identity = $this->managed_execution_action_identity( $job );
-        $identity_payload = array_merge(
-            $payload,
-            [
-                'central_action_id'  => $identity['central_action_id'] ?? null,
-                'action_id'          => $identity['action_id'] ?? null,
-                'action_name_label'  => $identity['action_name_label'] ?? null,
-            ]
-        );
-        if ( $error )
-        {
-            $result['status']        = 'failed';
-            $result['error_code']    = $error->get_error_code();
-            $result['error_message'] = $error->get_error_message();
-        }
-        $result_payload = isset( $result['result'] ) && is_array( $result['result'] )
-            ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result['result'], $provider )
-            : [];
-        $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
-            array_merge(
-                [
-                    'provider' => $provider,
-                    'status'   => $status,
-                ],
-                $result,
-                $identity,
-                $result_payload
-            )
-        );
-
-        $event = [
-            'execution_request_id' => $execution_request_id,
-            'mapping_id'           => $this->managed_execution_numeric_mapping_id( $job ),
-            'mapping_key'          => $this->resolve_event_mapping_key( $payload, $context ),
-            'action_code'          => $this->resolve_event_action_code( $identity_payload, $context ),
-            'action_label'         => $this->resolve_event_action_label( $identity_payload, $context ),
-            'form_source'          => $this->managed_execution_form_source( $job ),
-            'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
-            'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
-            'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
-            'provider'             => $provider,
-            'model'                => $result['model'] ?? $context['model'] ?? null,
-            'status'               => $status,
-            'result_json'          => $stored_result,
-            'payload_digest'       => $this->managed_execution_payload_digest( $job ),
-        ];
-
-        if ( $error )
-        {
-            $event['error_code']    = $error->get_error_code();
-            $event['error_message'] = $error->get_error_message();
-        }
-
-        $token_usage = $this->managed_execution_token_usage( $result );
-        if ( null !== $token_usage )
-        {
-            $event['token_usage_json'] = $token_usage;
-        }
-
-        $this->get_execution_events_repository()->record( $event );
-    }
-
-    private function record_managed_execution_failure_event( array $job, WP_Error $error ): void
-    {
-        $this->record_managed_execution_event(
-            $job,
-            [
-                'provider' => 'sentient_managed',
-                'status'   => 'failed',
-            ],
-            $error
-        );
-    }
-
-    private function record_managed_execution_skip_event( array $job, string $reason, ?string $reason_code = null ): void
-    {
-        $result = [
-            'provider'    => 'sentient_managed',
-            'status'      => 'skipped',
-            'skip_reason' => $reason,
-        ];
-
-        if ( null !== $reason_code && '' !== $reason_code )
-        {
-            $result['skip_reason_code'] = $reason_code;
-        }
-
-        $this->record_managed_execution_event( $job, $result );
-    }
-
-    private function should_record_managed_execution_event( array $job ): bool
-    {
-        if ( ! $this->is_cps_managed_job( $job ) )
-        {
-            return false;
-        }
-
-        return 'gravity_forms' !== $this->managed_execution_form_source( $job );
-    }
-
-    private function is_cps_managed_job( array $job ): bool
-    {
-        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
-        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $action_type_indicator = sanitize_key(
-            (string) ( $settings['action_type_indicator'] ?? $context['action_type_indicator'] ?? '' )
-        );
-
-        return in_array( $action_type_indicator, [ 'master', 'custom' ], true );
-    }
-
-    private function managed_execution_form_source( array $job ): string
-    {
-        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $form_source = sanitize_key(
-            (string) ( $context['form_source'] ?? $context['adapter_id'] ?? $payload['form_source'] ?? 'gravity_forms' )
-        );
-
-        return str_replace( '-', '_', $form_source );
-    }
-
-    private function managed_execution_numeric_mapping_id( array $job ): int
-    {
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        foreach ( [ 'local_form_mapping_id', 'local_mapping_id', 'mapping_id' ] as $key )
-        {
-            if ( isset( $context[ $key ] ) && is_scalar( $context[ $key ] ) && preg_match( '/^\d+$/', (string) $context[ $key ] ) )
-            {
-                return absint( $context[ $key ] );
-            }
-        }
-
-        return 0;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function managed_execution_action_identity( array $job ): array
-    {
-        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
-        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-
-        $central_action_id = $this->first_sanitized_key(
-            [
-                $settings['central_action_id'] ?? null,
-                $context['central_action_id'] ?? null,
-                $context['action_id'] ?? null,
-                $job['action_id'] ?? null,
-            ]
-        );
-        $action_label = $this->first_sanitized_text(
-            [
-                $settings['action_name_label'] ?? null,
-                $context['action_name_label'] ?? null,
-                $settings['display_name'] ?? null,
-                $settings['label'] ?? null,
-            ]
-        );
-
-        $identity = [];
-        if ( '' !== $central_action_id )
-        {
-            $identity['central_action_id'] = $central_action_id;
-            $identity['action_id']         = $central_action_id;
-        }
-        if ( '' !== $action_label )
-        {
-            $identity['action_name_label'] = $action_label;
-        }
-
-        return $identity;
     }
 
     private function first_sanitized_key( array $candidates ): string
@@ -2027,47 +1292,6 @@ class Sentient_Forms_Async_Handler
         return '' !== $action_label ? $action_label : null;
     }
 
-    private function managed_execution_payload_digest( array $job ): string
-    {
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
-
-        return hash(
-            'sha256',
-            wp_json_encode(
-                [
-                    'execution_request_id' => $job['execution_request_id'] ?? $context['execution_request_id'] ?? null,
-                    'action_id'            => $job['action_id'] ?? $context['action_id'] ?? null,
-                    'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? null,
-                    'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
-                    'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
-                    'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
-                ]
-            )
-        );
-    }
-
-    private function managed_execution_token_usage( array $result ): ?array
-    {
-        foreach (
-            [
-                $result['usage'] ?? null,
-                $result['token_usage'] ?? null,
-                $result['result']['usage'] ?? null,
-                $result['result_data']['usage'] ?? null,
-                $result['meta']['usage'] ?? null,
-            ] as $candidate
-        )
-        {
-            if ( is_array( $candidate ) )
-            {
-                return $candidate;
-            }
-        }
-
-        return null;
-    }
-
     private function resolve_submission_uuid( array $payload, array $context ): ?string
     {
         foreach (
@@ -2101,180 +1325,6 @@ class Sentient_Forms_Async_Handler
         return new Sentient_Forms_Execution_Events_Repository( $wpdb );
     }
 
-    /**
-     * Normalize mutable runtime settings before dispatch.
-     *
-     * @param array $settings Raw linkage settings.
-     * @return array
-     */
-    private function normalize_runtime_settings( array $settings ): array
-    {
-        if ( !isset( $settings['batch_settings'] ) || !is_array( $settings['batch_settings'] ) )
-        {
-            return $settings;
-        }
-
-        $settings['batch_settings'] = [
-            'enabled'       => ! empty( $settings['batch_settings']['enabled'] ),
-            'delay_seconds' => max( 10, min( 3600, (int) ( $settings['batch_settings']['delay_seconds'] ?? 60 ) ) ),
-            'max_wait_seconds' => max( 43200, min( 604800, (int) ( $settings['batch_settings']['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
-        ];
-
-        return $settings;
-    }
-
-    private function is_after_submission_batch_hook( mixed $hook ): bool
-    {
-        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
-    }
-
-    private function prepare_job_data( array $data ): array
-    {
-        $form = [];
-        if ( isset( $data['form'] ) && is_array( $data['form'] ) )
-        {
-            if ( isset( $data['form']['id'] ) && '' !== $data['form']['id'] )
-            {
-                $form['id'] = (string) $data['form']['id'];
-            }
-
-            if ( isset( $data['form']['title'] ) )
-            {
-                $form['title'] = sanitize_text_field( (string) $data['form']['title'] );
-            }
-
-            $fields = $this->sanitize_job_form_fields( $data['form']['fields'] ?? [] );
-            if ( [] !== $fields )
-            {
-                $form['fields'] = $fields;
-            }
-        }
-
-        $entry = [];
-        if ( isset( $data['entry'] ) && is_array( $data['entry'] ) )
-        {
-            foreach ( $data['entry'] as $key => $value )
-            {
-                $sanitized_value = $this->sanitize_job_data_value( $value );
-                if ( null !== $sanitized_value )
-                {
-                    $entry[ (string) $key ] = $sanitized_value;
-                }
-            }
-        }
-
-        $payload = [
-            'form'        => $form,
-            'entry'       => $entry,
-            'hook'        => isset( $data['hook'] ) ? sanitize_text_field( (string) $data['hook'] ) : 'gform_after_submission',
-            'form_source' => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : 'gravity_forms',
-        ];
-
-        if ( isset( $data['source_url'] ) )
-        {
-            $payload['source_url'] = esc_url_raw( (string) $data['source_url'] );
-        }
-
-        if ( isset( $data['validation_result'] ) && is_array( $data['validation_result'] ) )
-        {
-            $payload['validation_result'] = [
-                'is_valid' => (bool) ( $data['validation_result']['is_valid'] ?? true ),
-                'form'     => [
-                    'failed_validation'  => ! empty( $data['validation_result']['form']['failed_validation'] ),
-                    'validation_message' => isset( $data['validation_result']['form']['validation_message'] )
-                        ? sanitize_text_field( (string) $data['validation_result']['form']['validation_message'] )
-                        : '',
-                ],
-            ];
-        }
-
-        return $payload;
-    }
-
-    /**
-     * @param mixed $fields Raw form-source field manifest rows.
-     *
-     * @return array<int, array<string, mixed>>
-     */
-    private function sanitize_job_form_fields( mixed $fields ): array
-    {
-        if ( ! is_array( $fields ) )
-        {
-            return [];
-        }
-
-        $sanitized = [];
-        foreach ( $fields as $field )
-        {
-            if ( ! is_array( $field ) )
-            {
-                continue;
-            }
-
-            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] )
-                ? sanitize_text_field( (string) $field['id'] )
-                : '';
-            if ( '' === $field_id )
-            {
-                continue;
-            }
-
-            $row = [
-                'id' => $field_id,
-            ];
-
-            foreach ( [ 'label', 'adminLabel', 'type', 'visibility', 'field_id_scope', 'field_id_ambiguity_reason' ] as $key )
-            {
-                if ( isset( $field[ $key ] ) && is_scalar( $field[ $key ] ) )
-                {
-                    $row[ $key ] = sanitize_text_field( (string) $field[ $key ] );
-                }
-            }
-
-            foreach ( [ 'storage_eligible', 'file_reference_eligible', 'required', 'field_id_ambiguous' ] as $key )
-            {
-                if ( array_key_exists( $key, $field ) )
-                {
-                    $row[ $key ] = (bool) $field[ $key ];
-                }
-            }
-
-            $sanitized[] = $row;
-        }
-
-        return $sanitized;
-    }
-
-    private function sanitize_job_data_value( mixed $value ): mixed
-    {
-        if ( is_scalar( $value ) )
-        {
-            return sanitize_text_field( (string) $value );
-        }
-
-        if ( ! is_array( $value ) )
-        {
-            return null;
-        }
-
-        $sanitized = [];
-        foreach ( $value as $key => $nested_value )
-        {
-            if ( ! is_int( $key ) && ! is_string( $key ) )
-            {
-                continue;
-            }
-
-            $sanitized_value = $this->sanitize_job_data_value( $nested_value );
-            if ( null !== $sanitized_value )
-            {
-                $sanitized[ $key ] = $sanitized_value;
-            }
-        }
-
-        return $sanitized;
-    }
-
     public function dispatch_evaluation( array $job ): bool
     {
         $payload_data = isset( $job['payload'] ) && is_array( $job['payload'] ) ? $job['payload'] : [];
@@ -2295,6 +1345,7 @@ class Sentient_Forms_Async_Handler
         if ( $request_store->should_block( $evaluation_request_id, 'evaluation' ) )
         {
             // Treat duplicates as a no-op so health dashboards stay green, but keep the event visible.
+            $request_store->mark_status( $evaluation_request_id, 'skipped', __( 'Duplicate evaluation request blocked', 'sentient-forms' ), 'evaluation' );
             $this->emit_async_event(
                 'evaluation_duplicate_blocked',
                 array_merge(
@@ -2312,7 +1363,7 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $recorded = $request_store->record(
+        $request_store->record(
             $evaluation_request_id,
             [
                 'action_id'      => $job['action_id'] ?? $job['context']['action_id'] ?? '',
@@ -2322,12 +1373,10 @@ class Sentient_Forms_Async_Handler
                 'payload_digest' => $payload_data ? wp_hash( wp_json_encode( $payload_data ) ) : null,
             ]
         );
-        if ( true !== $recorded )
-        {
-            return false;
-        }
 
         $job_context = array_merge(
+            $job['context'] ?? [],
+            $job['settings'] ?? [],
             [
                 'adapter_id'         => $adapter_id,
                 'entry_id'           => $job['entry_id'] ?? $job['context']['entry_id'] ?? null,
@@ -2336,11 +1385,7 @@ class Sentient_Forms_Async_Handler
                 'job_type'           => 'evaluation',
                 'evaluation_payload' => $payload_data,
                 'evaluation_request_id' => $evaluation_request_id,
-            ],
-            array_merge(
-                $job['context'] ?? [],
-                $job['settings'] ?? []
-            )
+            ]
         );
 
         $job_context['job_id'] = wp_generate_uuid4();
@@ -2423,209 +1468,6 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
-     * Process an action
-     *
-     * @param string $action_id The action ID.
-     * @param array  $data      The data to process.
-     * @param array  $settings  The action settings.
-     *
-     * @return void
-     */
-    public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
-    {
-        $data    = $this->normalize_queued_action_data( $data );
-        $context = $this->normalize_context( $context, $action_id );
-
-        $job = [
-            'action_id'            => $action_id,
-            'data'                 => $data,
-            'settings'             => $settings,
-            'execution_request_id' => $execution_request_id,
-            'context'              => $context,
-        ];
-
-        $dependency_gate = $this->evaluate_dependency_gate( $job );
-        if ( 'skip' === $dependency_gate['state'] )
-        {
-            $this->handle_dependency_skip(
-                $job,
-                $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' ),
-                $dependency_gate['reason_code'] ?? null
-            );
-            $this->sweep_stale_async_rows();
-            return;
-        }
-
-        if ( 'wait' === $dependency_gate['state'] )
-        {
-            $this->requeue_action_waiting_on_dependencies(
-                $job,
-                (int) ( $dependency_gate['delay_seconds'] ?? 10 ),
-                $dependency_gate['reason'] ?? __( 'Waiting for dependency completion', 'sentient-forms' ),
-            );
-            $this->sweep_stale_async_rows();
-            return;
-        }
-
-		$this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
-		if ( $execution_request_id )
-		{
-			$this->get_request_store()->mark_status( $execution_request_id, 'running' );
-		}
-
-        try
-        {
-            $action = $this->plugin->get_action( $action_id );
-            $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
-            $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
-            
-            if ( !$action && !$is_cps_managed_action )
-            {
-                $this->handle_failure(
-                    $job,
-                    new WP_Error(
-                        'sentient_forms_missing_action',
-                        sprintf(
-                            /* translators: %s: action id. */
-                            __( 'Action %s not found.', 'sentient-forms' ),
-                            $action_id
-                        ),
-                    ),
-                );
-                return;
-            }
-
-            $entry_id = $data['entry']['id'] ?? $context['entry_id'] ?? null;
-            $form_id  = $data['form']['id'] ?? $context['form_id'] ?? null;
-
-            // For CPS-managed actions without a local handler, execute via Action Executor.
-            if ( !$action && $is_cps_managed_action )
-            {
-                // Apply hierarchical settings resolution (form-level merging)
-                $resolved_settings = $this->resolve_hierarchical_settings( $settings, $context );
-
-                try
-                {
-                    $executor = $this->plugin->get_action_executor();
-                    $result = $executor->execute(
-                        $resolved_settings['central_action_id'] ?? $action_id,
-                        $data['form'] ?? [],
-                        $data['entry'] ?? [],
-                        array_merge( $context, [ 'settings' => $resolved_settings ] )
-                    );
-                } catch ( Throwable $throwable )
-                {
-                    $this->handle_failure(
-                        $job,
-                        new WP_Error(
-                            'sentient_forms_async_exception',
-                            $throwable->getMessage(),
-                        ),
-                    );
-                    return;
-                }
-            }
-            else
-            {
-                // Local action exists - execute via local handler
-                try
-                {
-                    $result = $action->execute(
-                        $data,
-                        $settings,
-                        $entry_id ?? 0,
-                        $form_id ?? 0
-                    );
-                } catch ( Throwable $throwable )
-                {
-                    sentient_forms_debug_log(
-                        '[sentient-forms][async] execute exception.',
-                        [
-                            'action_id' => $action_id,
-                            'entry_id'  => $entry_id ?? 'n/a',
-                            'form_id'   => $form_id ?? 'n/a',
-                            'error'     => $throwable->getMessage(),
-                        ]
-                    );
-                    $this->handle_failure(
-                        $job,
-                        new WP_Error(
-                            'sentient_forms_async_exception',
-                            $throwable->getMessage(),
-                        ),
-                    );
-                    return;
-                }
-            }
-
-            if ( is_wp_error( $result ) )
-            {
-                sentient_forms_debug_log(
-                    '[sentient-forms][async] execute wp_error.',
-                    [
-                        'action_id'     => $action_id,
-                        'entry_id'      => $entry_id ?? 'n/a',
-                        'form_id'       => $form_id ?? 'n/a',
-                        'error_code'    => $result->get_error_code(),
-                        'error_message' => $result->get_error_message(),
-                    ]
-                );
-                $this->handle_failure( $job, $result );
-                return;
-            }
-
-            $normalized_result = is_array( $result ) ? $result : [ 'success' => (bool) $result ];
-            $this->handle_success( $job, $normalized_result );
-        }
-        finally
-        {
-            $this->sweep_stale_async_rows();
-        }
-    }
-
-    /**
-     * Tolerate the retired Elementor identifier only for durable, plugin-owned
-     * jobs that were serialized before the canonical source migration.
-     *
-     * @param array<array-key, mixed> $payload
-     *
-     * @return array<array-key, mixed>
-     */
-    private function normalize_queued_form_source_identities( array $payload ): array
-    {
-        foreach ( [ 'form_source', 'adapter_id' ] as $key )
-        {
-            if ( isset( $payload[ $key ] )
-                && is_scalar( $payload[ $key ] )
-                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $payload[ $key ] ) )
-            {
-                $payload[ $key ] = Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS;
-            }
-        }
-
-        return $payload;
-    }
-
-    /**
-     * Normalize only the plugin-owned identity fields in a queued action
-     * envelope. Entry data remains customer-controlled content.
-     *
-     * @param array<array-key, mixed> $data
-     *
-     * @return array<array-key, mixed>
-     */
-    private function normalize_queued_action_data( array $data ): array
-    {
-        $data = $this->normalize_queued_form_source_identities( $data );
-        if ( isset( $data['form'] ) && is_array( $data['form'] ) )
-        {
-            $data['form'] = $this->normalize_queued_form_source_identities( $data['form'] );
-        }
-
-        return $data;
-    }
-
-    /**
      * Determine whether this job can execute based on dependency outcomes.
      *
      * @param array<string, mixed> $job Job payload.
@@ -2676,7 +1518,7 @@ class Sentient_Forms_Async_Handler
                 ];
             }
 
-            if ( in_array( $initial, [ 'succeeded', 'success', 'replayed_success' ], true ) )
+            if ( in_array( $initial, [ 'succeeded', 'success' ], true ) )
             {
                 continue;
             }
@@ -2701,10 +1543,6 @@ class Sentient_Forms_Async_Handler
             }
 
             $record = $this->get_request_store()->get( $dependency_request_id, 'job' );
-            if ( ! $record && 'replayed_active' === $initial )
-            {
-                $record = $this->get_request_store()->get( $dependency_request_id, 'accepted_sync' );
-            }
             if ( ! $record )
             {
                 $pending_dependencies[] = $dependency_id;
@@ -2816,8 +1654,6 @@ class Sentient_Forms_Async_Handler
             );
         }
 
-        $this->record_managed_execution_skip_event( $job, $reason, $reason_code );
-
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )
         {
             $this->maybe_add_dependency_skip_note( $job, $reason );
@@ -2920,23 +1756,7 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $form_settings      = $this->get_form_actions_option( $form_source, $form_id );
-        $dependency_mapping = null;
-        if ( is_array( $form_settings ) && isset( $form_settings[ $dependency_id ] ) && is_array( $form_settings[ $dependency_id ] ) )
-        {
-            $dependency_mapping = $this->resolve_hierarchical_settings(
-                $form_settings[ $dependency_id ],
-                [
-                    'form_source' => $form_source,
-                    'form_id'     => $form_id,
-                    'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
-                ]
-            );
-        }
-        else
-        {
-            $dependency_mapping = $this->resolve_local_first_dependency_mapping( $form_source, $form_id, $dependency_id );
-        }
+        $dependency_mapping = $this->resolve_local_first_dependency_mapping( $form_source, $form_id, $dependency_id );
 
         if ( ! is_array( $dependency_mapping ) )
         {
@@ -3303,123 +2123,7 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
-     * Requeue a job while it waits for dependencies to complete.
-     *
-     * @param array<string, mixed> $job          Job payload.
-     * @param int                  $delay_seconds Delay before retry.
-     * @param string               $reason        Wait reason.
-     *
-     * @return void
-     */
-    private function requeue_action_waiting_on_dependencies( array $job, int $delay_seconds, string $reason ): void
-    {
-        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        if ( ! isset( $context['dependency_wait_started_at'] ) )
-        {
-            $context['dependency_wait_started_at'] = time();
-        }
-
-        $run_at = time() + max( 5, $delay_seconds );
-
-        $this->get_metadata_store()->update_status(
-            $context['job_id'] ?? null,
-            'retry_scheduled',
-            [
-                'last_error' => $reason,
-                'run_at'     => $run_at,
-            ]
-        );
-
-        if ( ! empty( $job['execution_request_id'] ) )
-        {
-            $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'queued', $reason );
-        }
-
-        $reschedule_context = $context;
-        unset( $reschedule_context['job_id'] );
-
-        $scheduled = $this->schedule_action(
-            (string) $job['action_id'],
-            is_array( $job['data'] ?? null ) ? $job['data'] : [],
-            is_array( $job['settings'] ?? null ) ? $job['settings'] : [],
-            $reschedule_context,
-            $run_at,
-        );
-
-        if ( ! $scheduled )
-        {
-            $this->handle_failure(
-                $job,
-                new WP_Error( 'sentient_forms_dependency_wait_reschedule_failed', $reason ),
-            );
-            return;
-        }
-
-        $this->emit_async_event(
-            'dependency_wait',
-            $context,
-            [
-                'reason' => $reason,
-                'run_at' => $run_at,
-            ],
-        );
-    }
-
-    /**
-     * Log a successful action execution
-     *
-     * @param string $action_id The action ID.
-     * @param array  $result    The action result.
-     *
-     * @return void
-     */
-    private function log_success( string $action_id, array $result ): void
-    {
-        // Get plugin options
-        $options    = $this->plugin->get_options();
-        $debug_mode = $options[ 'global_settings' ][ 'debug_mode' ] ?? false;
-
-        // Log the result if debug mode is enabled
-        if ( $debug_mode )
-        {
-            sentient_forms_debug_log(
-                'Sentient Forms action processed successfully.',
-                [
-                    'action_id' => $action_id,
-                    'result'    => $result,
-                ]
-            );
-        }
-
-    }
-
-    /**
-     * Log an error
-     *
-     * @param string $message The error message.
-     *
-     * @return void
-     */
-    private function log_error( string $message ): void
-    {
-        // Get plugin options
-        $options    = $this->plugin->get_options();
-        $debug_mode = $options[ 'global_settings' ][ 'debug_mode' ] ?? false;
-
-        // Log the error if debug mode is enabled
-        if ( $debug_mode )
-        {
-            sentient_forms_debug_log(
-                'Sentient Forms action error.',
-                [
-                    'message' => $message,
-                ]
-            );
-        }
-    }
-
-    /**
-     * Emit a consent-aware async event for external logging.
+     * Emit a consent-aware async event for local site logging.
      *
      * @param string $event   Event name (success, failed, retry_scheduled, etc.).
      * @param array  $context Job context metadata.
@@ -3427,30 +2131,138 @@ class Sentient_Forms_Async_Handler
      */
     private function emit_async_event( string $event, array $context = [], array $payload = [] ): void
     {
-        $options      = $this->plugin->get_options();
-        $debug_mode   = ! empty( $options['global_settings']['debug_mode'] );
         $telemetry    = $this->plugin->get_telemetry_settings();
         $telemetry_on = ! empty( $telemetry['telemetry_opt_in'] );
 
-        if ( !$telemetry_on && !$debug_mode )
+        if ( ! $telemetry_on )
         {
             return;
         }
 
+        $metadata = $this->local_diagnostic_metadata( $context, $payload );
+
         /**
-         * Fires whenever the async handler emits a structured telemetry/logging event.
+         * Fires whenever the async handler emits a metadata-only local diagnostic event.
          *
-         * @param array<string, mixed> $event_payload Event data (`event`, `context`, `payload`, `timestamp`).
+         * @param array<string, mixed> $event_payload Allowlisted local event data (`event`, `metadata`, `timestamp`).
          */
         do_action(
             'sentient_forms_async_event',
             [
                 'event'     => $event,
-                'context'   => $context,
-                'payload'   => $payload,
+                'metadata'  => $metadata,
                 'timestamp' => time(),
             ]
         );
+    }
+
+    /**
+     * Persist an already-consented local diagnostic event through the masked logger.
+     *
+     * The WordPress hook is public, so this listener independently rebuilds the
+     * allowlisted envelope instead of trusting another callback's payload.
+     *
+     * @param mixed $event_payload Candidate event payload.
+     */
+    public function write_local_diagnostic_event( mixed $event_payload ): void
+    {
+        $telemetry = $this->plugin->get_telemetry_settings();
+        if ( empty( $telemetry['telemetry_opt_in'] ) )
+        {
+            return;
+        }
+
+        $logger = $this->plugin->get_logger();
+        if ( ! $logger->is_enabled() || ! is_array( $event_payload ) )
+        {
+            return;
+        }
+
+        $event = isset( $event_payload['event'] ) && is_scalar( $event_payload['event'] )
+            ? sanitize_key( (string) $event_payload['event'] )
+            : '';
+        if ( '' === $event )
+        {
+            return;
+        }
+
+        $candidate_metadata = isset( $event_payload['metadata'] ) && is_array( $event_payload['metadata'] )
+            ? $event_payload['metadata']
+            : [];
+        $logger->info(
+            'Sentient Forms async diagnostic event.',
+            [
+                'event'    => $event,
+                'metadata' => $this->local_diagnostic_metadata( [], $candidate_metadata ),
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, string|int|float|bool|null>
+     */
+    private function local_diagnostic_metadata( array $context, array $payload ): array
+    {
+        $candidate = array_merge( $context, $payload );
+        if ( empty( $candidate['provider_path'] ) && ! empty( $candidate['provider'] ) )
+        {
+            $candidate['provider_path'] = $candidate['provider'];
+        }
+
+        $metadata = [
+            'schema_version' => self::LOCAL_DIAGNOSTIC_SCHEMA,
+            'plugin_version' => defined( 'SENTIENT_FORMS_VERSION' ) ? SENTIENT_FORMS_VERSION : 'unknown',
+        ];
+        $stable_code_keys = [
+            'action_id',
+            'action_code',
+            'adapter',
+            'adapter_id',
+            'form_source',
+            'provider_path',
+            'provider',
+            'job_type',
+            'status',
+            'error_code',
+            'warning_code',
+            'reason',
+        ];
+        foreach ( self::LOCAL_DIAGNOSTIC_METADATA_KEYS as $key )
+        {
+            if ( ! array_key_exists( $key, $candidate ) )
+            {
+                continue;
+            }
+
+            $value = $candidate[ $key ];
+            if ( null === $value || is_bool( $value ) || is_int( $value ) || is_float( $value ) )
+            {
+                $metadata[ $key ] = $value;
+                continue;
+            }
+            if ( ! is_scalar( $value ) )
+            {
+                continue;
+            }
+
+            $value = substr( sanitize_text_field( (string) $value ), 0, 191 );
+            if ( in_array( $key, $stable_code_keys, true )
+                && ! preg_match( '/^[a-z][a-z0-9_-]{1,63}$/D', $value ) )
+            {
+                continue;
+            }
+            if ( '' !== $value )
+            {
+                $metadata[ $key ] = $value;
+            }
+        }
+
+        unset( $metadata['provider'] );
+
+        return $metadata;
     }
 
     /**
@@ -3476,7 +2288,7 @@ class Sentient_Forms_Async_Handler
             );
         }
 
-        // Telemetry rows can stick in telemetry_queued if cron does not run; mark them sent.
+        // Remote telemetry is retired; preserve legacy queue rows as cancelled audit history.
         foreach ( $store->list( [ 'record_type' => 'telemetry', 'status' => 'telemetry_queued', 'limit' => 50 ] ) as $queued )
         {
             if ( empty( $queued['request_hash'] ) )
@@ -3486,8 +2298,8 @@ class Sentient_Forms_Async_Handler
 
             $store->mark_status(
                 $queued['request_hash'],
-                'telemetry_sent',
-                null,
+                'telemetry_retired',
+                __( 'Remote telemetry transport is retired; queued event cancelled locally.', 'sentient-forms' ),
                 'telemetry'
             );
         }

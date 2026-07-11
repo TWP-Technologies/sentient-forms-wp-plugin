@@ -10,6 +10,12 @@ import {
 	resetSecurityRoadblockAnnouncementForTests
 } from '$lib/api/security-roadblock';
 import { notifications } from '$lib/stores/notifications';
+import { z } from 'zod';
+
+const testResponseSchema = z.object({
+	success: z.literal(true),
+	data: z.object({ ok: z.boolean() })
+});
 
 declare global {
 	interface Window {
@@ -23,7 +29,7 @@ declare global {
 
 describe('apiFetch', () => {
 	const config = {
-		apiBaseUrl: 'https://example.com/wp-json/sentient-forms/v1/',
+		apiBaseUrl: 'http://localhost:3000/wp-json/sentient-forms/v1/',
 		restNonce: 'abc123'
 	};
 
@@ -326,12 +332,8 @@ describe('apiFetch', () => {
 			notifyErrors: false
 		});
 
-		await client.request('settings');
+		await client.requestParsed('settings', testResponseSchema);
 
-		expect(window.sentientFormsConfig?.siteUrl).toBe('http://localhost:3000/wp');
-		expect(window.sentientFormsConfig?.apiBaseUrl).toBe(
-			'http://localhost:3000/wp/wp-json/sentient-forms/v1/'
-		);
 		expect(fetchMock).toHaveBeenCalledWith(
 			'http://localhost:3000/wp/wp-json/sentient-forms/v1/settings',
 			expect.objectContaining({
@@ -362,7 +364,7 @@ describe('apiFetch', () => {
 			siteUrl: 'http://localhost:3000'
 		};
 
-		await client.request('settings');
+		await client.requestParsed('settings', testResponseSchema);
 
 		expect(fetchMock).toHaveBeenCalledWith(
 			'http://localhost:3000/wp-json/sentient-forms/v1/settings',
@@ -372,5 +374,22 @@ describe('apiFetch', () => {
 				})
 			})
 		);
+	});
+
+	it('rejects factory base URL and nonce overrides before either can expose the runtime nonce', async () => {
+		window.sentientFormsConfig = config;
+		const fetchMock = vi.fn();
+		const getNonce = vi.fn(() => 'attacker-selected-nonce');
+
+		expect(() =>
+			createClientFromConfig({
+				baseUrl: 'https://evil.example/collect/',
+				getNonce,
+				fetchImpl: fetchMock,
+				notifyErrors: false
+			} as never)
+		).toThrow('baseUrl');
+		expect(getNonce).not.toHaveBeenCalled();
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

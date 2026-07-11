@@ -21,7 +21,7 @@ Sentient Forms is a WordPress plugin that operates as the local control plane fo
 ## Project Structure & Module Organization
 The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `providers/`, `rest-api/`, repositories, and shared services. The SvelteKit admin SPA lives in `admin-app/`; production assets are generated into `assets/dist/`. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
 
-- Async execution details (Action Scheduler integration, retry policy, telemetry hooks) live in `docs/async-handler.md`. Use that doc when wiring new adapters or site-specific logging so you respect consent + retry semantics.
+- Async execution details (Action Scheduler integration, retry policy, and metadata-only local diagnostic hooks) live in `docs/async-handler.md`. Explicit diagnostic consent is the sole event-generation gate; debug mode must never enable or widen diagnostics. The default writer additionally requires on-site logging, payloads remain allowlisted and local, and no telemetry leaves the site in this release.
 - Form Source adapter boundaries live in `docs/architecture/form-source-adapter-boundaries.md`. When behavior depends on Gravity Forms, Contact Form 7, WPForms, Elementor Pro Forms, or another source-specific runtime, route the platform-neutral decision through shared Sentient Forms services and put only the source-specific native operation behind the adapter/capability contract.
 
 ### Form Source Adapter Contract
@@ -37,7 +37,7 @@ The adapter pattern is part of the plugin architecture, not a convenience layer.
 
 - The bundled Action Catalog is the executable authority for Action prompts, output contracts, canonical lifecycles, source-neutral effects, and allowed facets. CPS does not own WordPress Action definitions.
 - An Action facet is a reusable capability around an Action that may have stricter subscription, managed-execution, lifecycle, Form Source capability, managed-infrastructure capability, or metering requirements.
-- Every provider-routing path that has adopted the Action policy/facet model must resolve the base policy and all enabled facet policies before selecting a provider; the strictest access, execution, lifecycle, capability, and metering requirements win. Policy/facet definitions and routing primitives may land before integration into legacy form-triggered execution, but staged publication must not be described as runtime enforcement for those paths.
+- Resolve the base Action policy and all enabled facet policies before selecting a provider. The strictest access, execution, lifecycle, capability, and metering requirements win.
 - Keep entitlement separate from provider routing. An active-subscription feature may still use Direct OpenRouter, while a managed-only feature requires CPS and managed credits.
 - Do not create separate Direct and CPS implementations for every Action, and do not multiply Action codes for every facet permutation.
 - Treat legacy `master`/CPS-template branches as migration residue. Do not add new callers or compatibility filters; remove them through the coordinated legacy-cleanup stack after current stored mappings are normalized.
@@ -47,14 +47,14 @@ The adapter pattern is part of the plugin architecture, not a convenience layer.
 - SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
 - Zod parsing is mandatory at admin-app trust boundaries: REST envelopes, imported/exported JSON, persisted action/form configuration, migration payloads, cached/session values, and unknown browser/runtime payloads must be parsed before application code trusts their shape. Derive TypeScript boundary types from those schemas instead of duplicating handwritten types. Any exception must be narrow, documented inline, and covered by a test that proves why schema parsing is inapplicable.
 - When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
-- Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes the lockfile-installed Svelte checker and fails if legacy syntax or `createEventDispatcher` usage slips back in. Required QA must not invoke unpinned `sv` packages through `bunx` or `npx`.
-- The `/actions/custom` route is the canonical custom-action UX. Always go through `$lib/stores/custom-actions` so quota, notifications, and CPS envelopes stay consistent. The store expects CPS to return `{ action, quota }` on mutations and `{ actions, quota }` on reads; update the shared TypeScript types if the CPS contract changes.
+- Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes `npx sv check` and fails if legacy syntax or `createEventDispatcher` usage slips back in.
+- The plugin Action Catalog is the executable Action authority. Custom Actions and mappings must use the plugin's local workspace contracts and must not restore CPS-owned Action templates, custom-Action envelopes, or dual Action-definition authority.
 
 ## Build, Test, and Development Commands
 - `php build/generate-class-map.php`: rebuild `includes/class-map.php` after adding or moving classes.
 - `php -l sentient-forms.php includes/**/*.php`: run a syntax lint sweep before committing.
 - `wp plugin activate sentient-forms`: enable the plugin in a local WordPress stack for manual testing.
-- `wp rest route list --namespace=sentient-forms/v1`: verify endpoints after REST changes.
+- `wp rest route list | rg sentient-forms`: verify plugin endpoints after REST changes.
 - `composer install && composer phpcs`: install PHP tooling and run the custom Sentient Forms coding standard (Allman braces, 4-space indent, snake_case names). CI will run the same check on every PR.
 - `vendor/bin/phpunit --filter LicenseControllerTest`: executes the current WordPress integration test suite (requires MariaDB; see `tests/wp-tests-config.php` for credentials or set `WP_TESTS_DB_*` env vars).
 - `bun install` (from `wp-plugin/admin-app/`): install SPA dependencies (requires network access).
@@ -66,7 +66,7 @@ The adapter pattern is part of the plugin architecture, not a convenience layer.
 - `SENTIENT_RUN_WP_E2E=1 bun run qa:full`: opt-in flag to exercise the wp-admin/Gravity Forms Playwright suites against the Docker WordPress stack. Without it, the `wp-*` specs skip to keep local CI deterministic when WordPress is unavailable.
 - Use Form Source-specific E2E flags and fixtures when available. Broad support claims require real user-path proof for every supported surface in scope, not only Gravity Forms.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
-- Async/unit sanity: run `vendor/bin/phpunit --testsuite "Sentient Forms"` (expects WP 6.8 deprecation noise). For local harness health before submissions, run `./scripts/check-local-health.sh` from repo root (verifies CPS /v1/health from WP container and proxy key presence).
+- Async/unit sanity: run `vendor/bin/phpunit --testsuite "Sentient Forms"` (expects WP 6.8 deprecation noise). For local harness health before submissions, run `./scripts/check-local-health.sh` from repo root (verifies the retained CPS managed-service health contract from the WordPress container and proxy key presence).
 
 ### Git Hooks
 

@@ -984,6 +984,41 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( '"currency"', wp_json_encode( $entry ) );
     }
 
+    public function test_get_log_entries_never_presents_unclassified_currency_as_direct_openrouter(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+
+        $this->assertNotFalse(
+            $wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => 'req-unclassified-private-cost',
+                    'provider'             => 'unclassified',
+                    'model'                => 'unknown/model:free',
+                    'status'               => 'succeeded',
+                    'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'amount_usd' => 0.1234, 'free' => true ] ),
+                    'result_json'          => wp_json_encode( [ 'metering' => [ 'currency' => 'USD', 'billed_amount_microusd' => 123400 ] ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            )
+        );
+
+        $response = $this->controller->get_log_entries( new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' ) );
+        $entries  = array_column( $response->get_data()['entries'], null, 'execution_request_id' );
+        $entry    = $entries['req-unclassified-private-cost'];
+
+        $this->assertSame( 'unclassified', $entry['usage_cost']['route'] );
+        $this->assertSame( 'unknown', $entry['usage_cost']['kind'] );
+        $this->assertFalse( $entry['usage_cost']['known'] );
+        $this->assertArrayNotHasKey( 'amount_usd', $entry['usage_cost'] );
+        $this->assertStringNotContainsString( 'currency', wp_json_encode( $entry ) );
+        $this->assertStringNotContainsString( 'microusd', wp_json_encode( $entry ) );
+    }
+
     public function test_get_log_entries_resolves_managed_action_identity_from_event_payload(): void
     {
         global $wpdb;

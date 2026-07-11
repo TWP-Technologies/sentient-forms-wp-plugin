@@ -77,21 +77,6 @@ class MetaControllerTest extends WP_UnitTestCase
         $this->assertFalse( $data['supports_credits'] );
     }
 
-    public function test_capabilities_keep_legacy_cps_custom_actions_behind_proxy_key_when_enabled(): void
-    {
-        add_filter( 'sentient_forms_enable_legacy_cps_custom_actions', '__return_true' );
-        Sentient_Forms_Plugin::instance()->clear_license_data();
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/meta/capabilities' );
-        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
-        $response = rest_get_server()->dispatch( $request );
-
-        $this->assertSame( 200, $response->get_status() );
-        $data = $response->get_data();
-
-        $this->assertFalse( $data['supports_custom_actions'] );
-    }
-
     public function test_capabilities_requires_authentication(): void
     {
         wp_set_current_user( 0 );

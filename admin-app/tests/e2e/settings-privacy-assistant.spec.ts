@@ -125,7 +125,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -134,14 +134,11 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			});
 		});
@@ -151,37 +148,34 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [
-							{
-								id: 'openai/gpt-5.5',
-								display_name: 'OpenAI: GPT-5.5',
-								provider: 'openrouter',
-								speed_tier: 'balanced',
-								cost_tier: 'medium',
-								capabilities: {
-									reasoning: true,
-									tools: true,
-									structured: true,
-									web_search: true,
-									long_context: true
-								},
-								context_window: 400000,
-								tags: ['reasoning', 'structured-output'],
-								supported_parameters: ['reasoning', 'tools']
-							}
-						],
-						presets: [
-							{
-								code: 'sf_research',
-								display_name: 'Research',
-								category: 'local',
-								resolved_model_id: 'openai/gpt-5.5',
-								auto_upgrade: true
-							}
-						]
-					}
+					models: [
+						{
+							id: 'openai/gpt-5.5',
+							display_name: 'OpenAI: GPT-5.5',
+							provider: 'openrouter',
+							speed_tier: 'balanced',
+							cost_tier: 'medium',
+							capabilities: {
+								reasoning: true,
+								tools: true,
+								structured: true,
+								web_search: true,
+								long_context: true
+							},
+							context_window: 400000,
+							tags: ['reasoning', 'structured-output'],
+							supported_parameters: ['reasoning', 'tools']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_research',
+							display_name: 'Research',
+							category: 'local',
+							resolved_model_id: 'openai/gpt-5.5',
+							auto_upgrade: true
+						}
+					]
 				})
 			});
 		});
@@ -248,6 +242,9 @@ test.describe('Privacy setup assistant', () => {
 			.getByLabel('Enforce ZDR for managed service')
 			.check();
 		await page.getByTestId('privacy-setup-preset-maximum_visibility').click();
+		await expect(page.getByTestId('privacy-setup-ledger-retention-summary')).toContainText(
+			'180-day Submission Ledger'
+		);
 		await page.getByRole('button', { name: 'Apply Maximum visibility' }).click();
 
 		await expect.poll(() => capturedPayloads.length).toBe(1);
@@ -260,6 +257,7 @@ test.describe('Privacy setup assistant', () => {
 
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
+		await expect(page.getByTestId('settings-profile-submission-ledger')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});
 
@@ -354,7 +352,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -363,14 +361,11 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			});
 		});
@@ -380,11 +375,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [],
-						presets: []
-					}
+					models: [],
+					presets: []
 				})
 			});
 		});
@@ -532,7 +524,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -541,14 +533,11 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			});
 		});
@@ -558,37 +547,34 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [
-							{
-								id: 'openai/gpt-5.5',
-								display_name: 'OpenAI: GPT-5.5',
-								provider: 'sentient_managed',
-								speed_tier: 'balanced',
-								cost_tier: 'medium',
-								capabilities: {
-									reasoning: true,
-									tools: true,
-									structured: true,
-									web_search: true,
-									long_context: true
-								},
-								context_window: 400000,
-								tags: ['zdr', 'reasoning', 'structured-output'],
-								supported_parameters: ['reasoning', 'tools']
-							}
-						],
-						presets: [
-							{
-								code: 'sf_research',
-								display_name: 'Research',
-								category: 'managed',
-								resolved_model_id: 'openai/gpt-5.5',
-								auto_upgrade: true
-							}
-						]
-					}
+					models: [
+						{
+							id: 'openai/gpt-5.5',
+							display_name: 'OpenAI: GPT-5.5',
+							provider: 'sentient_managed',
+							speed_tier: 'balanced',
+							cost_tier: 'medium',
+							capabilities: {
+								reasoning: true,
+								tools: true,
+								structured: true,
+								web_search: true,
+								long_context: true
+							},
+							context_window: 400000,
+							tags: ['zdr', 'reasoning', 'structured-output'],
+							supported_parameters: ['reasoning', 'tools']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_research',
+							display_name: 'Research',
+							category: 'managed',
+							resolved_model_id: 'openai/gpt-5.5',
+							auto_upgrade: true
+						}
+					]
 				})
 			});
 		});
@@ -794,7 +780,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -803,14 +789,11 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			});
 		});
@@ -820,11 +803,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [],
-						presets: []
-					}
+					models: [],
+					presets: []
 				})
 			});
 		});
@@ -1024,24 +1004,21 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					success: true,
-					data: [
-						{
-							id: 12,
-							provider: 'openrouter',
-							label: 'OpenRouter key',
-							auth_mode: 'manual_key',
-							constant_name: null,
-							status: 'valid',
-							status_json: null,
-							last_validated_at: '2026-06-18T00:00:00Z',
-							created_at: '2026-06-18T00:00:00Z',
-							updated_at: '2026-06-18T00:00:00Z',
-							secret_configured: true
-						}
-					]
-				})
+				body: JSON.stringify([
+					{
+						id: 12,
+						provider: 'openrouter',
+						label: 'OpenRouter key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2026-06-18T00:00:00Z',
+						created_at: '2026-06-18T00:00:00Z',
+						updated_at: '2026-06-18T00:00:00Z',
+						secret_configured: true
+					}
+				])
 			});
 		});
 
@@ -1069,34 +1046,31 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [
-							{
-								id: '~google/gemini-pro-latest',
-								display_name: 'Google: Gemini 3.1 Pro Preview (latest alias)',
-								provider: 'openrouter',
-								speed_tier: 'balanced',
-								cost_tier: 'high',
-								capabilities: {
-									reasoning: true,
-									tools: true,
-									structured: true,
+					models: [
+						{
+							id: '~google/gemini-pro-latest',
+							display_name: 'Google: Gemini 3.1 Pro Preview (latest alias)',
+							provider: 'openrouter',
+							speed_tier: 'balanced',
+							cost_tier: 'high',
+							capabilities: {
+								reasoning: true,
+								tools: true,
+								structured: true,
+								web_search: true,
+								server_tools: {
 									web_search: true,
-									server_tools: {
-										web_search: true,
-										web_fetch: false,
-										datetime: false
-									},
-									long_context: true
+									web_fetch: false,
+									datetime: false
 								},
-								context_window: 1048576,
-								tags: ['reasoning', 'structured-output', 'web-search'],
-								supported_parameters: ['reasoning', 'tools']
-							}
-						],
-						presets: []
-					}
+								long_context: true
+							},
+							context_window: 1048576,
+							tags: ['reasoning', 'structured-output', 'web-search'],
+							supported_parameters: ['reasoning', 'tools']
+						}
+					],
+					presets: []
 				})
 			});
 		});
@@ -1272,7 +1246,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -1281,11 +1255,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [],
-						presets: []
-					}
+					models: [],
+					presets: []
 				})
 			});
 		});
@@ -1442,7 +1413,7 @@ test.describe('Privacy setup assistant', () => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify([])
 			});
 		});
 
@@ -1451,14 +1422,11 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						model_id: 'openai/gpt-5.5',
-						display_name: 'OpenAI: GPT-5.5',
-						resolution_source: 'mock',
-						override_chain: [],
-						backup_model_id: null
-					}
+					model_id: 'openai/gpt-5.5',
+					display_name: 'OpenAI: GPT-5.5',
+					resolution_source: 'mock',
+					override_chain: [],
+					backup_model_id: null
 				})
 			});
 		});
@@ -1468,11 +1436,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						models: [],
-						presets: []
-					}
+					models: [],
+					presets: []
 				})
 			});
 		});

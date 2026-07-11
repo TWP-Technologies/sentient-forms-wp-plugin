@@ -3,7 +3,7 @@
  * Plugin Name: Sentient Forms
  * Plugin URI: https://sentientforms.com
  * Description: Integrate Large Language Models (LLMs) with form builders to automate intelligent actions on form submissions.
- * Version: 0.11.0
+ * Version: 0.10.0
  * Author: TWP Technologies, LLC.
  * Author URI: https://twp.tech
  * Text Domain: sentient-forms
@@ -21,41 +21,126 @@ if ( !defined( 'ABSPATH' ) )
 }
 
 // Define plugin constants.
-const SENTIENT_FORMS_VERSION     = '0.11.0';
-const SENTIENT_FORMS_DB_VERSION  = '2026.07.15.submission_native_correlation';
+const SENTIENT_FORMS_VERSION     = '0.10.0';
+const SENTIENT_FORMS_DB_VERSION  = '2026.07.10.submission_ledger_retention';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
-const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';
-const SENTIENT_FORMS_RELEASE_SOURCE_URL = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.11.0';
+const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v2';
+const SENTIENT_FORMS_RELEASE_SOURCE_URL = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.10.0';
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );
 
 if ( ! function_exists( 'sentient_forms_debug_log' ) )
 {
     /**
-     * Emit opt-in diagnostic information without writing directly to PHP logs.
+     * Emit an allowlisted local diagnostic event after explicit consent.
      *
-     * The plugin does not attach a default writer. Site owners or support tooling
-     * can opt in by filtering `sentient_forms_debug_log_enabled` and handling the
-     * `sentient_forms_debug_log` action.
+     * Arbitrary caller messages and context never cross this boundary. Debug mode
+     * cannot enable diagnostics, and nothing is sent off-site.
      *
-     * @param string $message Diagnostic message.
-     * @param array  $context Redacted contextual fields.
+     * @param string $message Candidate diagnostic code or internal message.
+     * @param array  $context Candidate contextual fields.
      */
     function sentient_forms_debug_log( string $message, array $context = [] ): void
     {
-        $enabled = (bool) apply_filters(
-            'sentient_forms_debug_log_enabled',
-            defined( 'WP_DEBUG' ) && WP_DEBUG,
-            $message,
-            $context
+        $plugin_options = get_option( 'sentient_forms_settings', [] );
+        $plugin_options = is_array( $plugin_options ) ? $plugin_options : [];
+        $api_options    = get_option( 'sentient_forms_plugin_settings', [] );
+        $api_options    = is_array( $api_options ) ? $api_options : [];
+        $telemetry      = isset( $plugin_options['telemetry'] ) && is_array( $plugin_options['telemetry'] )
+            ? $plugin_options['telemetry']
+            : [];
+        $consented      = ! empty( $telemetry['telemetry_opt_in'] );
+        $logging_on     = ! empty( $plugin_options['enable_logging'] ) || ! empty( $api_options['enable_logging'] );
+        $logging_on     = (bool) apply_filters(
+            'sentient_forms_enable_logging',
+            $logging_on || ( defined( 'SENTIENT_FORMS_LOG_ENABLED' ) && SENTIENT_FORMS_LOG_ENABLED )
         );
 
-        if ( ! $enabled )
+        if ( ! $consented || ! $logging_on )
         {
             return;
         }
 
-        do_action( 'sentient_forms_debug_log', $message, $context );
+        $allowed_keys = [
+            'diagnostic_code',
+            'action_id',
+            'action_code',
+            'execution_request_id',
+            'adapter',
+            'adapter_id',
+            'form_source',
+            'provider_path',
+            'provider',
+            'job_type',
+            'attempt',
+            'max_attempts',
+            'status',
+            'error_code',
+            'warning_code',
+            'reason',
+            'duration_ms',
+            'queue_wait_ms',
+            'run_at',
+            'event',
+        ];
+        $stable_code_keys = [
+            'diagnostic_code',
+            'action_id',
+            'action_code',
+            'adapter',
+            'adapter_id',
+            'form_source',
+            'provider_path',
+            'provider',
+            'job_type',
+            'status',
+            'error_code',
+            'warning_code',
+            'reason',
+            'event',
+        ];
+        $safe_context = [];
+        foreach ( $allowed_keys as $key )
+        {
+            if ( ! array_key_exists( $key, $context ) )
+            {
+                continue;
+            }
+
+            $value = $context[ $key ];
+            if ( is_bool( $value ) || is_int( $value ) || is_float( $value ) )
+            {
+                $safe_context[ $key ] = $value;
+                continue;
+            }
+            if ( ! is_scalar( $value ) )
+            {
+                continue;
+            }
+
+            $value = substr( sanitize_text_field( (string) $value ), 0, 191 );
+            if ( in_array( $key, $stable_code_keys, true )
+                && ! preg_match( '/^[a-z][a-z0-9_-]{1,63}$/D', $value ) )
+            {
+                continue;
+            }
+            if ( '' !== $value )
+            {
+                $safe_context[ $key ] = $value;
+            }
+        }
+
+        $diagnostic_code = isset( $safe_context['diagnostic_code'] )
+            ? sanitize_key( (string) $safe_context['diagnostic_code'] )
+            : '';
+        if ( '' === $diagnostic_code && preg_match( '/^[a-z][a-z0-9_]{2,63}$/D', $message ) )
+        {
+            $diagnostic_code = sanitize_key( $message );
+        }
+        $safe_context['diagnostic_code'] = '' !== $diagnostic_code ? $diagnostic_code : 'generic_debug_event';
+        unset( $safe_context['provider'] );
+
+        do_action( 'sentient_forms_debug_log', 'Sentient Forms diagnostic event.', $safe_context );
     }
 }
 

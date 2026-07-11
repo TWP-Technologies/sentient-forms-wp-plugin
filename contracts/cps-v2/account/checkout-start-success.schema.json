@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/checkout-start-success.schema.json",
+  "title": "Sentient Managed Checkout Start Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "status",
+        "checkout_intent_id",
+        "checkout_session_id",
+        "checkout_url",
+        "plan_code",
+        "billing_interval",
+        "billing_boundary"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "const": "sentient-managed"
+        },
+        "status": {
+          "type": "string",
+          "const": "open"
+        },
+        "checkout_intent_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "checkout_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkout_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "plan_code": {
+          "type": "string",
+          "enum": [
+            "starter",
+            "pro",
+            "business"
+          ]
+        },
+        "billing_interval": {
+          "type": "string",
+          "const": "monthly"
+        },
+        "billing_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "direct_openrouter_billed_by_sentient",
+            "managed_proxy_billed_by_sentient"
+          ],
+          "properties": {
+            "direct_openrouter_billed_by_sentient": {
+              "type": "boolean",
+              "const": false
+            },
+            "managed_proxy_billed_by_sentient": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

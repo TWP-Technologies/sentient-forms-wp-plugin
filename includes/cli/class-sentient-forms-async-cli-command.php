@@ -136,18 +136,21 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             $context['last_error'] = null;
 
             $scheduled = false;
-            if ( 'sentient_forms_process_action' === $job['hook'] )
+            if ( 'sentient_forms_process_local_mapping' === $job['hook'] )
             {
-                $action_id = $payload['action_id'] ?? ( $context['action_id'] ?? '' );
-                if ( empty( $action_id ) )
+                $local_mapping_id = absint( $payload['local_mapping_id'] ?? $context['local_form_mapping_id'] ?? 0 );
+                if ( $local_mapping_id <= 0 )
                 {
-                    WP_CLI::error( 'Job payload is missing an action ID.' );
+                    WP_CLI::error( 'Job payload is missing a local mapping ID.' );
                 }
 
-                $scheduled = $handler->schedule_action(
-                    $action_id,
-                    $payload['data'] ?? [],
-                    $payload['settings'] ?? [],
+                $scheduled = $handler->schedule_local_mapping(
+                    $local_mapping_id,
+                    [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
+                    [
+                        'id'              => $payload['entry_id'] ?? $context['entry_id'] ?? '',
+                        'submission_uuid' => $payload['submission_uuid'] ?? $context['submission_uuid'] ?? null,
+                    ],
                     $context,
                 );
             }

@@ -49,7 +49,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         parent::tearDown();
     }
 
-    public function test_definitions_from_cps_are_normalized(): void
+    public function test_legacy_cps_template_flag_cannot_override_local_definitions(): void
     {
         $enable_cps_templates = static fn() => true;
         add_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
@@ -96,13 +96,19 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertIsArray( $data );
         $this->assertNotEmpty( $data );
-        $definition = $data[0];
+        $definitions = array_values(
+            array_filter(
+                $data,
+                static fn( array $definition ): bool => 'spam_detection_v1' === ( $definition['id'] ?? null )
+            )
+        );
+        $this->assertCount( 1, $definitions );
+        $definition = $definitions[0];
 
         $this->assertSame( 'spam_detection_v1', $definition['id'] );
-        $this->assertSame( 'Spam Analysis', $definition['label'] );
-        $this->assertSame( 'cps', $definition['source'] );
-        $this->assertSame( 'models/gemini-1.5-flash', $definition['modelHint'] );
-        $this->assertSame( 5, $definition['baseCreditCost'] );
+        $this->assertSame( 'bundled', $definition['source'] );
+        $this->assertSame( 'openrouter/auto', $definition['modelHint'] );
+        $this->assertNull( $definition['baseCreditCost'] );
         $this->assertArrayHasKey( 'hooks', $definition );
         $this->assertIsArray( $definition['hooks'] );
         $this->assertContains( 'gform_validation', $definition['hooks'] );
@@ -205,6 +211,8 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $definitions = $response->get_data();
         $ids         = array_column( $definitions, 'id' );
 
+        $this->assertSame( $expected_codes, $ids );
+
         foreach ( $expected_codes as $code )
         {
             $this->assertContains( $code, $ids, "Missing bundled REST definition for {$code}." );
@@ -226,6 +234,97 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
             }
             $this->assertIsArray( $definition['hooks'] ?? null );
         }
+    }
+
+    public function test_bundled_definition_executable_fields_come_from_code_not_tampered_database_values(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_action_templates';
+        $wpdb->update(
+            $table,
+            [
+                'display_name'             => 'Tampered label',
+                'description'              => 'Tampered description',
+                'prompt_template'          => 'Tampered prompt',
+                'default_model'            => 'tampered/model',
+                'structured_output_schema' => wp_json_encode( [ 'type' => 'string' ] ),
+                'override_schema'          => wp_json_encode( [ 'tampered' => true ] ),
+            ],
+            [ 'code' => 'spam_detection_v1' ]
+        );
+
+        $response   = $this->dispatch_definitions_request();
+        $definition = $this->find_definition_by_id( $response->get_data(), 'spam_detection_v1' );
+        $canonical  = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertIsArray( $definition );
+        $this->assertSame( $canonical['display_name'], $definition['label'] ?? null );
+        $this->assertSame( $canonical['description'], $definition['description'] ?? null );
+        $this->assertSame( $canonical['prompt_template'], $definition['promptTemplate'] ?? null );
+        $this->assertSame( $canonical['default_model'], $definition['modelHint'] ?? null );
+        $this->assertSame( $canonical['structured_output_schema'], $definition['structuredOutputSchema'] ?? null );
+        $this->assertSame( $canonical['override_schema'], $definition['overrideSchema'] ?? null );
+    }
+
+    public function test_extra_bundled_database_definition_fails_closed(): void
+    {
+        global $wpdb;
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $extra_id   = $repository->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'unexpected_bundled_action_v1',
+                'display_name'    => 'Unexpected bundled Action',
+                'prompt_template' => 'This row must not extend the code-owned catalog.',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $extra_id );
+
+        $response = $this->dispatch_definitions_request();
+
+        $this->assertSame( 503, $response->get_status() );
+        $this->assertSame( 'sentient_forms_bundled_action_catalog_unavailable', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_partial_bundled_database_identity_fails_closed(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_action_templates';
+        $wpdb->update( $table, [ 'code' => '' ], [ 'code' => 'spam_detection_v1' ] );
+
+        $response = $this->dispatch_definitions_request();
+
+        $this->assertSame( 503, $response->get_status() );
+        $this->assertSame( 'sentient_forms_bundled_action_catalog_unavailable', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_missing_bundled_catalog_fails_closed_instead_of_substituting_imported_templates(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_action_templates';
+        $wpdb->update( $table, [ 'is_active' => 0 ], [ 'source' => 'bundled' ], [ '%d' ], [ '%s' ] );
+
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $imported_id = $repository->upsert_by_code(
+            [
+                'source'          => 'imported',
+                'code'            => 'imported_must_not_replace_catalog',
+                'display_name'    => 'Imported replacement',
+                'prompt_template' => 'Do not expose as the bundled catalog.',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $imported_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 503, $response->get_status() );
+        $this->assertSame( 'sentient_forms_bundled_action_catalog_unavailable', $response->get_data()['code'] ?? null );
+        $this->assertStringNotContainsString( 'imported_must_not_replace_catalog', wp_json_encode( $response->get_data() ) );
     }
 
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void
@@ -281,6 +380,14 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
             10,
             3
         );
+    }
+
+    private function dispatch_definitions_request(): WP_REST_Response
+    {
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
+        return rest_get_server()->dispatch( $request );
     }
 
     /**

@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import { parsePromptOverridesInput } from '$lib/utils/custom-actions';
+	import { z } from 'zod';
 	import Button from './button.svelte';
 	import type {
 		TemplateOverrideSchema,
@@ -91,7 +92,7 @@
 				} else {
 					// Unknown type: try JSON parse, fall back to string
 					try {
-						obj[pair.key.trim()] = JSON.parse(pair.value);
+						obj[pair.key.trim()] = z.json().parse(JSON.parse(pair.value));
 					} catch {
 						obj[pair.key.trim()] = pair.value;
 					}
@@ -218,7 +219,9 @@
 </script>
 
 <div class="sf:flex sf:flex-col sf:gap-2">
-	<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
+	<div
+		class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center"
+	>
 		<label for={id} class="sf:text-sm sf:font-medium sf:text-slate-700"> Prompt Overrides </label>
 		<div class="sf:flex sf:gap-1">
 			<Button
@@ -351,23 +354,11 @@
 
 			<div class="sf:flex sf:flex-wrap sf:gap-2">
 				{#if hasSchema && getAvailableSchemaKeys().length > 0}
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						onclick={addSchemaKey}
-					>
+					<Button type="button" variant="secondary" size="sm" onclick={addSchemaKey}>
 						+ Add template option
 					</Button>
 				{/if}
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					onclick={addPair}
-				>
-					+ Custom override
-				</Button>
+				<Button type="button" variant="ghost" size="sm" onclick={addPair}>+ Custom override</Button>
 			</div>
 		</div>
 	{:else}

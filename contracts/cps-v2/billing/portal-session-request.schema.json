@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/portal-session-request.schema.json",
+  "title": "Sentient Billing Portal Session Request",
+  "type": "object",
+  "required": [
+    "return_url"
+  ],
+  "properties": {
+    "return_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "flow_type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CPS accepts home, subscription_update, subscription_cancel, and their short aliases."
+    },
+    "subscription_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

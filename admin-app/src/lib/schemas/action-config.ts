@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FormActionConfig, SpamGuidanceExample } from '$lib/api/types';
+import { modelSelectionSchema } from '$lib/schemas/model-selection';
 
 export const MAX_SPAM_GUIDANCE_EXAMPLES = 10;
 export const MAX_SPAM_GUIDANCE_TEXT_LENGTH = 800;
@@ -52,8 +53,8 @@ const formActionConfigPayloadSchema = z
 		skip_downstream_on_spam: z.boolean().optional(),
 		spam_result_display_mode: z.enum(['none', 'spam_only', 'all_results']).optional(),
 		spam_indicators_display: z.enum(['simple', 'detailed']).optional(),
-		model_selection: z.unknown().optional(),
-		realtime_settings: z.unknown().optional(),
+		model_selection: modelSelectionSchema.optional(),
+		realtime_settings: z.json().optional(),
 		updated_at: z.string().optional()
 	})
 	.transform((value) => value as Partial<FormActionConfig>);

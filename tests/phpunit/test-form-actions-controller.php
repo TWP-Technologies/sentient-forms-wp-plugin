@@ -87,199 +87,6 @@ if ( ! function_exists( 'gform_update_meta' ) ) {
 	}
 }
 
-if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan' ) ) {
-	class Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan extends Sentient_Forms_Mappings_Sync {
-		public function plan_workflow( string $form_source_slug, int $form_id, string $hook_scope = 'all' ) {
-			return [
-				'authority'         => 'cps',
-				'policy_version'    => '2026-02-mixed-sync-async-v1',
-				'hook_scope'        => $hook_scope,
-				'available_hooks'   => [],
-				'nodes'             => [],
-				'edges'             => [],
-				'hooks'             => [],
-				'policy_violations' => [],
-			];
-		}
-
-		public function fetch_mappings(): array {
-			return [];
-		}
-	}
-}
-
-if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
-	class Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan extends Sentient_Forms_Mappings_Sync {
-		public int $plan_calls = 0;
-		public int $sync_calls = 0;
-		/** @var array<int, array<string,mixed>> */
-		public array $synced_actions = [];
-
-		public function plan_workflow( string $form_source_slug, int $form_id, string $hook_scope = 'all' ) {
-			$this->plan_calls++;
-
-			if ( 1 === $this->plan_calls ) {
-				return [
-					'authority'         => 'cps',
-					'policy_version'    => '2026-02-mixed-sync-async-v1',
-					'hook_scope'        => $hook_scope,
-					'available_hooks'   => [],
-					'nodes'             => [],
-					'edges'             => [],
-					'hooks'             => [],
-					'policy_violations' => [],
-				];
-			}
-
-			return [
-				'authority'         => 'cps',
-				'policy_version'    => '2026-02-mixed-sync-async-v1',
-				'hook_scope'        => $hook_scope,
-				'available_hooks'   => [ 'gform_validation' ],
-				'nodes'             => [
-					[
-						'mapping_id'        => 'map_spam_v1',
-						'label'             => 'Local Spam Detection',
-						'central_action_id' => 'spam_detection_v1',
-						'trigger_hooks'     => [ 'gform_validation' ],
-						'dependency_ids'    => [],
-						'is_enabled'        => true,
-						'is_async'          => false,
-					],
-				],
-				'edges'             => [],
-				'hooks'             => [],
-				'policy_violations' => [],
-			];
-		}
-
-		public function sync_form_mappings_for_form( string $form_source_slug, int|string $form_id, array $local_actions, bool $include_disabled = true ) {
-			$this->sync_calls++;
-			$this->synced_actions = $local_actions;
-
-			return [
-				'counts' => [
-					'create' => 1,
-					'update' => 0,
-					'delete' => 0,
-					'skip'   => 0,
-					'error'  => 0,
-				],
-			];
-		}
-
-		public function fetch_mappings(): array {
-			return [];
-		}
-	}
-}
-
-if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Records_Local_Change' ) ) {
-	class Sentient_Forms_Test_Mappings_Sync_Records_Local_Change extends Sentient_Forms_Mappings_Sync {
-		public int $sync_calls = 0;
-		public string $synced_form_source = '';
-		public int|string|null $synced_form_id = null;
-		/** @var array<int, array<string,mixed>> */
-		public array $synced_actions = [];
-
-		public function sync_form_mappings_for_form( string $form_source_slug, int|string $form_id, array $local_actions, bool $include_disabled = true ) {
-			$this->sync_calls++;
-			$this->synced_form_source = $form_source_slug;
-			$this->synced_form_id     = $form_id;
-			$this->synced_actions     = $local_actions;
-
-			return [
-				'counts' => [
-					'create' => 1,
-					'update' => 0,
-					'delete' => 0,
-					'skip'   => 0,
-					'error'  => 0,
-				],
-			];
-		}
-
-		public function fetch_mappings(): array {
-			return [];
-		}
-	}
-}
-
-if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Counting_Fetch' ) ) {
-	class Sentient_Forms_Test_Mappings_Sync_Counting_Fetch extends Sentient_Forms_Mappings_Sync {
-		public int $fetch_calls = 0;
-
-		public function get_site_id(): string {
-			return 'site-overview-test';
-		}
-
-		public function fetch_mappings(): array {
-			$this->fetch_calls++;
-
-			return [
-				[
-					'id'                   => 'cps-form-1',
-					'site_id'              => 'site-overview-test',
-					'form_source'          => 'gravity_forms',
-					'form_id'              => 1,
-					'action_template_code' => 'spam_detection_v1',
-					'display_name'         => 'Spam Detection',
-					'settings'             => [
-						'local_mapping_id'           => 'cps_map_form_1',
-						'trigger_hooks'              => [ 'gform_validation' ],
-						'is_action_enabled_for_form' => true,
-					],
-				],
-				[
-					'id'                   => 'cps-form-2',
-					'site_id'              => 'site-overview-test',
-					'form_source'          => 'gravity_forms',
-					'form_id'              => 2,
-					'action_template_code' => 'entry_summary_v1',
-					'display_name'         => 'Entry Summary',
-					'settings'             => [
-						'local_mapping_id'           => 'cps_map_form_2',
-						'trigger_hooks'              => [ 'gform_after_submission' ],
-						'is_action_enabled_for_form' => false,
-					],
-				],
-			];
-		}
-	}
-}
-
-if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
-	class Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch extends Sentient_Forms_Mappings_Sync {
-		public int $fetch_calls = 0;
-
-		public function __construct( private string $form_id ) {}
-
-		public function get_site_id(): string {
-			return 'site-provider-native-test';
-		}
-
-		public function fetch_mappings(): array {
-			$this->fetch_calls++;
-
-			return [
-				[
-					'id'                   => 'cps-elementor-summary',
-					'site_id'              => 'site-provider-native-test',
-					'form_source'          => 'elementor_pro_forms',
-					'form_id'              => $this->form_id,
-					'action_template_code' => 'entry_summary_v1',
-					'display_name'         => 'Entry Summary',
-					'settings'             => [
-						'local_mapping_id'           => 'cps_elementor_summary',
-						'trigger_hooks'              => [ 'after_submission' ],
-						'is_action_enabled_for_form' => true,
-					],
-				],
-			];
-		}
-	}
-}
-
 if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 	class Sentient_Forms_Test_Opaque_Form_Source_Adapter implements Sentient_Forms_Adapter_Interface {
 		/** @var array<int,string> */
@@ -730,28 +537,28 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        $this->create_ready_managed_credential();
 
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
 
         $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' ) );
-        $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
+        $request->set_param( 'central_action_id', 'content_validation_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'validation' ] );
 
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
-        $stored = get_option(
-            'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ),
-            []
-        );
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored   = $mappings->list_for_form( 'elementor_pro_forms', $form_id );
 
         $this->assertSame( 201, $response->get_status() );
-        $this->assertSame( 'cps_remote_summary_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( 'content_validation_v1', $data['central_action_id'] ?? null );
         $this->assertSame( [ 'validation' ], $data['trigger_hooks'] ?? null );
         $this->assertCount( 1, $stored );
-        $this->assertSame( [ 'validation' ], reset( $stored )['trigger_hooks'] ?? null );
+        $this->assertSame( 'validation', $stored[0]['hook'] ?? null );
     }
 
     public function test_elementor_actions_strip_native_result_writing_effects(): void
@@ -784,40 +591,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'store_result', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'meta', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'entry_note', $stored[0]['effect_mapping_json'] ?? [] );
-    }
-
-    public function test_elementor_provider_native_action_create_syncs_local_change_to_cps(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Records_Local_Change' ) ) {
-            $this->markTestSkipped( 'Mappings sync local-change test double is unavailable.' );
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id = $this->create_elementor_form_page_for_controller();
-        $form_id = $page_id . ':formabc';
-        $sync    = new Sentient_Forms_Test_Mappings_Sync_Records_Local_Change();
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' );
-        $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
-        $request->set_param( 'action_type_indicator', 'master' );
-        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
-        $request->set_param( 'action_name_label', 'Remote Summary' );
-        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
-        $request->set_param( 'form_id', $form_id );
-
-        $response = $this->controller->add_form_action( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 201, $response->get_status() );
-        $this->assertSame( 'cps_remote_summary_v1', $data['central_action_id'] ?? null );
-        $this->assertSame( 1, $sync->sync_calls );
-        $this->assertSame( 'elementor_pro_forms', $sync->synced_form_source );
-        $this->assertSame( $form_id, $sync->synced_form_id );
-        $this->assertSame( $data['local_mapping_id'] ?? null, $sync->synced_actions[0]['local_mapping_id'] ?? null );
     }
 
     public function test_elementor_spam_actions_strip_native_spam_status_effects(): void
@@ -886,7 +659,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_pro_forms_123_formabc', [] ) );
     }
 
-    public function test_form_action_routes_preserve_opaque_form_ids_for_non_gravity_sources(): void
+    public function test_form_action_routes_preserve_opaque_form_ids_without_persisting_unknown_actions(): void
     {
         $adapter = $this->register_opaque_form_source_adapter();
         $form_id = '42:form-alpha_2026';
@@ -907,12 +680,11 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $create_response = $this->dispatch_form_actions_request( $create_request );
         $created         = $create_response->get_data();
 
-        $this->assertSame( 201, $create_response->get_status() );
-        $this->assertSame( [ 'after_submission' ], $created['trigger_hooks'] ?? null );
+        $this->assertSame( 409, $create_response->get_status() );
+        $this->assertSame( 'rest_local_action_mapping_required', $created['code'] ?? null );
 
         $stored = get_option( 'sentient_forms_actions_opaque_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ), [] );
-        $this->assertIsArray( $stored );
-        $this->assertArrayHasKey( $created['local_mapping_id'], $stored );
+        $this->assertSame( [], $stored );
 
         $bootstrap_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/opaque_forms/forms/' . $form_id . '/actions/bootstrap' ) );
         $bootstrap_response = $this->dispatch_form_actions_request( $bootstrap_request );
@@ -922,7 +694,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( $form_id, $bootstrap['form_id'] ?? null );
         $this->assertSame( 'Alpha 2026', $bootstrap['form']['name'] ?? null );
         $this->assertSame( 'email', $bootstrap['form_fields'][0]['id'] ?? null );
-        $this->assertSame( $created['local_mapping_id'], $bootstrap['actions'][0]['local_mapping_id'] ?? null );
+        $this->assertSame( [], $bootstrap['actions'] ?? null );
 
         $disable_request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/opaque_forms/forms/' . $form_id . '/actions/disable' ) );
         $disable_request->set_param( 'sf_disabled', true );
@@ -937,7 +709,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $stored['sf_disabled'] ?? false );
     }
 
-    public function test_form_action_option_keys_do_not_collide_for_provider_native_ids(): void
+    public function test_unknown_actions_do_not_create_option_keys_for_provider_native_ids(): void
     {
         $this->register_opaque_form_source_adapter();
 
@@ -946,8 +718,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             '42_form-alpha_2026',
             '42.form-alpha_2026',
         ];
-        $created_ids = [];
-
         foreach ( $form_ids as $form_id )
         {
             $create_request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/opaque_forms/forms/' . rawurlencode( $form_id ) . '/actions' ) );
@@ -958,8 +728,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             $create_response = $this->dispatch_form_actions_request( $create_request );
             $created         = $create_response->get_data();
 
-            $this->assertSame( 201, $create_response->get_status() );
-            $created_ids[ $form_id ] = $created['local_mapping_id'] ?? null;
+            $this->assertSame( 409, $create_response->get_status() );
+            $this->assertSame( 'rest_local_action_mapping_required', $created['code'] ?? null );
+            $this->assertSame(
+                [],
+                get_option( 'sentient_forms_actions_opaque_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ), [] )
+            );
         }
 
         global $wpdb;
@@ -970,17 +744,75 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             )
         );
 
-        foreach ( $form_ids as $form_id )
-        {
-            $bootstrap_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/opaque_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' ) );
-            $bootstrap_response = $this->dispatch_form_actions_request( $bootstrap_request );
-            $bootstrap          = $bootstrap_response->get_data();
+        $this->assertSame( [], $this->dynamic_action_option_keys );
+    }
 
-            $this->assertSame( 200, $bootstrap_response->get_status() );
-            $this->assertSame( $form_id, $bootstrap['form_id'] ?? null );
-            $this->assertCount( 1, $bootstrap['actions'] ?? [] );
-            $this->assertSame( $created_ids[ $form_id ], $bootstrap['actions'][0]['local_mapping_id'] ?? null );
-        }
+    public function test_rest_update_fails_closed_for_legacy_option_backed_mapping(): void
+    {
+        GFAPI::$forms[401] = [ 'id' => 401, 'title' => 'Legacy update fixture' ];
+        $option_key        = 'sentient_forms_actions_gravity_forms_401';
+        $stored            = [
+            'map_legacy' => [
+                'local_mapping_id'           => 'map_legacy',
+                'central_action_id'          => 'entry_summary_v1',
+                'action_type_indicator'      => 'master',
+                'trigger_hooks'              => [ 'after_submission' ],
+                'is_action_enabled_for_form' => true,
+                'settings'                   => [ 'execution_mode' => 'after_submission' ],
+            ],
+        ];
+        update_option( $option_key, $stored, false );
+
+        $request = $this->authenticate_rest_request(
+            new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/401/actions/map_legacy' )
+        );
+        $request->set_param( 'is_action_enabled_for_form', false );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 'rest_legacy_action_mapping_read_only', $data['code'] ?? null );
+        $this->assertStringContainsString( 'create', strtolower( (string) ( $data['message'] ?? '' ) ) );
+        $this->assertSame( $stored, get_option( $option_key, [] ) );
+        delete_option( $option_key );
+    }
+
+    public function test_rest_duplicate_fails_closed_for_legacy_option_backed_mapping(): void
+    {
+        GFAPI::$forms[402] = [ 'id' => 402, 'title' => 'Legacy duplicate fixture' ];
+        $option_key        = 'sentient_forms_actions_gravity_forms_402';
+        $stored            = [
+            'map_legacy' => [
+                'local_mapping_id'           => 'map_legacy',
+                'central_action_id'          => 'entry_summary_v1',
+                'action_type_indicator'      => 'master',
+                'trigger_hooks'              => [ 'after_submission' ],
+                'is_action_enabled_for_form' => true,
+                'settings'                   => [ 'execution_mode' => 'after_submission' ],
+            ],
+        ];
+        update_option( $option_key, $stored, false );
+
+        $request = $this->authenticate_rest_request(
+            new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/402/actions/map_legacy/duplicate' )
+        );
+        $request->set_param(
+            'parent',
+            [
+                'type' => 'hook_root',
+                'hook' => 'after_submission',
+            ]
+        );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 'rest_legacy_action_mapping_read_only', $data['code'] ?? null );
+        $this->assertStringContainsString( 'create', strtolower( (string) ( $data['message'] ?? '' ) ) );
+        $this->assertSame( $stored, get_option( $option_key, [] ) );
+        delete_option( $option_key );
     }
 
     public function test_get_submission_ledger_list_returns_captured_form_submissions(): void
@@ -2782,6 +2614,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_rejects_bundled_action_when_managed_consent_is_missing(): void
     {
+        global $wpdb;
+
+        $wpdb->delete(
+            $wpdb->prefix . 'sentient_external_service_consents',
+            [ 'provider' => 'sentient_managed' ],
+            [ '%s' ]
+        );
         $this->create_ready_managed_credential( false );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/127/actions' );
@@ -3067,22 +2906,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     {
         global $wpdb;
 
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id = $custom_actions->create(
+        $action_id = $this->create_bundled_custom_action_fixture(
+            'content_validation_v1',
+            'Bundled Content Validation',
             [
-                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'content_validation_v1' ),
-                'display_name'         => 'Bundled Content Validation',
-                'definition_json'      => [
-                    'supported_execution_modes' => [ 'validation' ],
-                ],
-                'model_selection_json' => [
-                    'provider' => 'openrouter',
-                    'primary'  => 'openrouter/auto',
-                ],
-                'status'               => 'active',
+                'provider' => 'openrouter',
+                'primary'  => 'openrouter/auto',
             ]
         );
-        $this->assertIsInt( $action_id );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/155/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
@@ -3101,7 +2932,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
     }
 
-    public function test_add_form_action_does_not_treat_authoritative_true_custom_code_collision_as_bundled(): void
+    public function test_add_form_action_reserves_catalog_code_when_database_row_claims_custom_definition(): void
     {
         global $wpdb;
 
@@ -3133,9 +2964,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $response = $this->controller->add_form_action( $request );
 
-        $this->assertInstanceOf( WP_REST_Response::class, $response );
-        $this->assertSame( 201, $response->get_status() );
-        $this->assertSame( 'content_validation_v1', $response->get_data()['central_action_id'] ?? null );
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
     }
 
     public function test_add_form_action_rejects_true_custom_realtime_even_when_definition_declares_it(): void
@@ -3483,6 +3313,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [ 'gform_after_submission' ],
             [
                 'execution_mode' => 'after_submission',
+                'dispatch_mode'  => 'sync',
             ]
         );
 
@@ -3490,6 +3321,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'entry_summary_v1', $data['central_action_id'] ?? null );
         $this->assertSame( 'Entry Summary', $data['action_name_label'] ?? null );
         $this->assertSame( [ 'after_submission' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( 'after_submission', $data['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $data['dispatch_mode'] ?? null );
+        $this->assertSame( 'sync', $data['settings']['dispatch_mode'] ?? null );
         $this->assertSame( 'active', $data['linked_action_status'] ?? null );
 
         global $wpdb;
@@ -3500,7 +3334,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertCount( 1, $stored_mappings );
         $this->assertSame( 'after_submission', $stored_mappings[0]['hook'] ?? null );
-        $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['meta']['sentient_forms_summary'] ?? null );
         $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
 
@@ -3672,7 +3506,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'clarification_assistant_v1', $data['central_action_id'] ?? null );
         $this->assertSame( [ 'real_time' ], $data['trigger_hooks'] ?? null );
         $this->assertSame( 'real_time', $data['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $data['dispatch_mode'] ?? null );
         $this->assertSame( 'real_time', $data['settings']['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $data['settings']['dispatch_mode'] ?? null );
         $this->assertFalse( $data['settings']['realtime_settings']['auto_refresh_enabled'] ?? true );
         $this->assertTrue( $data['settings']['realtime_settings']['field_checkpoints_enabled'] ?? false );
         $this->assertSame( [ '1' ], $data['settings']['realtime_settings']['checkpoint_field_ids'] ?? null );
@@ -3689,7 +3525,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertCount( 1, $stored_mappings );
         $this->assertSame( 'real_time', $stored_mappings[0]['hook'] ?? null );
-        $this->assertSame( 'real_time', $stored_mappings[0]['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( '9', $stored_mappings[0]['settings_json']['realtime_settings']['storage_target_field_id'] ?? null );
         $this->assertTrue( $stored_mappings[0]['settings_json']['realtime_settings']['page_checkpoints_enabled'] ?? false );
     }
@@ -3774,17 +3610,18 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_rejects_non_clarification_realtime_trigger(): void
     {
+        $this->create_ready_managed_credential();
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/18/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 18 );
-        $request->set_param( 'central_action_id', 'sentient_forms_local_custom_action' );
-        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'central_action_id', 'entry_summary_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'real_time' ] );
 
         $response = $this->controller->add_form_action( $request );
 
         $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_realtime_action', $response->get_error_code() );
+        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
     }
 
     public function test_add_form_action_rejects_non_clarification_realtime_execution_mode(): void
@@ -3903,212 +3740,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
     }
 
-    public function test_update_option_backed_bundled_mapping_rejects_lifecycle_outside_action_source_contract(): void
-    {
-        $option_key = 'sentient_forms_actions_gravity_forms_152';
-        $mapping_id = 'map_entry_summary';
-        update_option(
-            $option_key,
-            [
-                $mapping_id => [
-                    'local_mapping_id'      => $mapping_id,
-                    'central_action_id'     => 'entry_summary_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'after_submission' ],
-                    'settings'              => [ 'execution_mode' => 'after_submission' ],
-                ],
-            ],
-            false
-        );
 
-        $request = new WP_REST_Request(
-            'PUT',
-            '/sentient-forms/v1/gravity_forms/forms/152/actions/' . $mapping_id
-        );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 152 );
-        $request->set_param( 'local_mapping_id', $mapping_id );
-        $request->set_param( 'trigger_hooks', [ 'validation' ] );
-        $request->set_param( 'settings', [ 'execution_mode' => 'validation' ] );
 
-        $response = $this->controller->update_form_action_item( $request );
 
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
-        delete_option( $option_key );
-    }
-
-    public function test_update_option_backed_generated_bundled_identity_resolves_linked_custom_action_contract(): void
-    {
-        global $wpdb;
-
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $generated_code = Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'content_validation_v1' );
-        $action_id = $custom_actions->create(
-            [
-                'code'                 => $generated_code,
-                'display_name'         => 'Bundled Content Validation',
-                'definition_json'      => [ 'supported_execution_modes' => [ 'validation' ] ],
-                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
-                'status'               => 'active',
-            ]
-        );
-        $this->assertIsInt( $action_id );
-
-        $option_key = 'sentient_forms_actions_gravity_forms_166';
-        $mapping_id = 'map_generated_content_validation';
-        update_option(
-            $option_key,
-            [
-                $mapping_id => [
-                    'local_mapping_id'      => $mapping_id,
-                    'central_action_id'     => $generated_code,
-                    'action_id'             => $action_id,
-                    'action_type_indicator' => 'local_first',
-                    'trigger_hooks'         => [ 'validation' ],
-                    'settings'              => [ 'execution_mode' => 'validation' ],
-                ],
-            ],
-            false
-        );
-
-        $request = new WP_REST_Request(
-            'PUT',
-            '/sentient-forms/v1/gravity_forms/forms/166/actions/' . $mapping_id
-        );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 166 );
-        $request->set_param( 'local_mapping_id', $mapping_id );
-        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
-        $request->set_param( 'settings', [ 'execution_mode' => 'after_submission' ] );
-
-        $response = $this->controller->update_form_action_item( $request );
-
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
-        delete_option( $option_key );
-    }
-
-    public function test_update_option_backed_identity_replacement_does_not_validate_against_stale_custom_action(): void
-    {
-        global $wpdb;
-
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id = $custom_actions->create(
-            [
-                'code'                 => 'custom_follow_up_before_bundled_replacement',
-                'display_name'         => 'Custom Follow-up Before Bundled Replacement',
-                'definition_json'      => [
-                    'supported_execution_modes' => [ 'after_submission' ],
-                    'prompt_template'            => 'Summarize {{entry}}.',
-                ],
-                'model_selection_json' => [
-                    'provider' => 'openrouter',
-                    'primary'  => 'openrouter/auto',
-                ],
-                'status'               => 'active',
-            ]
-        );
-        $this->assertIsInt( $action_id );
-
-        $option_key = 'sentient_forms_actions_gravity_forms_170';
-        $mapping_id = 'map_custom_replaced_by_bundled';
-        update_option(
-            $option_key,
-            [
-                $mapping_id => [
-                    'local_mapping_id'      => $mapping_id,
-                    'central_action_id'     => 'custom_follow_up_before_bundled_replacement',
-                    'action_id'             => $action_id,
-                    'action_type_indicator' => 'custom',
-                    'trigger_hooks'         => [ 'after_submission' ],
-                    'settings'              => [ 'execution_mode' => 'after_submission' ],
-                ],
-            ],
-            false
-        );
-
-        $request = new WP_REST_Request(
-            'PUT',
-            '/sentient-forms/v1/gravity_forms/forms/170/actions/' . $mapping_id
-        );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 170 );
-        $request->set_param( 'local_mapping_id', $mapping_id );
-        $request->set_param( 'central_action_id', 'content_validation_v1' );
-        $request->set_param( 'action_type_indicator', 'master' );
-        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
-        $request->set_param( 'settings', [ 'execution_mode' => 'after_submission' ] );
-
-        $response = $this->controller->update_form_action_item( $request );
-
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
-        delete_option( $option_key );
-    }
-
-    public function test_update_option_backed_master_identity_is_not_hijacked_by_custom_code_collision(): void
-    {
-        global $wpdb;
-
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $previous_action_id = $custom_actions->create(
-            [
-                'code'                 => 'custom_identity_before_master_collision',
-                'display_name'         => 'Custom Identity Before Master Collision',
-                'definition_json'      => [ 'supported_execution_modes' => [ 'after_submission' ] ],
-                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
-                'status'               => 'active',
-            ]
-        );
-        $this->assertIsInt( $previous_action_id );
-
-        $collision_action_id = $custom_actions->create(
-            [
-                'code'                 => 'content_validation_v1',
-                'display_name'         => 'True Custom Collision',
-                'definition_json'      => [ 'supported_execution_modes' => [ 'after_submission' ] ],
-                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
-                'status'               => 'active',
-            ]
-        );
-        $this->assertIsInt( $collision_action_id );
-
-        $option_key = 'sentient_forms_actions_gravity_forms_171';
-        $mapping_id = 'map_custom_replaced_by_master_collision';
-        update_option(
-            $option_key,
-            [
-                $mapping_id => [
-                    'local_mapping_id'      => $mapping_id,
-                    'central_action_id'     => 'custom_identity_before_master_collision',
-                    'action_id'             => $previous_action_id,
-                    'action_type_indicator' => 'custom',
-                    'trigger_hooks'         => [ 'after_submission' ],
-                    'settings'              => [ 'execution_mode' => 'after_submission' ],
-                ],
-            ],
-            false
-        );
-
-        $request = new WP_REST_Request(
-            'PUT',
-            '/sentient-forms/v1/gravity_forms/forms/171/actions/' . $mapping_id
-        );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 171 );
-        $request->set_param( 'local_mapping_id', $mapping_id );
-        $request->set_param( 'central_action_id', 'content_validation_v1' );
-        $request->set_param( 'action_type_indicator', 'master' );
-        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
-        $request->set_param( 'settings', [ 'execution_mode' => 'after_submission' ] );
-
-        $response = $this->controller->update_form_action_item( $request );
-
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
-        delete_option( $option_key );
-    }
 
     public function test_add_bundled_mapping_rejects_execution_mode_outside_action_source_contract(): void
     {
@@ -4567,7 +4201,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 'trigger_hooks'         => [ 'gform_after_submission' ],
                 'settings'              => [
                     'dependency_ids' => [ 'map_async' ],
-                    'execution_mode' => 'validation',
+                    'execution_mode' => 'after_submission',
+                    'dispatch_mode'  => 'sync',
                 ],
             ],
         ];
@@ -4942,163 +4577,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'dependency_ids', $child['settings_json'] ?? [] );
     }
 
-    public function test_duplicate_form_action_item_inserts_duplicate_and_rewires_parent_children(): void
-    {
-        $option_key = 'sentient_forms_actions_gravity_forms_13';
-        update_option(
-            $option_key,
-            [
-                'map_parent' => [
-                    'local_mapping_id'      => 'map_parent',
-                    'central_action_id'     => 'parent_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'gform_validation' ],
-                    'settings'              => [
-                        'trigger_sources' => [
-                            'gform_validation' => [ 'type' => 'hook_root' ],
-                        ],
-                    ],
-                ],
-                'map_source' => [
-                    'local_mapping_id'      => 'map_source',
-                    'central_action_id'     => 'source_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'gform_validation' ],
-                    'settings'              => [
-                        'trigger_sources' => [
-                            'gform_validation' => [ 'type' => 'hook_root' ],
-                        ],
-                    ],
-                ],
-                'map_child'  => [
-                    'local_mapping_id'      => 'map_child',
-                    'central_action_id'     => 'child_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'gform_validation' ],
-                    'settings'              => [
-                        'dependency_ids'  => [ 'map_parent' ],
-                        'trigger_sources' => [
-                            'gform_validation' => [
-                                'type'       => 'mapping',
-                                'mapping_id' => 'map_parent',
-                            ],
-                        ],
-                    ],
-                ],
-            ]
-        );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/13/actions/map_source/duplicate' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 13 );
-        $request->set_param( 'local_mapping_id', 'map_source' );
-        $request->set_param(
-            'parent',
-            [
-                'type'       => 'mapping',
-                'hook'       => 'gform_validation',
-                'mapping_id' => 'map_parent',
-            ]
-        );
 
-        $response = $this->controller->duplicate_form_action_item( $request );
-        $this->assertInstanceOf( WP_REST_Response::class, $response );
-        $this->assertSame( 201, $response->get_status() );
-
-        $data         = $response->get_data();
-        $duplicate    = $data['duplicate'] ?? [];
-        $duplicate_id = $duplicate['local_mapping_id'] ?? '';
-        $this->assertIsString( $duplicate_id );
-        $this->assertNotSame( '', $duplicate_id );
-        $this->assertNotSame( 'map_source', $duplicate_id );
-
-        $moved_children = $data['insertion']['moved_children'] ?? [];
-        $this->assertContains( 'map_child', $moved_children );
-
-        $stored = get_option( $option_key, [] );
-        $this->assertArrayHasKey( $duplicate_id, $stored );
-        $this->assertSame(
-            $duplicate_id,
-            $stored['map_child']['settings']['trigger_sources']['validation']['mapping_id'] ?? null
-        );
-        $this->assertSame( [ $duplicate_id ], $stored['map_child']['settings']['dependency_ids'] ?? [] );
-
-        delete_option( $option_key );
-    }
-
-    public function test_duplicate_form_action_item_rejects_parent_hook_not_on_source_mapping(): void
-    {
-        $option_key = 'sentient_forms_actions_gravity_forms_14';
-        update_option(
-            $option_key,
-            [
-                'map_source' => [
-                    'local_mapping_id'      => 'map_source',
-                    'central_action_id'     => 'source_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'gform_validation' ],
-                    'settings'              => [],
-                ],
-            ]
-        );
-
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/14/actions/map_source/duplicate' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 14 );
-        $request->set_param( 'local_mapping_id', 'map_source' );
-        $request->set_param(
-            'parent',
-            [
-                'type' => 'hook_root',
-                'hook' => 'gform_after_submission',
-            ]
-        );
-
-        $response = $this->controller->duplicate_form_action_item( $request );
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_duplicate_parent_hook', $response->get_error_code() );
-
-        delete_option( $option_key );
-    }
-
-    public function test_duplicate_form_action_item_rejects_stale_bundled_lifecycle_outside_action_source_contract(): void
-    {
-        $option_key = 'sentient_forms_actions_gravity_forms_154';
-        update_option(
-            $option_key,
-            [
-                'map_stale_content_validation' => [
-                    'local_mapping_id'      => 'map_stale_content_validation',
-                    'central_action_id'     => 'content_validation_v1',
-                    'action_type_indicator' => 'master',
-                    'trigger_hooks'         => [ 'after_submission' ],
-                    'settings'              => [ 'execution_mode' => 'after_submission' ],
-                ],
-            ],
-            false
-        );
-
-        $request = new WP_REST_Request(
-            'POST',
-            '/sentient-forms/v1/gravity_forms/forms/154/actions/map_stale_content_validation/duplicate'
-        );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 154 );
-        $request->set_param( 'local_mapping_id', 'map_stale_content_validation' );
-        $request->set_param(
-            'parent',
-            [
-                'type' => 'hook_root',
-                'hook' => 'after_submission',
-            ]
-        );
-
-        $response = $this->controller->duplicate_form_action_item( $request );
-
-        $this->assertWPError( $response );
-        $this->assertSame( 'rest_invalid_action_lifecycle', $response->get_error_code() );
-        delete_option( $option_key );
-    }
 
     public function test_sanitize_trace_entry_values_filters_invalid_values_and_clamps_length(): void
     {
@@ -5228,8 +4708,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 ],
                 false
             );
-            $this->set_mappings_sync( null );
-
             $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/73/actions/request-trace' );
             $request->set_param( 'form_source_slug', 'gravity_forms' );
             $request->set_param( 'form_id', 73 );
@@ -5252,48 +4730,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         }
     }
 
-    public function test_elementor_request_trace_merges_cps_mappings_for_provider_native_form_id(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
-            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id = $this->create_elementor_form_page_for_controller();
-        $form_id = $page_id . ':formabc';
-        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/request-trace' );
-        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
-        $request->set_param( 'form_id', $form_id );
-        $request->set_param( 'hook_scope', 'after_submission' );
-        $request->set_param( 'entry_values', [ 'email' => 'prospect@example.test' ] );
-
-        $response = $this->controller->get_request_trace( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 1, $sync->fetch_calls );
-        $this->assertSame( 'after_submission', $data['hook_scope'] ?? null );
-        $this->assertSame( [ 'after_submission' ], $data['available_hooks'] ?? null );
-        $this->assertSame( [ 'cps_elementor_summary' ], $data['hooks'][0]['queued'] ?? null );
-    }
-
-    // =========================================================================
-    // CB-FORMS-001: Per-Form Master Disable Tests
-    // =========================================================================
-
-    /**
-     * CB-FORMS-001: sf_disabled flag must NOT leak into the actions array.
-     *
-     * The sf_disabled boolean lives in the same WP option as action linkages.
-     * get_form_actions MUST filter it out, otherwise the frontend receives a
-     * phantom "action" whose value is `true` instead of an action object.
-     */
     public function test_get_form_actions_excludes_sf_disabled_from_response(): void
     {
         $option_key = 'sentient_forms_actions_gravity_forms_1';
@@ -5407,24 +4843,16 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $form_id = $page_id . ':formabc';
 
         global $wpdb;
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
 
-        $action_id = $custom_actions->create(
+        $action_id = $this->create_bundled_custom_action_fixture(
+            'spam_detection_v1',
+            'Spam Detection',
             [
-                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
-                'display_name'         => 'Spam Detection',
-                'definition_json'      => [
-                    'template_code' => 'spam_detection_v1',
-                ],
-                'model_selection_json' => [
-                    'provider' => 'openrouter',
-                    'model'    => 'openai/gpt-oss-20b:free',
-                ],
-                'status'               => 'active',
+                'provider' => 'openrouter',
+                'model'    => 'openai/gpt-oss-20b:free',
             ]
         );
-        $this->assertIsInt( $action_id );
 
         $mapping_id = $mappings->create(
             [
@@ -5572,40 +5000,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'unknown', $forms_by_id[2]['execution_status']['status'] ?? null );
     }
 
-    public function test_get_forms_overview_fetches_cps_mappings_once_for_all_forms(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Counting_Fetch' ) ) {
-            $this->markTestSkipped( 'Mappings sync counting test double is unavailable.' );
-        }
-
-        GFAPI::$forms = [
-            1 => [
-                'id'        => 1,
-                'title'     => 'Contact Form',
-                'is_active' => true,
-            ],
-            2 => [
-                'id'        => 2,
-                'title'     => 'Quote Request',
-                'is_active' => true,
-            ],
-        ];
-
-        $sync = new Sentient_Forms_Test_Mappings_Sync_Counting_Fetch();
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-
-        $response = $this->controller->get_forms_overview( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 1, $sync->fetch_calls, 'Overview should not fetch the full CPS mapping list once per form.' );
-        $this->assertCount( 2, $data['forms'] ?? [] );
-        $this->assertSame( 'cps_map_form_1', $data['forms'][0]['actions'][0]['local_mapping_id'] ?? null );
-        $this->assertSame( 'cps_map_form_2', $data['forms'][1]['actions'][0]['local_mapping_id'] ?? null );
-    }
-
     public function test_elementor_pro_forms_overview_includes_descriptor_and_provider_native_form_id(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
@@ -5642,105 +5036,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $data['form_source_descriptor']['native_entry']['link'] ?? true );
     }
 
-    public function test_elementor_form_actions_bootstrap_merges_cps_mappings_for_provider_native_form_id(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
-            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id = $this->create_elementor_form_page_for_controller();
-        $form_id = $page_id . ':formabc';
-        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' );
-        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
-        $request->set_param( 'form_id', $form_id );
-
-        $response = $this->controller->get_form_actions_bootstrap( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( $form_id, $data['form_id'] ?? null );
-        $this->assertSame( 1, $sync->fetch_calls );
-        $this->assertCount( 1, $data['actions'] ?? [] );
-        $this->assertSame( 'cps_elementor_summary', $data['actions'][0]['local_mapping_id'] ?? null );
-        $this->assertSame( 'entry_summary_v1', $data['actions'][0]['central_action_id'] ?? null );
-        $this->assertSame( 'cps', $data['actions'][0]['source'] ?? null );
-    }
-
-    public function test_elementor_pro_forms_overview_merges_cps_mappings_for_provider_native_form_id(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
-            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id = $this->create_elementor_form_page_for_controller();
-        $form_id = $page_id . ':formabc';
-        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/overview' );
-        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
-
-        $response = $this->controller->get_forms_overview( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 1, $sync->fetch_calls );
-        $this->assertSame( $form_id, $data['forms'][0]['id'] ?? null );
-        $this->assertCount( 1, $data['forms'][0]['actions'] ?? [] );
-        $this->assertSame( 'cps_elementor_summary', $data['forms'][0]['actions'][0]['local_mapping_id'] ?? null );
-        $this->assertSame( 'cps', $data['forms'][0]['actions'][0]['source'] ?? null );
-    }
-
-    public function test_elementor_workflow_plan_merges_cps_mappings_for_provider_native_form_id(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
-            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id = $this->create_elementor_form_page_for_controller();
-        $form_id = $page_id . ':formabc';
-        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/workflow-plan' );
-        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
-        $request->set_param( 'form_id', $form_id );
-        $request->set_param( 'hook_scope', 'after_submission' );
-
-        $response = $this->controller->get_workflow_plan( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 1, $sync->fetch_calls );
-        $this->assertSame( 'local', $data['authority'] ?? null );
-        $this->assertContains( 'after_submission', $data['available_hooks'] ?? [] );
-        $this->assertContains( 'cps_elementor_summary', array_column( $data['nodes'] ?? [], 'mapping_id' ) );
-    }
-
     public function test_get_form_actions_bootstrap_combines_actions_status_and_disabled_state(): void
     {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
-            $this->markTestSkipped( 'Mappings sync workflow plan test double is unavailable.' );
-        }
-
-        $sync = new Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan();
-        $this->set_mappings_sync( $sync );
-
         update_option(
             'sentient_forms_actions_gravity_forms_1',
             [
@@ -5814,9 +5111,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'gform_validation',
             $data['form_source_descriptor']['lifecycles']['validation']['native_hook'] ?? null
         );
-        $this->assertSame( 'cps', $data['workflow_plan']['authority'] ?? null );
-        $this->assertSame( 2, $sync->plan_calls );
-        $this->assertSame( 1, $sync->sync_calls );
+        $this->assertSame( 'local', $data['workflow_plan']['authority'] ?? null );
+        $this->assertSame( 'plugin_local_authority', $data['workflow_plan']['authority_reason'] ?? null );
+        $this->assertFalse( $data['workflow_plan']['cps_unreachable'] ?? true );
     }
 
     public function test_form_actions_bootstrap_includes_bundled_provider_path_policy(): void
@@ -6166,6 +5463,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'settings',
             [
                 'execution_mode' => 'after_submission',
+                'dispatch_mode'  => 'sync',
                 'input_mapping'  => [
                     'name'    => '1',
                     'message' => '2',
@@ -6199,6 +5497,10 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertSame( 'local_first_' . $record['mapping_id'], $data['local_mapping_id'] ?? null );
         $this->assertFalse( $data['is_action_enabled_for_form'] ?? true );
+        $this->assertSame( 'after_submission', $data['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $data['dispatch_mode'] ?? null );
+        $this->assertSame( 'after_submission', $data['settings']['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $data['settings']['dispatch_mode'] ?? null );
         $this->assertSame( [ 'name' => '1', 'message' => '2' ], $data['settings']['input_mapping'] ?? null );
         $this->assertSame( 'sentient_managed', $data['settings']['model_selection']['provider'] ?? null );
         $this->assertSame( 'sf_default', $data['settings']['model_selection']['primary'] ?? null );
@@ -6206,6 +5508,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'yes', $data['settings']['include_site_context'] ?? null );
         $this->assertIsArray( $stored );
         $this->assertFalse( $stored['enabled'] );
+        $this->assertSame( 'after_submission', $stored['hook'] ?? null );
+        $this->assertSame( 'sync', $stored['execution_mode'] ?? null );
         $this->assertSame( [ 'name' => '1', 'message' => '2' ], $stored['input_bindings_json'] ?? null );
         $this->assertSame( 'sentient_managed', $stored['settings_json']['model_selection']['provider'] ?? null );
         $this->assertSame( 'sf_default', $stored['settings_json']['model_selection']['primary'] ?? null );
@@ -6213,79 +5517,18 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'yes', $stored['settings_json']['include_site_context'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
-    }
 
-    public function test_update_form_action_item_updates_wrapped_option_duplicate(): void
-    {
-        $option_key = 'sentient_forms_actions_gravity_forms_1';
-        $mapping_id = 'map_rt_stale_wrapper';
-        $base_mapping = [
-            'local_mapping_id'           => $mapping_id,
-            'central_action_id'          => 'clarification_assistant_v1',
-            'action_type_indicator'      => 'master',
-            'trigger_hooks'              => [ 'real_time' ],
-            'is_action_enabled_for_form' => true,
-            'settings'                   => [
-                'execution_mode'     => 'real_time',
-                'realtime_settings'  => [
-                    'storage_target_field_id'   => '9',
-                    'pre_submit_run_enabled'    => false,
-                    'hidden_field_exposure_mode' => 'label_hidden',
-                ],
-            ],
-        ];
+        $reload_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $reload_request->set_param( 'form_source_slug', 'gravity_forms' );
+        $reload_request->set_param( 'form_id', 1 );
+        $reload_request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $reload      = $this->controller->get_form_action_item( $reload_request );
+        $reload_data = $reload->get_data();
 
-        update_option(
-            $option_key,
-            [
-                'enabled' => true,
-                'actions' => [
-                    $mapping_id => $base_mapping,
-                ],
-                $mapping_id => $base_mapping,
-            ],
-            false
-        );
-
-        GFAPI::$forms[1] = [
-            'id'     => 1,
-            'title'  => 'Realtime wrapper save',
-            'fields' => [
-                (object) [ 'id' => 9, 'label' => 'Sentient Forms Realtime Q&A', 'type' => 'hidden' ],
-            ],
-        ];
-
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 1 );
-        $request->set_param( 'local_mapping_id', $mapping_id );
-        $request->set_param( 'trigger_hooks', [ 'real_time' ] );
-        $request->set_param(
-            'settings',
-            [
-                'execution_mode'    => 'real_time',
-                'realtime_settings' => [
-                    'storage_target_field_id'    => '9',
-                    'pre_submit_run_enabled'     => true,
-                    'pre_submit_timeout_ms'      => 2500,
-                    'hidden_field_exposure_mode' => 'label_hidden',
-                ],
-            ]
-        );
-
-        $response = $this->controller->update_form_action_item( $request );
-        $this->assertInstanceOf( WP_REST_Response::class, $response );
-
-        $stored = get_option( $option_key, [] );
-
-        $this->assertTrue(
-            $stored[ $mapping_id ]['settings']['realtime_settings']['pre_submit_run_enabled'] ?? false
-        );
-        $this->assertTrue(
-            $stored['actions'][ $mapping_id ]['settings']['realtime_settings']['pre_submit_run_enabled'] ?? false
-        );
-
-        delete_option( $option_key );
+        $this->assertSame( 'after_submission', $reload_data['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $reload_data['dispatch_mode'] ?? null );
+        $this->assertSame( 'after_submission', $reload_data['settings']['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $reload_data['settings']['dispatch_mode'] ?? null );
     }
 
     public function test_update_form_action_item_rejects_realtime_for_non_clarification_local_first_mapping(): void
@@ -6464,141 +5707,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
-    public function test_get_workflow_plan_falls_back_when_cps_plan_omits_local_mappings(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan' ) ) {
-            $this->markTestSkipped( 'Mappings sync test double is unavailable.' );
-        }
-
-        $option_key = 'sentient_forms_actions_gravity_forms_1';
-        update_option( $option_key, [
-            'sf_disabled' => false,
-            'map_spam_v1' => [
-                'local_mapping_id'           => 'map_spam_v1',
-                'central_action_id'          => 'spam_detection_v1',
-                'action_type_indicator'      => 'master',
-                'is_action_enabled_for_form' => true,
-                'trigger_hooks'              => [ 'gform_validation' ],
-                'action_name_label'          => 'Local Spam Detection',
-                'settings'                   => [
-                    'trigger_sources' => [
-                        'gform_validation' => [ 'type' => 'hook_root' ],
-                    ],
-                ],
-            ],
-        ] );
-
-        $this->set_mappings_sync( new Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan() );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 1 );
-        $request->set_param( 'hook_scope', 'all' );
-
-        $response = $this->controller->get_workflow_plan( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 'local', $data['authority'] ?? null );
-        $this->assertSame( 'cps_mismatch', $data['authority_reason'] ?? null );
-        $this->assertFalse( $data['cps_unreachable'] ?? true );
-        $this->assertContains( 'validation', $data['available_hooks'] ?? [] );
-
-        $node_ids = array_column( $data['nodes'] ?? [], 'mapping_id' );
-        $this->assertContains( 'map_spam_v1', $node_ids );
-
-        delete_option( $option_key );
-    }
-
-    public function test_get_workflow_plan_syncs_and_retries_when_cps_plan_omits_local_mappings(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
-            $this->markTestSkipped( 'Mappings sync reconciliation test double is unavailable.' );
-        }
-
-        $option_key = 'sentient_forms_actions_gravity_forms_1';
-        update_option( $option_key, [
-            'sf_disabled' => false,
-            'map_spam_v1' => [
-                'local_mapping_id'           => 'map_spam_v1',
-                'central_action_id'          => 'spam_detection_v1',
-                'action_type_indicator'      => 'master',
-                'is_action_enabled_for_form' => true,
-                'trigger_hooks'              => [ 'gform_validation' ],
-                'action_name_label'          => 'Local Spam Detection',
-            ],
-        ] );
-
-        $sync = new Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan();
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 1 );
-        $request->set_param( 'hook_scope', 'all' );
-
-        $response = $this->controller->get_workflow_plan( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 'cps', $data['authority'] ?? null );
-        $this->assertFalse( $data['cps_unreachable'] ?? true );
-        $this->assertSame( 2, $sync->plan_calls, 'Planner should retry once after reconciliation.' );
-        $this->assertSame( 1, $sync->sync_calls, 'Local mappings should be reconciled to CPS before retrying.' );
-        $this->assertSame( 'map_spam_v1', $sync->synced_actions[0]['local_mapping_id'] ?? null );
-
-        delete_option( $option_key );
-    }
-
-    public function test_get_workflow_plan_syncs_only_real_mappings_from_wrapped_option_shape(): void
-    {
-        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
-            $this->markTestSkipped( 'Mappings sync reconciliation test double is unavailable.' );
-        }
-
-        $option_key = 'sentient_forms_actions_gravity_forms_1';
-        $mapping    = [
-            'local_mapping_id'           => 'map_spam_v1',
-            'central_action_id'          => 'spam_detection_v1',
-            'action_type_indicator'      => 'master',
-            'is_action_enabled_for_form' => true,
-            'trigger_hooks'              => [ 'gform_validation' ],
-            'action_name_label'          => 'Local Spam Detection',
-        ];
-
-        update_option(
-            $option_key,
-            [
-                'enabled'       => true,
-                'actions'       => [
-                    'map_spam_v1' => $mapping,
-                ],
-                'map_spam_v1'   => $mapping,
-                'sf_disabled'   => false,
-            ]
-        );
-
-        $sync = new Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan();
-        $this->set_mappings_sync( $sync );
-
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 1 );
-        $request->set_param( 'hook_scope', 'all' );
-
-        $response = $this->controller->get_workflow_plan( $request );
-        $data     = $response->get_data();
-
-        $this->assertSame( 'cps', $data['authority'] ?? null );
-        $this->assertSame( 1, $sync->sync_calls );
-        $this->assertCount( 1, $sync->synced_actions );
-        $this->assertSame( 'map_spam_v1', $sync->synced_actions[0]['local_mapping_id'] ?? null );
-        $this->assertArrayNotHasKey( 'cps_sync_error_code', $data );
-
-        delete_option( $option_key );
-    }
-
-    /**
-     * CB-FORMS-001: toggle_form_disabled round-trip — set, read, clear.
-     */
     public function test_toggle_form_disabled_round_trip(): void
     {
         $option_key = 'sentient_forms_actions_gravity_forms_2';
@@ -6742,6 +5850,46 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 201, $response->get_status() );
 
         return $response->get_data();
+    }
+
+    /**
+     * @param array<string, mixed> $model_selection
+     */
+    private function create_bundled_custom_action_fixture( string $action_code, string $display_name, array $model_selection ): int
+    {
+        global $wpdb;
+
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+        $this->assertIsArray( $catalog );
+        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => $action_code,
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+            [
+                'template_id'          => $template_id,
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $action_code ),
+                'display_name'         => $display_name,
+                'definition_json'      => Sentient_Forms_Bundled_Action_Templates::linkage_definition( $action_code ),
+                'model_selection_json' => $model_selection,
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        return $action_id;
     }
 
     private function create_ready_openrouter_credential( bool $record_consent = true ): int
@@ -6908,13 +6056,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $reflection->setAccessible( true );
 
         return $reflection->invokeArgs( $this->controller, $args );
-    }
-
-    private function set_mappings_sync( ?Sentient_Forms_Mappings_Sync $mappings_sync ): void
-    {
-        $property = new ReflectionProperty( $this->controller, 'mappings_sync' );
-        $property->setAccessible( true );
-        $property->setValue( $this->controller, $mappings_sync );
     }
 
     private function set_provider_path_policy( ?Sentient_Forms_Provider_Path_Policy_Service $policy ): void

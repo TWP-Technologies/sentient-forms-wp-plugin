@@ -3,7 +3,7 @@ import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
 function dashboardSummary(overrides: Record<string, unknown> = {}) {
-	return {
+	const summary = {
 		generated_at: '2030-01-05T10:00:00Z',
 		providers: [],
 		templates: [],
@@ -18,8 +18,51 @@ function dashboardSummary(overrides: Record<string, unknown> = {}) {
 			license_id: null,
 			site_id: null
 		},
-		async_health: { status: 'healthy', blockers: [], warnings: [] },
+		async_health: {
+			queue_depth: 0,
+			oldest_run_at: null,
+			recent_failures: {},
+			warnings: []
+		},
 		...overrides
+	};
+	const records = <T extends Record<string, unknown>>(
+		value: unknown,
+		defaults: T
+	): Array<T & Record<string, unknown>> => {
+		return Array.isArray(value)
+			? value.map((item) => ({
+					...defaults,
+					...(item && typeof item === 'object' && !Array.isArray(item) ? item : {})
+				}))
+			: [];
+	};
+
+	return {
+		...summary,
+		providers: records(summary.providers, {
+			id: 0, provider: '', label: '', auth_mode: '', constant_name: null, status: '',
+			status_json: null, last_validated_at: null, created_at: null, updated_at: null,
+			secret_configured: false
+		}),
+		templates: records(summary.templates, {
+			id: 0, source: null, external_id: null, code: null, display_name: null,
+			description: null, prompt_template: null, default_model: null,
+			structured_output_schema: null, override_schema: null, version: null,
+			is_active: false, created_at: null, updated_at: null
+		}),
+		custom_actions: records(summary.custom_actions, {
+			id: 0, external_id: null, template_id: null, code: null, display_name: null,
+			definition_json: null, model_selection_json: null, status: null,
+			created_at: null, updated_at: null
+		}),
+		recent_events: records(summary.recent_events, {
+			id: 0, execution_request_id: null, mapping_id: null, form_source: null,
+			form_id: null, entry_id: null, provider: null, model: null, status: null,
+			token_usage_json: null, cost_json: null, result_json: null, error_code: null,
+			error_message: null, payload_digest: null, created_at: null, updated_at: null,
+			expires_at: null
+		})
 	};
 }
 
@@ -32,7 +75,7 @@ async function routeDashboardSummary(
 		route.fulfill({
 			status,
 			contentType: 'application/json',
-			body: JSON.stringify({ success: status < 400, data: summary })
+			body: JSON.stringify(summary)
 		})
 	);
 }

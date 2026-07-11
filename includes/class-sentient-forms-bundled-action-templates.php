@@ -1459,6 +1459,84 @@ PROMPT,
         return null !== self::get( $code );
     }
 
+    public static function catalog_digest( string $code ): string
+    {
+        $definition = self::get( $code );
+        if ( null === $definition )
+        {
+            return '';
+        }
+
+        return hash( 'sha256', (string) wp_json_encode( $definition, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) );
+    }
+
+    /**
+     * Return the only database payload allowed to link a built-in Action row to
+     * this code-owned catalog. Executable content never comes from the database.
+     *
+     * @return array{template_code:string,catalog_digest:string}
+     */
+    public static function linkage_definition( string $code ): array
+    {
+        $code   = sanitize_key( $code );
+        $digest = self::catalog_digest( $code );
+
+        return '' === $digest
+            ? []
+            : [
+                'template_code' => $code,
+                'catalog_digest' => $digest,
+            ];
+    }
+
+    /**
+     * Fail closed for missing, extra, stale, or tampered built-in linkage data.
+     */
+    public static function is_valid_linkage_definition( array $definition ): bool
+    {
+        if ( [ 'template_code', 'catalog_digest' ] !== array_keys( $definition ) )
+        {
+            return false;
+        }
+
+        $code = isset( $definition['template_code'] ) && is_scalar( $definition['template_code'] )
+            ? sanitize_key( (string) $definition['template_code'] )
+            : '';
+        $digest = isset( $definition['catalog_digest'] ) && is_scalar( $definition['catalog_digest'] )
+            ? strtolower( trim( (string) $definition['catalog_digest'] ) )
+            : '';
+        $expected = self::catalog_digest( $code );
+
+        return '' !== $expected && hash_equals( $expected, $digest );
+    }
+
+    /**
+     * Project the code-owned catalog into the provider execution definition.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function execution_definition( string $code ): ?array
+    {
+        $catalog = self::get( $code );
+        if ( null === $catalog )
+        {
+            return null;
+        }
+
+        $definition                  = is_array( $catalog['definition_json'] ?? null ) ? $catalog['definition_json'] : [];
+        $definition['template_code'] = sanitize_key( $code );
+        $definition['code']          = sanitize_key( $code );
+        foreach ( [ 'prompt_template', 'default_model', 'structured_output_schema', 'override_schema' ] as $field )
+        {
+            if ( array_key_exists( $field, $catalog ) )
+            {
+                $definition[ $field ] = $catalog[ $field ];
+            }
+        }
+
+        return $definition;
+    }
+
     public static function build_managed_custom_action_code( string $template_code ): string
     {
         return self::MANAGED_CUSTOM_ACTION_PREFIX . sanitize_key( $template_code );
@@ -1472,37 +1550,18 @@ PROMPT,
     public static function extract_template_code_from_custom_action_code( string $code ): string
     {
         $code = sanitize_key( $code );
+        if ( self::has( $code ) )
+        {
+            return $code;
+        }
+
         if ( self::is_managed_custom_action_code( $code ) )
         {
-            return sanitize_key( substr( $code, strlen( self::MANAGED_CUSTOM_ACTION_PREFIX ) ) );
+            $candidate = sanitize_key( substr( $code, strlen( self::MANAGED_CUSTOM_ACTION_PREFIX ) ) );
+            return self::has( $candidate ) ? $candidate : '';
         }
 
-        if ( str_starts_with( $code, 'imported_' ) )
-        {
-            $candidate = sanitize_key( substr( $code, strlen( 'imported_' ) ) );
-            if ( self::has( $candidate ) )
-            {
-                return $candidate;
-            }
-
-            foreach ( array_keys( self::definitions() ) as $template_code )
-            {
-                if ( str_starts_with( $candidate, $template_code . '_' ) )
-                {
-                    return $template_code;
-                }
-            }
-        }
-
-        foreach ( array_keys( self::definitions() ) as $template_code )
-        {
-            if ( str_ends_with( $code, '_' . $template_code ) )
-            {
-                return $template_code;
-            }
-        }
-
-        return self::has( $code ) ? $code : '';
+        return '';
     }
 
     /**

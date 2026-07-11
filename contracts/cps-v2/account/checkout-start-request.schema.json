@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/checkout-start-request.schema.json",
+  "title": "Sentient Managed Checkout Start Request",
+  "type": "object",
+  "required": [
+    "plan_code",
+    "site_url",
+    "local_site_identifier",
+    "success_url",
+    "cancel_url",
+    "disclosure_version",
+    "accepted_managed_service_terms"
+  ],
+  "properties": {
+    "plan_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Normalized by CPS to starter, pro, or business."
+    },
+    "billing_interval": {
+      "type": "string",
+      "description": "CPS currently accepts only the monthly interval and its month alias."
+    },
+    "site_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "local_site_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "success_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "cancel_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "disclosure_version": {
+      "type": "string",
+      "minLength": 8
+    },
+    "accepted_managed_service_terms": {
+      "type": "boolean",
+      "const": true
+    },
+    "require_zdr": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true
+}

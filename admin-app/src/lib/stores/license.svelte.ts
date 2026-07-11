@@ -2,6 +2,7 @@ import { toStore } from 'svelte/store';
 import { createClientFromConfig } from '$lib/api/client';
 import type { LicenseActivationResult, LicenseInfoResponse, TierSummary } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export interface LicenseState {
 	loading: boolean;
@@ -26,7 +27,7 @@ function extractTierName(tier: unknown): string | null {
 	return null;
 }
 
-const runtimeConfig = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+const runtimeConfig = readRuntimeConfigSafely();
 const bootstrap = runtimeConfig?.license ?? {};
 
 const initialState: LicenseState = {

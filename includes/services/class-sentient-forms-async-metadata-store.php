@@ -19,7 +19,7 @@ class Sentient_Forms_Async_Metadata_Store
      * Record a newly scheduled job.
      *
      * @param string               $job_id             UUID assigned to the job context.
-     * @param string               $hook               Hook name (`sentient_forms_process_action` or evaluation).
+     * @param string               $hook               Local-mapping or evaluation hook name.
      * @param array<string, mixed> $payload            Payload passed to Action Scheduler.
      * @param int                  $run_at             Timestamp when the job is scheduled to run.
      * @param int|null             $action_scheduler_id Optional Action Scheduler action ID.

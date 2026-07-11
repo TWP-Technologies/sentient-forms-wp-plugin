@@ -26,30 +26,29 @@ Do not submit an older public release ZIP after security or compliance fixes lan
 - Local custom tables and repositories for providers, consent, action templates, custom actions, mappings, execution events, migrations, and model cache.
 - Direct OpenRouter client using the WordPress HTTP API for key validation and chat completions.
 - Optional Sentient Forms Managed Execution for managed AI execution, account state, billing, metering, and support diagnostics.
-- Consent-gated provider setup, managed-service setup, telemetry, Site Context generation, and realtime assistant flows.
+- Consent-gated provider setup, managed-service setup, metadata-only local diagnostics, Site Context generation, and realtime assistant flows.
 - Local workspace REST endpoints for templates, custom actions, mappings, execution events, support bundles, and mapping test runs.
 - Local prompt rendering, structured JSON result extraction, idempotent execution-event recording, Gravity Forms-style result effects, ledger-backed review surfaces for supported non-Gravity builders, and post-execution notes/email/hooks/webhooks where the adapter supports them.
-- Realtime Clarification Assistant suggestions for mapped Gravity Forms fields when an administrator enables the action and accepts the relevant external-service disclosure. Contact Form 7, WPForms, and Elementor Pro Forms support after-submission actions through the Sentient Forms Submission Ledger; Elementor Pro Forms requires Elementor Pro Forms APIs. Validation blocking, realtime suggestions, native spam status, native submission-entry parity, webhook suppression, and notification suppression are not supported for those builders in this release.
+- Content Validation can block invalid submissions on all four Form Sources through the field or form error capabilities each builder provides. Spam Detection uses native spam state for Gravity Forms and Contact Form 7; on WPForms and Elementor Pro Forms it blocks through validation without claiming native spam state. Realtime Clarification Assistant remains Gravity Forms-only. Contact Form 7, WPForms, and Elementor Pro Forms use the Sentient Forms Submission Ledger for supported after-submission review workflows; Elementor Pro Forms requires Elementor Pro Forms APIs. Native submission-entry, webhook-control, and notification-control effects remain builder-specific capabilities rather than universal parity claims.
 - Privacy export/erase hooks, scheduled execution-event retention cleanup, configurable uninstall behavior, and redacted support bundles.
 - WordPress.org source/package scanners, release-version checks, readme validation, license audit, and a repeatable clean package-directory builder.
 
 ## External Services and Consent
 
-The WordPress.org `readme.txt` is the authoritative submission disclosure for external services. Keep it current whenever the plugin adds or changes provider paths, telemetry, webhooks, managed-service behavior, realtime suggestions, or AI-generated Site Context.
+The WordPress.org `readme.txt` is the authoritative submission disclosure for external services. Keep it current whenever the plugin adds or changes provider paths, webhooks, managed-service behavior, realtime suggestions, or AI-generated Site Context.
 
 Current external-service categories disclosed in `readme.txt`:
 
 - OpenRouter direct execution.
 - Sentient Forms Managed Execution.
-- Optional Sentient Forms telemetry.
 - Administrator-configured webhooks.
 - Realtime Clarification Assistant.
 
-No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
+No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. Optional diagnostic consent enables only metadata-safe local hooks; the separate on-site logging setting controls the plugin's masked writer, debug mode cannot bypass consent, and no telemetry leaves the WordPress site in this release.
 
 ## Development Workflow
 
-1. **WordPress stack**: Boot the local Docker compose environment or point the plugin at an existing WordPress instance running one of the supported form builders. Activate the plugin with `wp plugin activate sentient-forms`. Gravity Forms has the deepest native workflow support; Contact Form 7, WPForms, and Elementor Pro Forms require the Sentient Forms Submission Ledger for after-submission review workflows. Elementor Pro Forms also requires Elementor Pro Forms APIs.
+1. **WordPress stack**: Boot the local Docker compose environment or point the plugin at an existing WordPress instance running one of the supported form builders. Activate the plugin with `wp plugin activate sentient-forms`. All four Form Sources support the shipped validation contracts described above. Gravity Forms has the deepest native after-submission effects; Contact Form 7, WPForms, and Elementor Pro Forms require the Sentient Forms Submission Ledger for supported after-submission review workflows. Elementor Pro Forms also requires Elementor Pro Forms APIs.
 2. **Admin SPA**: From `admin-app/`, run `bun install` once, then use:
    - `bun run dev` for local SPA development.
    - `bun run build:wp` before committing UI changes; this copies hashed assets into `assets/dist/`.
@@ -77,7 +76,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 - `includes/class-sentient-forms-installer.php` owns local table install/upgrade and retention scheduling.
 - `includes/repositories/` contains local-first data access classes.
 - `includes/providers/` contains provider-specific clients such as OpenRouter direct execution.
-- `includes/services/` contains local execution, prompt rendering, result application, privacy/data governance, support bundle, telemetry, and managed-service support.
+- `includes/services/` contains local execution, prompt rendering, result application, privacy/data governance, support bundle, local diagnostics, and managed-service support.
 - `includes/rest-api/controllers/class-local-providers-controller.php` exposes local provider onboarding APIs.
 - `includes/rest-api/controllers/class-local-workspace-controller.php` exposes local workspace, execution, support, and test-run APIs.
 - `scripts/build-wporg-package.php` builds the clean package directory used for WordPress.org artifact checks.
@@ -89,7 +88,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 
 ## Release Readiness
 
-Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.9.x copy, that means Gravity Forms native workflows plus Contact Form 7, WPForms, and Elementor Pro Forms after-submission ledger workflows, without implying Gravity Forms-style parity for builders that do not support it.
+Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.10.0, evidence must cover the declared validation behavior across all four Form Sources, supported after-submission ledger workflows, and Gravity Forms-only realtime behavior without implying universal native-effect parity.
 
 For WordPress.org submission, prefer the latest validated GitHub release ZIP and manifest over an ad hoc local ZIP. The public source tag named in `readme.txt` and `assets/dist/SOURCE.md` must exist before upload. If a local rebuild is necessary, run the same package checks against the rebuilt package and preserve the package path/hash in release evidence.
 

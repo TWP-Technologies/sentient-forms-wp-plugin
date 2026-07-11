@@ -1,8 +1,31 @@
 import { expect, test } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
+import { mockResponsiveApi } from './utils/mock-responsive-api';
 
 test.describe('Settings retention controls', () => {
+	test('describes telemetry consent as local-only diagnostics', async ({ page }) => {
+		await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
+		await mockResponsiveApi(page);
+
+		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+
+		const diagnostics = page.getByTestId('settings-local-diagnostics');
+		await expect(diagnostics.getByText('Allow local diagnostic events')).toBeVisible();
+		await expect(diagnostics).toContainText('Enable on-site logging below to write them');
+		await expect(diagnostics).toContainText('Nothing is sent off-site in this release.');
+		await expect(diagnostics.getByText(/Remote consent record|Synced/)).toHaveCount(0);
+
+		await diagnostics.getByRole('button', { name: 'What is recorded?' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Local diagnostics and data privacy' });
+		await expect(dialog).toBeVisible();
+		await expect(dialog).toContainText('On-site logging must also be enabled');
+		await expect(dialog).toContainText('When consent and on-site logging are both enabled');
+		await expect(dialog).toContainText('remain on this WordPress site');
+		await expect(dialog).toContainText('Nothing is sent off-site in this release.');
+		await expect(dialog).not.toContainText('remote telemetry sync');
+	});
+
 	test('shows a loading state until privacy settings finish loading', async ({ page }) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
@@ -94,6 +117,7 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByTestId('settings-retention-loading-state')).toBeHidden();
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
+		await expect(page.getByTestId('settings-profile-submission-ledger')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});
 
@@ -119,6 +143,7 @@ test.describe('Settings retention controls', () => {
 			execution_global_disabled: false,
 			execution_provider_disabled: { gravity_forms: false },
 			execution_event_retention_days: 90,
+			submission_ledger_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
 			managed_zdr_required: false,
@@ -193,7 +218,24 @@ test.describe('Settings retention controls', () => {
 			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
 		);
 		await expect(page.getByText('Local data retention')).toBeVisible();
+		const manualRetentionHelp = page.getByTestId('settings-manual-retention-help');
+		await expect(manualRetentionHelp).toHaveCount(0);
+		await page.getByLabel('Execution logs').selectOption('0');
+		await expect(manualRetentionHelp).toHaveText(
+			'Manual cleanup keeps new execution logs until an administrator removes them or changes this setting.'
+		);
+		await page.getByLabel('Submission Ledger records').selectOption('0');
+		await expect(manualRetentionHelp).toHaveText(
+			'Manual cleanup keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.'
+		);
 		await page.getByLabel('Execution logs').selectOption('30');
+		await expect(manualRetentionHelp).toHaveText(
+			'Manual cleanup keeps new Submission Ledger records until an administrator removes them or changes this setting.'
+		);
+		await page.getByLabel('Submission Ledger records').selectOption('7');
+		await expect(manualRetentionHelp).toHaveCount(0);
+		await page.getByLabel('Execution logs').selectOption('30');
+		await page.getByLabel('Submission Ledger records').selectOption('7');
 		await page.getByLabel('Store full AI outputs locally').check();
 		await page.getByLabel('Delete local data on uninstall').check();
 
@@ -212,10 +254,12 @@ test.describe('Settings retention controls', () => {
 		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(retentionPayloadCount);
 		expect(capturedPayloads.at(-1)).toMatchObject({
 			execution_event_retention_days: 30,
+			submission_ledger_retention_days: 7,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: true
 		});
 		await expect(page.getByLabel('Execution logs')).toHaveValue('30');
+		await expect(page.getByLabel('Submission Ledger records')).toHaveValue('7');
 		await expect(page.getByLabel('Store full AI outputs locally')).toBeChecked();
 		await expect(page.getByLabel('Delete local data on uninstall')).toBeChecked();
 	});
@@ -238,6 +282,7 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 30,
+					submission_ledger_retention_days: 180,
 					delete_data_on_uninstall: false,
 					store_full_ai_outputs: true,
 					privacy_setup_profile: 'maximum_visibility',
@@ -295,6 +340,7 @@ test.describe('Settings retention controls', () => {
 		);
 		await expect(page.getByText(/Started from Maximum visibility\./)).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('30 days');
+		await expect(page.getByTestId('settings-profile-submission-ledger')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-uninstall')).toContainText('Keeps plugin data');
 		await expect(page.getByTestId('settings-profile-diagnostics')).toContainText(
 			'On-site logging disabled'

@@ -1373,12 +1373,17 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $status      = $this->normalize_local_execution_status( (string) ( $event['status'] ?? '' ) );
         $action      = $this->resolve_local_execution_action( $event );
         $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
-        $provider    = sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) );
+        $provider    = sanitize_key( (string) ( $event['provider'] ?? 'unclassified' ) );
+        $provider    = '' !== $provider ? $provider : 'unclassified';
         $form_source = sanitize_key( (string) ( $event['form_source'] ?? 'unknown' ) );
-        if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+        $is_managed  = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider );
+        $is_direct   = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_explicit_direct_provider( $provider );
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
         {
-            $result_json = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result_json );
-            $cost        = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cost );
+            $result_json = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $result_json, $provider );
+            $cost        = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $cost, $provider );
         }
         $metering    = is_array( $result_json['metering'] ?? null ) ? $result_json['metering'] : [];
 
@@ -1390,7 +1395,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'debited_credits'            => 0,
         ];
 
-        if ( 'sentient_managed' === $provider )
+        if ( $is_managed )
         {
             $debited_credits = isset( $metering['debited_credits'] ) ? absint( $metering['debited_credits'] ) : 0;
             $pricing = [
@@ -1403,9 +1408,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'debited_credits'            => $debited_credits,
             ];
         }
-        $credits_used = 'sentient_managed' === $provider ? absint( $pricing['debited_credits'] ?? 0 ) : 0;
+        $credits_used = $is_managed ? absint( $pricing['debited_credits'] ?? 0 ) : 0;
 
-        if ( ! empty( $cost ) && 'sentient_managed' !== $provider )
+        if ( ! empty( $cost ) && $is_direct )
         {
             $pricing['provider_cost'] = $cost;
         }
@@ -1419,7 +1424,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'result_data' => $result_data,
             ],
         ];
-        if ( 'sentient_managed' !== $provider )
+        if ( $is_direct )
         {
             $details['cost'] = $cost;
         }
@@ -1542,19 +1547,23 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         {
             $is_managed = Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider );
         }
+        $is_direct = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_explicit_direct_provider( $provider );
+        $fallback_code = $is_managed
+            ? 'sentient_forms_managed_action'
+            : ( $is_direct ? 'local_openrouter_action' : 'unclassified_action' );
+        $fallback_label = $is_managed
+            ? __( 'Sentient Forms managed action', 'sentient-forms' )
+            : ( $is_direct ? __( 'Local OpenRouter action', 'sentient-forms' ) : __( 'Unclassified action', 'sentient-forms' ) );
 
         $fallback   = [
             'code'  => $mapping_id > 0
                 ? 'local_first_' . $mapping_id
-                : ( $is_managed ? 'sentient_forms_managed_action' : 'local_openrouter_action' ),
+                : $fallback_code,
             'label' => $mapping_id > 0
                 /* translators: %d: Local form mapping database ID. */
                 ? sprintf( __( 'Local mapping #%d', 'sentient-forms' ), $mapping_id )
-                : (
-                    $is_managed
-                    ? __( 'Sentient Forms managed action', 'sentient-forms' )
-                    : __( 'Local OpenRouter action', 'sentient-forms' )
-                ),
+                : $fallback_label,
         ];
 
         if ( $is_managed )
@@ -1872,7 +1881,12 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
      */
     private function build_local_usage_cost_summary( string $provider, array $event, array $result_json, array $cost, array $pricing ): array
     {
-        if ( 'sentient_managed' === $provider )
+        $is_managed = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider );
+        $is_direct = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_explicit_direct_provider( $provider );
+
+        if ( $is_managed )
         {
             $credits = absint( $pricing['debited_credits'] ?? 0 );
             return [
@@ -1885,6 +1899,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'kind'        => 'sentient_credits',
                 'credits'     => $credits,
                 'known'       => true,
+            ];
+        }
+
+        if ( ! $is_direct )
+        {
+            return [
+                'route' => 'unclassified',
+                'label' => 'Unknown',
+                'kind'  => 'unknown',
+                'known' => false,
             ];
         }
 

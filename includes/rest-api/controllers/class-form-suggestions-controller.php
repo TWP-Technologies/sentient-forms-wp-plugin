@@ -396,24 +396,11 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			return $this->prepare_item_for_response( $local_response );
 		}
 
-		$response = $this->plugin->get_action_executor()->suggest(
-			$central_action_id,
-			$form,
-			$execution_known_values,
-			$context,
-			$suggestion_context
+        return $this->prepare_error_response(
+            'sentient_forms_local_mapping_required',
+            __( 'This suggestion mapping predates local Action authority and must be saved again before it can run.', 'sentient-forms' ),
+            409
 		);
-
-		if ( is_wp_error( $response ) ) {
-			$status = (int) ( $response->get_error_data()['status'] ?? 502 );
-			return $this->prepare_error_response(
-				'sentient_forms_suggest_failed',
-				$response->get_error_message(),
-				$status
-			);
-		}
-
-		return $this->prepare_item_for_response( $response );
 	}
 
 	/**

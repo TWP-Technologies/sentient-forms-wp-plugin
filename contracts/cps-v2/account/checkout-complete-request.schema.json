@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/checkout-complete-request.schema.json",
+  "title": "Sentient Managed Checkout Complete Request",
+  "type": "object",
+  "required": [
+    "site_url",
+    "local_site_identifier"
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "checkout_intent_id"
+      ]
+    },
+    {
+      "required": [
+        "checkout_session_id"
+      ]
+    }
+  ],
+  "properties": {
+    "checkout_intent_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "checkout_session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "activation_token": {
+      "type": "string",
+      "minLength": 1
+    },
+    "site_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "local_site_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  },
+  "additionalProperties": true
+}

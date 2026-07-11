@@ -15,11 +15,7 @@ const defaultLicense = {
 	status: 'active',
 	license_key_masked: 'LIC-****-****-1234',
 	proxy_key_present: true,
-	tier: {
-		code: 'pro',
-		display_name: 'Pro',
-		monthly_credit_quota: DEFAULT_PRO_MONTHLY_CREDITS
-	},
+	tier: 'pro',
 	expires_at: '2030-01-01T00:00:00Z',
 	last_synced: '2030-01-05T10:00:00Z',
 	license_id: 'lic-1',
@@ -93,13 +89,33 @@ const localActionTemplates = [
 	{
 		id: 1,
 		source: 'bundled',
+		external_id: 'spam_detection_v1',
 		code: 'spam_detection',
 		display_name: 'Spam detection',
 		description: 'Detect unwanted submissions.',
 		prompt_template: 'Classify this entry.',
 		default_model: 'openrouter/free-model',
+		structured_output_schema: null,
+		override_schema: null,
 		version: '1',
-		is_active: true
+		is_active: true,
+		created_at: '2030-01-05T09:00:00Z',
+		updated_at: '2030-01-05T10:00:00Z'
+	}
+];
+
+const localCustomActionRecords = [
+	{
+		id: 1,
+		external_id: 'action-alpha',
+		template_id: 1,
+		code: 'alpha',
+		display_name: 'Alpha action',
+		definition_json: {},
+		model_selection_json: null,
+		status: 'active',
+		created_at: '2026-02-20T00:00:00Z',
+		updated_at: '2026-02-24T00:00:00Z'
 	}
 ];
 
@@ -107,10 +123,22 @@ const localExecutionEvents = [
 	{
 		id: 1,
 		execution_request_id: 'run-responsive-1',
+		mapping_id: null,
+		form_source: 'gravity_forms',
+		form_id: '123',
+		entry_id: '321',
 		provider: 'openrouter',
 		model: 'openrouter/free-model',
 		status: 'succeeded',
-		created_at: '2030-01-05T10:00:00Z'
+		token_usage_json: null,
+		cost_json: null,
+		result_json: null,
+		error_code: null,
+		error_message: null,
+		payload_digest: null,
+		created_at: '2030-01-05T10:00:00Z',
+		updated_at: '2030-01-05T10:00:00Z',
+		expires_at: null
 	}
 ];
 
@@ -337,7 +365,9 @@ export async function mockResponsiveApi(
 	];
 
 	const workflowPlan = {
-		authority: 'wp_rest',
+		authority: 'local',
+		authority_reason: 'responsive_fixture',
+		cps_unreachable: true,
 		policy_version: '2026-02-mixed-sync-async-v1',
 		hook_scope: 'all',
 		available_hooks: ['gform_validation', 'gform_after_submission'],
@@ -420,16 +450,7 @@ export async function mockResponsiveApi(
 		}
 
 		if (method === 'POST' && endpoint === 'license/activate') {
-			return respondJson(route, {
-				success: true,
-				status: 'active',
-				message: 'License activated',
-				proxy_api_key: 'proxy-key-1',
-				tier: 'pro',
-				expiry_date: '2030-01-01T00:00:00Z',
-				license_id: 'lic-1',
-				site_id: 'site-1'
-			});
+			return respondJson(route, defaultLicense);
 		}
 
 		if (method === 'POST' && endpoint === 'license/bootstrap') {
@@ -446,16 +467,13 @@ export async function mockResponsiveApi(
 
 		if (method === 'GET' && endpoint === 'admin/dashboard-summary') {
 			return respondJson(route, {
-				success: true,
-				data: {
-					generated_at: '2030-01-05T10:00:00Z',
-					providers: localProviderCredentials,
-					templates: localActionTemplates,
-					custom_actions: customActions,
-					recent_events: localExecutionEvents,
-					license: defaultLicense,
-					async_health: asyncHealthState
-				}
+				generated_at: '2030-01-05T10:00:00Z',
+				providers: localProviderCredentials,
+				templates: localActionTemplates,
+				custom_actions: localCustomActionRecords,
+				recent_events: localExecutionEvents,
+				license: defaultLicense,
+				async_health: asyncHealthState
 			});
 		}
 
@@ -561,20 +579,16 @@ export async function mockResponsiveApi(
 
 		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/overview`) {
 			return respondJson(route, {
-				success: true,
-				data: {
-					form_source: formSourceSlug,
-					forms: forms.map((form) => ({
-						...form,
-						actions: formActions,
-						action_count: formActions.length,
-						enabled_action_count: formActions.filter(
-							(action) => action.is_action_enabled_for_form
-						).length,
-						execution_status: executionStatusUnknown
-					})),
-					generated_at: '2030-01-05T10:00:00Z'
-				}
+				form_source: formSourceSlug,
+				forms: forms.map((form) => ({
+					...form,
+					actions: formActions,
+					action_count: formActions.length,
+					enabled_action_count: formActions.filter((action) => action.is_action_enabled_for_form)
+						.length,
+					execution_status: executionStatusUnknown
+				})),
+				generated_at: '2030-01-05T10:00:00Z'
 			});
 		}
 
@@ -584,40 +598,40 @@ export async function mockResponsiveApi(
 
 		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/${formId}/actions/bootstrap`) {
 			return respondJson(route, {
-				success: true,
-				data: {
-					form_source: formSourceSlug,
-					form_id: formId,
-					form: forms.find((form) => Number(form.id) === formId) ?? null,
-					actions: formActions,
-					execution_status: executionStatusUnknown,
-					disabled_state: {
-						sf_disabled: false,
-						global_disabled: false,
-						provider_disabled: false,
-						effective_disabled: false
-					},
-					capabilities,
-					definitions: actionDefinitions,
-					custom_actions: {
-						actions: customActions,
-						quota: {
-							quota_max: 5,
-							quota_used: 1,
-							quota_remaining: 4
-						}
-					},
-					provider_credentials: localProviderCredentials,
-					form_action_configs: {},
-					form_fields: formFields,
-					action_defaults: Object.fromEntries(
-						[...actionDefinitions.map((definition) => definition.id), ...customActions.map((action) => action.code)]
-							.filter(Boolean)
-							.map((id) => [id, {}])
-					),
-					workflow_plan: workflowPlan,
-					generated_at: '2030-01-05T10:00:00Z'
-				}
+				form_source: formSourceSlug,
+				form_id: formId,
+				form: forms.find((form) => Number(form.id) === formId) ?? null,
+				actions: formActions,
+				execution_status: executionStatusUnknown,
+				disabled_state: {
+					sf_disabled: false,
+					global_disabled: false,
+					provider_disabled: false,
+					effective_disabled: false
+				},
+				capabilities,
+				definitions: actionDefinitions,
+				custom_actions: {
+					actions: customActions,
+					quota: {
+						quota_max: 5,
+						quota_used: 1,
+						quota_remaining: 4
+					}
+				},
+				provider_credentials: localProviderCredentials,
+				form_action_configs: {},
+				form_fields: formFields,
+				action_defaults: Object.fromEntries(
+					[
+						...actionDefinitions.map((definition) => definition.id),
+						...customActions.map((action) => action.code)
+					]
+						.filter(Boolean)
+						.map((id) => [id, {}])
+				),
+				workflow_plan: workflowPlan,
+				generated_at: '2030-01-05T10:00:00Z'
 			});
 		}
 

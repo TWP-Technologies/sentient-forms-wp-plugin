@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/checkout-complete-success.schema.json",
+  "title": "Sentient Managed Checkout Complete Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "status",
+        "activation_ready",
+        "billing_boundary"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "activation_ready": {
+                "const": true
+              }
+            },
+            "required": [
+              "activation_ready"
+            ]
+          },
+          "then": {
+            "required": [
+              "license_key",
+              "proxy_api_key",
+              "license_id",
+              "site_id",
+              "site_url",
+              "local_site_identifier",
+              "tier"
+            ]
+          },
+          "else": {
+            "required": [
+              "pending_reason",
+              "site_url",
+              "local_site_identifier"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "const": "sentient-managed"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activation_ready": {
+          "type": "boolean"
+        },
+        "pending_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proxy_api_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "site_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "local_site_identifier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "display_name",
+            "site_limit",
+            "monthly_credit_quota"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "site_limit": {
+              "type": "integer"
+            },
+            "monthly_credit_quota": {
+              "type": "integer"
+            }
+          }
+        },
+        "expiry_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "billing_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "direct_openrouter_billed_by_sentient",
+            "managed_proxy_billed_by_sentient"
+          ],
+          "properties": {
+            "direct_openrouter_billed_by_sentient": {
+              "type": "boolean",
+              "const": false
+            },
+            "managed_proxy_billed_by_sentient": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

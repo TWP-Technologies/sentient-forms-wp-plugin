@@ -187,26 +187,12 @@ class Sentient_Forms_Llm_Controller extends Sentient_Forms_Abstract_Base_Control
                 }
             }
 
-            $api_key = '';
-            if ( class_exists( 'Sentient_Forms_Plugin' ) )
+            if ( ! class_exists( 'Sentient_Forms_OpenRouter_Direct_Client' ) )
             {
-                $api_key = Sentient_Forms_Plugin::instance()->get_proxy_api_key();
+                return $this->prepare_error_response( 'missing_api_client', __( 'OpenRouter model catalog client not found.', 'sentient-forms' ), 500 );
             }
 
-            if ( empty( $api_key ) )
-            {
-                // This error is critical and should not be cached long-term in the API_ERROR_TRANSIENT_KEY
-                return $this->prepare_error_response( 'missing_api_key', __( 'Missing proxy API key.', 'sentient-forms' ), 400 );
-            }
-
-            if ( !class_exists( 'Sentient_Forms_Llm_Api_Client' ) )
-            {
-                // This error is critical and should not be cached long-term
-                return $this->prepare_error_response( 'missing_api_client', __( 'LLM API client not found.', 'sentient-forms' ), 500 );
-            }
-
-            $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-            $response = $client->get_available_models();
+            $response = ( new Sentient_Forms_OpenRouter_Direct_Client() )->list_models();
 
             if ( is_wp_error( $response ) )
             {
@@ -225,10 +211,13 @@ class Sentient_Forms_Llm_Controller extends Sentient_Forms_Abstract_Base_Control
             // Clear any cached API error on successful response
             delete_transient( self::API_ERROR_TRANSIENT_KEY );
 
-            if ( !is_array( $response ) )
+            $response = isset( $response['data'] ) && is_array( $response['data'] )
+                ? $response['data']
+                : $response;
+            if ( ! is_array( $response ) )
             {
                 // This indicates an unexpected response format from the API
-                $api_error = $this->prepare_error_response( 'invalid_response', __( 'Invalid data from CPS.', 'sentient-forms' ), 500 );
+                $api_error = $this->prepare_error_response( 'invalid_response', __( 'Invalid data from the OpenRouter model catalog.', 'sentient-forms' ), 500 );
                 set_transient( self::API_ERROR_TRANSIENT_KEY, $api_error, self::API_ERROR_TRANSIENT_TTL );
                 sentient_forms_debug_log(
                     'Sentient Forms LLM API returned an invalid response.',

@@ -41,7 +41,6 @@ if ( $_form_adapter_registry )
     }
 }
 // The $forms variable is now $_forms_list for clarity in this scope
-// The JavaScript will use the localized `sentientFormsFormsData` or `sentientFormsAdmin.forms`
 
 ?>
 <div class="wrap sentient-forms-admin">
@@ -232,7 +231,7 @@ if ( $_form_adapter_registry )
                                             foreach ( $settings_fields as $field_key => $field_args ):
                                             // Skip the main 'enabled' field for the action if it's already handled above
                                             // or if it's a common field that shouldn't be duplicated here.
-                                            // However, `get_settings_fields()` in `Abstract_Action` adds 'llm', not 'enabled'.
+                                                // The legacy settings array may not contain an explicit enabled flag.
                                             // So, this check might not be necessary unless 'enabled' is also part of $settings_fields.
 
                                             $field_input_id = "sentient-forms-action-" . esc_attr( $action->get_id() ) . "-" . esc_attr( $field_key );

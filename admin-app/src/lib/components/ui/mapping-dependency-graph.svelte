@@ -16,6 +16,7 @@
 	import Badge from './badge.svelte';
 	import Button from './button.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import { parseRegisteredEndpointRequest } from '$lib/api/endpoint-schemas';
 	import MappingDependencyGraphNode from './mapping-dependency-graph-node.svelte';
 	import MappingDependencyHookRootNode from './mapping-dependency-hook-root-node.svelte';
 	import MappingDependencyHookRootEdge from './mapping-dependency-hook-root-edge.svelte';
@@ -31,7 +32,6 @@
 		ConditionTraceNode,
 		FormActionLinkage,
 		FormFieldInfo,
-		RequestTraceRequest,
 		RequestTraceResponse,
 		RequestTraceStep,
 		TraceBlockReason,
@@ -304,7 +304,9 @@
 	});
 	const activeDuplicateParentOption = $derived.by(() => {
 		if (activeDuplicateParentOptions.length === 0) return null;
-		const selected = activeDuplicateParentOptions.find((option) => option.id === activeDuplicateParentId);
+		const selected = activeDuplicateParentOptions.find(
+			(option) => option.id === activeDuplicateParentId
+		);
 		return selected ?? activeDuplicateParentOptions[0] ?? null;
 	});
 	const activeDuplicateIsLoading = $derived.by(() => {
@@ -491,7 +493,8 @@
 	const previewSourceLabel = $derived.by(() => {
 		if (useRemotePreview) return 'Preview source: managed planner';
 		if (hasUnsavedChanges) return 'Preview source: local draft (unsaved edits)';
-		if (plannerAuthority === 'cps') return 'Preview source: local planner (managed planner mismatch)';
+		if (plannerAuthority === 'cps')
+			return 'Preview source: local planner (managed planner mismatch)';
 		return 'Preview source: local planner';
 	});
 
@@ -557,7 +560,10 @@
 		return Math.min(Math.max(value, min), max);
 	}
 
-	function computeDuplicatePopoverPosition(anchor: DuplicatePopoverAnchorRect): { left: number; top: number } {
+	function computeDuplicatePopoverPosition(anchor: DuplicatePopoverAnchorRect): {
+		left: number;
+		top: number;
+	} {
 		if (typeof window === 'undefined') {
 			return {
 				left: anchor.left,
@@ -571,11 +577,7 @@
 			DUPLICATE_POPOVER_PADDING,
 			viewportWidth - DUPLICATE_POPOVER_WIDTH - DUPLICATE_POPOVER_PADDING
 		);
-		const left = clamp(
-			anchor.right - DUPLICATE_POPOVER_WIDTH,
-			DUPLICATE_POPOVER_PADDING,
-			maxLeft
-		);
+		const left = clamp(anchor.right - DUPLICATE_POPOVER_WIDTH, DUPLICATE_POPOVER_PADDING, maxLeft);
 		const spaceBelow = viewportHeight - anchor.bottom - DUPLICATE_POPOVER_PADDING;
 		const spaceAbove = anchor.top - DUPLICATE_POPOVER_PADDING;
 		const renderAbove =
@@ -794,10 +796,7 @@
 			const strokeWidth = isHovered ? 2.6 : edge.data?.kind === 'dependency' ? 2 : 1.8;
 			const baseStyle = typeof edge.style === 'string' ? edge.style : '';
 			const styleParts = [baseStyle, 'cursor:pointer'];
-			styleParts.push(
-				`--xy-edge-stroke:${strokeColor}`,
-				`--xy-edge-stroke-width:${strokeWidth}px`
-			);
+			styleParts.push(`--xy-edge-stroke:${strokeColor}`, `--xy-edge-stroke-width:${strokeWidth}px`);
 			if (isMuted) {
 				styleParts.push('opacity:0.45', 'stroke-dasharray:4 3');
 			}
@@ -836,14 +835,14 @@
 			const linkage = linkageById.get(node.id) ?? node.data.linkage;
 			const isEditingTarget = editingMappingId === node.id;
 			const isDuplicatePopoverOpen = activeDuplicatePopoverNodeId === node.id;
-				return {
-					...node,
-					position: { ...nextPosition },
-					zIndex: isDuplicatePopoverOpen ? 120 : isEditingTarget ? 80 : 10,
-					data: buildMappingNodeData(node.id, linkage, node.data.label)
-				};
-			});
-		}
+			return {
+				...node,
+				position: { ...nextPosition },
+				zIndex: isDuplicatePopoverOpen ? 120 : isEditingTarget ? 80 : 10,
+				data: buildMappingNodeData(node.id, linkage, node.data.label)
+			};
+		});
+	}
 
 	function buildMappingNodeData(
 		nodeId: string,
@@ -949,9 +948,7 @@
 		if (!(target instanceof Node)) return;
 		if (duplicatePopoverElement?.contains(target)) return;
 
-		const trigger = document.querySelector(
-			duplicateTriggerSelector(activeDuplicatePopoverNodeId)
-		);
+		const trigger = document.querySelector(duplicateTriggerSelector(activeDuplicatePopoverNodeId));
 		if (trigger instanceof Node && trigger.contains(target)) return;
 		closeActiveDuplicatePopover();
 	}
@@ -1360,8 +1357,8 @@
 		const decision = evaluateConnectionDecision({
 			source: sourceNodeId,
 			target: targetNodeId,
-			sourceHandle: connectionState.fromHandle?.id ?? undefined,
-			targetHandle: connectionState.toHandle?.id ?? undefined
+			sourceHandle: connectionState.fromHandle?.id ?? null,
+			targetHandle: connectionState.toHandle?.id ?? null
 		});
 		if (!decision.valid) {
 			setConnectionFeedback(decision.code ?? 'unknown', decision.message ?? 'Connection rejected.');
@@ -1643,20 +1640,21 @@
 		traceLoading = true;
 		traceError = null;
 
-		const payload: RequestTraceRequest = {
+		const payloadInput: Record<string, unknown> = {
 			hook_scope: selectedHookScope,
 			field_scope: 'mapped_and_rule',
 			include_drafts: traceIncludeDrafts
 		};
 		if (Object.keys(traceManualValues).length > 0) {
-			payload.entry_values = traceManualValues;
+			payloadInput.entry_values = traceManualValues;
 		}
 		if (parsedEntryId !== undefined) {
-			payload.entry_id = parsedEntryId;
+			payloadInput.entry_id = parsedEntryId;
 		}
 		if (traceIncludeDrafts) {
-			payload.draft_mappings = linkages;
+			payloadInput.draft_mappings = linkages;
 		}
+		const payload = parseRegisteredEndpointRequest('forms.requestTrace.run', payloadInput);
 
 		try {
 			const client = createClientFromConfig({ notifyErrors: false });
@@ -1682,7 +1680,9 @@
 		}
 	}
 
-	function traceOutcomeVariant(outcome: RequestTraceStep['outcome']): 'success' | 'info' | 'danger' {
+	function traceOutcomeVariant(
+		outcome: RequestTraceStep['outcome']
+	): 'success' | 'info' | 'danger' {
 		switch (outcome) {
 			case 'would_run':
 				return 'success';
@@ -1693,7 +1693,10 @@
 		}
 	}
 
-	function describeTraceBlockReason(reason: TraceBlockReason | null | undefined, details?: string | null): string {
+	function describeTraceBlockReason(
+		reason: TraceBlockReason | null | undefined,
+		details?: string | null
+	): string {
 		if (!reason) return details?.trim() ?? 'Unknown block reason';
 		switch (reason) {
 			case 'disabled':
@@ -1707,7 +1710,9 @@
 			case 'policy_violation':
 				return details ? `Policy violation: ${details}` : 'Policy violation.';
 			case 'invalid_trigger':
-				return details ? `Missing trigger source: ${displayHookLabel(details)}` : 'Missing trigger source.';
+				return details
+					? `Missing trigger source: ${displayHookLabel(details)}`
+					: 'Missing trigger source.';
 			case 'condition_false':
 				return details ? `Condition did not match: ${details}` : 'Condition did not match.';
 			default:
@@ -1814,9 +1819,7 @@
 		</div>
 		<div class="sf:flex sf:items-center sf:gap-2 sf:flex-wrap">
 			<Badge variant={plannerAuthority === 'cps' ? 'success' : 'neutral'}>
-				{plannerAuthority === 'cps'
-					? 'Planner authority: managed'
-					: 'Planner authority: local'}
+				{plannerAuthority === 'cps' ? 'Planner authority: managed' : 'Planner authority: local'}
 			</Badge>
 			{#if graph.cycleIds.length > 0}
 				<Badge variant="danger">Cycle detected</Badge>
@@ -1938,8 +1941,8 @@
 		<p
 			class="sf:text-xs sf:rounded-md sf:border sf:border-amber-300 sf:bg-amber-50 sf:px-3 sf:py-2 sf:text-amber-800"
 		>
-			Managed workflow planner is unavailable. Showing local fallback preview in read-only
-			authority mode.
+			Managed workflow planner is unavailable. Showing local fallback preview in read-only authority
+			mode.
 		</p>
 	{/if}
 
@@ -1963,8 +1966,8 @@
 		<p
 			class="sf:text-xs sf:rounded-md sf:border sf:border-indigo-200 sf:bg-indigo-50 sf:px-3 sf:py-2 sf:text-indigo-800"
 		>
-			Connecting from <strong>{displayMappingLabel(pendingConnectionSource.nodeId)}</strong>. Drop
-			on an action's left hook handle to set dependency order, or on a root target handle to
+			Connecting from <strong>{displayMappingLabel(pendingConnectionSource.nodeId ?? '')}</strong>.
+			Drop on an action's left hook handle to set dependency order, or on a root target handle to
 			retarget hook root.
 		</p>
 	{/if}
@@ -1989,22 +1992,22 @@
 				data-viewport={`${flowViewport.x.toFixed(2)},${flowViewport.y.toFixed(2)},${flowViewport.zoom.toFixed(3)}`}
 				bind:this={graphCanvasElement}
 			>
-					<SvelteFlow
-						bind:nodes={flowNodes}
-						bind:edges={flowEdges}
-						bind:viewport={flowViewport}
-						fitView={shouldAutoFitView}
+				<SvelteFlow
+					bind:nodes={flowNodes}
+					bind:edges={flowEdges}
+					bind:viewport={flowViewport}
+					fitView={shouldAutoFitView}
 					nodesDraggable
 					nodesConnectable
 					elementsSelectable
 					panOnDrag
 					zoomOnScroll
-						onconnect={handleConnect}
-						onconnectstart={handleConnectStart}
-						onconnectend={handleConnectEnd}
-						onclickconnectstart={handleConnectStart}
-						onclickconnectend={handleConnectEnd}
-						onedgeclick={handleEdgeClick}
+					onconnect={handleConnect}
+					onconnectstart={handleConnectStart}
+					onconnectend={handleConnectEnd}
+					onclickconnectstart={handleConnectStart}
+					onclickconnectend={handleConnectEnd}
+					onedgeclick={handleEdgeClick}
 					onedgepointerenter={handleEdgePointerEnter}
 					onedgepointerleave={handleEdgePointerLeave}
 					onnodedrag={handleNodeDrag}
@@ -2012,71 +2015,71 @@
 					{isValidConnection}
 					connectionMode={ConnectionMode.Strict}
 					connectionLineType={ConnectionLineType.SmoothStep}
-						{nodeTypes}
-						{edgeTypes}
-						clickConnect
-						class="sf:rounded-md"
-						noDragClass="nodrag"
-						noPanClass="nopan"
+					{nodeTypes}
+					{edgeTypes}
+					clickConnect
+					class="sf:rounded-md"
+					noDragClass="nodrag"
+					noPanClass="nopan"
 					noWheelClass="sf-nowheel"
 					connectionRadius={56}
 					minZoom={0.3}
 					maxZoom={1.8}
+				>
+					<Background />
+					<MiniMap class="sf:pointer-events-none" />
+					<Controls />
+				</SvelteFlow>
+				{#if activeDuplicatePopoverNodeId && activeDuplicatePopoverPosition}
+					<div
+						class="sf:fixed sf:z-[260] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-xl sf:space-y-2 nodrag nopan sf-nowheel"
+						style={`left:${activeDuplicatePopoverPosition.left}px;top:${activeDuplicatePopoverPosition.top}px;`}
+						onpointerdown={(event) => event.stopPropagation()}
+						bind:this={duplicatePopoverElement}
+						data-testid={`dependency-node-duplicate-popover-${activeDuplicatePopoverNodeId}`}
 					>
-						<Background />
-						<MiniMap class="sf:pointer-events-none" />
-						<Controls />
-					</SvelteFlow>
-					{#if activeDuplicatePopoverNodeId && activeDuplicatePopoverPosition}
-						<div
-							class="sf:fixed sf:z-[260] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-xl sf:space-y-2 nodrag nopan sf-nowheel"
-							style={`left:${activeDuplicatePopoverPosition.left}px;top:${activeDuplicatePopoverPosition.top}px;`}
-							onpointerdown={(event) => event.stopPropagation()}
-							bind:this={duplicatePopoverElement}
-							data-testid={`dependency-node-duplicate-popover-${activeDuplicatePopoverNodeId}`}
+						<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+							Duplicate and insert under
+						</p>
+						<select
+							class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+							bind:value={activeDuplicateParentId}
+							data-testid={`dependency-node-duplicate-select-${activeDuplicatePopoverNodeId}`}
 						>
-							<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
-								Duplicate and insert under
+							{#each activeDuplicateParentOptions as option (option.id)}
+								<option value={option.id}>{option.label}</option>
+							{/each}
+						</select>
+						{#if activeDuplicateParentOption?.description}
+							<p class="sf:text-[11px] sf:text-slate-500">
+								{activeDuplicateParentOption.description}
 							</p>
-							<select
-								class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-								bind:value={activeDuplicateParentId}
-								data-testid={`dependency-node-duplicate-select-${activeDuplicatePopoverNodeId}`}
+						{/if}
+						<div class="sf:flex sf:justify-end sf:gap-1">
+							<Button
+								size="sm"
+								variant="secondary"
+								class="nodrag"
+								onclick={closeDuplicatePopoverFromUI}
+								data-testid={`dependency-node-duplicate-cancel-${activeDuplicatePopoverNodeId}`}
+								disabled={activeDuplicateIsLoading}
 							>
-								{#each activeDuplicateParentOptions as option (option.id)}
-									<option value={option.id}>{option.label}</option>
-								{/each}
-							</select>
-							{#if activeDuplicateParentOption?.description}
-								<p class="sf:text-[11px] sf:text-slate-500">
-									{activeDuplicateParentOption.description}
-								</p>
-							{/if}
-							<div class="sf:flex sf:justify-end sf:gap-1">
-								<Button
-									size="sm"
-									variant="secondary"
-									class="nodrag"
-									onclick={closeDuplicatePopoverFromUI}
-									data-testid={`dependency-node-duplicate-cancel-${activeDuplicatePopoverNodeId}`}
-									disabled={activeDuplicateIsLoading}
-								>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									variant="primary"
-									class="nodrag"
-									onclick={confirmDuplicateFromUI}
-									data-testid={`dependency-node-duplicate-confirm-${activeDuplicatePopoverNodeId}`}
-									disabled={!activeDuplicateParentOption || activeDuplicateIsLoading}
-								>
-									{activeDuplicateIsLoading ? 'Duplicating…' : 'Duplicate'}
-								</Button>
-							</div>
+								Cancel
+							</Button>
+							<Button
+								size="sm"
+								variant="primary"
+								class="nodrag"
+								onclick={confirmDuplicateFromUI}
+								data-testid={`dependency-node-duplicate-confirm-${activeDuplicatePopoverNodeId}`}
+								disabled={!activeDuplicateParentOption || activeDuplicateIsLoading}
+							>
+								{activeDuplicateIsLoading ? 'Duplicating…' : 'Duplicate'}
+							</Button>
 						</div>
-					{/if}
-				</div>
+					</div>
+				{/if}
+			</div>
 
 			<div
 				class="sf:h-[520px] sf:overflow-y-auto sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-3"
@@ -2181,278 +2184,280 @@
 									{displayMappingLabel(issue.dependency_id)}: {issue.message}
 								</li>
 							{/each}
-							</ul>
-						{/if}
+						</ul>
+					{/if}
+				</div>
+
+				<div
+					class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-3"
+					data-testid="request-trace-panel"
+				>
+					<div>
+						<p class="sf:text-xs sf:font-semibold sf:text-slate-700">Request tracer</p>
+						<p class="sf:text-[11px] sf:text-slate-500">
+							Simulate request outcomes for the current graph scope using optional entry values.
+						</p>
 					</div>
 
-					<div
-						class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-3"
-						data-testid="request-trace-panel"
-					>
-						<div>
-							<p class="sf:text-xs sf:font-semibold sf:text-slate-700">Request tracer</p>
-							<p class="sf:text-[11px] sf:text-slate-500">
-								Simulate request outcomes for the current graph scope using optional entry values.
-							</p>
-						</div>
+					<div class="sf:grid sf:grid-cols-1 sf:gap-2">
+						<label class="sf:text-[11px] sf:text-slate-600">
+							Entry ID (optional)
+							<input
+								type="text"
+								inputmode="numeric"
+								bind:value={traceEntryId}
+								placeholder="e.g. 1234"
+								class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+								data-testid="request-trace-entry-id"
+							/>
+						</label>
 
-						<div class="sf:grid sf:grid-cols-1 sf:gap-2">
-							<label class="sf:text-[11px] sf:text-slate-600">
-								Entry ID (optional)
-								<input
-									type="text"
-									inputmode="numeric"
-									bind:value={traceEntryId}
-									placeholder="e.g. 1234"
-									class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-									data-testid="request-trace-entry-id"
-								/>
-							</label>
+						<label class="sf:flex sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600">
+							<input
+								type="checkbox"
+								checked={traceIncludeDrafts}
+								class="sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+								onchange={(event) => {
+									traceIncludeDrafts = (event.currentTarget as HTMLInputElement).checked;
+								}}
+								data-testid="request-trace-include-drafts"
+							/>
+							Include unsaved draft mappings
+						</label>
+					</div>
 
-							<label class="sf:flex sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600">
-								<input
-									type="checkbox"
-									checked={traceIncludeDrafts}
-									class="sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-									onchange={(event) => {
-										traceIncludeDrafts = (event.currentTarget as HTMLInputElement).checked;
-									}}
-									data-testid="request-trace-include-drafts"
-								/>
-								Include unsaved draft mappings
-							</label>
-						</div>
-
-						<div class="sf:space-y-2">
-							<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">Manual field values</p>
-							<div class="sf:grid sf:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sf:gap-2">
-								{#if traceFieldOptions.length > 0}
-									<select
-										bind:value={traceCustomFieldId}
-										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										data-testid="request-trace-field-id"
-									>
-										{#each traceFieldOptions as field (`${field.id}`)}
-											<option value={String(field.id)}>
-												{getTraceFieldDisplay(String(field.id)).optionLabel}
-											</option>
-										{/each}
-									</select>
-								{:else}
-									<input
-										type="text"
-										bind:value={traceCustomFieldId}
-										placeholder="Field ID"
-										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										data-testid="request-trace-field-id"
-									/>
-								{/if}
-								<input
-									type="text"
-									bind:value={traceCustomFieldValue}
-									placeholder="Field value"
+					<div class="sf:space-y-2">
+						<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">Manual field values</p>
+						<div class="sf:grid sf:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sf:gap-2">
+							{#if traceFieldOptions.length > 0}
+								<select
+									bind:value={traceCustomFieldId}
 									class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-									data-testid="request-trace-field-value"
-								/>
-								<Button
-									size="sm"
-									variant="secondary"
-									onclick={addOrUpdateTraceManualValue}
-									data-testid="request-trace-add-manual-value"
+									data-testid="request-trace-field-id"
 								>
-									Add
-								</Button>
-							</div>
-
-							{#if traceManualEntries.length === 0}
-								<p class="sf:text-[11px] sf:text-slate-500">No manual values added.</p>
-							{:else}
-								<div class="sf:space-y-1">
-									{#each traceManualEntries as [fieldId, value] (fieldId)}
-										<div
-											class="sf:grid sf:grid-cols-[minmax(0,1fr)_auto] sf:items-center sf:gap-2"
-											data-testid={`request-trace-manual-${fieldId}`}
-										>
-											<label class="sf:text-[11px] sf:text-slate-600">
-												<span class="sf:block sf:text-xs sf:font-medium sf:text-slate-700">
-													{getTraceFieldDisplay(fieldId).primaryName}
-												</span>
-												<span class="sf:block sf:text-[11px] sf:text-slate-500">
-													{getTraceFieldDisplay(fieldId).helperText}
-												</span>
-												<input
-													type="text"
-													value={value}
-													oninput={(event) => {
-														updateTraceManualValue(
-															fieldId,
-															(event.currentTarget as HTMLInputElement).value
-														);
-													}}
-													class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												/>
-											</label>
-											<Button
-												size="sm"
-												variant="ghost"
-												onclick={() => removeTraceManualValue(fieldId)}
-											>
-												Remove
-											</Button>
-										</div>
+									{#each traceFieldOptions as field (`${field.id}`)}
+										<option value={String(field.id)}>
+											{getTraceFieldDisplay(String(field.id)).optionLabel}
+										</option>
 									{/each}
-								</div>
+								</select>
+							{:else}
+								<input
+									type="text"
+									bind:value={traceCustomFieldId}
+									placeholder="Field ID"
+									class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+									data-testid="request-trace-field-id"
+								/>
 							{/if}
-						</div>
-
-						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+							<input
+								type="text"
+								bind:value={traceCustomFieldValue}
+								placeholder="Field value"
+								class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+								data-testid="request-trace-field-value"
+							/>
 							<Button
 								size="sm"
-								variant="primary"
-								disabled={traceLoading}
-								onclick={() => {
-									void runRequestTrace();
-								}}
-								data-testid="request-trace-run"
+								variant="secondary"
+								onclick={addOrUpdateTraceManualValue}
+								data-testid="request-trace-add-manual-value"
 							>
-								{traceLoading ? 'Tracing…' : 'Run trace'}
-							</Button>
-							<Button size="sm" variant="secondary" onclick={clearTraceResult}>
-								Clear result
-							</Button>
-							<Button size="sm" variant="ghost" onclick={clearTraceInputs}>
-								Clear inputs
+								Add
 							</Button>
 						</div>
 
-						{#if traceError}
-							<p
-								class="sf:text-xs sf:rounded-md sf:border sf:border-rose-300 sf:bg-rose-50 sf:px-2 sf:py-1 sf:text-rose-800"
-								data-testid="request-trace-error"
-							>
-								{traceError}
-							</p>
-						{/if}
-
-						{#if traceResult}
-							<div class="sf:space-y-2" data-testid="request-trace-results">
-								<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2">
-									<p class="sf:text-[11px] sf:text-slate-700">
-										<strong>Input source:</strong>
-										{traceResult.input.source}
-									</p>
-									<p class="sf:text-[11px] sf:text-slate-600">
-										<strong>Effective values:</strong>
-										{Object.keys(traceResult.input.values ?? {}).length}
-										·
-										<strong>Manual:</strong>
-										{traceResult.input.manual_field_ids.length}
-										·
-										<strong>Imported:</strong>
-										{traceResult.input.imported_field_ids.length}
-									</p>
-									{#if traceResult.input.warnings.length > 0}
-										<ul class="sf:mt-1 sf:space-y-1">
-											{#each traceResult.input.warnings as warning, index (`warning-${index}`)}
-												<li class="sf:text-[11px] sf:text-amber-700">{warning}</li>
-											{/each}
-										</ul>
-									{/if}
-								</div>
-
-								{#if traceResult.hooks.length === 0}
-									<p class="sf:text-[11px] sf:text-slate-500">
-										No trace hooks are available for this graph.
-									</p>
-								{:else}
-									{#each traceResult.hooks as hookTrace (hookTrace.hook)}
-										<div
-											class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:space-y-2"
-											data-testid={`request-trace-hook-${hookTrace.hook}`}
+						{#if traceManualEntries.length === 0}
+							<p class="sf:text-[11px] sf:text-slate-500">No manual values added.</p>
+						{:else}
+							<div class="sf:space-y-1">
+								{#each traceManualEntries as [fieldId, value] (fieldId)}
+									<div
+										class="sf:grid sf:grid-cols-[minmax(0,1fr)_auto] sf:items-center sf:gap-2"
+										data-testid={`request-trace-manual-${fieldId}`}
+									>
+										<label class="sf:text-[11px] sf:text-slate-600">
+											<span class="sf:block sf:text-xs sf:font-medium sf:text-slate-700">
+												{getTraceFieldDisplay(fieldId).primaryName}
+											</span>
+											<span class="sf:block sf:text-[11px] sf:text-slate-500">
+												{getTraceFieldDisplay(fieldId).helperText}
+											</span>
+											<input
+												type="text"
+												{value}
+												oninput={(event) => {
+													updateTraceManualValue(
+														fieldId,
+														(event.currentTarget as HTMLInputElement).value
+													);
+												}}
+												class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											/>
+										</label>
+										<Button
+											size="sm"
+											variant="ghost"
+											onclick={() => removeTraceManualValue(fieldId)}
 										>
-											<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
-												<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
-													{displayHookLabel(hookTrace.hook)}
-												</p>
-												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
-													<Badge variant="success">Run: {hookTrace.runnable.length}</Badge>
-													<Badge variant="info">Background: {hookTrace.queued.length}</Badge>
-													<Badge variant="danger">Blocked: {hookTrace.blocked.length}</Badge>
-												</div>
-											</div>
-
-											{#if hookTrace.steps.length === 0}
-												<p class="sf:text-[11px] sf:text-slate-500">
-													No step details returned for this hook.
-												</p>
-											{:else}
-												<div class="sf:space-y-2">
-													{#each hookTrace.steps as step (`${hookTrace.hook}:${step.mapping_id}`)}
-														<div
-															class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-1"
-															data-testid={`request-trace-step-${step.mapping_id}`}
-														>
-															<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
-																<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
-																	{step.label}
-																</p>
-																<Badge variant={traceOutcomeVariant(step.outcome)}>
-																	{traceOutcomeLabel(step.outcome)}
-																</Badge>
-															</div>
-
-															<p class="sf:text-[11px] sf:text-slate-600">
-																<strong>Trigger:</strong>
-																{formatTraceTriggerSource(step)}
-																·
-																<strong>Deps:</strong>
-																{step.dependency_ids.length > 0
-																	? step.dependency_ids.map((id) => displayMappingLabel(id)).join(', ')
-																	: 'none'}
-															</p>
-
-															{#if step.outcome === 'blocked'}
-																<p class="sf:text-[11px] sf:text-rose-700">
-																	{describeTraceBlockReason(step.block_reason, step.block_details)}
-																</p>
-															{/if}
-
-															<div class="sf:text-[11px] sf:text-slate-600">
-																<p>
-																	<strong>Condition:</strong>
-																	{step.condition.summary}
-																</p>
-																<p>
-																	<strong>Reason code:</strong>
-																	{step.condition.reason_code}
-																</p>
-															</div>
-
-															{#if step.condition.tree}
-																<details class="sf:rounded-sm sf:bg-white sf:p-1">
-																	<summary class="sf:cursor-pointer sf:text-[11px] sf:text-slate-600">
-																		Condition decision tree
-																	</summary>
-																	<ul class="sf:mt-1 sf:space-y-0.5">
-																		{#each formatConditionTrace(step.condition.tree) as line, index (`${step.mapping_id}:${index}`)}
-																			<li class="sf:text-[11px] sf:font-mono sf:text-slate-600">{line}</li>
-																		{/each}
-																	</ul>
-																</details>
-															{/if}
-														</div>
-													{/each}
-												</div>
-											{/if}
-										</div>
-									{/each}
-								{/if}
+											Remove
+										</Button>
+									</div>
+								{/each}
 							</div>
 						{/if}
 					</div>
+
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<Button
+							size="sm"
+							variant="primary"
+							disabled={traceLoading}
+							onclick={() => {
+								void runRequestTrace();
+							}}
+							data-testid="request-trace-run"
+						>
+							{traceLoading ? 'Tracing…' : 'Run trace'}
+						</Button>
+						<Button size="sm" variant="secondary" onclick={clearTraceResult}>Clear result</Button>
+						<Button size="sm" variant="ghost" onclick={clearTraceInputs}>Clear inputs</Button>
+					</div>
+
+					{#if traceError}
+						<p
+							class="sf:text-xs sf:rounded-md sf:border sf:border-rose-300 sf:bg-rose-50 sf:px-2 sf:py-1 sf:text-rose-800"
+							data-testid="request-trace-error"
+						>
+							{traceError}
+						</p>
+					{/if}
+
+					{#if traceResult}
+						<div class="sf:space-y-2" data-testid="request-trace-results">
+							<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2">
+								<p class="sf:text-[11px] sf:text-slate-700">
+									<strong>Input source:</strong>
+									{traceResult.input.source}
+								</p>
+								<p class="sf:text-[11px] sf:text-slate-600">
+									<strong>Effective values:</strong>
+									{Object.keys(traceResult.input.values ?? {}).length}
+									·
+									<strong>Manual:</strong>
+									{traceResult.input.manual_field_ids.length}
+									·
+									<strong>Imported:</strong>
+									{traceResult.input.imported_field_ids.length}
+								</p>
+								{#if traceResult.input.warnings.length > 0}
+									<ul class="sf:mt-1 sf:space-y-1">
+										{#each traceResult.input.warnings as warning, index (`warning-${index}`)}
+											<li class="sf:text-[11px] sf:text-amber-700">{warning}</li>
+										{/each}
+									</ul>
+								{/if}
+							</div>
+
+							{#if traceResult.hooks.length === 0}
+								<p class="sf:text-[11px] sf:text-slate-500">
+									No trace hooks are available for this graph.
+								</p>
+							{:else}
+								{#each traceResult.hooks as hookTrace (hookTrace.hook)}
+									<div
+										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:space-y-2"
+										data-testid={`request-trace-hook-${hookTrace.hook}`}
+									>
+										<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+											<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+												{displayHookLabel(hookTrace.hook)}
+											</p>
+											<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
+												<Badge variant="success">Run: {hookTrace.runnable.length}</Badge>
+												<Badge variant="info">Background: {hookTrace.queued.length}</Badge>
+												<Badge variant="danger">Blocked: {hookTrace.blocked.length}</Badge>
+											</div>
+										</div>
+
+										{#if hookTrace.steps.length === 0}
+											<p class="sf:text-[11px] sf:text-slate-500">
+												No step details returned for this hook.
+											</p>
+										{:else}
+											<div class="sf:space-y-2">
+												{#each hookTrace.steps as step (`${hookTrace.hook}:${step.mapping_id}`)}
+													<div
+														class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-1"
+														data-testid={`request-trace-step-${step.mapping_id}`}
+													>
+														<div
+															class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2"
+														>
+															<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+																{step.label}
+															</p>
+															<Badge variant={traceOutcomeVariant(step.outcome)}>
+																{traceOutcomeLabel(step.outcome)}
+															</Badge>
+														</div>
+
+														<p class="sf:text-[11px] sf:text-slate-600">
+															<strong>Trigger:</strong>
+															{formatTraceTriggerSource(step)}
+															·
+															<strong>Deps:</strong>
+															{step.dependency_ids.length > 0
+																? step.dependency_ids
+																		.map((id) => displayMappingLabel(id))
+																		.join(', ')
+																: 'none'}
+														</p>
+
+														{#if step.outcome === 'blocked'}
+															<p class="sf:text-[11px] sf:text-rose-700">
+																{describeTraceBlockReason(step.block_reason, step.block_details)}
+															</p>
+														{/if}
+
+														<div class="sf:text-[11px] sf:text-slate-600">
+															<p>
+																<strong>Condition:</strong>
+																{step.condition.summary}
+															</p>
+															<p>
+																<strong>Reason code:</strong>
+																{step.condition.reason_code}
+															</p>
+														</div>
+
+														{#if step.condition.tree}
+															<details class="sf:rounded-sm sf:bg-white sf:p-1">
+																<summary class="sf:cursor-pointer sf:text-[11px] sf:text-slate-600">
+																	Condition decision tree
+																</summary>
+																<ul class="sf:mt-1 sf:space-y-0.5">
+																	{#each formatConditionTrace(step.condition.tree) as line, index (`${step.mapping_id}:${index}`)}
+																		<li class="sf:text-[11px] sf:font-mono sf:text-slate-600">
+																			{line}
+																		</li>
+																	{/each}
+																</ul>
+															</details>
+														{/if}
+													</div>
+												{/each}
+											</div>
+										{/if}
+									</div>
+								{/each}
+							{/if}
+						</div>
+					{/if}
 				</div>
 			</div>
-		{/if}
+		</div>
+	{/if}
 
 	<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3 sf:text-[11px] sf:text-slate-500">
 		<span>Slate edge: explicit dependency (upstream prerequisite -> dependent)</span>
@@ -2484,14 +2489,13 @@
 	{/if}
 </div>
 
-	<style>
-		:global(.sf-removable-edge path),
-		:global(path.sf-removable-edge) {
-			cursor: pointer;
-			transition:
-				stroke 120ms ease,
-				stroke-width 120ms ease,
-				opacity 120ms ease;
-		}
-
-	</style>
+<style>
+	:global(.sf-removable-edge path),
+	:global(path.sf-removable-edge) {
+		cursor: pointer;
+		transition:
+			stroke 120ms ease,
+			stroke-width 120ms ease,
+			opacity 120ms ease;
+	}
+</style>

@@ -59,18 +59,22 @@
 		type InheritableBooleanMode,
 		normalizeFormActionConfig
 	} from '$lib/utils/action-config';
-	import { isRealtimeEligibleActionId, normalizeRealtimeSettings } from '$lib/utils/realtime-settings';
+	import {
+		isRealtimeEligibleActionId,
+		normalizeRealtimeSettings
+	} from '$lib/utils/realtime-settings';
 	import {
 		openRouterActionHealth,
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
 	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 
 	const client = createClientFromConfig();
-	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+	const runtime = readRuntimeConfigSafely();
 	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
 
 	let definitions = $state<ActionDefinition[]>([]);

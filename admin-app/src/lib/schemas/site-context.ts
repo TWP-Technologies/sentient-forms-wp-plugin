@@ -88,7 +88,7 @@ const siteContextSchema = z
 		next_free_refresh_at: nullableStringSchema,
 		created_at: z.string(),
 		updated_at: z.string(),
-		metadata: z.record(z.string(), z.unknown()).nullable().optional()
+		metadata: z.record(z.string(), z.json()).nullable().optional()
 	})
 	.passthrough();
 
@@ -106,7 +106,7 @@ const generationAccessSchema = z
 
 const generationJobDiagnosticsSchema = z.preprocess(
 	(value) => (Array.isArray(value) && value.length === 0 ? {} : value),
-	z.record(z.string(), z.unknown())
+	z.record(z.string(), z.json())
 );
 
 export const siteContextGenerationJobSchema = z

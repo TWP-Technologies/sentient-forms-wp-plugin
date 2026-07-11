@@ -24,17 +24,17 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             return new WP_Error( 'sentient_forms_missing_execution_request_id', __( 'Execution request ID is required.', 'sentient-forms' ) );
         }
 
-        $provider = sanitize_key( (string) ( $data['provider'] ?? 'openrouter' ) );
-        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider ) )
+        $provider = sanitize_key( (string) ( $data['provider'] ?? 'unclassified' ) );
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
         {
             if ( isset( $data['cost_json'] ) && is_array( $data['cost_json'] ) )
             {
-                $data['cost_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data['cost_json'] );
+                $data['cost_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $data['cost_json'], $provider );
             }
 
             if ( isset( $data['result_json'] ) && is_array( $data['result_json'] ) )
             {
-                $data['result_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data['result_json'] );
+                $data['result_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $data['result_json'], $provider );
             }
         }
 
@@ -424,6 +424,12 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $row['token_usage_json'] = $this->decode_json_field( $row['token_usage_json'] ?? null );
         $row['cost_json']        = $this->decode_json_field( $row['cost_json'] ?? null );
         $row['result_json']      = $this->decode_json_field( $row['result_json'] ?? null );
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+        {
+            $provider = $row['provider'] ?? null;
+            $row['cost_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $row['cost_json'], $provider );
+            $row['result_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $row['result_json'], $provider );
+        }
         return $row;
     }
 

@@ -1,0 +1,465 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/state-success.schema.json",
+  "title": "Sentient Billing State Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "site_id",
+        "license_id",
+        "status",
+        "plan",
+        "account",
+        "billing",
+        "credits",
+        "allocation",
+        "managed_usage",
+        "billing_boundary",
+        "catalog"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "const": "sentient-managed"
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "license_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan": {
+          "$ref": "#/$defs/tier"
+        },
+        "account": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "license_status",
+            "tier"
+          ],
+          "properties": {
+            "license_status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tier": {
+              "$ref": "#/$defs/tier"
+            }
+          }
+        },
+        "billing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "customer_id",
+            "subscription",
+            "managed_enabled"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "customer_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "subscription": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/subscription"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "managed_enabled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "credits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "current_balance",
+            "tier_quota",
+            "ledger_delta",
+            "top_up_available"
+          ],
+          "properties": {
+            "current_balance": {
+              "type": "integer"
+            },
+            "tier_quota": {
+              "type": "integer"
+            },
+            "ledger_delta": {
+              "type": "integer"
+            },
+            "top_up_available": {
+              "type": "integer"
+            }
+          }
+        },
+        "allocation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "seat_quantity",
+            "tier_site_limit",
+            "allowed_sites",
+            "active_sites",
+            "over_limit",
+            "blocked_new_activations",
+            "grace_expires_at",
+            "capacity_policy"
+          ],
+          "properties": {
+            "seat_quantity": {
+              "type": "integer"
+            },
+            "tier_site_limit": {
+              "type": "integer"
+            },
+            "allowed_sites": {
+              "type": "integer"
+            },
+            "active_sites": {
+              "type": "integer"
+            },
+            "over_limit": {
+              "type": "boolean"
+            },
+            "blocked_new_activations": {
+              "type": "boolean"
+            },
+            "grace_expires_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "capacity_policy": {
+              "type": "string",
+              "const": "tier_allowance_v2"
+            }
+          }
+        },
+        "managed_usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution_count",
+            "succeeded_count",
+            "failed_count",
+            "token_usage"
+          ],
+          "properties": {
+            "execution_count": {
+              "type": "integer"
+            },
+            "succeeded_count": {
+              "type": "integer"
+            },
+            "failed_count": {
+              "type": "integer"
+            },
+            "token_usage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "input_tokens",
+                "output_tokens",
+                "total_tokens"
+              ],
+              "properties": {
+                "input_tokens": {
+                  "type": "integer"
+                },
+                "output_tokens": {
+                  "type": "integer"
+                },
+                "total_tokens": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "billing_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "direct_openrouter_billed_by_sentient",
+            "managed_proxy_billed_by_sentient"
+          ],
+          "properties": {
+            "direct_openrouter_billed_by_sentient": {
+              "type": "boolean",
+              "const": false
+            },
+            "managed_proxy_billed_by_sentient": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unit_label",
+            "plans",
+            "top_up_policy",
+            "top_up_packs"
+          ],
+          "properties": {
+            "unit_label": {
+              "type": "string",
+              "const": "managed action credits"
+            },
+            "plans": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/catalog_plan"
+              }
+            },
+            "top_up_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "eligible_plan_code",
+                "expires_after_days",
+                "consumption_order"
+              ],
+              "properties": {
+                "eligible_plan_code": {
+                  "type": "string",
+                  "const": "business"
+                },
+                "expires_after_days": {
+                  "type": "integer",
+                  "const": 365
+                },
+                "consumption_order": {
+                  "type": "string",
+                  "const": "monthly_allowance_first_then_oldest_top_up_lot"
+                }
+              }
+            },
+            "top_up_packs": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/catalog_pack"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "display_name",
+        "site_limit",
+        "monthly_credit_quota"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "site_limit": {
+          "type": "integer"
+        },
+        "monthly_credit_quota": {
+          "type": "integer"
+        }
+      }
+    },
+    "subscription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_subscription_id",
+        "status",
+        "quantity",
+        "cancel_at_period_end",
+        "current_period_start",
+        "current_period_end",
+        "trial_end",
+        "provider_price_id"
+      ],
+      "properties": {
+        "provider_subscription_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantity": {
+          "type": "integer"
+        },
+        "cancel_at_period_end": {
+          "type": "boolean"
+        },
+        "current_period_start": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_period_end": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trial_end": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider_price_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "catalog_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "display_name",
+        "monthly_price_usd",
+        "billing_interval",
+        "site_limit",
+        "monthly_credits",
+        "top_up_eligible",
+        "positioning"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "starter",
+            "pro",
+            "business"
+          ]
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "monthly_price_usd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "billing_interval": {
+          "type": "string",
+          "const": "monthly"
+        },
+        "site_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "monthly_credits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "top_up_eligible": {
+          "type": "boolean"
+        },
+        "positioning": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "catalog_pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "display_name",
+        "credits",
+        "price_usd",
+        "eligible_plan_code",
+        "expires_after_days"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "top_up_small",
+            "top_up_medium",
+            "top_up_large"
+          ]
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "credits": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "price_usd": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "eligible_plan_code": {
+          "type": "string",
+          "const": "business"
+        },
+        "expires_after_days": {
+          "type": "integer",
+          "const": 365
+        }
+      }
+    }
+  }
+}

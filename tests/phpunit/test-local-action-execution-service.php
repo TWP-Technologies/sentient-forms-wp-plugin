@@ -160,6 +160,27 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             Sentient_Forms_Test_Gravity_Meta_Store::reset();
         }
 
+        // The PHPUnit suite provides gform_* test doubles from whichever
+        // Gravity Forms-focused test file is loaded first. Clear the public
+        // seam as well as the known backing stores so randomized execution
+        // cannot inherit entry metadata from another test class.
+        foreach ( [ 99, 501 ] as $entry_id )
+        {
+            foreach (
+                [
+                    'sentient_forms_summary',
+                    'sentient_forms_classification',
+                    'sentient_forms_spam_classification',
+                    '_sentient_forms_local_result',
+                    'sentient_forms_last_response',
+                    'sentient_forms_post_execution_actions',
+                ] as $meta_key
+            )
+            {
+                gform_update_meta( $entry_id, $meta_key, null );
+            }
+        }
+
         GFFormsModel::$notes = [];
         add_filter( 'sentient_forms_local_mark_entry_as_spam', [ $this, 'capture_spam_mark' ], 10, 3 );
     }
@@ -181,6 +202,208 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         ];
 
         return true;
+    }
+
+    public function test_rejects_local_mapping_id_collision_with_different_form_context(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 99, 'title' => 'Wrong form' ],
+            [ 'id' => 100, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [
+                'form_source'      => 'gravity_forms',
+                'form_id'          => '99',
+                'central_action_id'=> 'contact_spam_triage',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_local_mapping_context_mismatch', $result->get_error_code() );
+        $this->assertSame( 'form_id', $result->get_error_data()['field'] ?? null );
+        $this->assertSame( [], $client->chat_calls );
+    }
+
+    public function test_runtime_policy_blocks_subscription_only_action_before_direct_provider_call(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [
+                'hook'                    => 'gform_after_submission',
+                'effective_action_policy' => [
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_subscription_unavailable', $result->get_error_code() );
+        $this->assertSame( [], $client->chat_calls );
+        $this->assertSame( [], $this->events->list_recent() );
+    }
+
+    public function test_reserved_catalog_identities_reject_unrelated_imported_template_linkage_before_execution(): void
+    {
+        $imported_template_id = $this->templates->upsert_by_code(
+            [
+                'source'          => 'imported',
+                'code'            => 'unrelated_imported_template',
+                'display_name'    => 'Unrelated imported template',
+                'prompt_template' => 'This database prompt must never execute for a reserved Action identity.',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $imported_template_id );
+
+        foreach (
+            [
+                'entry_summary_v1',
+                Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+            ] as $reserved_code
+        )
+        {
+            $fixture = $this->create_local_openrouter_mapping();
+            $mapping = $this->mappings->get( $fixture['mapping_id'] );
+            $this->assertIsArray( $mapping );
+            $updated = $this->custom_actions->update(
+                (int) $mapping['action_id'],
+                [
+                    'code'            => $reserved_code,
+                    'template_id'     => $imported_template_id,
+                    'definition_json' => [
+                        'prompt_template' => 'This database prompt must never execute for a reserved Action identity.',
+                    ],
+                ]
+            );
+            $this->assertIsArray( $updated );
+
+            $client  = new Sentient_Forms_Test_OpenRouter_Client();
+            $service = $this->create_service( $client );
+            $result  = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [ 'hook' => 'gform_after_submission' ]
+            );
+
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_action_catalog_linkage_invalid', $result->get_error_code() );
+            $this->assertSame( [], $client->chat_calls );
+            $this->assertSame( [], $this->events->list_recent() );
+        }
+    }
+
+    public function test_subscription_only_direct_route_rechecks_one_authoritative_billing_snapshot_per_execution(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $this->create_ready_managed_service_credential();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $status  = 'active';
+        $calls   = 0;
+        $billing = static function ( $current, $context ) use ( &$status, &$calls ) {
+            ++$calls;
+
+            return [
+                'status'  => $status,
+                'billing' => [ 'managed_enabled' => true ],
+                'credits' => [
+                    'current_balance' => 0,
+                    'credit_debt'     => 0,
+                ],
+            ];
+        };
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+
+        $policy = [
+            'feature_access'                    => 'active_subscription',
+            'execution_requirement'             => 'provider_flexible',
+            'required_form_source_capabilities' => [],
+            'required_managed_capabilities'     => [],
+            'eligible_lifecycles'                => [ 'after_submission' ],
+            'metering_class'                     => 'standard',
+        ];
+        $first = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [
+                'hook'                    => 'gform_after_submission',
+                'execution_request_id'    => 'subscription-direct-active',
+                'effective_action_policy' => $policy,
+            ]
+        );
+
+        $this->assertIsArray( $first );
+        $this->assertSame( 'openrouter', $first['provider'] ?? null );
+        $this->assertSame( 1, $calls, 'Subscription status and managed capacity must reuse one parsed CPS snapshot.' );
+
+        $status = 'canceled';
+        $second = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 100, '1' => 'Grace', '2' => 'grace@example.test' ],
+            [
+                'hook'                    => 'gform_after_submission',
+                'execution_request_id'    => 'subscription-direct-inactive',
+                'effective_action_policy' => $policy,
+            ]
+        );
+        remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+
+        $this->assertWPError( $second );
+        $this->assertSame( 'sentient_forms_provider_route_subscription_required', $second->get_error_code() );
+        $this->assertSame( 2, $calls, 'Queued execution must re-evaluate CPS subscription state at execution time.' );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertCount( 1, $this->events->list_recent() );
+    }
+
+    public function test_subscription_only_direct_route_fails_closed_when_authoritative_billing_is_unavailable(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $this->create_ready_managed_service_credential();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $billing = static fn() => new WP_Error( 'billing_unavailable', 'CPS billing unavailable.' );
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [
+                'hook'                    => 'gform_after_submission',
+                'execution_request_id'    => 'subscription-direct-unavailable',
+                'effective_action_policy' => [
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+            ]
+        );
+        remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_subscription_unavailable', $result->get_error_code() );
+        $this->assertSame( [], $client->chat_calls );
+        $this->assertSame( [], $this->events->list_recent() );
     }
 
     public function test_executes_local_openrouter_mapping_and_records_success(): void
@@ -505,18 +728,60 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $template = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
         $this->assertIsArray( $template );
 
+        $template_id = $this->templates->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'spam_detection_v1',
+                'display_name'    => $template['display_name'],
+                'prompt_template' => $template['prompt_template'],
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
         $fixture = $this->create_local_openrouter_mapping(
             true,
             null,
+            Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'spam_detection_v1' ),
             [
-                'system_prompt'   => 'Classify contact form submissions.',
-                'prompt_template' => $template['prompt_template'],
-            ],
-            [
-                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'template_id' => $template_id,
+                'code'        => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'anthropic/claude-sonnet-4.6',
+                ],
             ]
         );
-        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $updated_action = $this->custom_actions->update(
+            (int) $mapping['action_id'],
+            [ 'definition_json' => Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'spam_detection_v1' ) ]
+        );
+        $this->assertIsArray( $updated_action );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            [
+                'id'      => 'chatcmpl-bundled-spam-prompt',
+                'model'   => 'anthropic/claude-sonnet-4.6',
+                'choices' => [
+                    [
+                        'message' => [
+                            'role'    => 'assistant',
+                            'content' => wp_json_encode(
+                                [
+                                    'classification' => 'ham',
+                                    'confidence'     => 0.98,
+                                    'justification'  => 'A plausible service inquiry.',
+                                    'indicators'     => [],
+                                ]
+                            ),
+                        ],
+                        'finish_reason' => 'stop',
+                    ],
+                ],
+                'usage' => [ 'prompt_tokens' => 10, 'completion_tokens' => 8, 'total_tokens' => 18 ],
+            ]
+        );
         $service = $this->create_service( $client );
 
         $result = $service->execute_mapping(
@@ -566,17 +831,34 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $template = Sentient_Forms_Bundled_Action_Templates::get( 'entry_summary_v1' );
         $this->assertIsArray( $template );
 
+        $template_id = $this->templates->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => 'entry_summary_v1',
+                'display_name'             => $template['display_name'],
+                'prompt_template'          => $template['prompt_template'],
+                'structured_output_schema' => $template['structured_output_schema'] ?? null,
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
         $fixture = $this->create_local_openrouter_mapping(
             true,
             null,
+            Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'entry_summary_v1' ),
             [
-                'system_prompt'   => 'Summarize contact form submissions.',
-                'prompt_template' => $template['prompt_template'],
-            ],
-            [
-                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+                'template_id' => $template_id,
+                'code'        => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
             ]
         );
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $updated_action = $this->custom_actions->update(
+            (int) $mapping['action_id'],
+            [ 'definition_json' => Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'entry_summary_v1' ) ]
+        );
+        $this->assertIsArray( $updated_action );
         $client  = new Sentient_Forms_Test_OpenRouter_Client();
         $service = $this->create_service( $client );
 
@@ -602,6 +884,97 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $content = (string) ( $client->chat_calls[0]['payload']['messages'][1]['content'] ?? '' );
         $this->assertStringContainsString( '<TRUSTED_ACTION_CUSTOMIZATION source="sentient_forms_admin">', $content );
         $this->assertStringContainsString( 'Mention the requested next step first.', $content );
+    }
+
+    public function test_bundled_execution_fails_closed_for_missing_or_tampered_catalog_linkage(): void
+    {
+        $template = Sentient_Forms_Bundled_Action_Templates::get( 'entry_summary_v1' );
+        $this->assertIsArray( $template );
+        $template_id = $this->templates->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'entry_summary_v1',
+                'display_name'    => $template['display_name'],
+                'prompt_template' => $template['prompt_template'],
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code' => 'entry_summary_v1',
+                'catalog_digest' => Sentient_Forms_Bundled_Action_Templates::catalog_digest( 'entry_summary_v1' ),
+                'prompt_template' => 'Persisted override must not run.',
+            ],
+            [
+                'template_id' => $template_id,
+                'code'        => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+            ]
+        );
+
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $tampered_action = $this->custom_actions->update(
+            (int) $mapping['action_id'],
+            [
+                'definition_json' => [
+                    'template_code'  => 'entry_summary_v1',
+                    'catalog_digest' => Sentient_Forms_Bundled_Action_Templates::catalog_digest( 'entry_summary_v1' ),
+                    'prompt_template' => 'Persisted override must not run.',
+                ],
+            ]
+        );
+        $this->assertIsArray( $tampered_action );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $result  = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_catalog_linkage_invalid', $result->get_error_code() );
+        $this->assertSame( [], $client->chat_calls );
+        $this->assertSame( [], $this->events->list_recent() );
+
+        $missing_fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'entry_summary_v1' ),
+            [ 'code' => 'entry_summary_v1' ]
+        );
+        $missing_mapping = $this->mappings->get( $missing_fixture['mapping_id'] );
+        $this->assertIsArray( $missing_mapping );
+
+        global $wpdb;
+        $this->assertNotFalse(
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_custom_actions',
+                [ 'template_id' => null ],
+                [ 'id' => (int) $missing_mapping['action_id'] ],
+                [ null ],
+                [ '%d' ]
+            )
+        );
+
+        $missing_client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $missing_service = $this->create_service( $missing_client );
+        $missing_result  = $missing_service->execute_mapping(
+            $missing_fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 100, '1' => 'Grace', '2' => 'grace@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $missing_result );
+        $this->assertSame( 'sentient_forms_action_catalog_linkage_missing', $missing_result->get_error_code() );
+        $this->assertSame( [], $missing_client->chat_calls );
     }
 
     public function test_post_execution_actions_can_be_filtered_by_lead_grade(): void
@@ -718,7 +1091,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'prompt_template' => 'Grade this lead from {{form.title}} for {{name}}.',
             ],
             [
-                'code'         => 'dogfood_lead_grading_v1',
+                'code'         => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'lead_grading_v1' ),
                 'display_name' => 'Lead Scoring',
             ]
         );
@@ -745,9 +1118,20 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 [
                     'grade'                => 'A',
                     'confidence'           => 0.91,
+                    'fit_summary'          => 'Strong service and contact fit.',
+                    'intent_summary'       => 'Requests a concrete project consultation.',
+                    'reasons'              => [
+                        [
+                            'signal'   => 'clear_project',
+                            'evidence' => 'The request includes a concrete project.',
+                            'impact'   => 'positive',
+                        ],
+                    ],
+                    'red_flags'            => [],
+                    'missing_info'         => [],
                     'recommended_priority' => 'urgent',
-                    'next_best_action'     => 'Call within one business hour.',
                     'justification'        => 'The request matches the trusted profile and includes a clear project.',
+                    'profile_version'      => 4,
                 ]
             )
         );
@@ -801,7 +1185,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'prompt_template' => 'Grade this lead from {{form.title}} for {{name}}.',
             ],
             [
-                'code'         => 'dogfood_lead_grading_v1',
+                'code'         => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'lead_grading_v1' ),
                 'display_name' => 'Lead Scoring',
             ]
         );
@@ -895,6 +1279,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'suggested_reply_draft' => 'Thanks for reaching out.',
                     'next_best_action'      => 'Reply after internal review.',
                     'reply_rationale'       => 'Manual override requested a draft.',
+                    'missing_info_to_request' => [],
+                    'risk_flags'            => [],
+                    'do_not_send'           => false,
+                    'source_action_results' => [ 'lead_grade' => 'Reject' ],
+                    'profile_version'       => 2,
                 ]
             )
         );
@@ -979,18 +1368,33 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $credential_id = $this->create_ready_openrouter_credential( 'CF7 Suggested Reply', 'sk-or-cf7-reply-secret' );
         $consent_id    = $this->consents->record( 'openrouter', '2026-04-16', get_current_user_id() );
         $this->assertIsInt( $consent_id );
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( 'suggested_reply_v1' );
+        $this->assertIsArray( $catalog );
+        $template_id = $this->templates->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => 'suggested_reply_v1',
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
 
         $action_id = $this->custom_actions->create(
             [
                 'code'                 => 'suggested_reply_v1',
                 'display_name'         => 'Suggested Reply',
-                'definition_json'      => [
-                    'system_prompt'   => 'Draft a concise reply.',
-                    'prompt_template' => 'Message: {{message}}',
-                ],
+                'template_id'          => $template_id,
+                'definition_json'      => Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'suggested_reply_v1' ),
                 'model_selection_json' => [
                     'provider'      => 'openrouter',
-                    'model'         => 'openrouter/auto',
+                    'model'         => 'anthropic/claude-sonnet-4.6',
                     'credential_id' => $credential_id,
                 ],
             ]
@@ -1019,6 +1423,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'suggested_reply_draft' => 'Thanks for reaching out.',
                     'next_best_action'      => 'Reply after review.',
                     'reply_rationale'       => 'Manual override requested a draft.',
+                    'missing_info_to_request' => [],
+                    'risk_flags'            => [],
+                    'do_not_send'            => false,
+                    'source_action_results'  => [ 'lead_grade' => 'Reject' ],
+                    'profile_version'        => 2,
                 ]
             )
         );
@@ -1067,7 +1476,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertNull( $results->get_entry_result( 'contact_form_7', '42', '501' ) );
     }
 
-    public function test_executes_imported_bundled_openrouter_mapping_without_saved_credential_id(): void
+    public function test_imported_suffix_action_executes_as_custom_without_catalog_promotion(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
             true,
@@ -1101,29 +1510,30 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
-        $this->assertSame( 'openrouter/auto', $result['model'] );
+        $this->assertSame( 'gemini-3-flash-preview', $result['model'] );
         $this->assertCount( 1, $client->chat_calls );
         $this->assertSame( $fixture['secret'], $client->chat_calls[0]['api_key'] );
-        $this->assertSame( 'openrouter/auto', $client->chat_calls[0]['payload']['model'] );
-        $this->assertStringContainsString( 'Submission data:', $client->chat_calls[0]['payload']['messages'][1]['content'] );
-        $this->assertStringContainsString( 'Ada Lovelace', $client->chat_calls[0]['payload']['messages'][1]['content'] );
-        $this->assertStringContainsString( 'Contact Form', $client->chat_calls[0]['payload']['messages'][1]['content'] );
+        $this->assertSame( 'gemini-3-flash-preview', $client->chat_calls[0]['payload']['model'] );
+        $this->assertSame(
+            'Provide a brief, human-readable summary of this form submission.',
+            $client->chat_calls[0]['payload']['messages'][1]['content']
+        );
 
         $action = $this->custom_actions->get_by_code( 'imported_entry_summary_v1_5cfa445eee8f' );
         $this->assertIsArray( $action );
         $this->assertSame( $fixture['credential_id'], (int) ( $action['model_selection_json']['credential_id'] ?? 0 ) );
-        $this->assertSame( 'openrouter/auto', $action['model_selection_json']['model'] ?? null );
-        $this->assertStringContainsString( '{{entry}}', $action['definition_json']['prompt_template'] ?? '' );
+        $this->assertSame( 'gemini-3-flash-preview', $action['model_selection_json']['model'] ?? null );
+        $this->assertSame( 'cps_template_mapping_import', $action['definition_json']['source'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $action['definition_json']['template_code'] ?? null );
+        $this->assertSame( 'Provide a brief, human-readable summary of this form submission.', $action['definition_json']['prompt_template'] ?? null );
 
         $mapping = $this->mappings->get( $fixture['mapping_id'] );
         $this->assertIsArray( $mapping );
-        $this->assertSame( 'content', $mapping['effect_mapping_json']['meta']['sentient_forms_summary'] ?? null );
-        $this->assertSame( 'content', $mapping['effect_mapping_json']['entry_note']['path'] ?? null );
+        $this->assertNull( $mapping['effect_mapping_json'] ?? null );
 
         $event = $this->events->get_by_request_id( $result['execution_request_id'] );
         $this->assertIsArray( $event );
-        $this->assertContains( 'meta:sentient_forms_summary', $event['result_json']['effects']['applied'] ?? [] );
-        $this->assertContains( 'entry_note', $event['result_json']['effects']['applied'] ?? [] );
+        $this->assertSame( [], $event['result_json']['effects']['applied'] ?? [] );
     }
 
     public function test_entry_summary_effect_uses_structured_summary_when_content_is_json(): void
@@ -1137,7 +1547,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'prompt_template' => 'Provide a brief, human-readable summary of this form submission.',
             ],
             [
-                'code'                 => 'imported_entry_summary_json_v1',
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
                 'model_selection_json' => [
                     'provider' => 'openrouter',
                     'model'    => 'openrouter/auto',
@@ -2467,7 +2877,17 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 [ 'status' => 402 ]
             )
         );
-        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.97,
+                    'justification'  => 'Contact looks legitimate.',
+                    'indicators'     => [],
+                ],
+                'anthropic/claude-sonnet-4.6'
+            )
+        );
         $service    = $this->create_service( $openrouter, $managed_proxy );
         $form       = [ 'id' => 7, 'title' => 'Contact Form' ];
         $entry      = [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ];
@@ -2489,9 +2909,9 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
         $this->assertSame( 'openrouter', $result['provider'] );
-        $this->assertSame( 'openrouter/auto', $result['model'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $result['model'] );
         $this->assertSame( 'sentient_managed_credits_exhausted', $result['fallback_reason'] ?? null );
-        $this->assertSame( 'Contact looks legitimate.', $result['result']['content'] );
+        $this->assertSame( 'ham', $result['result']['structured']['classification'] );
 
         $this->assertCount( 1, $managed_proxy->execute_calls );
         $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
@@ -3613,7 +4033,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
     {
         $template_id = $this->templates->upsert_by_code(
             [
-                'source'                   => 'bundled',
+                'source'                   => 'custom',
                 'code'                     => 'template_spam_triage',
                 'display_name'             => 'Template Spam Triage',
                 'prompt_template'          => 'Classify this submission.',
@@ -3662,7 +4082,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
     {
         $template_id = $this->templates->upsert_by_code(
             [
-                'source'          => 'bundled',
+                'source'          => 'custom',
                 'code'            => 'template_prompt_fallback',
                 'display_name'    => 'Template Prompt Fallback',
                 'prompt_template' => 'Fallback prompt for {{form.title}} from {{name}}.',
@@ -4038,6 +4458,53 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             ],
             $custom_action_overrides
         );
+
+        $bundled_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
+            (string) ( $action_data['code'] ?? '' )
+        );
+        if ( '' !== $bundled_code )
+        {
+            $catalog = Sentient_Forms_Bundled_Action_Templates::get( $bundled_code );
+            $this->assertIsArray( $catalog );
+            $template_id = $this->templates->upsert_by_code(
+                [
+                    'source'                   => 'bundled',
+                    'code'                     => $bundled_code,
+                    'display_name'             => $catalog['display_name'],
+                    'description'              => $catalog['description'] ?? null,
+                    'prompt_template'          => $catalog['prompt_template'],
+                    'default_model'            => $catalog['default_model'] ?? null,
+                    'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                    'override_schema'          => $catalog['override_schema'] ?? null,
+                    'version'                  => $catalog['version'] ?? '1',
+                    'is_active'                => true,
+                ]
+            );
+            $this->assertIsInt( $template_id );
+            $action_data['template_id']     = $template_id;
+            $action_data['definition_json'] = Sentient_Forms_Bundled_Action_Templates::linkage_definition( $bundled_code );
+            if ( is_array( $catalog['structured_output_schema'] ?? null ) )
+            {
+                $selection = is_array( $action_data['model_selection_json'] ?? null )
+                    ? $action_data['model_selection_json']
+                    : [];
+                if (
+                    'openrouter' === sanitize_key( (string) ( $selection['provider'] ?? '' ) )
+                    && in_array( (string) ( $selection['model'] ?? '' ), [ '', 'openrouter/auto', 'gemini-3-flash-preview' ], true )
+                )
+                {
+                    $selection['model'] = 'anthropic/claude-sonnet-4.6';
+                }
+                if (
+                    'openrouter' === sanitize_key( (string) ( $selection['backup_provider'] ?? '' ) )
+                    && in_array( (string) ( $selection['backup_model'] ?? '' ), [ '', 'openrouter/auto' ], true )
+                )
+                {
+                    $selection['backup_model'] = 'anthropic/claude-sonnet-4.6';
+                }
+                $action_data['model_selection_json'] = $selection;
+            }
+        }
 
         $action_id = $this->custom_actions->create(
             $action_data

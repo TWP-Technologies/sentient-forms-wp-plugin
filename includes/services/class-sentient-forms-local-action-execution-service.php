@@ -29,7 +29,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
         private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null,
-        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
+        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
+        private ?Sentient_Forms_Managed_Service_Client $managed_service = null
     )
     {
         global $wpdb;
@@ -47,6 +48,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
         $this->lead_profiles  = $this->lead_profiles ?? new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
         $this->lead_scoring_results = $this->lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $this->managed_service = $this->managed_service ?? new Sentient_Forms_Managed_Service_Client();
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -108,11 +110,20 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
-        $action  = $this->model_selection_service->prepare_bundled_action_for_execution( $action );
+        $action = $this->resolve_authoritative_action_definition( $action );
+        if ( is_wp_error( $action ) )
+        {
+            return $action;
+        }
         $mapping = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
 
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
         $action_code                = $this->resolve_action_code( $action, $definition );
+        $context_match              = $this->assert_mapping_matches_context( $mapping, $action_code, $context );
+        if ( is_wp_error( $context_match ) )
+        {
+            return $context_match;
+        }
         [ $mapping, $context ]      = $this->prepare_lead_value_runtime_context( $mapping, $action, $definition, $context );
         if ( $this->requires_active_lead_profile( $action_code ) && ! is_array( $context['lead_profile'] ?? null ) )
         {
@@ -154,6 +165,17 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $action['model_selection_json'] = $base_model_selection;
         $model_selection                = $this->model_selection_service->prepare_model_selection_for_execution( $action, $context );
+        $effective_policy               = is_array( $context['effective_action_policy'] ?? null )
+            ? $context['effective_action_policy']
+            : null;
+        if ( is_array( $effective_policy ) )
+        {
+            $model_selection = $this->route_model_selection_for_policy( $effective_policy, $model_selection );
+            if ( is_wp_error( $model_selection ) )
+            {
+                return $model_selection;
+            }
+        }
         $provider        = sanitize_key( (string) ( $model_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) );
         $model           = sanitize_text_field( (string) ( $model_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) );
 
@@ -208,6 +230,11 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         if ( 'sentient_managed' === $provider )
         {
+            $managed_policy = $this->recheck_managed_dispatch_policy( $effective_policy );
+            if ( is_wp_error( $managed_policy ) )
+            {
+                return $managed_policy;
+            }
             $managed_context = $this->resolve_managed_proxy_context( $credential );
             if ( is_wp_error( $managed_context ) )
             {
@@ -1635,6 +1662,303 @@ class Sentient_Forms_Local_Action_Execution_Service
         return '';
     }
 
+    /**
+     * Resolve built-in executable content exclusively from the code-owned Action
+     * Catalog. WordPress rows retain only template linkage plus a validated digest.
+     *
+     * @param array<string, mixed> $action
+     * @return array<string, mixed>|WP_Error
+     */
+    private function resolve_authoritative_action_definition( array $action ): array | WP_Error
+    {
+        $template_id = absint( $action['template_id'] ?? 0 );
+        $action_code = isset( $action['code'] ) && is_scalar( $action['code'] )
+            ? sanitize_key( (string) $action['code'] )
+            : '';
+        $catalog_code  = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $action_code );
+        $looks_bundled = '' !== $catalog_code && Sentient_Forms_Bundled_Action_Templates::has( $catalog_code );
+
+        if ( $template_id <= 0 )
+        {
+            return $looks_bundled
+                ? new WP_Error(
+                    'sentient_forms_action_catalog_linkage_missing',
+                    __( 'The built-in Action is missing its catalog linkage.', 'sentient-forms' )
+                )
+                : $action;
+        }
+
+        $template = $this->templates->get( $template_id );
+        if ( ! is_array( $template ) )
+        {
+            return new WP_Error(
+                'sentient_forms_action_catalog_template_missing',
+                __( 'The linked Action Catalog row could not be found.', 'sentient-forms' )
+            );
+        }
+
+        $template_code   = sanitize_key( (string) ( $template['code'] ?? '' ) );
+        $template_source = sanitize_key( (string) ( $template['source'] ?? '' ) );
+        $is_bundled      = $looks_bundled
+            || 'bundled' === $template_source
+            || Sentient_Forms_Bundled_Action_Templates::has( $template_code );
+        if ( ! $is_bundled )
+        {
+            return $action;
+        }
+
+        $linkage = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
+        if (
+            'bundled' !== $template_source
+            || ! Sentient_Forms_Bundled_Action_Templates::has( $template_code )
+            || ( $looks_bundled && $catalog_code !== $template_code )
+            || ! Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition( $linkage )
+            || $template_code !== sanitize_key( (string) ( $linkage['template_code'] ?? '' ) )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_action_catalog_linkage_invalid',
+                __( 'The built-in Action Catalog linkage is missing, stale, or has been modified.', 'sentient-forms' )
+            );
+        }
+
+        $definition = Sentient_Forms_Bundled_Action_Templates::execution_definition( $template_code );
+        if ( ! is_array( $definition ) )
+        {
+            return new WP_Error(
+                'sentient_forms_action_catalog_definition_missing',
+                __( 'The built-in Action definition is unavailable.', 'sentient-forms' )
+            );
+        }
+
+        $action['definition_json'] = $definition;
+        $action['_catalog_linkage_validated'] = $template_code;
+        return $action;
+    }
+
+    /**
+     * Select a provider from current entitlement and credential state after the
+     * runner has composed the canonical Action and facet policy.
+     *
+     * @param array<string, mixed> $effective_policy
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>|WP_Error
+     */
+    private function route_model_selection_for_policy( array $effective_policy, array $selection ): array | WP_Error
+    {
+        $managed = $this->model_selection_service->find_single_ready_credential_for_provider( 'sentient_managed' );
+        $direct  = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        $requires_active_subscription = 'active_subscription' === sanitize_key( (string) ( $effective_policy['feature_access'] ?? '' ) );
+        $requires_managed_execution   = 'managed_only' === sanitize_key( (string) ( $effective_policy['execution_requirement'] ?? '' ) );
+        $requires_authoritative_state = $requires_active_subscription || $requires_managed_execution;
+        $billing                      = null;
+
+        if ( is_array( $managed ) )
+        {
+            $billing = $this->resolve_authoritative_billing_snapshot( $managed );
+        }
+
+        if ( $requires_authoritative_state && ( ! is_array( $managed ) || is_wp_error( $billing ) ) )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_subscription_unavailable',
+                __( 'Sentient Forms could not verify the current subscription status.', 'sentient-forms' )
+            );
+        }
+
+        $authoritative_subscription_active = is_array( $billing )
+            ? $this->billing_snapshot_has_active_subscription( $billing )
+            : $this->model_selection_service->managed_account_is_active();
+        $authoritative_managed_capacity = is_array( $billing )
+            ? $this->billing_snapshot_has_managed_capacity( $billing )
+            : false;
+        $state   = [
+            'subscription_active'        => $authoritative_subscription_active,
+            'managed_ready'              => is_array( $managed ) && $this->provider_consent_exists( 'sentient_managed' ),
+            'managed_capacity_available' => is_array( $managed ) && $authoritative_managed_capacity,
+            'direct_ready'               => is_array( $direct ) && $this->provider_consent_exists( 'openrouter' ),
+        ];
+        $filtered = apply_filters( 'sentient_forms_action_provider_runtime_state', $state, $effective_policy, $selection );
+        if ( is_array( $filtered ) )
+        {
+            $state = $filtered;
+        }
+        if ( $requires_authoritative_state )
+        {
+            $state['subscription_active']        = $authoritative_subscription_active;
+            $state['managed_capacity_available'] = $authoritative_managed_capacity;
+        }
+
+        $route = ( new Sentient_Forms_Provider_Route_Decision() )->decide( $effective_policy, $state );
+        if ( is_wp_error( $route ) )
+        {
+            return $route;
+        }
+
+        $provider  = $route['provider'];
+        $previous_provider = sanitize_key( (string) ( $selection['provider'] ?? '' ) );
+        $credential = 'sentient_managed' === $provider ? $managed : $direct;
+        if ( ! is_array( $credential ) )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_credential_unavailable',
+                __( 'The selected Action provider credential is unavailable.', 'sentient-forms' )
+            );
+        }
+
+        $selection['provider']      = $provider;
+        $selection['credential_id'] = absint( $credential['id'] ?? 0 );
+        if ( 'sentient_managed' === $provider )
+        {
+            if ( 'sentient_managed' !== $previous_provider || empty( $selection['model'] ) )
+            {
+                $selection['model'] = 'sf_default';
+            }
+        }
+        elseif ( 'openrouter' !== $previous_provider || empty( $selection['model'] ) )
+        {
+            $selection['model'] = isset( $selection['backup_model'] ) && is_scalar( $selection['backup_model'] )
+                ? sanitize_text_field( (string) $selection['backup_model'] )
+                : 'openrouter/auto';
+        }
+
+        return $selection;
+    }
+
+    private function provider_consent_exists( string $provider ): bool
+    {
+        $latest = $this->consents->latest_for_provider( sanitize_key( $provider ) );
+        if ( ! is_array( $latest ) )
+        {
+            return false;
+        }
+
+        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+        return ! ( 'sentient_managed' === $provider && 'revoke_managed_proxy' === sanitize_key( (string) ( $metadata['action'] ?? '' ) ) );
+    }
+
+    /**
+     * Fail closed on stale/unknown managed capacity. CPS remains authoritative
+     * and performs the final reservation during dispatch.
+     *
+     * @param array<string, mixed> $credential
+     */
+    private function resolve_authoritative_billing_snapshot( array $credential ): array | WP_Error
+    {
+        $managed_context = $this->resolve_managed_proxy_context( $credential );
+        if ( is_wp_error( $managed_context ) )
+        {
+            return $managed_context;
+        }
+
+        $billing = apply_filters( 'sentient_forms_action_policy_billing_state', null, $managed_context );
+        if ( null === $billing )
+        {
+            $billing = $this->managed_service->get_billing_state( $managed_context['proxy_api_key'] );
+        }
+        if ( is_wp_error( $billing ) || ! is_array( $billing ) )
+        {
+            return is_wp_error( $billing )
+                ? $billing
+                : new WP_Error(
+                    'sentient_forms_provider_route_subscription_unavailable',
+                    __( 'Sentient Forms received an invalid billing-state response.', 'sentient-forms' )
+                );
+        }
+
+        if ( ! isset( $billing['status'] ) || ! is_scalar( $billing['status'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_subscription_unavailable',
+                __( 'Sentient Forms received billing state without a subscription status.', 'sentient-forms' )
+            );
+        }
+
+        return $billing;
+    }
+
+    /**
+     * @param array<string, mixed> $billing
+     */
+    private function billing_snapshot_has_active_subscription( array $billing ): bool
+    {
+        $status = sanitize_key( (string) ( $billing['status'] ?? '' ) );
+
+        return in_array( $status, [ 'active', 'trialing' ], true );
+    }
+
+    /**
+     * @param array<string, mixed> $billing
+     */
+    private function billing_snapshot_has_managed_capacity( array $billing ): bool
+    {
+        if ( isset( $billing['billing']['managed_enabled'] ) && ! rest_sanitize_boolean( $billing['billing']['managed_enabled'] ) )
+        {
+            return false;
+        }
+
+        $credits = is_array( $billing['credits'] ?? null ) ? $billing['credits'] : $billing;
+        $balance = null;
+        foreach ( [ 'current_balance', 'available_balance', 'balance' ] as $field )
+        {
+            if ( isset( $credits[ $field ] ) && is_numeric( $credits[ $field ] ) )
+            {
+                $balance = (float) $credits[ $field ];
+                break;
+            }
+        }
+        $debt = 0.0;
+        foreach ( [ 'credit_debt', 'debt', 'outstanding_debt' ] as $field )
+        {
+            if ( isset( $credits[ $field ] ) && is_numeric( $credits[ $field ] ) )
+            {
+                $debt = max( $debt, (float) $credits[ $field ] );
+            }
+        }
+
+        return null !== $balance && $balance > 0 && $debt <= 0;
+    }
+
+    /**
+     * Recheck managed-only and infrastructure capability constraints at the CPS
+     * dispatch boundary rather than trusting an earlier UI or runner decision.
+     */
+    private function recheck_managed_dispatch_policy( ?array $effective_policy ): true | WP_Error
+    {
+        if ( null === $effective_policy )
+        {
+            return true;
+        }
+        if ( ! $this->model_selection_service->managed_account_is_active() )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_subscription_required',
+                __( 'Managed execution requires an active Sentient Forms subscription.', 'sentient-forms' )
+            );
+        }
+
+        $available = apply_filters(
+            'sentient_forms_managed_infrastructure_capabilities',
+            [ 'base_limit', 'tool_budget' ],
+            $effective_policy
+        );
+        $available = is_array( $available ) ? array_values( array_unique( array_map( 'sanitize_key', $available ) ) ) : [];
+        $required  = is_array( $effective_policy['required_managed_capabilities'] ?? null )
+            ? array_values( array_unique( array_map( 'sanitize_key', $effective_policy['required_managed_capabilities'] ) ) )
+            : [];
+        $missing = array_values( array_diff( $required, $available ) );
+        if ( [] !== $missing )
+        {
+            return new WP_Error(
+                'sentient_forms_managed_capability_unavailable',
+                __( 'Managed execution cannot provide a required Action capability.', 'sentient-forms' ),
+                [ 'missing_capabilities' => $missing ]
+            );
+        }
+
+        return true;
+    }
+
     private function is_bundled_action_code( string $action_code ): bool
     {
         return in_array(
@@ -2629,23 +2953,54 @@ class Sentient_Forms_Local_Action_Execution_Service
         $action_code = (string) ( $action['code'] ?? 'local_action' );
         $action_id   = sprintf( 'local:%d:%s', (int) ( $mapping['id'] ?? 0 ), $action_code );
 
-        if ( class_exists( 'Sentient_Forms_Action_Executor' ) )
+        return Sentient_Forms_Execution_Identity::generate(
+            $action_id,
+            $form,
+            $entry,
+            array_merge(
+                $context,
+                [
+                    'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
+                    'action_id'  => $action_code,
+                ]
+            )
+        );
+    }
+
+    /**
+     * Prevent a stale UI mapping identifier from selecting an unrelated local row.
+     *
+     * @param array<string,mixed> $mapping
+     * @param array<string,mixed> $context
+     *
+     * @return true|WP_Error
+     */
+    private function assert_mapping_matches_context( array $mapping, string $action_code, array $context ): true | WP_Error
+    {
+        $expected = [
+            'form_source' => sanitize_key( (string) ( $context['form_source'] ?? '' ) ),
+            'form_id'     => sanitize_text_field( (string) ( $context['form_id'] ?? '' ) ),
+            'action_code' => sanitize_key( (string) ( $context['central_action_id'] ?? '' ) ),
+        ];
+        $actual = [
+            'form_source' => sanitize_key( (string) ( $mapping['form_source'] ?? '' ) ),
+            'form_id'     => sanitize_text_field( (string) ( $mapping['form_id'] ?? '' ) ),
+            'action_code' => sanitize_key( $action_code ),
+        ];
+
+        foreach ( $expected as $field => $value )
         {
-            return Sentient_Forms_Action_Executor::generate_execution_request_id(
-                $action_id,
-                $form,
-                $entry,
-                array_merge(
-                    $context,
-                    [
-                        'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
-                        'action_id'  => $action_code,
-                    ]
-                )
-            );
+            if ( '' !== $value && $value !== $actual[ $field ] )
+            {
+                return new WP_Error(
+                    'sentient_forms_local_mapping_context_mismatch',
+                    __( 'The local Action mapping does not belong to this Action and Form Source context.', 'sentient-forms' ),
+                    [ 'field' => $field ]
+                );
+            }
         }
 
-        return substr( hash( 'sha256', (string) wp_json_encode( [ $action_id, $form, $entry, $context ] ) ), 0, 32 );
+        return true;
     }
 
     private function resolve_submission_uuid( array $context ): ?string

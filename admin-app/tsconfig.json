@@ -1,6 +1,7 @@
 {
   "extends": "./.svelte-kit/tsconfig.json",
   "compilerOptions": {
+    "strictNullChecks": true,
     "types": ["vitest/importMeta", "vite/client"]
   },
   "include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],

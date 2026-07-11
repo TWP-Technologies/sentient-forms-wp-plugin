@@ -19,11 +19,11 @@ export function parsePromptOverridesInput(raw: string): {
 	}
 
 	try {
-		const parsed = JSON.parse(raw);
-		if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+		const parsed = promptOverridesSchema.safeParse(JSON.parse(raw));
+		if (!parsed.success) {
 			return { error: 'Prompt overrides must be a JSON object.' };
 		}
-		return { result: parsed as Record<string, unknown> };
+		return { result: parsed.data };
 	} catch (error) {
 		return {
 			error:
@@ -147,3 +147,6 @@ export function buildDefaultCustomActionMergeTags(): CustomActionMergeTagOption[
 		{ group: 'Result', token: 'confidence', label: 'Confidence' }
 	]);
 }
+import { z } from 'zod';
+
+const promptOverridesSchema = z.record(z.string(), z.json());

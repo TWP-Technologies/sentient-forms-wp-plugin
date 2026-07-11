@@ -28,6 +28,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { runAdminCssHealthCheck } from '$lib/utils/admin-css-health';
 	import { Toaster } from 'sonner-svelte';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 	interface Props {
 		children?: import('svelte').Snippet;
@@ -35,7 +36,7 @@
 
 	let { children }: Props = $props();
 	const client = createClientFromConfig();
-	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+	const runtime = readRuntimeConfigSafely();
 
 	const links: Array<{ path: NavigationLinkPath; label: string }> = [
 		{ path: '/dashboard', label: 'Dashboard' },
@@ -95,11 +96,12 @@
 	}
 
 	function retrySecurityRoadblock(): void {
-		if (typeof window === 'undefined' || !securityRoadblock?.retryEventName) return;
+		const retryEventName = securityRoadblock?.retryEventName;
+		if (typeof window === 'undefined' || !retryEventName) return;
 		const detail = securityRoadblock;
 		securityRoadblock = null;
 		securityRoadblockDetailsOpen = false;
-		window.dispatchEvent(new CustomEvent(detail.retryEventName, { detail }));
+		window.dispatchEvent(new CustomEvent(retryEventName, { detail }));
 	}
 
 	function updateWpAdminOffset(): void {

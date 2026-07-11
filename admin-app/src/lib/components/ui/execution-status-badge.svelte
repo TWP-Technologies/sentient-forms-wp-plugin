@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { Badge } from '$lib/components/ui';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	/**
 	 * ExecutionStatusBadge - Displays action execution status with optional auto-refresh
@@ -101,19 +101,20 @@
 
 		loading = true;
 		try {
-			const response = await wpFetch<{ success: boolean; data: StatusResponse }>(
-				`execution-status/${mappingId}/${entryId}`,
-				{ method: 'GET' }
+			const response = await wpRequestEndpoint(
+				'executionStatus.read',
+				{ method: 'GET' },
+				`execution-status/${mappingId}/${entryId}`
 			);
 
-			if (response?.data) {
-				const newStatus = response.data.status as ExecutionStatus;
+			if (response) {
+				const newStatus = response.status as ExecutionStatus;
 				if (newStatus !== status) {
 					status = newStatus;
 					onStatusChange?.(newStatus);
 				}
-				resultSummary = response.data.result_summary;
-				errorMessage = response.data.error_message;
+				resultSummary = response.result_summary;
+				errorMessage = response.error_message;
 			}
 		} catch (e) {
 			console.error('Failed to fetch execution status', e);

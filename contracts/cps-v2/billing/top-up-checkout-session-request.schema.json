@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/top-up-checkout-session-request.schema.json",
+  "title": "Sentient Billing Top-Up Checkout Session Request",
+  "type": "object",
+  "required": [
+    "pack_code",
+    "success_url",
+    "cancel_url"
+  ],
+  "properties": {
+    "pack_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CPS accepts canonical top-up pack codes and their documented numeric aliases."
+    },
+    "success_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "cancel_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": true
+}

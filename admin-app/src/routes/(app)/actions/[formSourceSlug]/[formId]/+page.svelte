@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { z } from 'zod';
+	import { readValidatedStorage } from '$lib/storage/validated-storage';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 	import { onMount } from 'svelte';
 	import {
 		Section,
@@ -83,7 +86,6 @@
 		SpamResultDisplayMode,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
-	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
 	import {
 		applyInheritableBooleanToConfig,
 		cloneDefaultModelSelection,
@@ -113,7 +115,7 @@
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
 	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	type Props = { data: { formSourceSlug: string; formId: string } };
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
@@ -404,8 +406,7 @@
 	let currentFormSummary = $state<FormSummary | null>(null);
 	let currentFormSummaryLoading = $state(false);
 	let currentFormSummaryError = $state<string | null>(null);
-	const runtimeFormSources: FormSourceSummary[] =
-		typeof window === 'undefined' ? [] : (window.sentientFormsConfig?.formSources ?? []);
+	const runtimeFormSources: FormSourceSummary[] = readRuntimeConfigSafely()?.formSources ?? [];
 	const runtimeFormSourceDescriptor = $derived.by(
 		() =>
 			runtimeFormSources.find((source) => source.slug === data.formSourceSlug)?.descriptor ?? null
@@ -994,7 +995,10 @@
 		}
 	}
 
-	function normalizeActionDefaultsForAction(actionId: string, config: FormActionConfig): FormActionConfig {
+	function normalizeActionDefaultsForAction(
+		actionId: string,
+		config: FormActionConfig
+	): FormActionConfig {
 		const normalizedConfig = normalizeFormActionConfig(config);
 		return isRealtimeEligibleActionId(actionId)
 			? {
@@ -1013,7 +1017,10 @@
 		}
 
 		const client = createClientFromConfig();
-		const config = normalizeActionDefaultsForAction(actionId, await client.getActionDefaults(actionId));
+		const config = normalizeActionDefaultsForAction(
+			actionId,
+			await client.getActionDefaults(actionId)
+		);
 		actionDefaultsByActionId = {
 			...actionDefaultsByActionId,
 			[actionId]: config
@@ -1164,9 +1171,7 @@
 		return client.searchSpamGuidanceEntries(data.formSourceSlug, data.formId, params);
 	}
 
-	async function saveHistoricalSpamGuidanceExample(
-		payload: SpamGuidanceExampleAppendPayload
-	) {
+	async function saveHistoricalSpamGuidanceExample(payload: SpamGuidanceExampleAppendPayload) {
 		const client = createClientFromConfig();
 		return client.appendSpamGuidanceExample(data.formSourceSlug, data.formId, payload);
 	}
@@ -1281,9 +1286,10 @@
 		currentFormSummaryError = null;
 
 		try {
-			const forms = await providerClient.getForms(data.formSourceSlug, { showNotifications: false });
-			currentFormSummary =
-				forms.find((form) => String(form.id) === String(data.formId)) ?? null;
+			const forms = await providerClient.getForms(data.formSourceSlug, {
+				showNotifications: false
+			});
+			currentFormSummary = forms.find((form) => String(form.id) === String(data.formId)) ?? null;
 		} catch (error) {
 			currentFormSummary = null;
 			currentFormSummaryError =
@@ -1379,7 +1385,10 @@
 		if (bootstrap.workflow_plan) {
 			workflowPlan = bootstrap.workflow_plan;
 			workflowPlanError = null;
-			lastWorkflowPlanSignature = createWorkflowPlanSignature(actionsState.items ?? [], workflowPlanScope);
+			lastWorkflowPlanSignature = createWorkflowPlanSignature(
+				actionsState.items ?? [],
+				workflowPlanScope
+			);
 		} else {
 			lastWorkflowPlanSignature = '';
 		}
@@ -1442,7 +1451,8 @@
 
 		return {
 			...mapping,
-			mode: mapping.mode === 'mixed' && mapping.media_ids.length > 0 ? 'media_library' : 'none',
+			mode:
+				mapping.mode === 'mixed' && (mapping.media_ids?.length ?? 0) > 0 ? 'media_library' : 'none',
 			gf_upload_field_ids: []
 		};
 	}
@@ -1523,7 +1533,9 @@
 
 			if (Array.isArray(definition.hooks)) {
 				for (const hook of definition.hooks) {
-					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook?.toString() ?? '') : hook?.toString();
+					const key = hasSourceDescriptor
+						? adaptHookForCurrentSource(hook?.toString() ?? '')
+						: hook?.toString();
 					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
 					if (key) next[key] = next[key] ?? key;
 				}
@@ -1916,7 +1928,9 @@
 	);
 	const providerPathPolicy = $derived(actionsState.bootstrap?.provider_path_policy ?? null);
 	const selectableBuiltInDefinitions = $derived(
-		builtInDefinitions.filter((definition) => !providerPolicyIsBlocked(providerPolicyForDefinition(definition)))
+		builtInDefinitions.filter(
+			(definition) => !providerPolicyIsBlocked(providerPolicyForDefinition(definition))
+		)
 	);
 	const hasDefinitions = $derived(builtInDefinitions.length > 0);
 	const hasBuiltInDefinitions = $derived(builtInDefinitions.length > 0);
@@ -1973,7 +1987,9 @@
 
 		return 'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records instead of native WPForms entry links.';
 	});
-	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
+	const sectionDescription = $derived(
+		`Link actions and execution settings for ${currentFormTitle}.`
+	);
 	const entryLookupHelpText = $derived(
 		data.formSourceSlug === 'gravity_forms'
 			? 'Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not the Gravity Forms submission ID.'
@@ -2171,19 +2187,18 @@
 		if (createKind === 'template') return;
 
 		try {
-			const raw = localStorage.getItem(LAST_HOOKS_KEY);
-			if (!raw) return;
-			const parsed = JSON.parse(raw);
-			if (Array.isArray(parsed) && parsed.every((h) => typeof h === 'string')) {
-				selectedHooks = new Set(sanitizeHooksForAction(parsed, selectedCreateActionId));
-			}
+			const parsed = readValidatedStorage(localStorage, LAST_HOOKS_KEY, z.array(z.string()));
+			if (!parsed) return;
+			selectedHooks = new Set(sanitizeHooksForAction(parsed, selectedCreateActionId));
 		} catch (err) {
 			console.warn('Could not restore hooks', err);
 		}
 	}
 
 	function isExecutionStatusActive(status: FormExecutionStatus | null | undefined): boolean {
-		const state = String(status?.status ?? '').toLowerCase().trim();
+		const state = String(status?.status ?? '')
+			.toLowerCase()
+			.trim();
 		if (ACTIVE_STATUS_TERMS.includes(state)) return true;
 
 		const message = String(status?.message ?? '').toLowerCase();
@@ -2534,7 +2549,7 @@
 			blocked_reason_code: 'policy_unavailable',
 			requires_structured_output: Boolean(
 				definition.structuredOutputSchema ??
-					(definition as unknown as Record<string, unknown>).structured_output_schema
+				(definition as unknown as Record<string, unknown>).structured_output_schema
 			)
 		};
 	}
@@ -2544,9 +2559,7 @@
 		return providerPathPolicy.actions?.[definition.id] ?? unavailableProviderPolicy(definition);
 	}
 
-	function providerPolicyIsBlocked(
-		policy: ProviderPathPolicyAction | null | undefined
-	): boolean {
+	function providerPolicyIsBlocked(policy: ProviderPathPolicyAction | null | undefined): boolean {
 		if (!policy) return true;
 		return Boolean(policy.blocked_reason_code || !policy.selected_provider);
 	}
@@ -2560,9 +2573,13 @@
 	}
 
 	function providerPolicyRouteTooltip(policy: ProviderPathPolicyAction | null | undefined): string {
-		if (!policy) return 'Provider route policy is unavailable. Refresh this page or complete provider setup before linking this action.';
+		if (!policy)
+			return 'Provider route policy is unavailable. Refresh this page or complete provider setup before linking this action.';
 		if (providerPolicyIsBlocked(policy)) {
-			return providerPolicyBlockedMessage(policy) || 'Complete provider setup before linking this action.';
+			return (
+				providerPolicyBlockedMessage(policy) ||
+				'Complete provider setup before linking this action.'
+			);
 		}
 		if (policy.selected_provider === 'sentient_managed') {
 			return 'Runs through Sentient Forms Managed Service. If Direct OpenRouter is also ready, Managed stays the default route.';
@@ -2573,13 +2590,17 @@
 		return 'Uses the configured execution route for this built-in action.';
 	}
 
-	function providerPolicyRouteVariant(policy: ProviderPathPolicyAction | null | undefined): BadgeVariant {
+	function providerPolicyRouteVariant(
+		policy: ProviderPathPolicyAction | null | undefined
+	): BadgeVariant {
 		if (!policy) return 'neutral';
 		if (providerPolicyIsBlocked(policy)) return 'warning';
 		return policy.selected_provider === 'sentient_managed' ? 'success' : 'info';
 	}
 
-	function providerPolicyBlockedMessage(policy: ProviderPathPolicyAction | null | undefined): string {
+	function providerPolicyBlockedMessage(
+		policy: ProviderPathPolicyAction | null | undefined
+	): string {
 		switch (policy?.blocked_reason_code) {
 			case 'structured_openrouter_model_unavailable':
 				return 'Structured output route unavailable';
@@ -2955,24 +2976,31 @@
 	}
 
 	async function resolveLocalBuilderModelSelection(): Promise<ResolvedModelSelection> {
-		const response = await wpFetch<ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>>(
-			'models/resolve',
-			{
-				method: 'POST',
-				body: {
-					action_selection: localBuilderModelSelection,
-					template_model_hint: 'openrouter/auto'
-				},
-				showNotifications: false
-			}
-		);
-		const resolved = unwrapRestResponse<ResolvedModelSelection>(response);
+		const response = await wpRequestEndpoint('models.resolve', {
+			method: 'POST',
+			body: {
+				action_selection: localBuilderModelSelection,
+				template_model_hint: 'openrouter/auto'
+			},
+			showNotifications: false
+		});
 
-		if (!resolved?.model_id) {
+		if (!response.model_id) {
 			throw new Error('Local model policy did not return a usable OpenRouter model.');
 		}
 
-		return resolved;
+		return {
+			model_id: response.model_id,
+			display_name: response.display_name ?? response.model_id,
+			resolution_source: response.resolution_source ?? 'unavailable',
+			override_chain: (response.override_chain ?? []).map((step) => ({
+				level: step.level,
+				selection: step.selection ?? null,
+				applied: step.applied,
+				reason: step.reason
+			})),
+			backup_model_id: response.backup_model_id ?? null
+		};
 	}
 
 	async function createDirectOpenRouterAction(hooks: string[]): Promise<void> {
@@ -4192,10 +4220,7 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<Section
-	heading="Actions"
-	description={sectionDescription}
->
+<Section heading="Actions" description={sectionDescription}>
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
@@ -4501,16 +4526,19 @@
 					{providerEditLinkLabel}
 				</a>
 			{/if}
-			<Button variant="secondary" onclick={() => void refresh()} data-testid="actions-refresh">Refresh</Button>
+			<Button variant="secondary" onclick={() => void refresh()} data-testid="actions-refresh"
+				>Refresh</Button
+			>
 			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
 			<Button
 				variant="secondary"
 				onclick={() => (showTemplateLibrary = true)}
-				disabled={!canConfigureFormSource}
-				>Import from Library</Button
+				disabled={!canConfigureFormSource}>Import from Library</Button
 			>
 			{#if supportsNativeEntryLookup}
-				<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
+				<Button variant="secondary" onclick={checkEntryStatus}
+					>Check Sentient Forms log entry</Button
+				>
 			{/if}
 		</div>
 	{/snippet}
@@ -4562,12 +4590,10 @@
 	</div>
 
 	{#if formSourceUnavailable}
-		<Alert
-			variant="warning"
-			class="sf:mt-2"
-			data-testid="form-source-availability-alert"
-		>
-			<div class="sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+		<Alert variant="warning" class="sf:mt-2" data-testid="form-source-availability-alert">
+			<div
+				class="sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+			>
 				<div>
 					<p class="sf:font-medium">{currentFormAdapterLabel} is unavailable</p>
 					<p class="sf:mt-1 sf:text-sm">{formSourceAvailabilityMessage}</p>
@@ -4580,11 +4606,7 @@
 	{/if}
 
 	{#if formSourceLimitationMessages.length > 0}
-		<Alert
-			variant="info"
-			class="sf:mt-2"
-			data-testid="form-source-limitations-alert"
-		>
+		<Alert variant="info" class="sf:mt-2" data-testid="form-source-limitations-alert">
 			<div class="sf:flex sf:flex-col sf:gap-2">
 				<p class="sf:font-medium">{currentFormAdapterLabel} capability limits</p>
 				<ul class="sf:list-disc sf:space-y-1 sf:pl-4 sf:text-sm">
@@ -4619,7 +4641,10 @@
 				{submissionLedgerDescription}
 			</p>
 			{#if submissionLedgerProviderNote}
-				<p class="sf:mt-1 sf:text-xs sf:text-slate-600" data-testid="submission-ledger-provider-note">
+				<p
+					class="sf:mt-1 sf:text-xs sf:text-slate-600"
+					data-testid="submission-ledger-provider-note"
+				>
 					{submissionLedgerProviderNote}
 				</p>
 			{/if}
@@ -5577,11 +5602,11 @@
 										inheritedNegative={currentFormActionConfig.spam_negative_examples?.length
 											? (currentFormActionConfig.spam_negative_examples ?? [])
 											: (currentActionDefaults.spam_negative_examples ?? [])}
-										inheritanceSource={currentFormActionConfig.spam_positive_examples?.length > 0 ||
-										currentFormActionConfig.spam_negative_examples?.length > 0
+										inheritanceSource={(currentFormActionConfig.spam_positive_examples?.length ??
+											0) > 0 || (currentFormActionConfig.spam_negative_examples?.length ?? 0) > 0
 											? 'form'
-											: currentActionDefaults.spam_positive_examples?.length > 0 ||
-												  currentActionDefaults.spam_negative_examples?.length > 0
+											: (currentActionDefaults.spam_positive_examples?.length ?? 0) > 0 ||
+												  (currentActionDefaults.spam_negative_examples?.length ?? 0) > 0
 												? 'action'
 												: null}
 										onchange={(details) => {
@@ -5805,25 +5830,25 @@
 								hidden={!mappingSectionExpansion.realtime}
 							>
 								{#if mappingSectionExpansion.realtime}
-										<Alert variant="warning">
-											<p class="sf:text-sm">
-												Real-time analysis holds the visitor on the form while the selected model
-												responds. Use faster models unless the form is important enough to justify the
-												wait.
-											</p>
-										</Alert>
-										<RealtimeSettingsEditor
-											idPrefix="mapping-realtime"
-											scope="mapping"
-											value={realtimeSettings}
-											{formFields}
-											storageFieldOptions={realtimeStorageFieldOptions}
-											totalPages={realtimeTotalPages}
-											onchange={updateRealtimeSettings}
-										/>
-									{/if}
-								</div>
-							</section>
+									<Alert variant="warning">
+										<p class="sf:text-sm">
+											Real-time analysis holds the visitor on the form while the selected model
+											responds. Use faster models unless the form is important enough to justify the
+											wait.
+										</p>
+									</Alert>
+									<RealtimeSettingsEditor
+										idPrefix="mapping-realtime"
+										scope="mapping"
+										value={realtimeSettings}
+										{formFields}
+										storageFieldOptions={realtimeStorageFieldOptions}
+										totalPages={realtimeTotalPages}
+										onchange={updateRealtimeSettings}
+									/>
+								{/if}
+							</div>
+						</section>
 					{/if}
 
 					<section class="sf:border sf:border-slate-200 sf:rounded-md">
@@ -5863,7 +5888,7 @@
 												updateAttachmentMapping({
 													mode: (event.currentTarget as HTMLSelectElement)
 														.value as AttachmentMapping['mode']
-											})}
+												})}
 										>
 											<option value="none">Disabled</option>
 											{#if supportsProviderUploadSourceMode}
@@ -6119,8 +6144,8 @@
 											/>
 										</div>
 										<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
-											Delay execution to reduce peak load. Managed action credit pricing is calculated at
-											execution time.
+											Delay execution to reduce peak load. Managed action credit pricing is
+											calculated at execution time.
 										</p>
 
 										{#if draftSettings.batch_settings?.enabled}
@@ -6224,7 +6249,9 @@
 					</Button>
 				</div>
 
-				<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-end sf:gap-2 sf:border-b sf:border-slate-200 sf:bg-white sf:px-4 sf:py-3">
+				<div
+					class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-end sf:gap-2 sf:border-b sf:border-slate-200 sf:bg-white sf:px-4 sf:py-3"
+				>
 					<Button
 						size="sm"
 						variant={createKind === 'template' ? 'primary' : 'secondary'}
@@ -6273,409 +6300,408 @@
 					{/if}
 				</div>
 
-				<form
-					class="sf:flex sf:min-h-0 sf:flex-1 sf:flex-col"
-					data-testid="link-action-form"
-				>
+				<form class="sf:flex sf:min-h-0 sf:flex-1 sf:flex-col" data-testid="link-action-form">
 					<div
 						class="sf:min-h-0 sf:flex-1 sf:space-y-4 sf:overflow-y-auto sf:px-4 sf:py-4"
 						data-testid="link-action-scroll-region"
 					>
-					{#if createKind === 'template'}
-						{#if !hasDefinitions}
-							<Alert variant="warning">No built-in actions available right now.</Alert>
-						{:else}
-							<div class="sf:space-y-2">
-								{#each builtInDefinitions.filter((definition) => {
-									const term = searchTerm.toLowerCase();
-									if (!term) return true;
-									const label = (definition.label ?? '').toLowerCase();
-									return definition.id.toLowerCase().includes(term) || label.includes(term);
-								}) as definition (definition.id)}
-									{@const definitionProviderPolicy = providerPolicyForDefinition(definition)}
-									{@const definitionProviderBlocked = providerPolicyIsBlocked(definitionProviderPolicy)}
-									<label
-										class={builtInOptionClass(definitionProviderPolicy)}
-										data-testid={`built-in-action-option-${definition.id}`}
-									>
-										<input
-											type="radio"
-											name="template-choice"
-											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={!definitionProviderBlocked && selectedTemplateId === definition.id}
-											disabled={definitionProviderBlocked}
-											onchange={() => {
-												if (!definitionProviderBlocked) {
-													selectedTemplateId = definition.id;
-												}
-											}}
-										/>
-										<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-1">
-											<div class="sf:flex sf:min-w-0 sf:flex-wrap sf:items-center sf:gap-2">
-												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-													{definition.label ?? definition.id}
-												</p>
-												<span
-													class="sf:inline-flex"
-													title={providerPolicyRouteTooltip(definitionProviderPolicy)}
-												>
-													<Badge variant={providerPolicyRouteVariant(definitionProviderPolicy)}>
-														{providerPolicyRouteLabel(definitionProviderPolicy)}
-													</Badge>
-												</span>
-											</div>
-											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
-											<p class="sf:text-xs sf:text-slate-500">
-												Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
-													definition
-												)}
-											</p>
-											<p class="sf:text-xs sf:text-slate-500">
-												Hooks: {summarizeDefinitionHooks(definition.hooks)}
-											</p>
-											{#if definitionProviderBlocked}
-												<p class="sf:text-xs sf:font-medium sf:text-amber-800">
-													{providerPolicyBlockedMessage(definitionProviderPolicy)}
-												</p>
-											{/if}
-										</div>
-									</label>
-								{/each}
-							</div>
-						{/if}
-					{:else if createKind === 'custom'}
-						{#if customActions.length === 0}
-							<Alert variant="info">No active custom actions. Create one first.</Alert>
-						{:else}
-							<div class="sf:space-y-2">
-								{#each customActions.filter((action) => {
-									const term = searchTerm.toLowerCase();
-									if (!term) return true;
-									return action.display_name.toLowerCase().includes(term) || action.code
-											.toLowerCase()
-											.includes(term) || action.id.toLowerCase().includes(term);
-								}) as action (action.id)}
-									<label
-										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
-									>
-										<input
-											type="radio"
-											name="custom-choice"
-											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={selectedCustomId === action.id}
-											onchange={() => (selectedCustomId = action.id)}
-										/>
-										<div class="sf:flex sf:flex-col sf:gap-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-												{action.display_name}
-											</p>
-											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
-											{#if action.base_credit_cost !== null}
-												<p class="sf:text-xs sf:text-slate-500">
-													Base credits: {action.base_credit_cost} credits
-												</p>
-											{/if}
-										</div>
-									</label>
-								{/each}
-							</div>
-						{/if}
-					{:else}
-						<div class="sf:space-y-4" data-testid="local-openrouter-builder">
-							<Alert variant={openRouterHealth.status === 'ready' ? 'info' : 'warning'}>
-								<div class="sf:flex sf:flex-col sf:gap-2">
-									<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-										<Badge variant={providerStatusVariant(openRouterHealth.badgeStatus)}>
-											{providerStatusLabel(openRouterHealth.badgeStatus)}
-										</Badge>
-										<p class="sf:text-sm sf:font-medium">{openRouterHealth.title}</p>
-									</div>
-									<p class="sf:text-sm">{openRouterHealth.message}</p>
-								</div>
-							</Alert>
-
-							{#if readyOpenRouterCredentials.length === 0}
-								<Alert variant="warning">
-									Validate a ready OpenRouter key before creating direct local mappings.
-								</Alert>
+						{#if createKind === 'template'}
+							{#if !hasDefinitions}
+								<Alert variant="warning">No built-in actions available right now.</Alert>
 							{:else}
-								<div class="sf:space-y-1">
-									<label
-										class="sf:text-sm sf:font-medium sf:text-slate-700"
-										for="local-builder-template"
-									>
-										Starter
-									</label>
-									<select
-										id="local-builder-template"
-										class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										value={localBuilderTemplateKey}
-										disabled={creating}
-										data-testid="local-builder-template"
-										onchange={(event) =>
-											applyLocalBuilderTemplate(
-												event.currentTarget.value as LocalBuilderTemplateKey
-											)}
-									>
-										{#each LOCAL_BUILDER_TEMPLATE_OPTIONS as template (template.key)}
-											<option value={template.key}>{template.label}</option>
-										{/each}
-									</select>
-									<p class="sf:text-xs sf:text-slate-500">{localBuilderTemplate.description}</p>
-								</div>
-
-								<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
-									<div class="sf:space-y-1">
+								<div class="sf:space-y-2">
+									{#each builtInDefinitions.filter((definition) => {
+										const term = searchTerm.toLowerCase();
+										if (!term) return true;
+										const label = (definition.label ?? '').toLowerCase();
+										return definition.id.toLowerCase().includes(term) || label.includes(term);
+									}) as definition (definition.id)}
+										{@const definitionProviderPolicy = providerPolicyForDefinition(definition)}
+										{@const definitionProviderBlocked =
+											providerPolicyIsBlocked(definitionProviderPolicy)}
 										<label
-											class="sf:text-sm sf:font-medium sf:text-slate-700"
-											for="local-builder-credential"
-										>
-											OpenRouter key
-										</label>
-										<select
-											id="local-builder-credential"
-											class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											bind:value={localBuilderCredentialId}
-											disabled={creating}
-											data-testid="local-builder-credential"
-										>
-											{#each readyOpenRouterCredentials as credential}
-												<option value={String(credential.id)}
-													>{credential.label} · #{credential.id}</option
-												>
-											{/each}
-										</select>
-									</div>
-									<InputField
-										id="local-builder-action-name"
-										label="Action name"
-										placeholder="Local OpenRouter summary"
-										bind:value={localBuilderActionName}
-										disabled={creating}
-										data-testid="local-builder-action-name"
-									/>
-								</div>
-
-								<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
-									<InputField
-										id="local-builder-result-meta-key"
-										label="Result meta key"
-										placeholder="sentient_forms_summary"
-										bind:value={localBuilderResultMetaKey}
-										disabled={creating}
-										required
-										data-testid="local-builder-result-meta-key"
-									/>
-									<div class="sf:space-y-1">
-										<label
-											class="sf:text-sm sf:font-medium sf:text-slate-700"
-											for="local-builder-execution-mode"
-										>
-											Run mode
-										</label>
-										<select
-											id="local-builder-execution-mode"
-											class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											bind:value={localBuilderExecutionMode}
-											disabled={creating}
-											data-testid="local-builder-execution-mode"
-										>
-											<option value="async">Background local run</option>
-											{#if localBuilderSupportsSync}
-												<option value="sync">Immediate local run</option>
-											{/if}
-										</select>
-									</div>
-								</div>
-
-								{#if localBuilderTemplateKey === 'spam_filter' && supportsSpamNoteControls}
-									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
-										<div class="sf:space-y-1">
-											<label
-												class="sf:text-sm sf:font-medium sf:text-slate-700"
-												for="local-builder-spam-result-display"
-											>
-												Spam note visibility
-											</label>
-											<select
-												id="local-builder-spam-result-display"
-												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												bind:value={localBuilderSpamResultDisplayMode}
-												disabled={creating}
-												data-testid="local-builder-spam-result-display"
-											>
-												{#each SPAM_RESULT_DISPLAY_OPTIONS as option (option.value)}
-													<option value={option.value}>{option.label}</option>
-												{/each}
-											</select>
-										</div>
-										<div class="sf:space-y-1">
-											<label
-												class="sf:text-sm sf:font-medium sf:text-slate-700"
-												for="local-builder-spam-indicators-display"
-											>
-												Spam note detail
-											</label>
-											<select
-												id="local-builder-spam-indicators-display"
-												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												bind:value={localBuilderSpamIndicatorsDisplay}
-												disabled={creating ||
-													normalizeSpamResultDisplayMode(localBuilderSpamResultDisplayMode) ===
-														'none'}
-												data-testid="local-builder-spam-indicators-display"
-											>
-												{#each SPAM_INDICATORS_DISPLAY_OPTIONS as option (option.value)}
-													<option value={option.value}>{option.label}</option>
-												{/each}
-											</select>
-										</div>
-									</div>
-								{/if}
-
-								<div class="sf:space-y-1">
-									<label
-										class="sf:text-sm sf:font-medium sf:text-slate-700"
-										for="local-builder-system-prompt"
-									>
-										System prompt
-									</label>
-									<textarea
-										id="local-builder-system-prompt"
-										class="sf:min-h-20 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										bind:value={localBuilderSystemPrompt}
-										disabled={creating}
-										data-testid="local-builder-system-prompt"
-									></textarea>
-								</div>
-
-								<div class="sf:space-y-1">
-									<label
-										class="sf:text-sm sf:font-medium sf:text-slate-700"
-										for="local-builder-prompt-template"
-									>
-										Prompt template
-									</label>
-									<textarea
-										id="local-builder-prompt-template"
-										class="sf:min-h-32 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:font-mono sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										bind:value={localBuilderPromptTemplate}
-										disabled={creating}
-										required
-										data-testid="local-builder-prompt-template"
-									></textarea>
-									<p class="sf:text-xs sf:text-slate-500">
-										Available placeholders include <code>{'{{form.title}}'}</code> and
-										<code>{'{{entry}}'}</code>. The result must include a JSON
-										<code>{localBuilderTemplate.resultField}</code> field.
-									</p>
-								</div>
-
-								<div data-testid="local-builder-model-selector">
-									<ModelSelector
-										value={localBuilderModelSelection}
-										label="Local model policy"
-										level="action"
-										templateModelHint="openrouter/auto"
-										{providerCredentials}
-										allowedProviders={['openrouter']}
-										requiredCapabilities={['structured']}
-										lockRequiredCapabilities={true}
-										onchange={handleLocalBuilderModelSelectionChange}
-									/>
-								</div>
-							{/if}
-						</div>
-					{/if}
-
-					<div>
-						<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
-							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Triggers</p>
-							{#if selectedHooks.size === 0}
-								<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
-							{/if}
-						</div>
-						<div class="sf:flex sf:flex-wrap sf:gap-3">
-							{#each createHookEntries as [hookKey, hookLabel] (hookKey)}
-								<label
-									class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
-								>
-									<input
-										type="checkbox"
-										class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										checked={selectedHooks.has(hookKey)}
-										onchange={() => toggleHookSelection(hookKey)}
-										data-testid={`create-trigger-hook-${hookKey}`}
-									/>
-									<span>{hookLabel}</span>
-								</label>
-							{/each}
-						</div>
-					</div>
-
-					{#if createKind !== 'local_openrouter'}
-						<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
-							<div
-								class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center"
-							>
-								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
-									Triggered by action (optional)
-								</p>
-								{#if selectedCreateDependencyIds.size > 0}
-									<Badge variant="info">1 selected</Badge>
-								{/if}
-							</div>
-							<p class="sf:text-xs sf:text-slate-500">
-								Choose one mapped action as upstream trigger source, or leave empty for autonomous
-								hook roots.
-							</p>
-							{#if selectedHooks.size === 0}
-								<p class="sf:text-xs sf:text-amber-700">
-									Choose trigger hooks first to see compatible upstream actions.
-								</p>
-							{:else if editableDependenciesForCreate.length === 0}
-								<p class="sf:text-xs sf:text-slate-500">
-									No compatible existing actions match the selected hooks.
-								</p>
-							{:else}
-								<div class="sf:grid sf:gap-2">
-									{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
-										<label
-											class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
+											class={builtInOptionClass(definitionProviderPolicy)}
+											data-testid={`built-in-action-option-${definition.id}`}
 										>
 											<input
 												type="radio"
-												name="create-dependency-trigger"
+												name="template-choice"
 												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
-												onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
+												checked={!definitionProviderBlocked && selectedTemplateId === definition.id}
+												disabled={definitionProviderBlocked}
+												onchange={() => {
+													if (!definitionProviderBlocked) {
+														selectedTemplateId = definition.id;
+													}
+												}}
 											/>
-											<div class="sf:min-w-0 sf:flex-1">
-												<p class="sf:text-sm sf:font-medium sf:text-slate-800">
-													{friendlyActionLabel(linkage)}
+											<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-1">
+												<div class="sf:flex sf:min-w-0 sf:flex-wrap sf:items-center sf:gap-2">
+													<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+														{definition.label ?? definition.id}
+													</p>
+													<span
+														class="sf:inline-flex"
+														title={providerPolicyRouteTooltip(definitionProviderPolicy)}
+													>
+														<Badge variant={providerPolicyRouteVariant(definitionProviderPolicy)}>
+															{providerPolicyRouteLabel(definitionProviderPolicy)}
+														</Badge>
+													</span>
+												</div>
+												<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
+												<p class="sf:text-xs sf:text-slate-500">
+													Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+														definition
+													)}
 												</p>
 												<p class="sf:text-xs sf:text-slate-500">
-													ID: {linkage.local_mapping_id}
+													Hooks: {summarizeDefinitionHooks(definition.hooks)}
 												</p>
-												<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
-													{#each getMappingTriggerHooks(linkage) as hook (hook)}
-														<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
-													{/each}
-												</div>
+												{#if definitionProviderBlocked}
+													<p class="sf:text-xs sf:font-medium sf:text-amber-800">
+														{providerPolicyBlockedMessage(definitionProviderPolicy)}
+													</p>
+												{/if}
 											</div>
 										</label>
 									{/each}
 								</div>
 							{/if}
-						</div>
-					{/if}
+						{:else if createKind === 'custom'}
+							{#if customActions.length === 0}
+								<Alert variant="info">No active custom actions. Create one first.</Alert>
+							{:else}
+								<div class="sf:space-y-2">
+									{#each customActions.filter((action) => {
+										const term = searchTerm.toLowerCase();
+										if (!term) return true;
+										return action.display_name.toLowerCase().includes(term) || action.code
+												.toLowerCase()
+												.includes(term) || action.id.toLowerCase().includes(term);
+									}) as action (action.id)}
+										<label
+											class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+										>
+											<input
+												type="radio"
+												name="custom-choice"
+												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												checked={selectedCustomId === action.id}
+												onchange={() => (selectedCustomId = action.id)}
+											/>
+											<div class="sf:flex sf:flex-col sf:gap-1">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+													{action.display_name}
+												</p>
+												<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+												{#if action.base_credit_cost !== null}
+													<p class="sf:text-xs sf:text-slate-500">
+														Base credits: {action.base_credit_cost} credits
+													</p>
+												{/if}
+											</div>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						{:else}
+							<div class="sf:space-y-4" data-testid="local-openrouter-builder">
+								<Alert variant={openRouterHealth.status === 'ready' ? 'info' : 'warning'}>
+									<div class="sf:flex sf:flex-col sf:gap-2">
+										<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+											<Badge variant={providerStatusVariant(openRouterHealth.badgeStatus)}>
+												{providerStatusLabel(openRouterHealth.badgeStatus)}
+											</Badge>
+											<p class="sf:text-sm sf:font-medium">{openRouterHealth.title}</p>
+										</div>
+										<p class="sf:text-sm">{openRouterHealth.message}</p>
+									</div>
+								</Alert>
 
-					{#if localBuilderResult && createKind === 'local_openrouter'}
-						<Alert variant="success" data-testid="local-builder-result">
-							Action #{localBuilderResult.action.id} mapped to {localBuilderResult.mappings.length}
-							hook{localBuilderResult.mappings.length === 1 ? '' : 's'} from local WordPress tables.
-						</Alert>
-					{/if}
+								{#if readyOpenRouterCredentials.length === 0}
+									<Alert variant="warning">
+										Validate a ready OpenRouter key before creating direct local mappings.
+									</Alert>
+								{:else}
+									<div class="sf:space-y-1">
+										<label
+											class="sf:text-sm sf:font-medium sf:text-slate-700"
+											for="local-builder-template"
+										>
+											Starter
+										</label>
+										<select
+											id="local-builder-template"
+											class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											value={localBuilderTemplateKey}
+											disabled={creating}
+											data-testid="local-builder-template"
+											onchange={(event) =>
+												applyLocalBuilderTemplate(
+													event.currentTarget.value as LocalBuilderTemplateKey
+												)}
+										>
+											{#each LOCAL_BUILDER_TEMPLATE_OPTIONS as template (template.key)}
+												<option value={template.key}>{template.label}</option>
+											{/each}
+										</select>
+										<p class="sf:text-xs sf:text-slate-500">{localBuilderTemplate.description}</p>
+									</div>
+
+									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-credential"
+											>
+												OpenRouter key
+											</label>
+											<select
+												id="local-builder-credential"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderCredentialId}
+												disabled={creating}
+												data-testid="local-builder-credential"
+											>
+												{#each readyOpenRouterCredentials as credential}
+													<option value={String(credential.id)}
+														>{credential.label} · #{credential.id}</option
+													>
+												{/each}
+											</select>
+										</div>
+										<InputField
+											id="local-builder-action-name"
+											label="Action name"
+											placeholder="Local OpenRouter summary"
+											bind:value={localBuilderActionName}
+											disabled={creating}
+											data-testid="local-builder-action-name"
+										/>
+									</div>
+
+									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+										<InputField
+											id="local-builder-result-meta-key"
+											label="Result meta key"
+											placeholder="sentient_forms_summary"
+											bind:value={localBuilderResultMetaKey}
+											disabled={creating}
+											required
+											data-testid="local-builder-result-meta-key"
+										/>
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-execution-mode"
+											>
+												Run mode
+											</label>
+											<select
+												id="local-builder-execution-mode"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderExecutionMode}
+												disabled={creating}
+												data-testid="local-builder-execution-mode"
+											>
+												<option value="async">Background local run</option>
+												{#if localBuilderSupportsSync}
+													<option value="sync">Immediate local run</option>
+												{/if}
+											</select>
+										</div>
+									</div>
+
+									{#if localBuilderTemplateKey === 'spam_filter' && supportsSpamNoteControls}
+										<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+											<div class="sf:space-y-1">
+												<label
+													class="sf:text-sm sf:font-medium sf:text-slate-700"
+													for="local-builder-spam-result-display"
+												>
+													Spam note visibility
+												</label>
+												<select
+													id="local-builder-spam-result-display"
+													class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+													bind:value={localBuilderSpamResultDisplayMode}
+													disabled={creating}
+													data-testid="local-builder-spam-result-display"
+												>
+													{#each SPAM_RESULT_DISPLAY_OPTIONS as option (option.value)}
+														<option value={option.value}>{option.label}</option>
+													{/each}
+												</select>
+											</div>
+											<div class="sf:space-y-1">
+												<label
+													class="sf:text-sm sf:font-medium sf:text-slate-700"
+													for="local-builder-spam-indicators-display"
+												>
+													Spam note detail
+												</label>
+												<select
+													id="local-builder-spam-indicators-display"
+													class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+													bind:value={localBuilderSpamIndicatorsDisplay}
+													disabled={creating ||
+														normalizeSpamResultDisplayMode(localBuilderSpamResultDisplayMode) ===
+															'none'}
+													data-testid="local-builder-spam-indicators-display"
+												>
+													{#each SPAM_INDICATORS_DISPLAY_OPTIONS as option (option.value)}
+														<option value={option.value}>{option.label}</option>
+													{/each}
+												</select>
+											</div>
+										</div>
+									{/if}
+
+									<div class="sf:space-y-1">
+										<label
+											class="sf:text-sm sf:font-medium sf:text-slate-700"
+											for="local-builder-system-prompt"
+										>
+											System prompt
+										</label>
+										<textarea
+											id="local-builder-system-prompt"
+											class="sf:min-h-20 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											bind:value={localBuilderSystemPrompt}
+											disabled={creating}
+											data-testid="local-builder-system-prompt"
+										></textarea>
+									</div>
+
+									<div class="sf:space-y-1">
+										<label
+											class="sf:text-sm sf:font-medium sf:text-slate-700"
+											for="local-builder-prompt-template"
+										>
+											Prompt template
+										</label>
+										<textarea
+											id="local-builder-prompt-template"
+											class="sf:min-h-32 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:font-mono sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											bind:value={localBuilderPromptTemplate}
+											disabled={creating}
+											required
+											data-testid="local-builder-prompt-template"
+										></textarea>
+										<p class="sf:text-xs sf:text-slate-500">
+											Available placeholders include <code>{'{{form.title}}'}</code> and
+											<code>{'{{entry}}'}</code>. The result must include a JSON
+											<code>{localBuilderTemplate.resultField}</code> field.
+										</p>
+									</div>
+
+									<div data-testid="local-builder-model-selector">
+										<ModelSelector
+											value={localBuilderModelSelection}
+											label="Local model policy"
+											level="action"
+											templateModelHint="openrouter/auto"
+											{providerCredentials}
+											allowedProviders={['openrouter']}
+											requiredCapabilities={['structured']}
+											lockRequiredCapabilities={true}
+											onchange={handleLocalBuilderModelSelectionChange}
+										/>
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						<div>
+							<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
+								<p class="sf:text-sm sf:font-medium sf:text-slate-700">Triggers</p>
+								{#if selectedHooks.size === 0}
+									<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
+								{/if}
+							</div>
+							<div class="sf:flex sf:flex-wrap sf:gap-3">
+								{#each createHookEntries as [hookKey, hookLabel] (hookKey)}
+									<label
+										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+									>
+										<input
+											type="checkbox"
+											class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											checked={selectedHooks.has(hookKey)}
+											onchange={() => toggleHookSelection(hookKey)}
+											data-testid={`create-trigger-hook-${hookKey}`}
+										/>
+										<span>{hookLabel}</span>
+									</label>
+								{/each}
+							</div>
+						</div>
+
+						{#if createKind !== 'local_openrouter'}
+							<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
+								<div
+									class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center"
+								>
+									<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+										Triggered by action (optional)
+									</p>
+									{#if selectedCreateDependencyIds.size > 0}
+										<Badge variant="info">1 selected</Badge>
+									{/if}
+								</div>
+								<p class="sf:text-xs sf:text-slate-500">
+									Choose one mapped action as upstream trigger source, or leave empty for autonomous
+									hook roots.
+								</p>
+								{#if selectedHooks.size === 0}
+									<p class="sf:text-xs sf:text-amber-700">
+										Choose trigger hooks first to see compatible upstream actions.
+									</p>
+								{:else if editableDependenciesForCreate.length === 0}
+									<p class="sf:text-xs sf:text-slate-500">
+										No compatible existing actions match the selected hooks.
+									</p>
+								{:else}
+									<div class="sf:grid sf:gap-2">
+										{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
+											<label
+												class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
+											>
+												<input
+													type="radio"
+													name="create-dependency-trigger"
+													class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+													checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
+													onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
+												/>
+												<div class="sf:min-w-0 sf:flex-1">
+													<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+														{friendlyActionLabel(linkage)}
+													</p>
+													<p class="sf:text-xs sf:text-slate-500">
+														ID: {linkage.local_mapping_id}
+													</p>
+													<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
+														{#each getMappingTriggerHooks(linkage) as hook (hook)}
+															<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
+														{/each}
+													</div>
+												</div>
+											</label>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						{#if localBuilderResult && createKind === 'local_openrouter'}
+							<Alert variant="success" data-testid="local-builder-result">
+								Action #{localBuilderResult.action.id} mapped to {localBuilderResult.mappings
+									.length}
+								hook{localBuilderResult.mappings.length === 1 ? '' : 's'} from local WordPress tables.
+							</Alert>
+						{/if}
 					</div>
 
 					<footer
@@ -6687,7 +6713,9 @@
 							data-testid="link-action-selected-summary"
 						>
 							<div class="sf:min-w-0">
-								<p class="sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-500">
+								<p
+									class="sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-500"
+								>
 									Selected action
 								</p>
 								<p class="sf:truncate sf:text-sm sf:font-semibold sf:text-slate-900">

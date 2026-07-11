@@ -71,6 +71,54 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertTrue( $after_export['done'] );
     }
 
+    public function test_privacy_export_scrubs_currency_unless_provider_is_explicitly_openrouter(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $email = 'currency-export@example.test';
+        $now   = current_time( 'mysql' );
+
+        foreach ( [ 'unclassified' => 'export-private-currency', 'openrouter' => 'export-direct-currency' ] as $provider => $request_id )
+        {
+            $this->assertNotFalse(
+                $this->wpdb->insert(
+                    $table,
+                    [
+                        'execution_request_id' => $request_id,
+                        'provider'             => $provider,
+                        'status'               => 'succeeded',
+                        'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'amount_usd' => 0.0012 ] ),
+                        'result_json'          => wp_json_encode(
+                            [
+                                'content'  => 'Follow up with ' . $email,
+                                'currency' => 'USD',
+                                'amount_usd' => 0.0012,
+                            ]
+                        ),
+                        'created_at'           => $now,
+                        'updated_at'           => $now,
+                    ],
+                    [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+                )
+            );
+        }
+
+        $export  = Sentient_Forms_Local_Data_Governance::export_personal_data( $email, 1 );
+        $encoded = wp_json_encode( $export['data'] );
+
+        $this->assertStringContainsString( 'export-private-currency', $encoded );
+        $this->assertStringContainsString( 'export-direct-currency', $encoded );
+        $private_item = current( array_filter( $export['data'], static fn( array $item ): bool => str_contains( wp_json_encode( $item ), 'export-private-currency' ) ) );
+        $direct_item  = current( array_filter( $export['data'], static fn( array $item ): bool => str_contains( wp_json_encode( $item ), 'export-direct-currency' ) ) );
+        $private_result = current( array_filter( $private_item['data'], static fn( array $row ): bool => 'Result' === ( $row['name'] ?? null ) ) );
+        $direct_result  = current( array_filter( $direct_item['data'], static fn( array $row ): bool => 'Result' === ( $row['name'] ?? null ) ) );
+        $private_payload = json_decode( (string) ( $private_result['value'] ?? '' ), true );
+        $direct_payload  = json_decode( (string) ( $direct_result['value'] ?? '' ), true );
+        $this->assertArrayNotHasKey( 'currency', $private_payload );
+        $this->assertArrayNotHasKey( 'amount_usd', $private_payload );
+        $this->assertSame( 'USD', $direct_payload['currency'] ?? null );
+        $this->assertSame( 0.0012, $direct_payload['amount_usd'] ?? null );
+    }
+
     public function test_execution_event_retention_defaults_and_cleanup(): void
     {
         update_option( 'sentient_forms_execution_event_retention_days', 7 );
@@ -98,6 +146,88 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $deleted = Sentient_Forms_Local_Data_Governance::run_retention_cleanup();
         $this->assertGreaterThanOrEqual( 1, $deleted );
         $this->assertNull( $this->events->get_by_request_id( 'retention-expired-1' ) );
+    }
+
+    public function test_execution_event_write_retains_currency_only_for_explicit_openrouter_provider(): void
+    {
+        foreach ( [ 'unclassified', '', 'unknown_provider' ] as $index => $provider )
+        {
+            $request_id = 'currency-private-' . $index;
+            $this->events->record(
+                [
+                    'execution_request_id' => $request_id,
+                    'provider'             => $provider,
+                    'status'               => 'succeeded',
+                    'cost_json'            => [
+                        'currency'   => 'USD',
+                        'amount_usd' => 0.0042,
+                    ],
+                    'result_json'          => [
+                        'metering' => [
+                            'currency'               => 'USD',
+                            'billed_amount_microusd' => 4200,
+                        ],
+                    ],
+                ]
+            );
+
+            $event = $this->events->get_by_request_id( $request_id );
+            $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
+            $this->assertArrayNotHasKey( 'amount_usd', $event['cost_json'] );
+            $this->assertArrayNotHasKey( 'currency', $event['result_json']['metering'] );
+            $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['result_json']['metering'] );
+        }
+
+        $this->events->record(
+            [
+                'execution_request_id' => 'currency-public-openrouter',
+                'provider'             => 'openrouter',
+                'status'               => 'succeeded',
+                'cost_json'            => [
+                    'currency'   => 'USD',
+                    'amount_usd' => 0.0042,
+                ],
+            ]
+        );
+
+        $direct = $this->events->get_by_request_id( 'currency-public-openrouter' );
+        $this->assertSame( 'USD', $direct['cost_json']['currency'] );
+        $this->assertSame( 0.0042, $direct['cost_json']['amount_usd'] );
+    }
+
+    public function test_execution_event_read_scrubs_historical_currency_unless_provider_is_explicitly_openrouter(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+
+        foreach ( [ 'unclassified' => 'read-private-history', 'openrouter' => 'read-direct-history' ] as $provider => $request_id )
+        {
+            $this->assertNotFalse(
+                $this->wpdb->insert(
+                    $table,
+                    [
+                        'execution_request_id' => $request_id,
+                        'provider'             => $provider,
+                        'status'               => 'succeeded',
+                        'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'amount_usd' => 0.0077 ] ),
+                        'result_json'          => wp_json_encode( [ 'metering' => [ 'currency' => 'USD', 'billed_amount_microusd' => 7700 ] ] ),
+                        'created_at'           => $now,
+                        'updated_at'           => $now,
+                    ],
+                    [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+                )
+            );
+        }
+
+        $private = $this->events->get_by_request_id( 'read-private-history' );
+        $this->assertArrayNotHasKey( 'currency', $private['cost_json'] );
+        $this->assertArrayNotHasKey( 'amount_usd', $private['cost_json'] );
+        $this->assertArrayNotHasKey( 'currency', $private['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $private['result_json']['metering'] );
+
+        $direct = $this->events->get_by_request_id( 'read-direct-history' );
+        $this->assertSame( 'USD', $direct['cost_json']['currency'] );
+        $this->assertSame( 0.0077, $direct['cost_json']['amount_usd'] );
     }
 
     public function test_submission_ledger_retention_cleanup_removes_expired_rows(): void
@@ -739,6 +869,51 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $event = $this->events->get_by_request_id( 'managed-provider-payload-only' );
         $this->assertArrayHasKey( 'privacy_route_fallback', $event['result_json'] );
         $this->assertArrayNotHasKey( 'provider_payload', $event['result_json'] );
+    }
+
+    public function test_managed_usage_scrub_removes_currency_from_unclassified_history_but_preserves_direct_history(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+
+        foreach ( [ 'unclassified' => 'private-history', 'openrouter' => 'direct-history' ] as $provider => $request_id )
+        {
+            $inserted = $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => $request_id,
+                    'provider'             => $provider,
+                    'status'               => 'succeeded',
+                    'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'amount_usd' => 0.0099 ] ),
+                    'result_json'          => wp_json_encode( [ 'metering' => [ 'currency' => 'USD', 'billed_amount_microusd' => 9900 ] ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            );
+            $this->assertNotFalse( $inserted );
+        }
+
+        Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+
+        $private_row = $this->wpdb->get_row(
+            $this->wpdb->prepare( 'SELECT cost_json, result_json FROM %i WHERE execution_request_id = %s', $table, 'private-history' ),
+            ARRAY_A
+        );
+        $private_cost   = json_decode( (string) $private_row['cost_json'], true );
+        $private_result = json_decode( (string) $private_row['result_json'], true );
+        $this->assertArrayNotHasKey( 'currency', $private_cost );
+        $this->assertArrayNotHasKey( 'amount_usd', $private_cost );
+        $this->assertArrayNotHasKey( 'currency', $private_result['metering'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $private_result['metering'] );
+
+        $direct_row = $this->wpdb->get_row(
+            $this->wpdb->prepare( 'SELECT cost_json FROM %i WHERE execution_request_id = %s', $table, 'direct-history' ),
+            ARRAY_A
+        );
+        $direct_cost = json_decode( (string) $direct_row['cost_json'], true );
+        $this->assertSame( 'USD', $direct_cost['currency'] );
+        $this->assertSame( 0.0099, $direct_cost['amount_usd'] );
     }
 
     public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void

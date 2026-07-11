@@ -193,11 +193,9 @@
 			applyDrafts(profileData);
 			const requestedView = requestedViewFromLocation();
 			view = requestedView ?? (profileData.readiness.ready ? 'dashboard' : 'setup');
-			const profileId = profileData.profile?.id;
-			if (
-				profileId &&
-				isGenerationPending(resolveGenerationStatus(profileData.profile.generation_metadata))
-			) {
+			const profile = profileData.profile;
+			const profileId = profile?.id;
+			if (profileId && isGenerationPending(resolveGenerationStatus(profile.generation_metadata))) {
 				void pollProfileGeneration(profileId);
 			}
 			void loadSpamGuidance();
@@ -280,6 +278,21 @@
 		};
 	}
 
+	function mergeLeadProfileResponse(
+		current: LeadProfileResponse | null,
+		update: Partial<LeadProfileResponse>
+	): LeadProfileResponse | null {
+		if (update.profile !== undefined && update.readiness !== undefined) {
+			return {
+				...update,
+				profile: update.profile,
+				readiness: update.readiness
+			};
+		}
+
+		return current === null ? null : { ...current, ...update };
+	}
+
 	async function saveProfile(showNotification = true) {
 		saving = true;
 		error = null;
@@ -334,7 +347,13 @@
 					review_required: selfImproveReviewRequired
 				}
 			});
-			profileResponse = response;
+			if (response.profile !== undefined && response.readiness !== undefined) {
+				profileResponse = {
+					...response,
+					profile: response.profile,
+					readiness: response.readiness
+				};
+			}
 			if (showNotification) notifications.success('Lead scoring setup saved');
 			return response;
 		} catch (e) {
@@ -407,7 +426,13 @@
 				lead_profile_consent: consent,
 				async: true
 			});
-			profileResponse = response;
+			if (response.profile !== undefined && response.readiness !== undefined) {
+				profileResponse = {
+					...response,
+					profile: response.profile,
+					readiness: response.readiness
+				};
+			}
 			dashboard = response.dashboard ?? dashboard;
 			if (isGenerationPending(resolveGenerationStatus(response.profile?.generation_metadata))) {
 				notifications.success('Lead scoring setup generation queued');
@@ -457,7 +482,13 @@
 		saving = true;
 		try {
 			const response = await client.refreshLeadProfileAssistant(profileId);
-			profileResponse = response;
+			if (response.profile !== undefined && response.readiness !== undefined) {
+				profileResponse = {
+					...response,
+					profile: response.profile,
+					readiness: response.readiness
+				};
+			}
 			notifications.success('Setup questions refreshed');
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Setup questions could not be refreshed.';
@@ -510,7 +541,7 @@
 				correctionEntry.entry_id,
 				parsed.data
 			);
-			profileResponse = response;
+			profileResponse = mergeLeadProfileResponse(profileResponse, response);
 			dashboard = response.dashboard ?? dashboard;
 			const updatedEntry = (response.entry as LeadScoringEntry | undefined) ?? correctionEntry;
 			selectedEntryDetail =
@@ -876,15 +907,17 @@
 		description="Lead scoring is currently limited to form sources with reliable native entry search, notes, and correction history."
 	>
 		<Card data-testid="elementor-lead-scoring-unavailable">
-			<div class="sf:flex sf:flex-col sf:gap-4 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+			<div
+				class="sf:flex sf:flex-col sf:gap-4 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+			>
 				<div>
 					<p class="sf:text-base sf:font-semibold sf:text-slate-900">
 						Lead Scoring is not available for Elementor Pro Forms yet.
 					</p>
 					<p class="sf:mt-2 sf:max-w-3xl sf:text-sm sf:text-slate-600">
-						Elementor submissions can be captured for ledger and action automation, but Lead
-						Scoring needs reliable native entry search, corrections, and notes before staff can
-						safely grade Elementor leads.
+						Elementor submissions can be captured for ledger and action automation, but Lead Scoring
+						needs reliable native entry search, corrections, and notes before staff can safely grade
+						Elementor leads.
 					</p>
 				</div>
 				<ButtonLink
@@ -901,221 +934,864 @@
 		heading="Lead Scoring"
 		description="Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form."
 	>
-	{#snippet actions()}
-		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-3">
-			<ButtonLink
-				variant="secondary"
-				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`)}
-			>
-				Back to actions
-			</ButtonLink>
-			<Button variant="secondary" onclick={loadLeadValue} disabled={loading}>
-				<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
-				Refresh
-			</Button>
-		</div>
-	{/snippet}
-
-	{#if error}
-		<Alert variant="danger" class="sf:mb-4">{error}</Alert>
-	{/if}
-
-	{#if loading}
-		<div class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-4">
-			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
-			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
-			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
-		</div>
-	{:else}
-		<SummaryStrip {dashboard} {gradeTotal} testId="lead-scoring-summary" />
-
-		<div
-			class="sf:mt-5 sf:flex sf:flex-wrap sf:gap-1 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-1"
-			aria-label="Lead scoring views"
-		>
-			{#each viewChoices as item}
-				<Button
-					variant={view === item.key ? 'secondary' : 'ghost'}
-					size="sm"
-					class="sf:min-h-9 sf:border-transparent sf:px-3"
-					onclick={() => (view = item.key)}
+		{#snippet actions()}
+			<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-3">
+				<ButtonLink
+					variant="secondary"
+					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`)}
 				>
-					{item.label}
+					Back to actions
+				</ButtonLink>
+				<Button variant="secondary" onclick={loadLeadValue} disabled={loading}>
+					<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+					Refresh
 				</Button>
-			{/each}
-		</div>
+			</div>
+		{/snippet}
 
-		{#if view === 'setup'}
-			<div class="sf:mt-5 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
-				<div class="sf:space-y-4">
-					<Card>
-						<div class="sf:flex sf:items-start sf:justify-between sf:gap-4">
-							<div>
-								<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Setup checklist</h2>
-								<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
-									{blockers.length} blocker{blockers.length === 1 ? '' : 's'} remaining
-								</p>
-							</div>
-							<Badge variant={ready ? 'success' : 'warning'}
-								>{ready ? 'Ready' : 'Needs input'}</Badge
-							>
-						</div>
-						<div class="sf:mt-4 sf:grid sf:gap-2 sf:lg:grid-cols-2">
-							{#each readiness?.requirements ?? [] as requirement (requirement.key)}
-								<div
-									class="sf:flex sf:items-start sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:p-3"
+		{#if error}
+			<Alert variant="danger" class="sf:mb-4">{error}</Alert>
+		{/if}
+
+		{#if loading}
+			<div class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-4">
+				<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
+				<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
+				<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
+			</div>
+		{:else}
+			<SummaryStrip {dashboard} {gradeTotal} testId="lead-scoring-summary" />
+
+			<div
+				class="sf:mt-5 sf:flex sf:flex-wrap sf:gap-1 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-1"
+				aria-label="Lead scoring views"
+			>
+				{#each viewChoices as item}
+					<Button
+						variant={view === item.key ? 'secondary' : 'ghost'}
+						size="sm"
+						class="sf:min-h-9 sf:border-transparent sf:px-3"
+						onclick={() => (view = item.key)}
+					>
+						{item.label}
+					</Button>
+				{/each}
+			</div>
+
+			{#if view === 'setup'}
+				<div class="sf:mt-5 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
+					<div class="sf:space-y-4">
+						<Card>
+							<div class="sf:flex sf:items-start sf:justify-between sf:gap-4">
+								<div>
+									<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Setup checklist</h2>
+									<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+										{blockers.length} blocker{blockers.length === 1 ? '' : 's'} remaining
+									</p>
+								</div>
+								<Badge variant={ready ? 'success' : 'warning'}
+									>{ready ? 'Ready' : 'Needs input'}</Badge
 								>
-									<div>
-										<p class="sf:text-sm sf:font-medium sf:text-slate-800">{requirement.label}</p>
-										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{requirement.detail}</p>
+							</div>
+							<div class="sf:mt-4 sf:grid sf:gap-2 sf:lg:grid-cols-2">
+								{#each readiness?.requirements ?? [] as requirement (requirement.key)}
+									<div
+										class="sf:flex sf:items-start sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:p-3"
+									>
+										<div>
+											<p class="sf:text-sm sf:font-medium sf:text-slate-800">{requirement.label}</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{requirement.detail}</p>
+										</div>
+										<Badge variant={requirementVariant(requirement)}>
+											{requirement.met ? 'Met' : requirement.severity}
+										</Badge>
 									</div>
-									<Badge variant={requirementVariant(requirement)}>
-										{requirement.met ? 'Met' : requirement.severity}
+								{/each}
+							</div>
+						</Card>
+
+						<Card class="sf:space-y-4">
+							<div
+								class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
+							>
+								<div>
+									<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Spam Guidance</h2>
+									<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+										Lead Scoring uses the same legitimate and spam examples as the spam action.
+										Global defaults count unless this form has its own override.
+									</p>
+								</div>
+								<div class="sf:flex sf:flex-wrap sf:gap-2">
+									<Badge
+										variant={(readiness?.spam_guidance?.positive_count ?? 0) >= 3
+											? 'success'
+											: 'warning'}
+									>
+										{readiness?.spam_guidance?.positive_count ?? 0} legitimate
+									</Badge>
+									<Badge
+										variant={(readiness?.spam_guidance?.negative_count ?? 0) >= 3
+											? 'success'
+											: 'warning'}
+									>
+										{readiness?.spam_guidance?.negative_count ?? 0} spam
 									</Badge>
 								</div>
-							{/each}
-						</div>
-					</Card>
+							</div>
+							<div class="sf:grid sf:gap-4 sf:xl:grid-cols-2">
+								<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+										<div>
+											<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Global defaults</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+												Used by every form that has no local Spam Guidance override.
+											</p>
+										</div>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => saveSpamGuidance('global')}
+											disabled={savingSpamScope !== null}
+										>
+											{savingSpamScope === 'global' ? 'Saving...' : 'Save global'}
+										</Button>
+									</div>
+									<SpamCriteriaEditor
+										positiveExamples={globalSpamPositive}
+										negativeExamples={globalSpamNegative}
+										initiallyExpanded={false}
+										onchange={(details) => {
+											globalSpamPositive = details.positive;
+											globalSpamNegative = details.negative;
+										}}
+									/>
+								</div>
+								<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+										<div>
+											<p class="sf:text-sm sf:font-semibold sf:text-slate-900">This form</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+												Override only when this form attracts different lead or spam patterns.
+											</p>
+										</div>
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => saveSpamGuidance('form')}
+											disabled={savingSpamScope !== null}
+										>
+											{savingSpamScope === 'form' ? 'Saving...' : 'Save form'}
+										</Button>
+									</div>
+									<SpamCriteriaEditor
+										positiveExamples={formSpamPositive}
+										negativeExamples={formSpamNegative}
+										inheritedPositive={globalSpamPositive}
+										inheritedNegative={globalSpamNegative}
+										inheritanceSource="action"
+										initiallyExpanded={false}
+										onchange={(details) => {
+											formSpamPositive = details.positive;
+											formSpamNegative = details.negative;
+										}}
+									/>
+								</div>
+							</div>
+						</Card>
 
-					<Card class="sf:space-y-4">
-						<div
-							class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
-						>
+						<Card class="sf:space-y-4">
+							<label
+								class="sf:flex sf:items-start sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
+							>
+								<input
+									type="checkbox"
+									class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+									bind:checked={consent}
+								/>
+								<span>
+									<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
+										Use saved context and examples for this form's lead scoring setup
+									</span>
+									<span class="sf:mt-1 sf:block sf:text-xs sf:text-slate-500">
+										Consent is stored with the local setup and required before generation.
+									</span>
+								</span>
+							</label>
+							<TextareaField
+								id="good-lead-criteria"
+								label="Good lead criteria"
+								rows={6}
+								bind:value={goodCriteria}
+								placeholder="Describe fit, intent, urgency, service-area, budget, use case, and handoff signals."
+							/>
+							<TextareaField
+								id="bad-lead-criteria"
+								label="Bad lead criteria"
+								rows={6}
+								bind:value={badCriteria}
+								placeholder="Describe disqualifiers, irrelevant requests, risky patterns, poor-fit inquiries, and spam-adjacent cases."
+							/>
+						</Card>
+
+						<Card class="sf:space-y-4">
 							<div>
-								<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Spam Guidance</h2>
+								<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Entry Examples</h2>
 								<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
-									Lead Scoring uses the same legitimate and spam examples as the spam action. Global
-									defaults count unless this form has its own override.
+									{exampleEntries.length} selected for setup calibration
 								</p>
 							</div>
-							<div class="sf:flex sf:flex-wrap sf:gap-2">
-								<Badge
-									variant={(readiness?.spam_guidance?.positive_count ?? 0) >= 3
-										? 'success'
-										: 'warning'}
-								>
-									{readiness?.spam_guidance?.positive_count ?? 0} legitimate
-								</Badge>
-								<Badge
-									variant={(readiness?.spam_guidance?.negative_count ?? 0) >= 3
-										? 'success'
-										: 'warning'}
-								>
-									{readiness?.spam_guidance?.negative_count ?? 0} spam
-								</Badge>
-							</div>
-						</div>
-						<div class="sf:grid sf:gap-4 sf:xl:grid-cols-2">
-							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-								<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
-									<div>
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Global defaults</p>
-										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-											Used by every form that has no local Spam Guidance override.
-										</p>
-									</div>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => saveSpamGuidance('global')}
-										disabled={savingSpamScope !== null}
-									>
-										{savingSpamScope === 'global' ? 'Saving...' : 'Save global'}
-									</Button>
+							<div class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end">
+								<div>
+									<InputField
+										id="lead-entry-search"
+										label="Search form entries"
+										placeholder="Name, email, company, or entry ID"
+										bind:value={entrySearchQuery}
+									/>
 								</div>
-								<SpamCriteriaEditor
-									positiveExamples={globalSpamPositive}
-									negativeExamples={globalSpamNegative}
-									initiallyExpanded={false}
-									onchange={(details) => {
-										globalSpamPositive = details.positive;
-										globalSpamNegative = details.negative;
-									}}
-								/>
+								<Button
+									variant="secondary"
+									class="sf:w-full sf:md:w-auto"
+									onclick={searchEntries}
+									disabled={entrySearchLoading}
+								>
+									{entrySearchLoading ? 'Searching...' : 'Search entries'}
+								</Button>
 							</div>
-							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-								<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
-									<div>
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">This form</p>
-										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-											Override only when this form attracts different lead or spam patterns.
-										</p>
-									</div>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => saveSpamGuidance('form')}
-										disabled={savingSpamScope !== null}
-									>
-										{savingSpamScope === 'form' ? 'Saving...' : 'Save form'}
-									</Button>
+							{#if entrySearchResults.length}
+								<div class="sf:grid sf:gap-2">
+									{#each entrySearchResults as entry (entry.id)}
+										<div
+											class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3"
+										>
+											<div class="sf:min-w-0 sf:flex-1">
+												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+													<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+														Entry #{entry.id}
+													</p>
+													{#if entry.status}
+														<Badge variant="neutral">{entry.status}</Badge>
+													{/if}
+												</div>
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+													{summarizeExample(entry)}
+												</p>
+											</div>
+											<div class="sf:flex sf:flex-wrap sf:gap-2">
+												{#each gradeChoices as grade}
+													<Button
+														size="sm"
+														variant="secondary"
+														onclick={() => addExampleEntry(entry, grade)}
+														disabled={exampleEntries.some(
+															(example) => example.entry_id === entry.id
+														)}
+													>
+														Mark {grade}
+													</Button>
+												{/each}
+											</div>
+										</div>
+									{/each}
 								</div>
-								<SpamCriteriaEditor
-									positiveExamples={formSpamPositive}
-									negativeExamples={formSpamNegative}
-									inheritedPositive={globalSpamPositive}
-									inheritedNegative={globalSpamNegative}
-									inheritanceSource="action"
-									initiallyExpanded={false}
-									onchange={(details) => {
-										formSpamPositive = details.positive;
-										formSpamNegative = details.negative;
-									}}
-								/>
+							{/if}
+							<div class="sf:grid sf:gap-3">
+								{#each exampleEntries as example (example.entry_id)}
+									<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3">
+										<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
+											<div class="sf:min-w-0 sf:flex-1">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+													Entry #{example.entry_id}
+												</p>
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+													{summarizeExample(example)}
+												</p>
+											</div>
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => removeExampleEntry(example.entry_id)}
+											>
+												Remove
+											</Button>
+										</div>
+										<div class="sf:mt-3 sf:grid sf:gap-3 sf:md:grid-cols-[10rem_minmax(0,1fr)]">
+											<SelectField
+												id={`lead-example-grade-${example.entry_id}`}
+												label="Grade"
+												value={example.grade}
+												options={gradeChoices.map((grade) => ({ value: grade, label: grade }))}
+												onchange={(event) =>
+													updateExampleGrade(example.entry_id, event.currentTarget.value)}
+											/>
+											<InputField
+												id={`lead-example-rationale-${example.entry_id}`}
+												label="Why this grade?"
+												value={example.rationale}
+												placeholder="Short calibration note"
+												oninput={(event) =>
+													updateExampleRationale(example.entry_id, event.currentTarget.value)}
+											/>
+										</div>
+									</div>
+								{:else}
+									<p
+										class="sf:rounded sf:border sf:border-dashed sf:border-slate-300 sf:p-3 sf:text-sm sf:text-slate-500"
+									>
+										No selected examples yet.
+									</p>
+								{/each}
 							</div>
+						</Card>
+
+						<Card class="sf:overflow-hidden sf:p-0">
+							<div class="sf:border-b sf:border-slate-200 sf:px-6 sf:py-6">
+								<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Configuration Setup</h2>
+								<p class="sf:mt-2 sf:text-base sf:text-slate-500">
+									Configure handoff settings, AI models, and automation preferences.
+								</p>
+							</div>
+
+							<div class="sf:space-y-8 sf:p-6">
+								<details
+									class="sf:group sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50"
+								>
+									<summary
+										class="sf:flex sf:cursor-pointer sf:list-none sf:items-center sf:justify-between sf:gap-3 sf:px-5 sf:py-4 sf:text-lg sf:font-semibold sf:text-slate-950"
+									>
+										<span class="sf:flex sf:items-center sf:gap-3">
+											<UploadIcon class="sf:h-5 sf:w-5 sf:text-slate-500" aria-hidden="true" />
+											Import Setup
+											<InfoTooltip
+												label="Copy criteria and handoff settings from another form, then tune them before regenerating this form's setup."
+											/>
+										</span>
+										<ChevronDownIcon
+											class="sf:h-5 sf:w-5 sf:text-slate-400 sf:transition-transform group-open:sf:rotate-180"
+											aria-hidden="true"
+										/>
+									</summary>
+									<div class="sf:border-t sf:border-slate-200 sf:bg-white sf:p-5">
+										<div
+											class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end"
+										>
+											<InputField
+												id="lead-profile-import-source"
+												label="Source setup ID"
+												placeholder="Setup ID from another Gravity Form"
+												bind:value={importProfileId}
+											/>
+											<Button variant="secondary" onclick={importLeadProfile} disabled={saving}>
+												Import setup
+											</Button>
+										</div>
+										<label
+											class="sf:mt-4 sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700"
+										>
+											<input
+												type="checkbox"
+												class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+												bind:checked={importExamples}
+											/>
+											<span>Also copy calibration examples from the source form</span>
+										</label>
+									</div>
+								</details>
+
+								<div class="sf:grid sf:gap-10 sf:xl:grid-cols-2">
+									<section class="sf:space-y-7">
+										<div class="sf:border-b sf:border-slate-200 sf:pb-4">
+											<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">
+												Core Handoff & Grading
+											</h3>
+										</div>
+
+										<div>
+											<div class="sf:flex sf:items-center sf:gap-2">
+												<label
+													for="lead-handoff-emails"
+													class="sf:text-base sf:font-semibold sf:text-slate-800"
+												>
+													Handoff emails
+												</label>
+												<InfoTooltip
+													label="People who should be notified when a scored lead matches the selected handoff grades."
+												/>
+											</div>
+											<div
+												class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
+											>
+												<div class="sf:flex sf:flex-wrap sf:gap-2">
+													{#each emailRecipients as email}
+														<span
+															class="sf:inline-flex sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
+														>
+															{email}
+															<Button
+																size="sm"
+																variant="ghost"
+																iconOnly
+																class="sf:h-5 sf:w-5 sf:min-h-0 sf:border-0 sf:bg-transparent sf:p-0 sf:text-slate-500 sf:shadow-none"
+																onclick={() => removeEmailTag(email)}
+																aria-label={`Remove ${email}`}
+															>
+																<XIcon class="sf:h-3.5 sf:w-3.5" aria-hidden="true" />
+															</Button>
+														</span>
+													{/each}
+													<input
+														id="lead-handoff-emails"
+														class="sf:min-w-56 sf:flex-1 sf:border-0 sf:bg-transparent sf:px-2 sf:py-2 sf:text-base sf:outline-none sf:placeholder:text-slate-400"
+														placeholder="Paste emails separated by commas..."
+														bind:value={emailDraft}
+														onkeydown={(event) => {
+															if (
+																event.key === 'Enter' ||
+																event.key === ',' ||
+																event.key === ';' ||
+																event.key === 'Tab'
+															) {
+																event.preventDefault();
+																commitEmailDraft();
+															}
+														}}
+														onblur={commitEmailDraft}
+													/>
+												</div>
+											</div>
+											{#each emailErrors as error}
+												<p class="sf:mt-1 sf:text-xs sf:text-danger-600">{error}</p>
+											{/each}
+										</div>
+
+										<div>
+											<div class="sf:flex sf:items-center sf:gap-2">
+												<label
+													for="lead-handoff-webhooks"
+													class="sf:text-base sf:font-semibold sf:text-slate-800"
+												>
+													Handoff webhooks
+												</label>
+												<InfoTooltip
+													label="Webhook URLs receive scored-lead payloads for systems like CRMs, Zapier, Make, or custom intake tools."
+												/>
+											</div>
+											<div
+												class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
+											>
+												<div class="sf:flex sf:flex-wrap sf:gap-2">
+													{#each webhookUrls as webhook}
+														<span
+															class="sf:inline-flex sf:max-w-full sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
+														>
+															<span class="sf:truncate">{webhook}</span>
+															<Button
+																size="sm"
+																variant="ghost"
+																iconOnly
+																class="sf:h-5 sf:w-5 sf:min-h-0 sf:border-0 sf:bg-transparent sf:p-0 sf:text-slate-500 sf:shadow-none"
+																onclick={() => removeWebhookTag(webhook)}
+																aria-label={`Remove ${webhook}`}
+															>
+																<XIcon class="sf:h-3.5 sf:w-3.5" aria-hidden="true" />
+															</Button>
+														</span>
+													{/each}
+													<input
+														id="lead-handoff-webhooks"
+														class="sf:min-w-56 sf:flex-1 sf:border-0 sf:bg-transparent sf:px-2 sf:py-2 sf:text-base sf:outline-none sf:placeholder:text-slate-400"
+														placeholder="Paste webhook URLs"
+														bind:value={webhookDraft}
+														onkeydown={(event) => {
+															if (
+																event.key === 'Enter' ||
+																event.key === ',' ||
+																event.key === ';' ||
+																event.key === 'Tab'
+															) {
+																event.preventDefault();
+																commitWebhookDraft();
+															}
+														}}
+														onblur={commitWebhookDraft}
+													/>
+												</div>
+											</div>
+											{#each webhookErrors as error}
+												<p class="sf:mt-1 sf:text-xs sf:text-danger-600">{error}</p>
+											{/each}
+										</div>
+
+										<div>
+											<div class="sf:flex sf:items-center sf:gap-2">
+												<p class="sf:text-base sf:font-semibold sf:text-slate-800">
+													Handoff grades
+												</p>
+												<InfoTooltip
+													label="Only selected grades trigger the email and webhook handoff rules."
+												/>
+											</div>
+											<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-3">
+												{#each gradeChoices as grade}
+													<label
+														class={`sf:inline-flex sf:h-12 sf:items-center sf:gap-2 sf:rounded-lg sf:border sf:px-4 sf:text-base sf:font-medium ${selectedGrades[grade] ? 'sf:border-primary-400 sf:bg-primary-50 sf:text-primary-900' : 'sf:border-slate-200 sf:bg-white sf:text-slate-700'}`}
+													>
+														<input
+															type="checkbox"
+															class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+															checked={selectedGrades[grade]}
+															onchange={(event) =>
+																setSelectedGrade(grade, event.currentTarget.checked)}
+														/>
+														{grade}
+													</label>
+												{/each}
+											</div>
+										</div>
+
+										<div class="sf:space-y-5 sf:rounded-xl sf:bg-slate-50 sf:p-5">
+											<label class="sf:flex sf:items-start sf:gap-3 sf:text-base sf:text-slate-700">
+												<input
+													type="checkbox"
+													class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+													bind:checked={writeLeadGradeNote}
+												/>
+												<span>
+													<span
+														class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
+													>
+														Record lead grade and justification
+														<InfoTooltip
+															label="Adds the grade and reasoning as a Gravity Forms entry note for printing, exports, and staff review."
+														/>
+													</span>
+													<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
+														Saves as a Gravity Forms entry note.
+													</span>
+												</span>
+											</label>
+											<label class="sf:flex sf:items-start sf:gap-3 sf:text-base sf:text-slate-700">
+												<input
+													type="checkbox"
+													class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+													bind:checked={writeSuggestedReplyNote}
+												/>
+												<span>
+													<span
+														class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
+													>
+														Record suggested reply and next best action
+														<InfoTooltip
+															label="Adds the reply draft and staff next step as a Gravity Forms entry note when available."
+														/>
+													</span>
+													<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
+														Saves as a Gravity Forms entry note.
+													</span>
+												</span>
+											</label>
+										</div>
+									</section>
+
+									<section class="sf:space-y-7">
+										<div class="sf:border-b sf:border-slate-200 sf:pb-4">
+											<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">
+												AI & Automation
+											</h3>
+										</div>
+
+										<div>
+											<div class="sf:flex sf:items-center sf:gap-2">
+												<p class="sf:text-base sf:font-semibold sf:text-slate-800">
+													Setup generation model
+												</p>
+												<InfoTooltip
+													label="This model writes the scoring setup instructions. It is separate from the model that scores live entries."
+												/>
+											</div>
+											<SelectField
+												id="lead-profile-generation-model"
+												label="Setup generation model"
+												bind:value={generationModel}
+												options={[
+													{ value: '~openai/gpt-latest', label: 'OpenAI GPT Latest' },
+													{ value: '~google/gemini-pro-latest', label: 'Google Gemini Pro Latest' },
+													{
+														value: '~anthropic/claude-opus-latest',
+														label: 'Anthropic Claude Opus Latest'
+													}
+												]}
+											/>
+											<p class="sf:mt-3 sf:text-base sf:leading-7 sf:text-slate-500">
+												Lead Scoring setup generation always uses the highest reasoning mode and
+												web-capable tools.
+											</p>
+										</div>
+
+										<div
+											class="sf:flex sf:items-center sf:justify-between sf:gap-5 sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
+										>
+											<div>
+												<div class="sf:flex sf:items-center sf:gap-2">
+													<p class="sf:text-base sf:font-semibold sf:text-slate-950">
+														Skip suggested replies for Reject leads
+													</p>
+													<InfoTooltip
+														label="Prevents automatic draft generation for rejected leads. Staff can still manually generate a reply from the detail panel."
+													/>
+												</div>
+												<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
+													Save reply-generation credits unless a staff member manually generates a
+													draft.
+												</p>
+											</div>
+											<Toggle
+												bind:checked={skipRejectSuggestedReply}
+												aria-label="Skip suggested replies for Reject leads"
+											/>
+										</div>
+
+										<div
+											class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
+										>
+											<div class="sf:flex sf:items-start sf:justify-between sf:gap-5">
+												<div>
+													<div class="sf:flex sf:items-center sf:gap-2">
+														<p class="sf:text-base sf:font-semibold sf:text-slate-950">
+															Enable self-improvement
+														</p>
+														<InfoTooltip
+															label="Uses staff grade corrections as calibration examples, then regenerates scoring instructions when the inputs change."
+														/>
+													</div>
+													<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
+														Use staff corrections to refresh scoring setup.
+													</p>
+												</div>
+												<Toggle
+													bind:checked={selfImproveConsent}
+													aria-label="Enable self-improvement"
+												/>
+											</div>
+
+											<div class="sf:mt-6 sf:border-t sf:border-slate-200 sf:pt-5">
+												<label
+													class="sf:flex sf:items-center sf:gap-3 sf:text-base sf:text-slate-700"
+												>
+													<input
+														type="checkbox"
+														class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+														bind:checked={selfImproveReviewRequired}
+													/>
+													<span class="sf:flex sf:items-center sf:gap-2">
+														Require review after regeneration
+														<InfoTooltip
+															label="Keeps regenerated setup changes in a review state before they affect live scoring."
+														/>
+													</span>
+												</label>
+												<div
+													class="sf:mt-5 sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+												>
+													<SelectField
+														id="lead-self-improvement-frequency"
+														label="Frequency"
+														bind:value={selfImproveFrequency}
+														options={[
+															{ value: 'manual', label: 'Manual only' },
+															{ value: 'weekly', label: 'Weekly' },
+															{ value: 'monthly', label: 'Monthly' }
+														]}
+													/>
+													<Button
+														variant="secondary"
+														class="sf:self-end"
+														onclick={runSelfImprovement}
+														disabled={!profile?.id ||
+															!selfImproveConsent ||
+															selfImproving ||
+															saving}
+													>
+														{selfImproving ? 'Running...' : 'Run self-improvement'}
+													</Button>
+												</div>
+											</div>
+										</div>
+									</section>
+								</div>
+							</div>
+
+							<div
+								class="sf:flex sf:flex-wrap sf:gap-3 sf:border-t sf:border-slate-200 sf:bg-slate-50 sf:px-6 sf:py-5"
+							>
+								<Button
+									onclick={() => saveProfile()}
+									disabled={saving || generating || generationPending}
+								>
+									{saving ? 'Saving...' : 'Save setup'}
+								</Button>
+								<Button
+									variant="secondary"
+									onclick={generateProfile}
+									disabled={saving || generating || generationPending}
+								>
+									{generating || generationPending ? 'Generating...' : 'Generate scoring setup'}
+								</Button>
+								<Button
+									variant="secondary"
+									onclick={refreshAssistant}
+									disabled={!profile?.id || saving}
+								>
+									Refresh setup questions
+								</Button>
+							</div>
+						</Card>
+					</div>
+
+					<Card>
+						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Setup Questions</h2>
+						<div class="sf:mt-4 sf:space-y-3">
+							{#if profile?.assistant?.questions?.length}
+								{#each profile.assistant.questions as question}
+									<div class="sf:rounded sf:border sf:border-slate-200 sf:p-3">
+										<p class="sf:text-sm sf:font-medium sf:text-slate-900">{question.question}</p>
+										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{question.why}</p>
+									</div>
+								{/each}
+							{:else}
+								<p class="sf:text-sm sf:text-slate-500">
+									Questions appear after the setup is saved or generated.
+								</p>
+							{/if}
 						</div>
 					</Card>
-
-					<Card class="sf:space-y-4">
-						<label
-							class="sf:flex sf:items-start sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
-						>
-							<input
-								type="checkbox"
-								class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-								bind:checked={consent}
-							/>
-							<span>
-								<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
-									Use saved context and examples for this form's lead scoring setup
-								</span>
-								<span class="sf:mt-1 sf:block sf:text-xs sf:text-slate-500">
-									Consent is stored with the local setup and required before generation.
-								</span>
-							</span>
-						</label>
-						<TextareaField
-							id="good-lead-criteria"
-							label="Good lead criteria"
-							rows={6}
-							bind:value={goodCriteria}
-							placeholder="Describe fit, intent, urgency, service-area, budget, use case, and handoff signals."
-						/>
-						<TextareaField
-							id="bad-lead-criteria"
-							label="Bad lead criteria"
-							rows={6}
-							bind:value={badCriteria}
-							placeholder="Describe disqualifiers, irrelevant requests, risky patterns, poor-fit inquiries, and spam-adjacent cases."
-						/>
-					</Card>
-
-					<Card class="sf:space-y-4">
+				</div>
+			{:else if view === 'dashboard'}
+				<div class="sf:mt-12 sf:grid sf:gap-12 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
+					<div class="sf:min-w-0 sf:space-y-6">
 						<div>
-							<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Entry Examples</h2>
-							<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
-								{exampleEntries.length} selected for setup calibration
+							<h2 class="sf:text-3xl sf:font-bold sf:tracking-tight sf:text-slate-950">
+								Scored entries
+							</h2>
+							<p class="sf:mt-3 sf:text-lg sf:text-slate-500">
+								Review grades, justification, follow-up drafts, and next best actions without
+								stretching table rows.
 							</p>
 						</div>
-						<div class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end">
-							<div>
-								<InputField
-									id="lead-entry-search"
-									label="Search form entries"
-									placeholder="Name, email, company, or entry ID"
-									bind:value={entrySearchQuery}
-								/>
+						<form
+							class="sf:grid sf:gap-3 sf:lg:max-w-4xl sf:lg:grid-cols-[minmax(0,1fr)_9rem]"
+							onsubmit={(event) => {
+								event.preventDefault();
+								void searchDashboardEntries();
+							}}
+						>
+							<label class="sf:grid sf:gap-2">
+								<span class="sf:text-base sf:font-medium sf:text-slate-800">Search entries</span>
+								<div class="sf:relative">
+									<SearchIcon
+										class="sf:pointer-events-none sf:absolute sf:left-4 sf:top-1/2 sf:h-5 sf:w-5 sf:-translate-y-1/2 sf:text-slate-400"
+										aria-hidden="true"
+									/>
+									<input
+										class="sf:h-14 sf:w-full sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:pl-12 sf:pr-4 sf:text-lg sf:shadow-sm sf:placeholder:text-slate-400 sf:focus-visible:border-primary-500 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500/30"
+										placeholder="Entry ID, grade, company, justification"
+										bind:value={dashboardQuery}
+									/>
+								</div>
+							</label>
+							<Button variant="secondary" class="sf:h-14 sf:self-end" type="submit">Search</Button>
+						</form>
+						<EntriesTable
+							entries={dashboard?.entries ?? []}
+							basePath={`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`}
+							showForm={false}
+							onOpenDetail={openEntryDetail}
+							emptyMessage="No scored entries yet. Run lead scoring on new or historical entries to populate this table."
+						/>
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
+							<p class="sf:text-xs sf:text-slate-500">
+								Page {dashboard?.entry_page ?? 1} of {Math.max(1, dashboard?.entry_pages ?? 1)} · {dashboard?.entry_total ??
+									0} entries
+							</p>
+							<div class="sf:flex sf:gap-2">
+								<Button
+									size="sm"
+									variant="secondary"
+									disabled={(dashboard?.entry_page ?? 1) <= 1}
+									onclick={() => setDashboardPage((dashboard?.entry_page ?? 1) - 1)}
+								>
+									Previous
+								</Button>
+								<Button
+									size="sm"
+									variant="secondary"
+									disabled={(dashboard?.entry_page ?? 1) >= (dashboard?.entry_pages ?? 1)}
+									onclick={() => setDashboardPage((dashboard?.entry_page ?? 1) + 1)}
+								>
+									Next
+								</Button>
 							</div>
+						</div>
+					</div>
+					<div class="sf:space-y-4">
+						<GradeDistribution grades={dashboard?.grades} />
+						<Card>
+							<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">
+								Recent Historical Runs
+							</h2>
+							<div class="sf:mt-4 sf:space-y-3">
+								{#each historicalRuns.slice(0, 5) as run}
+									<div class="sf:rounded sf:border sf:border-slate-200 sf:p-3">
+										<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+											<p class="sf:text-sm sf:font-medium sf:text-slate-900">
+												{actionLabel(run.action_code)}
+											</p>
+											<Badge variant={run.status === 'completed' ? 'success' : 'neutral'}
+												>{run.status}</Badge
+											>
+										</div>
+										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+											{run.estimated_entry_count} entries · {run.selected_entry_ids
+												?.slice(0, 4)
+												.map((id) => `#${id}`)
+												.join(', ') || 'selection pending'}
+										</p>
+									</div>
+								{:else}
+									<p class="sf:text-sm sf:text-slate-500">No historical runs yet.</p>
+								{/each}
+							</div>
+						</Card>
+					</div>
+				</div>
+			{:else}
+				<div class="sf:mt-5 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
+					<Card class="sf:space-y-4">
+						<div>
+							<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">
+								Select entries to score
+							</h2>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+								Search actual Gravity Forms entries, preview their submitted fields, and select one
+								or more entries for a historical run.
+							</p>
+						</div>
+						<SelectField
+							id="historical-action"
+							label="Action"
+							bind:value={historicalAction}
+							options={[
+								{ value: 'lead_grading_v1', label: 'Lead scoring' },
+								{ value: 'suggested_reply_v1', label: 'Suggested reply' }
+							]}
+						/>
+						<div class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end">
+							<InputField
+								id="historical-entry-search"
+								label="Search entries"
+								placeholder="Name, email, company, message, or entry ID"
+								bind:value={entrySearchQuery}
+							/>
 							<Button
 								variant="secondary"
 								class="sf:w-full sf:md:w-auto"
@@ -1132,582 +1808,124 @@
 										class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3"
 									>
 										<div class="sf:min-w-0 sf:flex-1">
-											<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-												<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
-													Entry #{entry.id}
-												</p>
-												{#if entry.status}
-													<Badge variant="neutral">{entry.status}</Badge>
-												{/if}
-											</div>
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{summarizeExample(entry)}</p>
-										</div>
-										<div class="sf:flex sf:flex-wrap sf:gap-2">
-											{#each gradeChoices as grade}
-												<Button
-													size="sm"
-													variant="secondary"
-													onclick={() => addExampleEntry(entry, grade)}
-													disabled={exampleEntries.some((example) => example.entry_id === entry.id)}
-												>
-													Mark {grade}
-												</Button>
-											{/each}
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
-						<div class="sf:grid sf:gap-3">
-							{#each exampleEntries as example (example.entry_id)}
-								<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3">
-									<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
-										<div class="sf:min-w-0 sf:flex-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
-												Entry #{example.entry_id}
-											</p>
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-												{summarizeExample(example)}
+											<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Entry #{entry.id}</p>
+											<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
+												{summarizeExample(entry)}
 											</p>
 										</div>
 										<Button
 											size="sm"
-											variant="ghost"
-											onclick={() => removeExampleEntry(example.entry_id)}
+											variant="secondary"
+											onclick={() => addHistoricalEntry(entry)}
+											disabled={historicalSelectedEntries.some(
+												(selected) => selected.id === entry.id
+											)}
 										>
-											Remove
+											Select
 										</Button>
 									</div>
-									<div class="sf:mt-3 sf:grid sf:gap-3 sf:md:grid-cols-[10rem_minmax(0,1fr)]">
-										<SelectField
-											id={`lead-example-grade-${example.entry_id}`}
-											label="Grade"
-											value={example.grade}
-											options={gradeChoices.map((grade) => ({ value: grade, label: grade }))}
-											onchange={(event) =>
-												updateExampleGrade(example.entry_id, event.currentTarget.value)}
-										/>
-										<InputField
-											id={`lead-example-rationale-${example.entry_id}`}
-											label="Why this grade?"
-											value={example.rationale}
-											placeholder="Short calibration note"
-											oninput={(event) =>
-												updateExampleRationale(example.entry_id, event.currentTarget.value)}
-										/>
-									</div>
-								</div>
-							{:else}
-								<p
-									class="sf:rounded sf:border sf:border-dashed sf:border-slate-300 sf:p-3 sf:text-sm sf:text-slate-500"
-								>
-									No selected examples yet.
-								</p>
-							{/each}
-						</div>
-					</Card>
-
-					<Card class="sf:overflow-hidden sf:p-0">
-						<div class="sf:border-b sf:border-slate-200 sf:px-6 sf:py-6">
-							<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Configuration Setup</h2>
-							<p class="sf:mt-2 sf:text-base sf:text-slate-500">
-								Configure handoff settings, AI models, and automation preferences.
-							</p>
-						</div>
-
-						<div class="sf:space-y-8 sf:p-6">
-							<details class="sf:group sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50">
-								<summary
-									class="sf:flex sf:cursor-pointer sf:list-none sf:items-center sf:justify-between sf:gap-3 sf:px-5 sf:py-4 sf:text-lg sf:font-semibold sf:text-slate-950"
-								>
-									<span class="sf:flex sf:items-center sf:gap-3">
-										<UploadIcon class="sf:h-5 sf:w-5 sf:text-slate-500" aria-hidden="true" />
-										Import Setup
-										<InfoTooltip
-											label="Copy criteria and handoff settings from another form, then tune them before regenerating this form's setup."
-										/>
-									</span>
-									<ChevronDownIcon
-										class="sf:h-5 sf:w-5 sf:text-slate-400 sf:transition-transform group-open:sf:rotate-180"
-										aria-hidden="true"
-									/>
-								</summary>
-								<div class="sf:border-t sf:border-slate-200 sf:bg-white sf:p-5">
-									<div
-										class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end"
-									>
-										<InputField
-											id="lead-profile-import-source"
-											label="Source setup ID"
-											placeholder="Setup ID from another Gravity Form"
-											bind:value={importProfileId}
-										/>
-										<Button variant="secondary" onclick={importLeadProfile} disabled={saving}>
-											Import setup
-										</Button>
-									</div>
-									<label
-										class="sf:mt-4 sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700"
-									>
-										<input
-											type="checkbox"
-											class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-											bind:checked={importExamples}
-										/>
-										<span>Also copy calibration examples from the source form</span>
-									</label>
-								</div>
-							</details>
-
-							<div class="sf:grid sf:gap-10 sf:xl:grid-cols-2">
-								<section class="sf:space-y-7">
-									<div class="sf:border-b sf:border-slate-200 sf:pb-4">
-										<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">
-											Core Handoff & Grading
-										</h3>
-									</div>
-
-									<div>
-										<div class="sf:flex sf:items-center sf:gap-2">
-											<label
-												for="lead-handoff-emails"
-												class="sf:text-base sf:font-semibold sf:text-slate-800"
-											>
-												Handoff emails
-											</label>
-											<InfoTooltip
-												label="People who should be notified when a scored lead matches the selected handoff grades."
-											/>
-										</div>
-										<div
-											class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
-										>
-											<div class="sf:flex sf:flex-wrap sf:gap-2">
-												{#each emailRecipients as email}
-													<span
-														class="sf:inline-flex sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
-													>
-														{email}
-														<Button
-															size="sm"
-															variant="ghost"
-															iconOnly
-															class="sf:h-5 sf:w-5 sf:min-h-0 sf:border-0 sf:bg-transparent sf:p-0 sf:text-slate-500 sf:shadow-none"
-															onclick={() => removeEmailTag(email)}
-															aria-label={`Remove ${email}`}
-														>
-															<XIcon class="sf:h-3.5 sf:w-3.5" aria-hidden="true" />
-														</Button>
-													</span>
-												{/each}
-												<input
-													id="lead-handoff-emails"
-													class="sf:min-w-56 sf:flex-1 sf:border-0 sf:bg-transparent sf:px-2 sf:py-2 sf:text-base sf:outline-none sf:placeholder:text-slate-400"
-													placeholder="Paste emails separated by commas..."
-													bind:value={emailDraft}
-													onkeydown={(event) => {
-														if (
-															event.key === 'Enter' ||
-															event.key === ',' ||
-															event.key === ';' ||
-															event.key === 'Tab'
-														) {
-															event.preventDefault();
-															commitEmailDraft();
-														}
-													}}
-													onblur={commitEmailDraft}
-												/>
-											</div>
-										</div>
-										{#each emailErrors as error}
-											<p class="sf:mt-1 sf:text-xs sf:text-danger-600">{error}</p>
-										{/each}
-									</div>
-
-									<div>
-										<div class="sf:flex sf:items-center sf:gap-2">
-											<label
-												for="lead-handoff-webhooks"
-												class="sf:text-base sf:font-semibold sf:text-slate-800"
-											>
-												Handoff webhooks
-											</label>
-											<InfoTooltip
-												label="Webhook URLs receive scored-lead payloads for systems like CRMs, Zapier, Make, or custom intake tools."
-											/>
-										</div>
-										<div
-											class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
-										>
-											<div class="sf:flex sf:flex-wrap sf:gap-2">
-												{#each webhookUrls as webhook}
-													<span
-														class="sf:inline-flex sf:max-w-full sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
-													>
-														<span class="sf:truncate">{webhook}</span>
-														<Button
-															size="sm"
-															variant="ghost"
-															iconOnly
-															class="sf:h-5 sf:w-5 sf:min-h-0 sf:border-0 sf:bg-transparent sf:p-0 sf:text-slate-500 sf:shadow-none"
-															onclick={() => removeWebhookTag(webhook)}
-															aria-label={`Remove ${webhook}`}
-														>
-															<XIcon class="sf:h-3.5 sf:w-3.5" aria-hidden="true" />
-														</Button>
-													</span>
-												{/each}
-												<input
-													id="lead-handoff-webhooks"
-													class="sf:min-w-56 sf:flex-1 sf:border-0 sf:bg-transparent sf:px-2 sf:py-2 sf:text-base sf:outline-none sf:placeholder:text-slate-400"
-													placeholder="Paste webhook URLs"
-													bind:value={webhookDraft}
-													onkeydown={(event) => {
-														if (
-															event.key === 'Enter' ||
-															event.key === ',' ||
-															event.key === ';' ||
-															event.key === 'Tab'
-														) {
-															event.preventDefault();
-															commitWebhookDraft();
-														}
-													}}
-													onblur={commitWebhookDraft}
-												/>
-											</div>
-										</div>
-										{#each webhookErrors as error}
-											<p class="sf:mt-1 sf:text-xs sf:text-danger-600">{error}</p>
-										{/each}
-									</div>
-
-									<div>
-										<div class="sf:flex sf:items-center sf:gap-2">
-											<p class="sf:text-base sf:font-semibold sf:text-slate-800">Handoff grades</p>
-											<InfoTooltip
-												label="Only selected grades trigger the email and webhook handoff rules."
-											/>
-										</div>
-										<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-3">
-											{#each gradeChoices as grade}
-												<label
-													class={`sf:inline-flex sf:h-12 sf:items-center sf:gap-2 sf:rounded-lg sf:border sf:px-4 sf:text-base sf:font-medium ${selectedGrades[grade] ? 'sf:border-primary-400 sf:bg-primary-50 sf:text-primary-900' : 'sf:border-slate-200 sf:bg-white sf:text-slate-700'}`}
-												>
-													<input
-														type="checkbox"
-														class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-														checked={selectedGrades[grade]}
-														onchange={(event) =>
-															setSelectedGrade(grade, event.currentTarget.checked)}
-													/>
-													{grade}
-												</label>
-											{/each}
-										</div>
-									</div>
-
-									<div class="sf:space-y-5 sf:rounded-xl sf:bg-slate-50 sf:p-5">
-										<label class="sf:flex sf:items-start sf:gap-3 sf:text-base sf:text-slate-700">
-											<input
-												type="checkbox"
-												class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-												bind:checked={writeLeadGradeNote}
-											/>
-											<span>
-												<span
-													class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
-												>
-													Record lead grade and justification
-													<InfoTooltip
-														label="Adds the grade and reasoning as a Gravity Forms entry note for printing, exports, and staff review."
-													/>
-												</span>
-												<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
-													Saves as a Gravity Forms entry note.
-												</span>
-											</span>
-										</label>
-										<label class="sf:flex sf:items-start sf:gap-3 sf:text-base sf:text-slate-700">
-											<input
-												type="checkbox"
-												class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-												bind:checked={writeSuggestedReplyNote}
-											/>
-											<span>
-												<span
-													class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
-												>
-													Record suggested reply and next best action
-													<InfoTooltip
-														label="Adds the reply draft and staff next step as a Gravity Forms entry note when available."
-													/>
-												</span>
-												<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
-													Saves as a Gravity Forms entry note.
-												</span>
-											</span>
-										</label>
-									</div>
-								</section>
-
-								<section class="sf:space-y-7">
-									<div class="sf:border-b sf:border-slate-200 sf:pb-4">
-										<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">AI & Automation</h3>
-									</div>
-
-									<div>
-										<div class="sf:flex sf:items-center sf:gap-2">
-											<p class="sf:text-base sf:font-semibold sf:text-slate-800">
-												Setup generation model
-											</p>
-											<InfoTooltip
-												label="This model writes the scoring setup instructions. It is separate from the model that scores live entries."
-											/>
-										</div>
-										<SelectField
-											id="lead-profile-generation-model"
-											label="Setup generation model"
-											bind:value={generationModel}
-											options={[
-												{ value: '~openai/gpt-latest', label: 'OpenAI GPT Latest' },
-												{ value: '~google/gemini-pro-latest', label: 'Google Gemini Pro Latest' },
-												{
-													value: '~anthropic/claude-opus-latest',
-													label: 'Anthropic Claude Opus Latest'
-												}
-											]}
-										/>
-										<p class="sf:mt-3 sf:text-base sf:leading-7 sf:text-slate-500">
-											Lead Scoring setup generation always uses the highest reasoning mode and
-											web-capable tools.
-										</p>
-									</div>
-
-									<div
-										class="sf:flex sf:items-center sf:justify-between sf:gap-5 sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
-									>
-										<div>
-											<div class="sf:flex sf:items-center sf:gap-2">
-												<p class="sf:text-base sf:font-semibold sf:text-slate-950">
-													Skip suggested replies for Reject leads
-												</p>
-												<InfoTooltip
-													label="Prevents automatic draft generation for rejected leads. Staff can still manually generate a reply from the detail panel."
-												/>
-											</div>
-											<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
-												Save reply-generation credits unless a staff member manually generates a
-												draft.
-											</p>
-										</div>
-										<Toggle
-											bind:checked={skipRejectSuggestedReply}
-											aria-label="Skip suggested replies for Reject leads"
-										/>
-									</div>
-
-									<div
-										class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
-									>
-										<div class="sf:flex sf:items-start sf:justify-between sf:gap-5">
-											<div>
-												<div class="sf:flex sf:items-center sf:gap-2">
-													<p class="sf:text-base sf:font-semibold sf:text-slate-950">
-														Enable self-improvement
-													</p>
-													<InfoTooltip
-														label="Uses staff grade corrections as calibration examples, then regenerates scoring instructions when the inputs change."
-													/>
-												</div>
-												<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
-													Use staff corrections to refresh scoring setup.
-												</p>
-											</div>
-											<Toggle
-												bind:checked={selfImproveConsent}
-												aria-label="Enable self-improvement"
-											/>
-										</div>
-
-										<div class="sf:mt-6 sf:border-t sf:border-slate-200 sf:pt-5">
-											<label
-												class="sf:flex sf:items-center sf:gap-3 sf:text-base sf:text-slate-700"
-											>
-												<input
-													type="checkbox"
-													class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-													bind:checked={selfImproveReviewRequired}
-												/>
-												<span class="sf:flex sf:items-center sf:gap-2">
-													Require review after regeneration
-													<InfoTooltip
-														label="Keeps regenerated setup changes in a review state before they affect live scoring."
-													/>
-												</span>
-											</label>
-											<div
-												class="sf:mt-5 sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-											>
-												<SelectField
-													id="lead-self-improvement-frequency"
-													label="Frequency"
-													bind:value={selfImproveFrequency}
-													options={[
-														{ value: 'manual', label: 'Manual only' },
-														{ value: 'weekly', label: 'Weekly' },
-														{ value: 'monthly', label: 'Monthly' }
-													]}
-												/>
-												<Button
-													variant="secondary"
-													class="sf:self-end"
-													onclick={runSelfImprovement}
-													disabled={!profile?.id || !selfImproveConsent || selfImproving || saving}
-												>
-													{selfImproving ? 'Running...' : 'Run self-improvement'}
-												</Button>
-											</div>
-										</div>
-									</div>
-								</section>
+								{/each}
 							</div>
-						</div>
-
-						<div
-							class="sf:flex sf:flex-wrap sf:gap-3 sf:border-t sf:border-slate-200 sf:bg-slate-50 sf:px-6 sf:py-5"
-						>
-							<Button
-								onclick={() => saveProfile()}
-								disabled={saving || generating || generationPending}
-							>
-								{saving ? 'Saving...' : 'Save setup'}
-							</Button>
-							<Button
-								variant="secondary"
-								onclick={generateProfile}
-								disabled={saving || generating || generationPending}
-							>
-								{generating || generationPending ? 'Generating...' : 'Generate scoring setup'}
-							</Button>
-							<Button
-								variant="secondary"
-								onclick={refreshAssistant}
-								disabled={!profile?.id || saving}
-							>
-								Refresh setup questions
-							</Button>
-						</div>
-					</Card>
-				</div>
-
-				<Card>
-					<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Setup Questions</h2>
-					<div class="sf:mt-4 sf:space-y-3">
-						{#if profile?.assistant?.questions?.length}
-							{#each profile.assistant.questions as question}
-								<div class="sf:rounded sf:border sf:border-slate-200 sf:p-3">
-									<p class="sf:text-sm sf:font-medium sf:text-slate-900">{question.question}</p>
-									<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{question.why}</p>
-								</div>
-							{/each}
-						{:else}
-							<p class="sf:text-sm sf:text-slate-500">
-								Questions appear after the setup is saved or generated.
-							</p>
 						{/if}
-					</div>
-				</Card>
-			</div>
-		{:else if view === 'dashboard'}
-			<div class="sf:mt-12 sf:grid sf:gap-12 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
-				<div class="sf:min-w-0 sf:space-y-6">
-					<div>
-						<h2 class="sf:text-3xl sf:font-bold sf:tracking-tight sf:text-slate-950">
-							Scored entries
-						</h2>
-						<p class="sf:mt-3 sf:text-lg sf:text-slate-500">
-							Review grades, justification, follow-up drafts, and next best actions without
-							stretching table rows.
-						</p>
-					</div>
-					<form
-						class="sf:grid sf:gap-3 sf:lg:max-w-4xl sf:lg:grid-cols-[minmax(0,1fr)_9rem]"
-						onsubmit={(event) => {
-							event.preventDefault();
-							void searchDashboardEntries();
-						}}
-					>
-						<label class="sf:grid sf:gap-2">
-							<span class="sf:text-base sf:font-medium sf:text-slate-800">Search entries</span>
-							<div class="sf:relative">
-								<SearchIcon
-									class="sf:pointer-events-none sf:absolute sf:left-4 sf:top-1/2 sf:h-5 sf:w-5 sf:-translate-y-1/2 sf:text-slate-400"
-									aria-hidden="true"
-								/>
-								<input
-									class="sf:h-14 sf:w-full sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:pl-12 sf:pr-4 sf:text-lg sf:shadow-sm sf:placeholder:text-slate-400 sf:focus-visible:border-primary-500 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500/30"
-									placeholder="Entry ID, grade, company, justification"
-									bind:value={dashboardQuery}
-								/>
+						<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3">
+							<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+								Selected entries ({historicalSelectedEntries.length})
+							</p>
+							<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+								{#each historicalSelectedEntries as entry (entry.id)}
+									<span
+										class="sf:inline-flex sf:items-center sf:gap-1 sf:rounded-full sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:font-medium sf:text-slate-700 sf:ring-1 sf:ring-slate-200"
+									>
+										#{entry.id}
+										<Button
+											size="sm"
+											variant="ghost"
+											class="sf:h-auto sf:min-h-0 sf:p-0 sf:px-1 sf:text-slate-500"
+											onclick={() => removeHistoricalEntry(entry.id)}
+											aria-label={`Remove entry ${entry.id}`}
+										>
+											x
+										</Button>
+									</span>
+								{:else}
+									<span class="sf:text-xs sf:text-slate-500">No entries selected.</span>
+								{/each}
 							</div>
+						</div>
+						<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+							<input
+								type="checkbox"
+								class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+								bind:checked={historicalBulkMode}
+							/>
+							<span>Use advanced pasted entry IDs instead</span>
 						</label>
-						<Button variant="secondary" class="sf:h-14 sf:self-end" type="submit">Search</Button>
-					</form>
-					<EntriesTable
-						entries={dashboard?.entries ?? []}
-						basePath={`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`}
-						showForm={false}
-						onOpenDetail={openEntryDetail}
-						emptyMessage="No scored entries yet. Run lead scoring on new or historical entries to populate this table."
-					/>
-					<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
-						<p class="sf:text-xs sf:text-slate-500">
-							Page {dashboard?.entry_page ?? 1} of {Math.max(1, dashboard?.entry_pages ?? 1)} · {dashboard?.entry_total ??
-								0} entries
-						</p>
-						<div class="sf:flex sf:gap-2">
+						{#if historicalBulkMode}
+							<TextareaField
+								id="historical-entry-ids"
+								label="Entry IDs"
+								rows={5}
+								bind:value={historicalEntryIds}
+								placeholder="1001, 1002, 1003"
+							/>
+						{/if}
+						<div class="sf:flex sf:flex-wrap sf:gap-2">
 							<Button
-								size="sm"
-								variant="secondary"
-								disabled={(dashboard?.entry_page ?? 1) <= 1}
-								onclick={() => setDashboardPage((dashboard?.entry_page ?? 1) - 1)}
+								onclick={createHistoricalPreview}
+								disabled={saving || (!historicalBulkMode && historicalSelectedEntries.length === 0)}
 							>
-								Previous
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={(dashboard?.entry_page ?? 1) >= (dashboard?.entry_pages ?? 1)}
-								onclick={() => setDashboardPage((dashboard?.entry_page ?? 1) + 1)}
-							>
-								Next
+								Create dry-run preview
 							</Button>
 						</div>
-					</div>
-				</div>
-				<div class="sf:space-y-4">
-					<GradeDistribution grades={dashboard?.grades} />
+					</Card>
 					<Card>
-						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Recent Historical Runs</h2>
+						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Runs</h2>
 						<div class="sf:mt-4 sf:space-y-3">
-							{#each historicalRuns.slice(0, 5) as run}
+							{#each historicalRuns as run}
 								<div class="sf:rounded sf:border sf:border-slate-200 sf:p-3">
-									<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
-										<p class="sf:text-sm sf:font-medium sf:text-slate-900">
-											{actionLabel(run.action_code)}
-										</p>
+									<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+										<div>
+											<p class="sf:text-sm sf:font-medium sf:text-slate-900">
+												{actionLabel(run.action_code)}
+											</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+												{run.estimated_entry_count} entries · {run.estimated_managed_credits ?? 0} managed
+												credits
+											</p>
+											{#if run.selected_entry_ids?.length}
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+													Entries {run.selected_entry_ids
+														.slice(0, 6)
+														.map((id) => `#${id}`)
+														.join(', ')}
+												</p>
+											{/if}
+											{#if run.progress}
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+													{run.progress.processed ?? 0}/{run.progress.total ?? 0} processed
+												</p>
+											{/if}
+										</div>
 										<Badge variant={run.status === 'completed' ? 'success' : 'neutral'}
 											>{run.status}</Badge
 										>
 									</div>
-									<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-										{run.estimated_entry_count} entries · {run.selected_entry_ids
-											?.slice(0, 4)
-											.map((id) => `#${id}`)
-											.join(', ') || 'selection pending'}
-									</p>
+									{#if canStartHistoricalRun(run)}
+										<div class="sf:mt-3">
+											<Button
+												size="sm"
+												variant="secondary"
+												onclick={() => startRun(run)}
+												disabled={runningId === run.id}
+											>
+												{runningId === run.id
+													? 'Updating...'
+													: run.dry_run
+														? 'Run confirmed'
+														: 'Start'}
+											</Button>
+										</div>
+									{/if}
 								</div>
 							{:else}
 								<p class="sf:text-sm sf:text-slate-500">No historical runs yet.</p>
@@ -1715,193 +1933,25 @@
 						</div>
 					</Card>
 				</div>
-			</div>
-		{:else}
-			<div class="sf:mt-5 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
-				<Card class="sf:space-y-4">
-					<div>
-						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Select entries to score</h2>
-						<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
-							Search actual Gravity Forms entries, preview their submitted fields, and select one or
-							more entries for a historical run.
-						</p>
-					</div>
-					<SelectField
-						id="historical-action"
-						label="Action"
-						bind:value={historicalAction}
-						options={[
-							{ value: 'lead_grading_v1', label: 'Lead scoring' },
-							{ value: 'suggested_reply_v1', label: 'Suggested reply' }
-						]}
-					/>
-					<div class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end">
-						<InputField
-							id="historical-entry-search"
-							label="Search entries"
-							placeholder="Name, email, company, message, or entry ID"
-							bind:value={entrySearchQuery}
-						/>
-						<Button
-							variant="secondary"
-							class="sf:w-full sf:md:w-auto"
-							onclick={searchEntries}
-							disabled={entrySearchLoading}
-						>
-							{entrySearchLoading ? 'Searching...' : 'Search entries'}
-						</Button>
-					</div>
-					{#if entrySearchResults.length}
-						<div class="sf:grid sf:gap-2">
-							{#each entrySearchResults as entry (entry.id)}
-								<div
-									class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3"
-								>
-									<div class="sf:min-w-0 sf:flex-1">
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Entry #{entry.id}</p>
-										<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
-											{summarizeExample(entry)}
-										</p>
-									</div>
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => addHistoricalEntry(entry)}
-										disabled={historicalSelectedEntries.some(
-											(selected) => selected.id === entry.id
-										)}
-									>
-										Select
-									</Button>
-								</div>
-							{/each}
-						</div>
-					{/if}
-					<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3">
-						<p class="sf:text-sm sf:font-medium sf:text-slate-800">
-							Selected entries ({historicalSelectedEntries.length})
-						</p>
-						<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
-							{#each historicalSelectedEntries as entry (entry.id)}
-								<span
-									class="sf:inline-flex sf:items-center sf:gap-1 sf:rounded-full sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:font-medium sf:text-slate-700 sf:ring-1 sf:ring-slate-200"
-								>
-									#{entry.id}
-									<Button
-										size="sm"
-										variant="ghost"
-										class="sf:h-auto sf:min-h-0 sf:p-0 sf:px-1 sf:text-slate-500"
-										onclick={() => removeHistoricalEntry(entry.id)}
-										aria-label={`Remove entry ${entry.id}`}
-									>
-										x
-									</Button>
-								</span>
-							{:else}
-								<span class="sf:text-xs sf:text-slate-500">No entries selected.</span>
-							{/each}
-						</div>
-					</div>
-					<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
-						<input
-							type="checkbox"
-							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-							bind:checked={historicalBulkMode}
-						/>
-						<span>Use advanced pasted entry IDs instead</span>
-					</label>
-					{#if historicalBulkMode}
-						<TextareaField
-							id="historical-entry-ids"
-							label="Entry IDs"
-							rows={5}
-							bind:value={historicalEntryIds}
-							placeholder="1001, 1002, 1003"
-						/>
-					{/if}
-					<div class="sf:flex sf:flex-wrap sf:gap-2">
-						<Button
-							onclick={createHistoricalPreview}
-							disabled={saving || (!historicalBulkMode && historicalSelectedEntries.length === 0)}
-						>
-							Create dry-run preview
-						</Button>
-					</div>
-				</Card>
-				<Card>
-					<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Runs</h2>
-					<div class="sf:mt-4 sf:space-y-3">
-						{#each historicalRuns as run}
-							<div class="sf:rounded sf:border sf:border-slate-200 sf:p-3">
-								<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-									<div>
-										<p class="sf:text-sm sf:font-medium sf:text-slate-900">
-											{actionLabel(run.action_code)}
-										</p>
-										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-											{run.estimated_entry_count} entries · {run.estimated_managed_credits ?? 0} managed
-											credits
-										</p>
-										{#if run.selected_entry_ids?.length}
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-												Entries {run.selected_entry_ids
-													.slice(0, 6)
-													.map((id) => `#${id}`)
-													.join(', ')}
-											</p>
-										{/if}
-										{#if run.progress}
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-												{run.progress.processed ?? 0}/{run.progress.total ?? 0} processed
-											</p>
-										{/if}
-									</div>
-									<Badge variant={run.status === 'completed' ? 'success' : 'neutral'}
-										>{run.status}</Badge
-									>
-								</div>
-								{#if canStartHistoricalRun(run)}
-									<div class="sf:mt-3">
-										<Button
-											size="sm"
-											variant="secondary"
-											onclick={() => startRun(run)}
-											disabled={runningId === run.id}
-										>
-											{runningId === run.id
-												? 'Updating...'
-												: run.dry_run
-													? 'Run confirmed'
-													: 'Start'}
-										</Button>
-									</div>
-								{/if}
-							</div>
-						{:else}
-							<p class="sf:text-sm sf:text-slate-500">No historical runs yet.</p>
-						{/each}
-					</div>
-				</Card>
-			</div>
+			{/if}
 		{/if}
-	{/if}
 
-	<DetailSheet
-		entry={selectedEntryDetail}
-		onClose={closeEntryDetail}
-		onOpenCorrection={openCorrection}
-		onGenerateReply={generateManualSuggestedReply}
-		generatingReply={generatingManualReply}
-	/>
-	<CorrectionModal
-		entry={correctionEntry}
-		grade={correctionGrade}
-		justification={correctionJustification}
-		{correcting}
-		onClose={() => (correctionEntry = null)}
-		onSave={correctSelectedEntry}
-		onGradeChange={(grade) => (correctionGrade = grade)}
-		onJustificationChange={(value) => (correctionJustification = value)}
-	/>
+		<DetailSheet
+			entry={selectedEntryDetail}
+			onClose={closeEntryDetail}
+			onOpenCorrection={openCorrection}
+			onGenerateReply={generateManualSuggestedReply}
+			generatingReply={generatingManualReply}
+		/>
+		<CorrectionModal
+			entry={correctionEntry}
+			grade={correctionGrade}
+			justification={correctionJustification}
+			{correcting}
+			onClose={() => (correctionEntry = null)}
+			onSave={correctSelectedEntry}
+			onGradeChange={(grade) => (correctionGrade = grade)}
+			onJustificationChange={(value) => (correctionJustification = value)}
+		/>
 	</Section>
 {/if}

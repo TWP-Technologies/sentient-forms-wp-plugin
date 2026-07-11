@@ -5,8 +5,7 @@ import { mockWpJson } from './utils/mock-wpjson';
 
 test.describe('Custom actions admin view', () => {
 	test.beforeEach(async ({ page }) => {
-		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+		await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 	});
 
 	test('keeps Custom Action save controls visible while editing a long form', async ({ page }) => {
@@ -29,14 +28,11 @@ test.describe('Custom actions admin view', () => {
 			},
 			customActions: {
 				list: {
-					success: true,
-					data: {
-						actions: [],
-						quota: {
-							quota_max: 5,
-							quota_used: 0,
-							quota_remaining: 5
-						}
+					actions: [],
+					quota: {
+						quota_max: 5,
+						quota_used: 0,
+						quota_remaining: 5
 					}
 				}
 			},
@@ -67,9 +63,7 @@ test.describe('Custom actions admin view', () => {
 		await body.evaluate((element) => {
 			element.scrollTop = element.scrollHeight;
 		});
-		await expect
-			.poll(() => body.evaluate((element) => element.scrollTop))
-			.toBeGreaterThan(0);
+		await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 		await expect(footer).toBeVisible();
 		await expect(footer).toHaveCSS('position', 'sticky');
 		await expect(footer.getByRole('button', { name: 'Create Action' })).toBeInViewport();
@@ -161,26 +155,23 @@ test.describe('Custom actions admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							supports_custom_actions: true,
-							cps_version: '1.2.0'
-						}
+						supports_custom_actions: true,
+						cps_version: '1.2.0'
 					})
 				});
 			}
 
 			if (url.endsWith('/settings')) {
 				if (method === 'PUT') {
-					Object.assign(settingsState, route.request().postDataJSON() as Partial<typeof settingsState>);
+					Object.assign(
+						settingsState,
+						route.request().postDataJSON() as Partial<typeof settingsState>
+					);
 				}
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({
-						success: true,
-						data: settingsState
-					})
+					body: JSON.stringify(settingsState)
 				});
 			}
 
@@ -208,10 +199,7 @@ test.describe('Custom actions admin view', () => {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({
-						success: true,
-						data: providerCredentials
-					})
+					body: JSON.stringify(providerCredentials)
 				});
 			}
 
@@ -220,193 +208,189 @@ test.describe('Custom actions admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							models: [
-								{
-									id: 'openai/gpt-5.5',
-									display_name: 'OpenAI: GPT-5.5',
-									provider: 'openrouter',
-									speed_tier: 'balanced',
-									cost_tier: 'medium',
-									category_rankings: {
-										legal: 1,
-										finance: 1,
-										programming: 3
-									},
-									capabilities: {
-										reasoning: true,
-										code: false,
-										vision: true,
-										tools: true,
-										structured: true,
+						models: [
+							{
+								id: 'openai/gpt-5.5',
+								display_name: 'OpenAI: GPT-5.5',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								category_rankings: {
+									legal: 1,
+									finance: 1,
+									programming: 3
+								},
+								capabilities: {
+									reasoning: true,
+									code: false,
+									vision: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									server_tools: {
 										web_search: true,
-										server_tools: {
-											web_search: true,
-											web_fetch: false,
-											datetime: true
-										},
-										long_context: true
+										web_fetch: false,
+										datetime: true
 									},
-									context_window: 400000,
-									is_preview: false,
-									tags: ['structured-output', 'reasoning'],
-									zdr_eligible: true,
-									zdr_source: 'openrouter_models_zdr_filter',
-									zdr_checked_at: '2026-06-22T22:00:00Z',
-									recommended_for: ['General purpose']
+									long_context: true
 								},
-								{
-									id: 'deepseek/deepseek-r1-0528',
-									display_name: 'DeepSeek: R1 0528',
-									provider: 'openrouter',
-									speed_tier: 'balanced',
-									cost_tier: 'low',
-									category_rankings: {
-										programming: 1,
-										science: 2,
-										technology: 3
-									},
-									capabilities: {
-										reasoning: true,
-										code: true,
-										vision: false,
-										tools: true,
-										structured: true,
-										web_search: false,
-										long_context: true
-									},
-									context_window: 128000,
-									is_preview: false,
-									tags: ['coding', 'reasoning'],
-									zdr_eligible: true,
-									zdr_source: 'openrouter_models_zdr_filter',
-									zdr_checked_at: '2026-06-22T22:00:00Z',
-									recommended_for: ['Programming', 'Science']
+								context_window: 400000,
+								is_preview: false,
+								tags: ['structured-output', 'reasoning'],
+								zdr_eligible: true,
+								zdr_source: 'openrouter_models_zdr_filter',
+								zdr_checked_at: '2026-06-22T22:00:00Z',
+								recommended_for: ['General purpose']
+							},
+							{
+								id: 'deepseek/deepseek-r1-0528',
+								display_name: 'DeepSeek: R1 0528',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'low',
+								category_rankings: {
+									programming: 1,
+									science: 2,
+									technology: 3
 								},
-								{
-									id: 'openrouter/free',
-									display_name: 'OpenRouter Free Models Router',
-									provider: 'openrouter',
-									speed_tier: 'fast',
-									cost_tier: 'free',
-									category_rankings: {
-										programming: 20,
-										trivia: 8
-									},
-									capabilities: {
-										reasoning: true,
-										code: false,
-										vision: true,
-										tools: true,
-										structured: true,
-										web_search: false,
-										long_context: true
-									},
-									context_window: 200000,
-									is_preview: false,
-									tags: ['free', 'structured-output'],
-									recommended_for: ['Free testing']
+								capabilities: {
+									reasoning: true,
+									code: true,
+									vision: false,
+									tools: true,
+									structured: true,
+									web_search: false,
+									long_context: true
 								},
-								{
-									id: 'openai/gpt-oss-20b:free',
-									display_name: 'OpenAI GPT OSS 20B Free',
-									provider: 'openrouter',
-									speed_tier: 'fast',
-									cost_tier: 'free',
-									category_rankings: {
-										programming: 2
-									},
-									capabilities: {
-										reasoning: false,
-										code: false,
-										vision: false,
-										tools: false,
-										structured: false,
-										web_search: false,
-										long_context: true
-									},
-									context_window: 131072,
-									is_preview: false,
-									tags: ['free'],
-									zdr_eligible: true,
-									zdr_source: 'openrouter_models_zdr_filter',
-									zdr_checked_at: '2026-06-22T22:00:00Z',
-									recommended_for: ['Cheap smoke tests']
-								}
-							],
-							presets: [
-								{
-									code: 'sf_default',
-									display_name: 'Recommended',
-									description: 'Recommended paid model.',
-									category: 'local',
-									resolved_model_id: 'openai/gpt-5.5',
-									auto_upgrade: true,
-									rationale:
-										'Default favors broad benchmark strength, structured/tool support, and production-stable paid routing.',
-									score: 92,
-									evidence_confidence: 'high',
-									evaluated_at: '2026-05-01',
-									score_breakdown: { category_fit: 93, operations: 86, availability: 95 },
-									top_candidates: [
-										{
-											model_id: 'openai/gpt-5.5',
-											score: 92,
-											notes: 'Best broad default among current cached paid candidates.'
-										}
-									],
-									source_urls: [
-										'https://artificialanalysis.ai/models',
-										'https://openrouter.ai/models'
-									]
+								context_window: 128000,
+								is_preview: false,
+								tags: ['coding', 'reasoning'],
+								zdr_eligible: true,
+								zdr_source: 'openrouter_models_zdr_filter',
+								zdr_checked_at: '2026-06-22T22:00:00Z',
+								recommended_for: ['Programming', 'Science']
+							},
+							{
+								id: 'openrouter/free',
+								display_name: 'OpenRouter Free Models Router',
+								provider: 'openrouter',
+								speed_tier: 'fast',
+								cost_tier: 'free',
+								category_rankings: {
+									programming: 20,
+									trivia: 8
 								},
-								{
-									code: 'sf_long_context',
-									display_name: 'Long context',
-									description:
-										'Prefers models with benchmark-backed long-document reasoning, not just the largest advertised context window.',
-									category: 'local',
-									resolved_model_id: 'openai/gpt-5.5',
-									auto_upgrade: true,
-									rationale:
-										'Long context prioritizes effective long-document reasoning and context-rot resistance.',
-									score: 93,
-									evidence_confidence: 'high',
-									evaluated_at: '2026-05-01',
-									score_breakdown: { category_fit: 95, operations: 82, availability: 94 },
-									top_candidates: [
-										{
-											model_id: 'openai/gpt-5.5',
-											score: 93,
-											notes: 'AA-LCR leader among current selector candidates.'
-										}
-									],
-									source_urls: [
-										'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
-										'https://llm-stats.com/leaderboards/best-ai-for-long-context'
-									]
+								capabilities: {
+									reasoning: true,
+									code: false,
+									vision: true,
+									tools: true,
+									structured: true,
+									web_search: false,
+									long_context: true
 								},
-								{
-									code: 'sf_free',
-									display_name: 'Free model',
-									description: 'Free workflow proof.',
-									category: 'local',
-									resolved_model_id: 'openrouter/free',
-									auto_upgrade: true
+								context_window: 200000,
+								is_preview: false,
+								tags: ['free', 'structured-output'],
+								recommended_for: ['Free testing']
+							},
+							{
+								id: 'openai/gpt-oss-20b:free',
+								display_name: 'OpenAI GPT OSS 20B Free',
+								provider: 'openrouter',
+								speed_tier: 'fast',
+								cost_tier: 'free',
+								category_rankings: {
+									programming: 2
 								},
-								...Array.from({ length: 12 }, (_, index) => ({
-									code: `sf_extra_${index}`,
-									display_name: `Specialized preset ${index + 1}`,
-									description: `Scrollable recommended preset ${index + 1}.`,
-									category: 'local',
-									resolved_model_id:
-										index % 2 === 0 ? 'openai/gpt-5.5' : 'deepseek/deepseek-r1-0528',
-									auto_upgrade: true
-								}))
-							],
-							pricing_policy_version: 'mock'
-						}
+								capabilities: {
+									reasoning: false,
+									code: false,
+									vision: false,
+									tools: false,
+									structured: false,
+									web_search: false,
+									long_context: true
+								},
+								context_window: 131072,
+								is_preview: false,
+								tags: ['free'],
+								zdr_eligible: true,
+								zdr_source: 'openrouter_models_zdr_filter',
+								zdr_checked_at: '2026-06-22T22:00:00Z',
+								recommended_for: ['Cheap smoke tests']
+							}
+						],
+						presets: [
+							{
+								code: 'sf_default',
+								display_name: 'Recommended',
+								description: 'Recommended paid model.',
+								category: 'local',
+								resolved_model_id: 'openai/gpt-5.5',
+								auto_upgrade: true,
+								rationale:
+									'Default favors broad benchmark strength, structured/tool support, and production-stable paid routing.',
+								score: 92,
+								evidence_confidence: 'high',
+								evaluated_at: '2026-05-01',
+								score_breakdown: { category_fit: 93, operations: 86, availability: 95 },
+								top_candidates: [
+									{
+										model_id: 'openai/gpt-5.5',
+										score: 92,
+										notes: 'Best broad default among current cached paid candidates.'
+									}
+								],
+								source_urls: [
+									'https://artificialanalysis.ai/models',
+									'https://openrouter.ai/models'
+								]
+							},
+							{
+								code: 'sf_long_context',
+								display_name: 'Long context',
+								description:
+									'Prefers models with benchmark-backed long-document reasoning, not just the largest advertised context window.',
+								category: 'local',
+								resolved_model_id: 'openai/gpt-5.5',
+								auto_upgrade: true,
+								rationale:
+									'Long context prioritizes effective long-document reasoning and context-rot resistance.',
+								score: 93,
+								evidence_confidence: 'high',
+								evaluated_at: '2026-05-01',
+								score_breakdown: { category_fit: 95, operations: 82, availability: 94 },
+								top_candidates: [
+									{
+										model_id: 'openai/gpt-5.5',
+										score: 93,
+										notes: 'AA-LCR leader among current selector candidates.'
+									}
+								],
+								source_urls: [
+									'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
+									'https://llm-stats.com/leaderboards/best-ai-for-long-context'
+								]
+							},
+							{
+								code: 'sf_free',
+								display_name: 'Free model',
+								description: 'Free workflow proof.',
+								category: 'local',
+								resolved_model_id: 'openrouter/free',
+								auto_upgrade: true
+							},
+							...Array.from({ length: 12 }, (_, index) => ({
+								code: `sf_extra_${index}`,
+								display_name: `Specialized preset ${index + 1}`,
+								description: `Scrollable recommended preset ${index + 1}.`,
+								category: 'local',
+								resolved_model_id: index % 2 === 0 ? 'openai/gpt-5.5' : 'deepseek/deepseek-r1-0528',
+								auto_upgrade: true
+							}))
+						],
+						pricing_policy_version: 'mock'
 					})
 				});
 			}
@@ -422,9 +406,8 @@ test.describe('Custom actions admin view', () => {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({
-						success: true,
-						data: url.endsWith('/models/resolve')
+					body: JSON.stringify(
+						url.endsWith('/models/resolve')
 							? {
 									model_id: resolvedModelId,
 									display_name: resolvedModelId,
@@ -470,7 +453,7 @@ test.describe('Custom actions admin view', () => {
 										estimate_source: 'baseline_profile'
 									}
 								}
-					})
+					)
 				});
 			}
 
@@ -805,18 +788,16 @@ test.describe('Custom actions admin view', () => {
 			}
 		}
 
-		const modelToolRects = await createForm
-			.getByTestId('model-tools-layout')
-			.evaluate((layout) =>
-				Array.from(layout.querySelectorAll<HTMLElement>('.sf-model-tools-select')).map((select) => {
-					const rect = select.getBoundingClientRect();
-					return {
-						left: rect.left,
-						right: rect.right,
-						width: rect.width
-					};
-				})
-			);
+		const modelToolRects = await createForm.getByTestId('model-tools-layout').evaluate((layout) =>
+			Array.from(layout.querySelectorAll<HTMLElement>('.sf-model-tools-select')).map((select) => {
+				const rect = select.getBoundingClientRect();
+				return {
+					left: rect.left,
+					right: rect.right,
+					width: rect.width
+				};
+			})
+		);
 		expect(modelToolRects).toHaveLength(4);
 		expect(Math.abs(modelToolRects[0].left - modelToolRects[2].left)).toBeLessThanOrEqual(2);
 		expect(Math.abs(modelToolRects[0].right - modelToolRects[2].right)).toBeLessThanOrEqual(2);
@@ -942,11 +923,8 @@ test.describe('Custom actions admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							supports_custom_actions: true,
-							cps_version: '1.2.0'
-						}
+						supports_custom_actions: true,
+						cps_version: '1.2.0'
 					})
 				});
 			}
@@ -998,11 +976,8 @@ test.describe('Custom actions admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							supports_custom_actions: true,
-							cps_version: '1.2.0'
-						}
+						supports_custom_actions: true,
+						cps_version: '1.2.0'
 					})
 				});
 			}

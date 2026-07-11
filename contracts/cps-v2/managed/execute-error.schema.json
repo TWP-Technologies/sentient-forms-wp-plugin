@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/managed/execute-error.schema.json",
+  "title": "Sentient Managed Execute Error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "error"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": false
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "privacy_route_failure": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema",
+                "policy_version",
+                "reason_code",
+                "selected_model"
+              ],
+              "properties": {
+                "schema": {
+                  "type": "string",
+                  "const": "sentient_forms_privacy_route_failure.v1"
+                },
+                "policy_version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason_code": {
+                  "type": "string",
+                  "const": "managed_zdr_route_unavailable"
+                },
+                "selected_model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 191
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "const": "managed_privacy_route_unavailable"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "required": [
+              "meta"
+            ],
+            "properties": {
+              "message": {
+                "const": "No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR."
+              },
+              "meta": {
+                "additionalProperties": false,
+                "properties": {
+                  "privacy_route_failure": true
+                },
+                "required": [
+                  "privacy_route_failure"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "error": {
+            "properties": {
+              "code": {
+                "not": {
+                  "const": "managed_privacy_route_unavailable"
+                }
+              }
+            },
+            "required": [
+              "code"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "properties": {
+              "meta": {
+                "not": {
+                  "required": [
+                    "privacy_route_failure"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

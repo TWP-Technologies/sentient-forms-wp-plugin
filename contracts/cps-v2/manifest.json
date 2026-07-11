@@ -1,0 +1,130 @@
+{
+  "contract_version": "v2",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v2/health",
+      "schemas": {
+        "success": "health/get-success.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/account/sites/activate",
+      "schemas": {
+        "request": "account/sites-activate-request.schema.json",
+        "success": "account/sites-activate-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/account/checkout/start",
+      "schemas": {
+        "request": "account/checkout-start-request.schema.json",
+        "success": "account/checkout-start-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/account/checkout/complete",
+      "schemas": {
+        "request": "account/checkout-complete-request.schema.json",
+        "success": "account/checkout-complete-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/account/sites/deactivate",
+      "schemas": {
+        "request": "account/sites-deactivate-request.schema.json",
+        "success": "account/sites-deactivate-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/account/sites/{site_id}",
+      "request_transport": {
+        "kind": "path_parameters"
+      },
+      "schemas": {
+        "request": "account/site-get-params.schema.json",
+        "success": "account/site-get-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/billing/checkout/session",
+      "schemas": {
+        "request": "billing/checkout-session-request.schema.json",
+        "success": "billing/checkout-session-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/billing/checkout/top-up-session",
+      "schemas": {
+        "request": "billing/top-up-checkout-session-request.schema.json",
+        "success": "billing/top-up-checkout-session-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/billing/portal/session",
+      "schemas": {
+        "request": "billing/portal-session-request.schema.json",
+        "success": "billing/portal-session-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/billing/webhooks/stripe",
+      "request_transport": {
+        "kind": "raw_signed_body",
+        "media_type": "application/json",
+        "signature_header": "Stripe-Signature",
+        "json_schema": "intentionally_omitted"
+      },
+      "schemas": {
+        "success": "billing/webhook-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/billing/state",
+      "request_transport": {
+        "kind": "none"
+      },
+      "schemas": {
+        "success": "billing/state-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v2/managed/execute",
+      "schemas": {
+        "request": "managed/execute-request.schema.json",
+        "success": "managed/execute-success.schema.json",
+        "error": "managed/execute-error.schema.json"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v2/metering/summary",
+      "schemas": {
+        "request": "metering/summary-query.schema.json",
+        "success": "metering/summary-success.schema.json",
+        "error": "common/error.schema.json"
+      }
+    }
+  ]
+}

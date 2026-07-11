@@ -651,6 +651,11 @@
 		}
 	}
 
+	function retryManagedCheckout(reference: ManagedCheckoutReference | null): void {
+		if (!reference) return;
+		void completeManagedCheckout(reference);
+	}
+
 	async function handleActivate(event: SubmitEvent) {
 		event.preventDefault();
 		issues = [];
@@ -723,7 +728,7 @@
 					success_url: managedCheckoutReturnUrl(),
 					cancel_url: managedCheckoutReturnUrl(),
 					disclosure_version: MANAGED_DISCLOSURE_VERSION,
-					accepted_managed_service_terms: acceptedManagedCheckoutDisclosure
+					accepted_managed_service_terms: true
 				},
 				{ showNotifications: false }
 			);
@@ -845,7 +850,7 @@
 							actionLabel={managedCheckoutReference ? 'Check again' : null}
 							onAction={managedCheckoutReference
 								? () => {
-										void completeManagedCheckout(managedCheckoutReference);
+										retryManagedCheckout(managedCheckoutReference);
 									}
 								: null}
 							inline
@@ -1231,7 +1236,7 @@
 						message={billingError.message}
 						actionLabel={billingError.actionLabel}
 						onAction={() => {
-							void billingError.retry();
+							void billingError?.retry();
 						}}
 						inline
 						testId="licensing-billing-error-state"

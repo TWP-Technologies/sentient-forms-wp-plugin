@@ -1,7 +1,12 @@
 import { writable } from 'svelte/store';
-import { createClientFromConfig, type AsyncSettingsPayload, type SentientFormsApiClient } from '$lib/api/client';
+import {
+	createClientFromConfig,
+	type AsyncSettingsPayload,
+	type SentientFormsApiClient
+} from '$lib/api/client';
 import type { AsyncSettingsResponse } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export interface AsyncSettingsState {
 	loading: boolean;
@@ -14,8 +19,7 @@ export interface AsyncSettingsState {
 	lastError: string | null;
 }
 
-const runtime =
-	typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.asyncSettings;
+const runtime = readRuntimeConfigSafely()?.asyncSettings;
 
 const initialState: AsyncSettingsState = {
 	loading: false,
@@ -41,7 +45,9 @@ function mapResponse(payload: AsyncSettingsResponse): AsyncSettingsState {
 	};
 }
 
-export function createAsyncSettingsStore(client: SentientFormsApiClient = createClientFromConfig()) {
+export function createAsyncSettingsStore(
+	client: SentientFormsApiClient = createClientFromConfig()
+) {
 	const { subscribe, set, update } = writable<AsyncSettingsState>({ ...initialState });
 
 	return {

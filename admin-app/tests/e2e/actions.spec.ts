@@ -39,7 +39,12 @@ const baseCustomActions = [
 		base_credit_cost: 1,
 		archived_at: null,
 		created_at: '2025-11-20T00:00:00Z',
-		updated_at: '2025-11-20T00:00:00Z'
+		updated_at: '2025-11-20T00:00:00Z',
+		action_kind: 'template_override',
+		definition: null,
+		definition_version: 1,
+		output_contract: null,
+		supported_execution_modes: ['after_submission']
 	}
 ];
 
@@ -405,7 +410,9 @@ function trackSentientRestRequests(page: Page): string[] {
 			const restIndex = url.pathname.indexOf(restPrefix);
 
 			if (restIndex >= 0) {
-				requests.push(`${request.method()} ${url.pathname.slice(restIndex + restPrefix.length)}${url.search}`);
+				requests.push(
+					`${request.method()} ${url.pathname.slice(restIndex + restPrefix.length)}${url.search}`
+				);
 			}
 		} catch {
 			// Ignore non-URL request records emitted by the browser driver.
@@ -706,7 +713,10 @@ async function connectHandlesAndAssert(
 		) {
 			const clickedHandles = await connectHandlesByClick(page, sourceSelector, targetSelector);
 			if (clickedHandles) {
-				outcome = await waitForConnectionOutcome(page, outcome.feedbackText || baselineFeedbackText);
+				outcome = await waitForConnectionOutcome(
+					page,
+					outcome.feedbackText || baselineFeedbackText
+				);
 			}
 		}
 		const { dirtyVisible, feedbackVisible, feedbackText } = outcome;
@@ -850,11 +860,7 @@ test.describe('Actions admin flows', () => {
 			license: {
 				status: 'active',
 				proxyKeyPresent: true,
-				tier: {
-					code: 'pro',
-					display_name: 'Pro',
-					monthly_credit_quota: 1000
-				},
+				tier: 'pro',
 				lastSynced: '2030-01-05T10:00:00Z',
 				licenseId: 'lic-1',
 				siteId: 'site-1'
@@ -950,20 +956,17 @@ test.describe('Actions admin flows', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						form_source: formSource,
-						forms: baseForms.map((form) => ({
-							...form,
-							actions: baseLinkages,
-							action_count: baseLinkages.length,
-							enabled_action_count: baseLinkages.filter(
-								(linkage) => linkage.is_action_enabled_for_form
-							).length,
-							execution_status: statusUnknown
-						})),
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+					form_source: formSource,
+					forms: baseForms.map((form) => ({
+						...form,
+						actions: baseLinkages,
+						action_count: baseLinkages.length,
+						enabled_action_count: baseLinkages.filter(
+							(linkage) => linkage.is_action_enabled_for_form
+						).length,
+						execution_status: statusUnknown
+					})),
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 			});
 		});
@@ -976,11 +979,8 @@ test.describe('Actions admin flows', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						defaults: Object.fromEntries(ids.map((id) => [id, {}])),
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+					defaults: Object.fromEntries(ids.map((id) => [id, {}])),
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 			});
 		});
@@ -1003,14 +1003,17 @@ test.describe('Actions admin flows', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/*/actions/status', (route) => {
-			legacyStatusRequests += 1;
-			return route.fulfill({
-				status: 418,
-				contentType: 'application/json',
-				body: JSON.stringify({ message: 'overview should not fetch per-form status' })
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/gravity_forms/forms/*/actions/status',
+			(route) => {
+				legacyStatusRequests += 1;
+				return route.fulfill({
+					status: 418,
+					contentType: 'application/json',
+					body: JSON.stringify({ message: 'overview should not fetch per-form status' })
+				});
+			}
+		);
 
 		const sentientRequests = trackSentientRestRequests(page);
 		await page.goto('/#/actions', { waitUntil: 'networkidle' });
@@ -1103,7 +1106,9 @@ test.describe('Actions admin flows', () => {
 		await expect(providerLabel).toBeVisible();
 		const providerStatus = providerLabel.locator('../..');
 		await expect(providerStatus).toContainText('Not installed');
-		await expect(providerStatus).toContainText('Install Elementor and Elementor Pro to enable Elementor Pro Forms.');
+		await expect(providerStatus).toContainText(
+			'Install Elementor and Elementor Pro to enable Elementor Pro Forms.'
+		);
 		await expect(providerStatus).not.toContainText('Requires Pro');
 		await expect(providerStatus).not.toContainText('Running');
 	});
@@ -1168,45 +1173,42 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					contentType: 'application/json',
 					body: JSON.stringify({
-						success: true,
-						data: {
-							form_source: formSource,
-							form_id: formId,
-							form: baseForms[0],
-							actions: baseLinkages,
-							execution_status: statusUnknown,
-							disabled_state: {
-								sf_disabled: false,
-								global_disabled: false,
-								provider_disabled: false,
-								effective_disabled: false
-							},
-							capabilities: {
-								supports_status: true,
-								supports_custom_actions: true,
-								supports_credits: true,
-								cps_version: 'test'
-							},
-							definitions: baseDefinitions,
-							custom_actions: { actions: baseCustomActions, quota },
-							provider_credentials: [limitedOpenRouterCredential],
-							form_action_configs: { 'spam-check': {} },
-							form_fields: baseFormFields,
-							action_defaults: { 'spam-check': {}, summarize: {}, hello: {} },
-							workflow_plan: {
-								authority: 'local',
-								authority_reason: 'test_fixture',
-								cps_unreachable: false,
-								policy_version: '2026-02-mixed-sync-async-v1',
-								hook_scope: 'all',
-								available_hooks: ['gform_validation'],
-								nodes: [],
-								edges: [],
-								hooks: [],
-								policy_violations: []
-							},
-							generated_at: '2030-01-05T10:00:00Z'
-						}
+						form_source: formSource,
+						form_id: formId,
+						form: baseForms[0],
+						actions: baseLinkages,
+						execution_status: statusUnknown,
+						disabled_state: {
+							sf_disabled: false,
+							global_disabled: false,
+							provider_disabled: false,
+							effective_disabled: false
+						},
+						capabilities: {
+							supports_status: true,
+							supports_custom_actions: true,
+							supports_credits: true,
+							cps_version: 'test'
+						},
+						definitions: baseDefinitions,
+						custom_actions: { actions: baseCustomActions, quota },
+						provider_credentials: [limitedOpenRouterCredential],
+						form_action_configs: { 'spam-check': {} },
+						form_fields: baseFormFields,
+						action_defaults: { 'spam-check': {}, summarize: {}, hello: {} },
+						workflow_plan: {
+							authority: 'local',
+							authority_reason: 'test_fixture',
+							cps_unreachable: false,
+							policy_version: '2026-02-mixed-sync-async-v1',
+							hook_scope: 'all',
+							available_hooks: ['gform_validation'],
+							nodes: [],
+							edges: [],
+							hooks: [],
+							policy_violations: []
+						},
+						generated_at: '2030-01-05T10:00:00Z'
 					})
 				});
 			}
@@ -1220,11 +1222,8 @@ test.describe('Actions admin flows', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					success: true,
-					data: {
-						defaults: Object.fromEntries(ids.map((id) => [id, {}])),
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+					defaults: Object.fromEntries(ids.map((id) => [id, {}])),
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 			});
 		});
@@ -1246,22 +1245,28 @@ test.describe('Actions admin flows', () => {
 				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
 			});
 		});
-		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/status', (route) => {
-			legacyStatusRequests += 1;
-			return route.fulfill({
-				status: 418,
-				contentType: 'application/json',
-				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
-			});
-		});
-		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/disable', (route) => {
-			legacyDisableRequests += 1;
-			return route.fulfill({
-				status: 418,
-				contentType: 'application/json',
-				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/status',
+			(route) => {
+				legacyStatusRequests += 1;
+				return route.fulfill({
+					status: 418,
+					contentType: 'application/json',
+					body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
+				});
+			}
+		);
+		await page.route(
+			'**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/disable',
+			(route) => {
+				legacyDisableRequests += 1;
+				return route.fulfill({
+					status: 418,
+					contentType: 'application/json',
+					body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
+				});
+			}
+		);
 
 		const sentientRequests = trackSentientRestRequests(page);
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
@@ -1304,16 +1309,13 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					contentType: 'application/json',
 					body: JSON.stringify({
-						success: true,
-						data: {
-							status: 'running',
-							last_run_at: '2030-01-05T10:02:00Z',
-							last_error_code: null,
-							message: 'Execution is running.',
-							updated_at: '2030-01-05T10:02:00Z',
-							entry_id: 456,
-							last_result: null
-						}
+						status: 'unknown',
+						last_run_at: '2030-01-05T10:02:00Z',
+						last_error_code: null,
+						message: 'Execution is running.',
+						updated_at: '2030-01-05T10:02:00Z',
+						entry_id: 456,
+						last_result: null
 					})
 				});
 			}
@@ -2183,8 +2185,7 @@ test.describe('Actions admin flows', () => {
 					disabled_at: null,
 					disabled_by_user_id: null,
 					settings_source: 'sentient_submission_ledger_settings',
-					ledger_records_endpoint:
-						`/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
+					ledger_records_endpoint: `/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
 					record_count: 0
 				},
 				creditBalance
@@ -2260,8 +2261,7 @@ test.describe('Actions admin flows', () => {
 					disabled_at: null,
 					disabled_by_user_id: null,
 					settings_source: 'sentient_submission_ledger_settings',
-					ledger_records_endpoint:
-						`/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
+					ledger_records_endpoint: `/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
 					record_count: 0
 				},
 				creditBalance
@@ -2278,9 +2278,7 @@ test.describe('Actions admin flows', () => {
 				'Elementor Pro Forms APIs are available, but Elementor Form Submissions APIs are unavailable.'
 			)
 		).toBeVisible();
-		await expect(page.locator('header').getByRole('link', { name: 'Lead Scoring' })).toHaveCount(
-			0
-		);
+		await expect(page.locator('header').getByRole('link', { name: 'Lead Scoring' })).toHaveCount(0);
 	});
 
 	test('blocks direct Elementor Lead Scoring route while native submission parity is unproven', async ({
@@ -2986,7 +2984,6 @@ test.describe('Actions admin flows', () => {
 				settings: {
 					local_form_mapping_id: 91,
 					execution_mode: payload.execution_mode === 'sync' ? 'validation' : 'after_submission',
-					input_mapping: (payload.input_bindings_json as Record<string, unknown>) ?? {},
 					effect_mapping_json: (payload.effect_mapping_json as Record<string, unknown>) ?? {},
 					trigger_sources: {
 						[hook]: { type: 'hook_root' }
@@ -3246,9 +3243,7 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/actions/wpforms/88', { waitUntil: 'networkidle' });
 		await expect(page.getByTestId('form-context-band')).toContainText('WPForms');
-		await expect(page.getByTestId('form-context-provider-edit-link')).toHaveText(
-			'Open in WPForms'
-		);
+		await expect(page.getByTestId('form-context-provider-edit-link')).toHaveText('Open in WPForms');
 		await expect(page.getByTestId('submission-ledger-affordance')).toContainText(
 			'Required for parity'
 		);
@@ -3348,7 +3343,10 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByTestId('link-action-form')).toHaveCount(0);
 		await expect(page.locator('header').getByRole('switch').first()).toBeDisabled();
 
-		await page.getByTestId('action-definitions-card').getByText('Action defaults and library').click();
+		await page
+			.getByTestId('action-definitions-card')
+			.getByText('Action defaults and library')
+			.click();
 		const defaultButtons = page.getByTestId('action-definitions-card').getByRole('button', {
 			name: 'Defaults'
 		});
@@ -3472,7 +3470,8 @@ test.describe('Actions admin flows', () => {
 					disabled_at: null,
 					disabled_by_user_id: null,
 					settings_source: 'sentient_submission_ledger_settings',
-					ledger_records_endpoint: '/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions',
+					ledger_records_endpoint:
+						'/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions',
 					record_count: 0
 				},
 				creditBalance
@@ -3561,8 +3560,7 @@ test.describe('Actions admin flows', () => {
 					disabled_at: null,
 					disabled_by_user_id: null,
 					settings_source: 'sentient_submission_ledger_settings',
-					ledger_records_endpoint:
-						`/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
+					ledger_records_endpoint: `/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
 					record_count: 0
 				},
 				creditBalance
@@ -3601,10 +3599,7 @@ test.describe('Actions admin flows', () => {
 		page
 	}) => {
 		await mockWpJson(page, {});
-		const envelope = (data: unknown) => ({
-			success: true,
-			data
-		});
+		const directResponse = (data: unknown) => data;
 		let submissionRecordRequests = 0;
 
 		await page.route(
@@ -3614,7 +3609,7 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(
-						envelope({
+						directResponse({
 							form_source: 'elementor_pro_forms',
 							form_id: '91',
 							enabled: false,
@@ -3630,47 +3625,50 @@ test.describe('Actions admin flows', () => {
 					)
 				})
 		);
-		await page.route('**/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions**', (route) => {
-			submissionRecordRequests += 1;
+		await page.route(
+			'**/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions**',
+			(route) => {
+				submissionRecordRequests += 1;
 
-			return route.fulfill({
-				status: 200,
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(
-					envelope({
-						form_source: 'elementor_pro_forms',
-						form_id: '91',
-						submissions: [
-							{
-								id: 12,
-								submission_uuid: '66666666-7777-4888-9999-aaaaaaaaaaaa',
-								form_source: 'elementor_pro_forms',
-								form_id: '91',
-								native_entry_id: null,
-								native_entry_url: null,
-								source_submitted_at: null,
-								captured_at: '2026-06-24T22:41:00Z',
-								logical_fields: {
-									email: 'lead@example.test'
-								},
-								provider_metadata: {},
-								file_refs: [],
-								redaction_summary: {
-									redacted_keys: []
-								},
-								action_runs: [],
-								expires_at: null,
-								detail_endpoint:
-									'/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions/66666666-7777-4888-9999-aaaaaaaaaaaa'
-							}
-						],
-						count: 1,
-						per_page: 50,
-						offset: 0
-					})
-				)
-			});
-		});
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(
+						directResponse({
+							form_source: 'elementor_pro_forms',
+							form_id: '91',
+							submissions: [
+								{
+									id: 12,
+									submission_uuid: '66666666-7777-4888-9999-aaaaaaaaaaaa',
+									form_source: 'elementor_pro_forms',
+									form_id: '91',
+									native_entry_id: null,
+									native_entry_url: null,
+									source_submitted_at: null,
+									captured_at: '2026-06-24T22:41:00Z',
+									logical_fields: {
+										email: 'lead@example.test'
+									},
+									provider_metadata: {},
+									file_refs: [],
+									redaction_summary: {
+										redacted_keys: []
+									},
+									action_runs: [],
+									expires_at: null,
+									detail_endpoint:
+										'/wp-json/sentient-forms/v1/elementor_pro_forms/forms/91/submissions/66666666-7777-4888-9999-aaaaaaaaaaaa'
+								}
+							],
+							count: 1,
+							per_page: 50,
+							offset: 0
+						})
+					)
+				});
+			}
+		);
 
 		await page.goto('/actions/elementor_pro_forms/91/submissions', { waitUntil: 'networkidle' });
 
@@ -3702,10 +3700,7 @@ test.describe('Actions admin flows', () => {
 				formSourceDescriptors: { elementor_pro_forms: elementorFormsProLimitedDescriptor }
 			}
 		});
-		const envelope = (data: unknown) => ({
-			success: true,
-			data
-		});
+		const directResponse = (data: unknown) => data;
 
 		await page.route(
 			`**/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/ledger-settings`,
@@ -3714,7 +3709,7 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(
-						envelope({
+						directResponse({
 							form_source: 'elementor_pro_forms',
 							form_id: elementorFormId,
 							enabled: true,
@@ -3723,8 +3718,7 @@ test.describe('Actions admin flows', () => {
 							disabled_at: null,
 							disabled_by_user_id: null,
 							settings_source: 'sentient_submission_ledger_settings',
-							ledger_records_endpoint:
-								`/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
+							ledger_records_endpoint: `/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
 							record_count: 1
 						})
 					)
@@ -3737,7 +3731,7 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(
-						envelope({
+						directResponse({
 							form_source: 'elementor_pro_forms',
 							form_id: elementorFormId,
 							submissions: [
@@ -3828,10 +3822,7 @@ test.describe('Actions admin flows', () => {
 				formSourceDescriptors: { elementor_pro_forms: elementorFormsProLimitedDescriptor }
 			}
 		});
-		const envelope = (data: unknown) => ({
-			success: true,
-			data
-		});
+		const directResponse = (data: unknown) => data;
 
 		await page.route(
 			`**/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/ledger-settings`,
@@ -3840,7 +3831,7 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(
-						envelope({
+						directResponse({
 							form_source: 'elementor_pro_forms',
 							form_id: elementorFormId,
 							enabled: true,
@@ -3849,8 +3840,7 @@ test.describe('Actions admin flows', () => {
 							disabled_at: null,
 							disabled_by_user_id: null,
 							settings_source: 'sentient_submission_ledger_settings',
-							ledger_records_endpoint:
-								`/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
+							ledger_records_endpoint: `/wp-json/sentient-forms/v1/elementor_pro_forms/forms/${encodedElementorFormId}/submissions`,
 							record_count: 1
 						})
 					)
@@ -3863,7 +3853,7 @@ test.describe('Actions admin flows', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(
-						envelope({
+						directResponse({
 							form_source: 'elementor_pro_forms',
 							form_id: elementorFormId,
 							submissions: [
@@ -3941,10 +3931,7 @@ test.describe('Actions admin flows', () => {
 						model_hint: 'openrouter/auto'
 					}
 				],
-				providerPathPolicy: managedProviderPathPolicy([
-					'spam_detection_v1',
-					'entry_summary_v1'
-				]),
+				providerPathPolicy: managedProviderPathPolicy(['spam_detection_v1', 'entry_summary_v1']),
 				status: statusUnknown,
 				formsActions: [],
 				formFields: [
@@ -3963,7 +3950,10 @@ test.describe('Actions admin flows', () => {
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
 
-		await drawer.locator('label', { hasText: 'Entry Summary' }).locator('input[type="radio"]').check();
+		await drawer
+			.locator('label', { hasText: 'Entry Summary' })
+			.locator('input[type="radio"]')
+			.check();
 
 		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
 		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toHaveCount(0);
@@ -3973,8 +3963,7 @@ test.describe('Actions admin flows', () => {
 		const createRequestPromise = page.waitForRequest((request) => {
 			const url = new URL(request.url());
 			return (
-				request.method() === 'POST' &&
-				url.pathname.endsWith('/contact_form_7/forms/77/actions')
+				request.method() === 'POST' && url.pathname.endsWith('/contact_form_7/forms/77/actions')
 			);
 		});
 		const createResponsePromise = page.waitForResponse((response) => {
@@ -3994,8 +3983,8 @@ test.describe('Actions admin flows', () => {
 		expect(payload.trigger_hooks).toEqual(['after_submission']);
 		expect(settings.execution_mode).toBe('after_submission');
 		expect(
-			(settings.trigger_sources as Record<string, { type?: string }> | undefined)
-				?.after_submission?.type
+			(settings.trigger_sources as Record<string, { type?: string }> | undefined)?.after_submission
+				?.type
 		).toBe('hook_root');
 	});
 

@@ -957,9 +957,9 @@ class Sentient_Forms_Local_Data_Governance
     private static function format_export_item( array $row ): array
     {
         $result = json_decode( (string) ( $row['result_json'] ?? '' ), true );
-        if ( is_array( $result ) && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $row['provider'] ?? null ) )
+        if ( is_array( $result ) && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
         {
-            $result = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result );
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_local_currency_policy( $result, $row['provider'] ?? null );
         }
 
         return [

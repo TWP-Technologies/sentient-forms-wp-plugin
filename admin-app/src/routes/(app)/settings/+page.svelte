@@ -16,15 +16,17 @@
 		SiteContextStatusResponse
 	} from '$lib/api/types';
 	import { navigateToAppPath } from '$lib/navigation';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 	import InfoIcon from '@lucide/svelte/icons/info';
 	import { normalizeSiteContextResponse, siteContextStatusLabel } from '$lib/utils/site-context';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 
 	interface PrivacyPresetDefinition {
 		label: string;
 		executionEventRetentionDays: number;
+		submissionLedgerRetentionDays: number;
 		deleteDataOnUninstall: boolean;
 		storeFullAiOutputs: boolean;
 		enableLogging: boolean;
@@ -35,7 +37,7 @@
 	const asyncHealth = asyncHealthStore;
 	const logging = loggingStore;
 	const client = createClientFromConfig();
-	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+	const runtime = readRuntimeConfigSafely();
 	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
 
 	let formDirty = $state(false);
@@ -55,6 +57,7 @@
 	let managedZdrSaving = $state(false);
 	let settingsWriteInFlight = $derived(executionSaving || retentionSaving || managedZdrSaving);
 	let executionEventRetentionDays = $state(90);
+	let submissionLedgerRetentionDays = $state(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
 	let managedZdrRequired = $state(false);
@@ -78,6 +81,7 @@
 		balanced: {
 			label: 'Balanced',
 			executionEventRetentionDays: 90,
+			submissionLedgerRetentionDays: 90,
 			deleteDataOnUninstall: true,
 			storeFullAiOutputs: false,
 			enableLogging: false
@@ -85,6 +89,7 @@
 		privacy_focused: {
 			label: 'Privacy focused',
 			executionEventRetentionDays: 30,
+			submissionLedgerRetentionDays: 30,
 			deleteDataOnUninstall: true,
 			storeFullAiOutputs: false,
 			enableLogging: false
@@ -92,6 +97,7 @@
 		maximum_privacy: {
 			label: 'Maximum privacy',
 			executionEventRetentionDays: 7,
+			submissionLedgerRetentionDays: 7,
 			deleteDataOnUninstall: true,
 			storeFullAiOutputs: false,
 			enableLogging: false
@@ -99,6 +105,7 @@
 		maximum_visibility: {
 			label: 'Maximum visibility',
 			executionEventRetentionDays: 180,
+			submissionLedgerRetentionDays: 180,
 			deleteDataOnUninstall: true,
 			storeFullAiOutputs: true,
 			enableLogging: true
@@ -119,6 +126,30 @@
 		{ value: 180, label: '180 days' },
 		{ value: 0, label: 'Manual cleanup only' }
 	];
+
+	function getManualRetentionHelp(
+		executionRetentionDays: number,
+		ledgerRetentionDays: number
+	): string | null {
+		const executionIsManual = executionRetentionDays === 0;
+		const ledgerIsManual = ledgerRetentionDays === 0;
+
+		if (executionIsManual && ledgerIsManual) {
+			return 'Manual cleanup keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.';
+		}
+		if (executionIsManual) {
+			return 'Manual cleanup keeps new execution logs until an administrator removes them or changes this setting.';
+		}
+		if (ledgerIsManual) {
+			return 'Manual cleanup keeps new Submission Ledger records until an administrator removes them or changes this setting.';
+		}
+
+		return null;
+	}
+
+	let manualRetentionHelp = $derived(
+		getManualRetentionHelp(executionEventRetentionDays, submissionLedgerRetentionDays)
+	);
 
 	function isKnownPrivacyProfile(
 		profile: PluginSettingsResponse['privacy_setup_profile']
@@ -147,6 +178,7 @@
 	let privacyProfileCustomized = $derived(
 		null !== activePrivacyPreset &&
 			(activePrivacyPreset.executionEventRetentionDays !== executionEventRetentionDays ||
+				activePrivacyPreset.submissionLedgerRetentionDays !== submissionLedgerRetentionDays ||
 				activePrivacyPreset.deleteDataOnUninstall !== deleteDataOnUninstall ||
 				activePrivacyPreset.storeFullAiOutputs !== storeFullAiOutputs ||
 				activePrivacyPreset.enableLogging !== effectiveLoggingEnabled)
@@ -190,6 +222,12 @@
 			typeof settings.execution_event_retention_days === 'number'
 				? settings.execution_event_retention_days
 				: 90;
+		submissionLedgerRetentionDays =
+			typeof settings.submission_ledger_retention_days === 'number'
+				? settings.submission_ledger_retention_days
+				: isKnownPrivacyProfile(settings.privacy_setup_profile)
+					? privacyPresetDefinitions[settings.privacy_setup_profile].submissionLedgerRetentionDays
+					: 90;
 		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
 		managedZdrRequired = Boolean(settings.managed_zdr_required);
@@ -266,7 +304,9 @@
 				{ showNotifications: false }
 			);
 			syncManagedZdrSetting(settings);
-			notifications.success(nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled');
+			notifications.success(
+				nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled'
+			);
 		} catch {
 			managedZdrRequired = previous;
 			notifications.error('Unable to update managed ZDR enforcement');
@@ -336,6 +376,7 @@
 			const settings = await client.updateSettings(
 				{
 					execution_event_retention_days: executionEventRetentionDays,
+					submission_ledger_retention_days: submissionLedgerRetentionDays,
 					delete_data_on_uninstall: deleteDataOnUninstall,
 					store_full_ai_outputs: storeFullAiOutputs
 				},
@@ -423,9 +464,7 @@
 	async function loadSiteContextStatus(): Promise<void> {
 		siteContextLoading = true;
 		try {
-			siteContextStatus = normalizeSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
-			);
+			siteContextStatus = normalizeSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 		} catch (error) {
 			console.error('Failed to load Site Context status', error);
 			siteContextStatus = null;
@@ -446,7 +485,7 @@
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
-		>
+	>
 		{#if !governanceLoaded && executionLoading}
 			<StateTemplate
 				variant="loading"
@@ -524,7 +563,7 @@
 				</Button>
 			</div>
 
-			<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-4">
+			<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-5">
 				<div
 					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
 					data-testid="settings-profile-execution-history"
@@ -534,6 +573,17 @@
 						{executionEventRetentionDays === 0
 							? 'Manual cleanup only'
 							: `${executionEventRetentionDays} days`}
+					</p>
+				</div>
+				<div
+					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+					data-testid="settings-profile-submission-ledger"
+				>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Submission Ledger</p>
+					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+						{submissionLedgerRetentionDays === 0
+							? 'Manual cleanup only'
+							: `${submissionLedgerRetentionDays} days`}
 					</p>
 				</div>
 				<div
@@ -684,15 +734,18 @@
 		</div>
 	{/if}
 
-	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm">
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm"
+		data-testid="settings-local-diagnostics"
+	>
 		<div
 			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
 		>
 			<div>
-				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
+				<p class="sf:font-medium sf:text-slate-900">Allow local diagnostic events</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share metadata-only reliability events with Sentient Forms after this site has a
-					connected Sentient identity.
+					Consent allows metadata-only reliability events to be generated. Enable on-site logging
+					below to write them to the masked log. Nothing is sent off-site in this release.
 				</p>
 			</div>
 			<div class="sf:flex sf:items-center sf:gap-3">
@@ -705,7 +758,7 @@
 					onclick={() => (telemetryDetailsOpen = true)}
 				>
 					<InfoIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
-					<span>What&nbsp;is&nbsp;shared?</span>
+					<span>What&nbsp;is&nbsp;recorded?</span>
 				</Button>
 				<label class="sf:flex sf:items-center sf:gap-3">
 					<span class="sf:text-sm sf:font-semibold">{$telemetry.optIn ? 'On' : 'Off'}</span>
@@ -721,19 +774,16 @@
 		</div>
 
 		<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
-			{#if $telemetry.syncedAt}
-				<p>Synced {$telemetry.syncedAt}</p>
-			{/if}
-			{#if $telemetry.remoteUpdatedAt}
-				<p>Remote consent record updated {$telemetry.remoteUpdatedAt}</p>
+			{#if $telemetry.updatedAt}
+				<p>Preference saved {$telemetry.updatedAt}</p>
 			{/if}
 		</div>
 		{#if $telemetry.loading}
 			<div class="sf:mt-3">
 				<StateTemplate
 					variant="loading"
-					title="Loading telemetry settings"
-					message="Syncing the latest telemetry consent state."
+					title="Loading diagnostic preference"
+					message="Reading the local consent setting."
 					inline
 					dense
 					testId="settings-telemetry-loading-state"
@@ -743,7 +793,7 @@
 			<div class="sf:mt-3">
 				<StateTemplate
 					variant="error"
-					title="Telemetry sync issue"
+					title="Local diagnostic preference unavailable"
 					message={$telemetry.lastError}
 					actionLabel="Retry"
 					onAction={() => {
@@ -776,10 +826,11 @@
 				>
 					<div>
 						<p id="telemetry-details-title" class="sf:text-lg sf:font-semibold sf:text-slate-950">
-							Telemetry and data privacy
+							Local diagnostics and data privacy
 						</p>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							Telemetry is only queued after opt-in and Sentient site identity are both present.
+							Consent controls generation of local metadata-only diagnostic events. On-site logging
+							must also be enabled to write them to the masked log.
 						</p>
 					</div>
 					<Button
@@ -794,35 +845,35 @@
 
 				<div class="sf:grid sf:gap-4 sf:p-5 sf:md:grid-cols-2">
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4">
-						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What is shared</p>
+						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What is recorded locally</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Async job success or failure events, background processing warnings,
-							plugin/runtime versions, provider path, action code, execution request ID,
-							adapter, status, attempt counts, timing details, and sanitized error or warning
-							codes.
+							When consent and on-site logging are both enabled, the masked log may include async
+							job success or failure events, background processing warnings, plugin/runtime
+							versions, provider path, action code, execution request ID, adapter, status, attempt
+							counts, timing details, and sanitized error or warning codes. These events remain on
+							this WordPress site.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-danger-100 sf:bg-danger-50 sf:p-4">
-						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is not shared</p>
+						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is never recorded</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-danger-800">
-							Form field contents, prompts, model outputs, raw error messages, visitor
-							identifiers, API keys, saved provider secrets, and billing secrets are not sent
-							as telemetry.
+							Form field contents, prompts, model outputs, raw error messages, visitor identifiers,
+							API keys, saved provider secrets, and billing secrets are excluded from these events.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4">
-						<p class="sf:text-sm sf:font-semibold sf:text-primary-900">Why it helps</p>
+						<p class="sf:text-sm sf:font-semibold sf:text-primary-900">Why it helps locally</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-primary-800">
-							Operational telemetry helps identify reliability regressions, slow background
-							processing, and action execution issues that are hard to diagnose from one site.
+							Local diagnostic events help administrators investigate reliability regressions, slow
+							background processing, and action execution issues before sharing a support bundle.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">Your control</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Turn telemetry off here to stop new telemetry queueing. Local consent is saved
-							immediately; remote telemetry sync and delivery remain inactive until a Sentient
-							site identity exists.
+							Turn consent off to stop generating new events, or turn on-site logging off to stop
+							writing them to the masked log. Preferences are saved immediately. Nothing is sent
+							off-site in this release.
 						</p>
 					</div>
 				</div>
@@ -839,7 +890,8 @@
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable on-site logging</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Write masked diagnostic logs to <code>wp-content/uploads/sentient-forms/logs</code> for support.
+					When local diagnostic consent above is also on, write masked logs to
+					<code>wp-content/uploads/sentient-forms/logs</code> for support.
 				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
@@ -923,6 +975,24 @@
 					</select>
 				</label>
 
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Submission Ledger records</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
+						bind:value={submissionLedgerRetentionDays}
+						disabled={settingsWriteInFlight || executionLoading}
+						data-testid="settings-submission-ledger-retention"
+					>
+						{#each retentionOptions as option}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+					<span class="sf:text-xs sf:text-slate-500">
+						Applies to future captured submissions. Existing expiry dates do not move when this
+						changes.
+					</span>
+				</label>
+
 				<label
 					class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3"
 				>
@@ -990,10 +1060,11 @@
 				<Button type="submit" disabled={settingsWriteInFlight || executionLoading}>
 					{retentionSaving ? 'Saving…' : 'Save retention'}
 				</Button>
-				<p class="sf:text-xs sf:text-slate-500">
-					Manual cleanup only keeps new execution logs until an administrator removes them or
-					changes this setting.
-				</p>
+				{#if manualRetentionHelp}
+					<p class="sf:text-xs sf:text-slate-500" data-testid="settings-manual-retention-help">
+						{manualRetentionHelp}
+					</p>
+				{/if}
 			</div>
 		{/if}
 	</form>

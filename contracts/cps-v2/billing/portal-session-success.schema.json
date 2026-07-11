@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/portal-session-success.schema.json",
+  "title": "Sentient Billing Portal Session Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "portal_url",
+        "customer_id"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "portal_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "customer_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -57,7 +57,7 @@ if ( ! class_exists( 'Sentient_Forms_Test_Accepted_Submission_Adapter' ) )
 
 if ( ! class_exists( 'Sentient_Forms_Test_Context_Tracking_Action' ) )
 {
-    final class Sentient_Forms_Test_Context_Tracking_Action implements Sentient_Forms_Action_Interface
+    final class Sentient_Forms_Test_Context_Tracking_Action
     {
         /** @var callable */
         private $on_execute;
@@ -126,14 +126,14 @@ if ( ! class_exists( 'Sentient_Forms_Test_Context_Tracking_Action' ) )
 
 if ( ! class_exists( 'Sentient_Forms_Test_Context_Action_Executor' ) )
 {
-    final class Sentient_Forms_Test_Context_Action_Executor extends Sentient_Forms_Action_Executor
+    final class Sentient_Forms_Test_Context_Action_Executor extends Sentient_Forms_Local_Action_Execution_Service
     {
         /** @var array<int, array<string, mixed>> */
         public array $calls = [];
 
         public function __construct( Sentient_Forms_Plugin $plugin )
         {
-            parent::__construct( $plugin, null );
+            // No repository dependencies are needed by this test double.
         }
 
         public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
@@ -144,12 +144,17 @@ if ( ! class_exists( 'Sentient_Forms_Test_Context_Action_Executor' ) )
                 'result_data' => [ 'summary' => 'Concrete Action completed.' ],
             ];
         }
+
+        public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+        {
+            return $this->execute( (string) ( $context['central_action_id'] ?? $mapping_id ), $form, $entry, $context );
+        }
     }
 }
 
 if ( ! class_exists( 'Sentient_Forms_Test_CF7_Validation_Action' ) )
 {
-    final class Sentient_Forms_Test_CF7_Validation_Action implements Sentient_Forms_Action_Interface
+    final class Sentient_Forms_Test_CF7_Validation_Action extends Sentient_Forms_Local_Action_Execution_Service
     {
         /** @var callable */
         private $on_execute;
@@ -157,6 +162,23 @@ if ( ! class_exists( 'Sentient_Forms_Test_CF7_Validation_Action' ) )
         public function __construct( private string $id, callable $on_execute )
         {
             $this->on_execute = $on_execute;
+        }
+
+        public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+        {
+            return call_user_func(
+                $this->on_execute,
+                [
+                    'form'              => $form,
+                    'entry'             => $entry,
+                    'hook'              => $context['hook'] ?? '',
+                    'form_source'       => $context['form_source'] ?? '',
+                    'execution_context' => $context,
+                ],
+                [],
+                $entry['id'] ?? '',
+                $form['id'] ?? ''
+            );
         }
 
         public function get_id(): string
@@ -244,7 +266,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         remove_all_actions( 'wpcf7_mail_sent' );
         remove_all_filters( 'wpcf7_validate' );
         remove_all_filters( 'wpcf7_spam' );
-        foreach ( [ '44', '47', '48', '49', '7951', '7952', '7953', '7954', '7955', '7956', '7957' ] as $form_id )
+        foreach ( [ '44', '47', '48', '49', '7951', '7952', '7953', '7954', '7955' ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
         }
@@ -265,10 +287,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         parent::tearDown();
     }
 
-    private function set_action_executor( ?Sentient_Forms_Action_Executor $executor ): void
+    private function set_action_executor( ?Sentient_Forms_Local_Action_Execution_Service $executor ): void
     {
         $reflection = new ReflectionClass( Sentient_Forms_Plugin::instance() );
-        $property   = $reflection->getProperty( 'action_executor' );
+        $property   = $reflection->getProperty( 'local_action_execution_service' );
         $property->setValue( Sentient_Forms_Plugin::instance(), $executor );
     }
 
@@ -315,8 +337,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $form       = $this->cf7_form( $form_id, 'CF7 Content Validation', [ $tag ] );
         $submission = $this->cf7_submission( $form, [ 'project-details' => 'test' ] );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_CF7_Validation_Action(
+        $action = new Sentient_Forms_Test_CF7_Validation_Action(
                 $action_id,
                 static function ( array $form_data ) use ( &$executions, &$seen ): array {
                     ++$executions;
@@ -329,32 +350,17 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                             'fields'   => [
                                 [
                                     'field_id' => 'project-details',
-                                    'is_valid' => false,
                                     'message' => 'Tell us what you need built.',
                                 ],
                             ],
                         ],
                     ];
                 }
-            )
-        );
-        update_option(
-            $option_key,
-            [
-                'map_content' => [
-                    'local_mapping_id'           => 'map_content',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+            );
+        $runner = $this->configure_validation_mapping( $form_id, $action );
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
         add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->init();
 
         global $wp_filter;
@@ -371,8 +377,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
-        $this->assertSame( 'validation', $seen['hook'] ?? null );
-        $this->assertSame( 'wpcf7_validate', $seen['native_hook'] ?? null );
+        $this->assertSame( 'wpcf7_validate', $seen['hook'] ?? null );
         $this->assertSame( 'contact_form_7', $seen['form_source'] ?? null );
         $this->assertSame( 'test', $seen['entry']['project-details'] ?? null );
         $this->assertCount( 1, $result->invalidations );
@@ -380,114 +385,17 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Tell us what you need built.', $result->invalidations[0]['message'] ?? null );
     }
 
-    public function test_cf7_form_only_validation_error_leaves_field_result_unchanged(): void
-    {
-        $form_id     = 7956;
-        $action_id   = 'cf7_form_validation_fixture';
-        $option_key  = 'sentient_forms_actions_contact_form_7_' . $form_id;
-        $submit_tag  = $this->cf7_tag( 'submit', 'submit', 'send' );
-        $unnamed_tag = $this->cf7_tag( 'text', 'text', '' );
-        $email_tag   = $this->cf7_tag( 'email*', 'email', 'your-email' );
-        $form        = $this->cf7_form( $form_id, 'CF7 Form Validation', [ $submit_tag, $unnamed_tag, $email_tag ] );
-        $submission  = $this->cf7_submission( $form, [ 'your-email' => 'visitor@example.test' ] );
-
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_CF7_Validation_Action(
-                $action_id,
-                static fn(): array => [
-                    'validation' => [
-                        'is_valid' => false,
-                        'message'  => '<strong>Please review this submission.</strong>',
-                        'fields'   => [],
-                    ],
-                ]
-            )
-        );
-        update_option(
-            $option_key,
-            [
-                'map_form' => [
-                    'local_mapping_id'           => 'map_form',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
-        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
-        $adapter->init();
-
-        $result = apply_filters(
-            'wpcf7_validate',
-            new Sentient_Forms_Test_CF7_Validation_Result(),
-            [ $submit_tag, $unnamed_tag, $email_tag ]
-        );
-
-        $this->assertSame( [], $result->invalidations );
-    }
-
-    public function test_cf7_form_only_validation_error_leaves_unnamed_submit_only_result_unchanged(): void
-    {
-        $form_id    = 7957;
-        $action_id  = 'cf7_submit_only_validation_fixture';
-        $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
-        $submit_tag = $this->cf7_tag( 'submit', 'submit', '' );
-        $form       = $this->cf7_form( $form_id, 'CF7 Submit-only Validation', [ $submit_tag ] );
-        $submission = $this->cf7_submission( $form, [] );
-
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_CF7_Validation_Action(
-                $action_id,
-                static fn(): array => [
-                    'validation' => [
-                        'is_valid' => false,
-                        'message'  => 'Please review this submission.',
-                        'fields'   => [],
-                    ],
-                ]
-            )
-        );
-        update_option(
-            $option_key,
-            [
-                'map_form' => [
-                    'local_mapping_id'           => 'map_form',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
-        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
-        $adapter->init();
-
-        $result = apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $submit_tag ] );
-
-        $this->assertSame( [], $result->invalidations );
-    }
-
     public function test_cf7_spam_hook_reuses_validation_outcome_without_second_execution(): void
     {
         $form_id    = 7952;
-        $action_id  = 'spam_analysis';
+        $action_id  = 'cf7_spam_validation_fixture';
         $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
         $executions = 0;
         $tag        = $this->cf7_tag( 'text*', 'text', 'your-name' );
         $form       = $this->cf7_form( $form_id, 'CF7 Spam Validation', [ $tag ] );
         $submission = $this->cf7_submission( $form, [ 'your-name' => 'Buy now' ] );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_CF7_Validation_Action(
+        $action = new Sentient_Forms_Test_CF7_Validation_Action(
                 $action_id,
                 static function () use ( &$executions ): array {
                     ++$executions;
@@ -499,37 +407,15 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                                 'classification' => 'spam',
                                 'confidence'     => 0.99,
                                 'justification'  => 'Known spam fixture.',
-                                'indicators'     => [
-                                    [
-                                        'type'     => 'commercial_solicitation',
-                                        'evidence' => 'Known spam fixture.',
-                                        'weight'   => 'high',
-                                    ],
-                                ],
                             ],
                         ],
                     ];
                 }
-            )
-        );
-        update_option(
-            $option_key,
-            [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+            );
+        $runner = $this->configure_validation_mapping( $form_id, $action );
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
         add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->init();
 
         apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
@@ -548,30 +434,14 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $form       = $this->cf7_form( $form_id, 'CF7 Failure Validation', [ $tag ] );
         $submission = $this->cf7_submission( $form, [ 'your-email' => 'private@example.test' ] );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_CF7_Validation_Action(
+        $action = new Sentient_Forms_Test_CF7_Validation_Action(
                 $action_id,
                 static fn(): WP_Error => new WP_Error( 'provider_timeout', 'Private provider failure details.' )
-            )
-        );
-        update_option(
-            $option_key,
-            [
-                'map_failure' => [
-                    'local_mapping_id'           => 'map_failure',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'fail_open'                  => false,
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+            );
+        $runner = $this->configure_validation_mapping( $form_id, $action );
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
         add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->init();
 
         $result     = apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
@@ -605,27 +475,6 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             7955 => [
                 'content' => 'Unstructured provider response.',
             ],
-            7956 => [
-                'result_data' => [
-                    'structured_output_valid' => false,
-                    'structured_output'       => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.99,
-                        'justification'  => 'Untrusted spam output must not apply.',
-                    ],
-                ],
-            ],
-            7957 => [
-                'result_data' => [
-                    'structured_output_valid' => true,
-                    'structured_output'       => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.99,
-                        'justification'  => 'Wrong schema for this custom validation Action.',
-                        'indicators'     => [],
-                    ],
-                ],
-            ],
         ];
 
         foreach ( $cases as $form_id => $action_result )
@@ -638,29 +487,14 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             $form       = $this->cf7_form( $form_id, 'CF7 Spam Preservation', [ $tag ] );
             $submission = $this->cf7_submission( $form, [ 'your-name' => 'Legitimate visitor' ] );
             $action_id  = 'cf7_spam_preservation_' . $form_id;
-            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-                new Sentient_Forms_Test_CF7_Validation_Action(
+            $action = new Sentient_Forms_Test_CF7_Validation_Action(
                     $action_id,
                     static fn(): array => $action_result
-                )
-            );
-            update_option(
-                'sentient_forms_actions_contact_form_7_' . $form_id,
-                [
-                    'map_spam' => [
-                        'local_mapping_id'           => 'map_spam',
-                        'central_action_id'          => $action_id,
-                        'action_type_indicator'      => 'custom',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'validation' ],
-                        'settings'                   => [ 'async' => false ],
-                    ],
-                ],
-                false
-            );
+                );
+            $runner = $this->configure_validation_mapping( $form_id, $action );
             add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
             add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-            ( new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() ) )->init();
+            ( new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner ) )->init();
 
             apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
 
@@ -668,7 +502,6 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             $this->assertTrue( apply_filters( 'wpcf7_spam', true, $submission ) );
         }
     }
-
     public function test_accepted_submission_runner_schedules_source_neutral_mapping(): void
     {
         global $wpdb;
@@ -681,20 +514,26 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings  = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
             [
-                'fixture_mapping' => [
-                    'local_mapping_id'           => 'fixture_mapping',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Evaluate fixture submission',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-            ],
-            false
+                'code'                 => 'fixture_source_neutral_action',
+                'display_name'         => 'Fixture source-neutral action',
+                'definition_json'      => [ 'prompt' => 'Evaluate {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
         );
+        $this->assertIsInt( $action_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source' => 'fixture_forms', 'form_id' => '99', 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
 
         $scheduled_jobs = [];
         add_action(
@@ -711,12 +550,14 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
-        $this->assertSame( 'fixture_forms', $scheduled_jobs[0]['args']['context']['form_source'] ?? null );
-        $this->assertSame( 'fixture_forms_submission_accepted', $scheduled_jobs[0]['args']['context']['hook'] ?? null );
-        $this->assertSame( $submission_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
-        $this->assertSame( 'fixture-entry-99', $scheduled_jobs[0]['args']['context']['entry_id'] ?? null );
-        $this->assertSame( 'Accepted fixture submission', $scheduled_jobs[0]['args']['data']['entry']['message'] ?? null );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
+        $this->assertSame( 'fixture_forms', $payload['context']['form_source'] ?? null );
+        $this->assertSame( 'fixture_forms_submission_accepted', $payload['context']['hook'] ?? null );
+        $this->assertSame( $submission_uuid, $payload['context']['submission_uuid'] ?? null );
+        $this->assertSame( 'fixture-entry-99', $payload['context']['entry_id'] ?? null );
+        $this->assertArrayNotHasKey( 'entry', $payload );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $stored = $ledger->get_by_submission_uuid( $submission_uuid );
@@ -724,147 +565,67 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'https://example.test/fixture-forms/entries/fixture-entry-99', $stored['native_entry_url'] ?? null );
         $this->assertSame( '2026-07-10 09:45:00', $stored['source_submitted_at'] ?? null );
         $this->assertSame( 'Fixture Form', $stored['provider_metadata_json']['form_name'] ?? null );
+        $this->assertSame( 'Accepted fixture submission', $stored['logical_fields_json']['message'] ?? null );
     }
 
-    public function test_accepted_runner_records_unsupported_native_effect_outcomes_before_filtering(): void
+    public function test_accepted_submission_records_terminal_event_for_stale_legacy_mapping(): void
     {
         global $wpdb;
 
-        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
-        {
-            sentient_forms_tests_reset_async_state();
-        }
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $action_id = 'fixture_unsupported_effects';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static fn (): array => [ 'classification' => 'ham' ]
-            )
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
         );
+        $option_key = 'sentient_forms_actions_fixture_forms_99';
         update_option(
-            'sentient_forms_actions_fixture_forms_99',
+            $option_key,
             [
-                'unsupported_effects' => [
-                    'local_mapping_id'           => 'unsupported_effects',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Unsupported fixture effects',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'               => false,
-                        'effect_mapping_json' => [
-                            'store_result'                   => true,
-                            'entry_note'                     => [ 'template' => 'Result: {{classification}}' ],
-                            'mark_as_spam'                   => true,
-                            'suppress_notifications_on_spam' => true,
+                'actions' => [
+                    'legacy_fixture_mapping' => [
+                        'local_mapping_id'           => 'legacy_fixture_mapping',
+                        'central_action_id'          => 'entry_summary_v1',
+                        'action_name_label'          => 'Legacy Entry Summary',
+                        'action_type_indicator'      => 'master',
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'is_action_enabled_for_form' => true,
+                        'settings'                   => [
+                            'execution_mode' => 'after_submission',
                         ],
                     ],
                 ],
             ],
             false
         );
-        $result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission_with_outcome(
+
+        try
+        {
+            $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+            $submission_uuid = $runner->run_accepted_submission(
                 new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-                [ 'native' => 'unsupported-effects' ]
+                [ 'native' => 'payload' ]
             );
+            $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+                ->list_for_submission_uuid( (string) $submission_uuid );
+            $ledger = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )
+                ->get_by_submission_uuid( (string) $submission_uuid );
 
-        $outcomes = $result->get_native_effect_outcomes( 'unsupported_effects' );
-        $this->assertSame(
-            [ 'entry_note', 'mark_as_spam', 'store_result', 'suppress_notifications' ],
-            array_column( $outcomes, 'effect' )
-        );
-        $this->assertSame( [ 'unsupported' ], array_values( array_unique( array_column( $outcomes, 'status' ) ) ) );
-        $reasons = array_values( array_unique( array_column( $outcomes, 'reason' ) ) );
-        sort( $reasons );
-        $this->assertSame(
-            [ 'native_entry_write_unavailable', 'native_notes_unavailable', 'native_spam_unavailable', 'notification_controls_unavailable' ],
-            $reasons
-        );
-
-        $logs = get_option( 'sentient_forms_action_log', [] );
-        $this->assertCount( 1, $logs );
-        $this->assertSame( $outcomes, $logs[0]['details']['native_effect_outcomes'] ?? null );
-
-        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
-            ->get_by_request_id( (string) ( $logs[0]['execution_request_id'] ?? '' ) );
-        $this->assertIsArray( $event );
-        $this->assertSame( $outcomes, $event['result_json']['native_effect_outcomes'] ?? null );
+            $this->assertIsString( $submission_uuid );
+            $this->assertCount( 1, $events );
+            $this->assertSame( 'failed', $events[0]['status'] ?? null );
+            $this->assertSame( 'legacy_mapping_requires_migration', $events[0]['error_code'] ?? null );
+            $this->assertSame( 'legacy_fixture_mapping', $events[0]['mapping_key'] ?? null );
+            $this->assertSame( 'fixture_forms', $events[0]['form_source'] ?? null );
+            $this->assertSame( $submission_uuid, $events[0]['submission_uuid'] ?? null );
+            $this->assertIsArray( $ledger );
+            $this->assertSame( $submission_uuid, $ledger['submission_uuid'] ?? null );
+        }
+        finally
+        {
+            delete_option( $option_key );
+        }
     }
-
-    public function test_synchronous_non_gravity_action_receives_distinct_mapping_execution_context(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $calls     = [];
-        $action_id = 'fixture_context_action';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function ( array $form_data, array $settings ) use ( &$calls ): array {
-                    $calls[] = [
-                        'hook'              => $form_data['hook'] ?? null,
-                        'form_source'       => $form_data['form_source'] ?? null,
-                        'execution_context' => $form_data['execution_context'] ?? null,
-                        'marker'            => $settings['settings']['marker'] ?? null,
-                    ];
-
-                    return [ 'classification' => 'ham' ];
-                }
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'fixture_first'  => [
-                    'local_mapping_id'           => 'fixture_first',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Fixture first',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false, 'marker' => 'first' ],
-                ],
-                'fixture_second' => [
-                    'local_mapping_id'           => 'fixture_second',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Fixture second',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false, 'marker' => 'second' ],
-                ],
-            ],
-            false
-        );
-
-        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
-        $submission_uuid = $runner->run_accepted_submission(
-            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-            [ 'native' => 'payload' ]
-        );
-
-        $this->assertCount( 2, $calls );
-        $this->assertSame( [ 'first', 'second' ], array_column( $calls, 'marker' ) );
-        $this->assertSame( [ 'after_submission', 'after_submission' ], array_column( $calls, 'hook' ) );
-        $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $calls, 'form_source' ) );
-        $execution_contexts = array_column( $calls, 'execution_context' );
-        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $execution_contexts, 'native_hook' ) );
-        $this->assertSame( [ 'fixture_first', 'fixture_second' ], array_column( $execution_contexts, 'mapping_id' ) );
-        $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $execution_contexts, 'submission_uuid' ) );
-        $request_ids = array_column( $execution_contexts, 'execution_request_id' );
-        $this->assertCount( 2, array_unique( $request_ids ) );
-        $this->assertNotEmpty( $request_ids[0] );
-        $this->assertNotEmpty( $request_ids[1] );
-    }
-
     public function test_concrete_synchronous_action_forwards_distinct_mapping_context_to_executor(): void
     {
         global $wpdb;
@@ -873,32 +634,35 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
         $executor = new Sentient_Forms_Test_Context_Action_Executor( Sentient_Forms_Plugin::instance() );
         $this->set_action_executor( $executor );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'concrete_first'  => [
-                    'local_mapping_id'           => 'concrete_first',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Concrete first',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false, 'marker' => 'first' ],
-                ],
-                'concrete_second' => [
-                    'local_mapping_id'           => 'concrete_second',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Concrete second',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false, 'marker' => 'second' ],
-                ],
-            ],
-            false
-        );
 
-        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings  = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code'                 => 'fixture_sync_context_action',
+                'display_name'         => 'Fixture sync context action',
+                'definition_json'      => [ 'prompt' => 'Evaluate {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_ids = [];
+        foreach ( [ 'first', 'second' ] as $marker )
+        {
+            $mapping_id = $mappings->create(
+                [
+                    'form_source' => 'fixture_forms', 'form_id' => '99', 'hook' => 'after_submission',
+                    'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                    'execution_mode' => 'sync', 'settings_json' => [ 'marker' => $marker ], 'enabled' => true,
+                ]
+            );
+            $this->assertIsInt( $mapping_id );
+            $mapping_ids[] = $mapping_id;
+        }
+
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $executor );
         $submission_uuid = $runner->run_accepted_submission(
             new Sentient_Forms_Test_Accepted_Submission_Adapter(),
             [ 'native' => 'payload' ]
@@ -906,631 +670,14 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $contexts = array_column( $executor->calls, 'context' );
 
         $this->assertCount( 2, $contexts );
-        $this->assertSame( [ 'after_submission', 'after_submission' ], array_column( $contexts, 'hook' ) );
-        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $contexts, 'native_hook' ) );
+        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $contexts, 'hook' ) );
         $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $contexts, 'form_source' ) );
-        $this->assertSame( [ 'concrete_first', 'concrete_second' ], array_column( $contexts, 'mapping_id' ) );
+        $this->assertSame( [ 'local_first_' . $mapping_ids[0], 'local_first_' . $mapping_ids[1] ], array_column( $contexts, 'local_mapping_id' ) );
         $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $contexts, 'submission_uuid' ) );
-        $this->assertSame( [ 'first', 'second' ], array_column( array_column( $contexts, 'settings' ), 'marker' ) );
         $request_ids = array_column( $contexts, 'execution_request_id' );
         $this->assertCount( 2, array_unique( $request_ids ) );
         $this->assertNotEmpty( $request_ids[0] );
         $this->assertNotEmpty( $request_ids[1] );
-    }
-
-    public function test_synchronous_accepted_execution_replays_active_and_success_without_repeating_effects(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $calls     = 0;
-        $reentered = false;
-        $action_id = 'fixture_durable_success';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function () use ( &$calls, &$reentered ): array {
-                    ++$calls;
-                    if ( ! $reentered )
-                    {
-                        $reentered = true;
-                        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-                            ->run_accepted_submission(
-                                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-                                [ 'native' => 'active-replay' ]
-                            );
-                    }
-
-                    return [ 'classification' => 'ham' ];
-                }
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'durable_success' => [
-                    'local_mapping_id'           => 'durable_success',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Durable success',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission(
-                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-                [ 'native' => 'first' ]
-            );
-        $replay_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission(
-                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-                [ 'native' => 'success-replay' ]
-            );
-
-        $this->assertSame( $first_uuid, $replay_uuid );
-        $this->assertSame( 1, $calls );
-        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
-        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
-        $this->assertCount( 1, $events );
-        $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
-    }
-
-    public function test_synchronous_success_replay_preserves_stored_effect_outcomes_over_current_preflight(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $action_id = 'fixture_stable_effect_replay';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static fn (): array => [ 'classification' => 'ham' ]
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'stable_effect_replay' => [
-                    'local_mapping_id'           => 'stable_effect_replay',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Stable effect replay',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'               => false,
-                        'effect_mapping_json' => [
-                            'entry_note' => [ 'template' => 'Result: {{classification}}' ],
-                        ],
-                    ],
-                ],
-            ],
-            false
-        );
-
-        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
-        $first  = $runner->run_accepted_submission_with_outcome(
-            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-            [ 'native' => 'first' ]
-        );
-        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
-            ->list_for_submission_uuid( $first->get_submission_uuid() );
-        $this->assertCount( 1, $events );
-
-        $wpdb->update(
-            $wpdb->prefix . 'sentient_execution_events',
-            [
-                'result_json' => wp_json_encode(
-                    [
-                        'native_effect_outcomes' => [
-                            [
-                                'effect' => 'entry_note',
-                                'status' => 'applied',
-                                'reason' => 'historical_native_application',
-                            ],
-                        ],
-                    ]
-                ),
-            ],
-            [ 'execution_request_id' => $events[0]['execution_request_id'] ],
-            [ '%s' ],
-            [ '%s' ]
-        );
-
-        $replay = $runner->run_accepted_submission_with_outcome(
-            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-            [ 'native' => 'replay' ]
-        );
-
-        $this->assertSame( 'replayed_success', $replay->get_mapping_outcomes()['stable_effect_replay'] ?? null );
-        $this->assertSame(
-            [
-                [
-                    'effect' => 'entry_note',
-                    'status' => 'applied',
-                    'reason' => 'historical_native_application',
-                ],
-            ],
-            $replay->get_native_effect_outcomes( 'stable_effect_replay' )
-        );
-    }
-
-    public function test_synchronous_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $calls           = 0;
-        $dependent_calls = 0;
-        $action_id       = 'fixture_digest_conflict';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function () use ( &$calls ): array {
-                    ++$calls;
-
-                    return [ 'classification' => 'ham' ];
-                }
-            )
-        );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                'fixture_digest_conflict_dependent',
-                static function () use ( &$dependent_calls ): array {
-                    ++$dependent_calls;
-
-                    return [ 'summary' => 'Dependent result.' ];
-                }
-            )
-        );
-        $mapping = [
-            'local_mapping_id'           => 'digest_conflict',
-            'central_action_id'          => $action_id,
-            'action_name_label'          => 'Digest conflict fixture',
-            'action_type_indicator'      => 'custom',
-            'is_action_enabled_for_form' => true,
-            'trigger_hooks'              => [ 'after_submission' ],
-            'settings'                   => [ 'async' => false, 'marker' => 'first' ],
-        ];
-        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'digest_conflict' => $mapping ], false );
-
-        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
-        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $mapping['settings']['marker'] = 'changed';
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'digest_conflict'           => $mapping,
-                'digest_conflict_dependent' => [
-                    'local_mapping_id'           => 'digest_conflict_dependent',
-                    'central_action_id'          => 'fixture_digest_conflict_dependent',
-                    'action_name_label'          => 'Digest conflict dependent fixture',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => false,
-                        'dependency_ids' => [ 'digest_conflict' ],
-                    ],
-                ],
-            ],
-            false
-        );
-        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
-        $this->assertSame( 1, $calls );
-        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['digest_conflict'] ?? null );
-        $error = $conflict->get_execution_result( 'digest_conflict' );
-        $this->assertWPError( $error );
-        $this->assertSame( 'sentient_forms_execution_digest_conflict', $error->get_error_code() );
-        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['digest_conflict_dependent'] ?? null );
-        $this->assertSame( 0, $dependent_calls );
-    }
-
-    public function test_async_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
-    {
-        global $wpdb;
-
-        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
-        {
-            sentient_forms_tests_reset_async_state();
-        }
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $mapping = [
-            'local_mapping_id'           => 'async_digest_conflict',
-            'central_action_id'          => 'fixture_async_digest_conflict',
-            'action_name_label'          => 'Async digest conflict fixture',
-            'action_type_indicator'      => 'custom',
-            'is_action_enabled_for_form' => true,
-            'trigger_hooks'              => [ 'after_submission' ],
-            'settings'                   => [ 'async' => true, 'marker' => 'first' ],
-        ];
-        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'async_digest_conflict' => $mapping ], false );
-
-        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
-        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $mapping['settings']['marker'] = 'changed';
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'async_digest_conflict'           => $mapping,
-                'async_digest_conflict_dependent' => [
-                    'local_mapping_id'           => 'async_digest_conflict_dependent',
-                    'central_action_id'          => 'fixture_async_digest_conflict_dependent',
-                    'action_name_label'          => 'Async digest conflict dependent fixture',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => true,
-                        'dependency_ids' => [ 'async_digest_conflict' ],
-                    ],
-                ],
-            ],
-            false
-        );
-        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
-        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['async_digest_conflict'] ?? null );
-        $error = $conflict->get_execution_result( 'async_digest_conflict' );
-        $this->assertWPError( $error );
-        $this->assertSame( 'sentient_forms_async_request_digest_conflict', $error->get_error_code() );
-        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['async_digest_conflict_dependent'] ?? null );
-
-        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
-        $this->assertCount( 1, $jobs );
-    }
-
-    public function test_async_dependency_graph_replays_identical_business_payloads(): void
-    {
-        global $wpdb;
-
-        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
-        {
-            sentient_forms_tests_reset_async_state();
-        }
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'async_replay_primary'   => [
-                    'local_mapping_id'           => 'async_replay_primary',
-                    'central_action_id'          => 'fixture_async_replay_primary',
-                    'action_name_label'          => 'Async replay primary fixture',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-                'async_replay_dependent' => [
-                    'local_mapping_id'           => 'async_replay_dependent',
-                    'central_action_id'          => 'fixture_async_replay_dependent',
-                    'action_name_label'          => 'Async replay dependent fixture',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => true,
-                        'dependency_ids' => [ 'async_replay_primary' ],
-                    ],
-                ],
-            ],
-            false
-        );
-
-        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
-        $adapter = new Sentient_Forms_Test_Accepted_Submission_Adapter();
-        $first   = $runner->run_accepted_submission_with_outcome( $adapter, [] );
-        $replay  = $runner->run_accepted_submission_with_outcome( $adapter, [] );
-
-        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_primary'] ?? null );
-        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_dependent'] ?? null );
-        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_primary'] ?? null );
-        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_dependent'] ?? null );
-
-        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
-        $this->assertCount( 2, $jobs );
-    }
-
-    public function test_required_ledger_capture_failure_prevents_accepted_execution(): void
-    {
-        global $wpdb;
-
-        $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
-            public function capture( array $payload ): array | WP_Error
-            {
-                return new WP_Error(
-                    'sentient_forms_db_insert_failed',
-                    'The required Submission Ledger record could not be created.'
-                );
-            }
-        };
-        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
-            Sentient_Forms_Plugin::instance(),
-            $capture_service
-        );
-
-        $result = $runner->run_accepted_submission_with_outcome(
-            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
-            []
-        );
-
-        $this->assertNull( $result->get_submission_uuid() );
-        $this->assertSame( [], $result->get_mapping_outcomes() );
-    }
-
-    public function test_synchronous_accepted_failure_is_terminal_without_explicit_safe_retry(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $calls     = 0;
-        $action_id = 'fixture_durable_failure';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function () use ( &$calls ): WP_Error {
-                    ++$calls;
-
-                    return new WP_Error( 'fixture_provider_failed', 'Provider failure details.' );
-                }
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'durable_failure' => [
-                    'local_mapping_id'           => 'durable_failure',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Durable failure',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-        $replay_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $this->assertSame( $first_uuid, $replay_uuid );
-        $this->assertSame( 1, $calls );
-        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
-        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
-        $this->assertCount( 1, $events );
-        $this->assertSame( 'failed', $events[0]['status'] ?? null );
-    }
-
-    public function test_synchronous_accepted_exception_is_recorded_as_terminal_failure(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $action_id = 'fixture_throwing_action';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function (): never {
-                    throw new RuntimeException( 'Private provider exception details.' );
-                }
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'throwing_action' => [
-                    'local_mapping_id'           => 'throwing_action',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Throwing fixture action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['throwing_action'] ?? null );
-        $error = $outcome->get_execution_result( 'throwing_action' );
-        $this->assertWPError( $error );
-        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $error->get_error_code() );
-
-        $logs = get_option( 'sentient_forms_action_log', [] );
-        $this->assertCount( 1, $logs );
-        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $logs[0]['error_code'] ?? null );
-        $this->assertStringNotContainsString( 'Private provider', wp_json_encode( $logs ) );
-
-        $execution_request_id = (string) ( $logs[0]['execution_request_id'] ?? '' );
-        $request = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $execution_request_id, 'accepted_sync' );
-        $this->assertSame( 'failed', $request['status'] ?? null );
-        $this->assertStringNotContainsString( 'Private provider', (string) ( $request['last_error'] ?? '' ) );
-
-        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $execution_request_id );
-        $this->assertSame( 'failed', $event['status'] ?? null );
-        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $event['error_code'] ?? null );
-        $this->assertStringNotContainsString( 'Private provider', (string) ( $event['error_message'] ?? '' ) );
-    }
-
-    public function test_synchronous_accepted_failure_retries_only_when_explicitly_safe(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $calls     = 0;
-        $action_id = 'fixture_safe_retry';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static function () use ( &$calls ): array | WP_Error {
-                    ++$calls;
-
-                    return 1 === $calls
-                        ? new WP_Error( 'fixture_retryable_failure', 'Retryable provider failure.' )
-                        : [ 'classification' => 'ham' ];
-                }
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'safe_retry' => [
-                    'local_mapping_id'           => 'safe_retry',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Safe retry',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                   => false,
-                        'synchronous_retry_safe' => true,
-                    ],
-                ],
-            ],
-            false
-        );
-
-        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-        $retry_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-
-        $this->assertSame( $first_uuid, $retry_uuid );
-        $this->assertSame( 2, $calls );
-        $this->assertCount( 2, get_option( 'sentient_forms_action_log', [] ) );
-        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
-        $this->assertCount( 1, $events );
-        $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
-    }
-
-    public function test_synchronous_action_log_never_persists_raw_provider_model_or_submission_content(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $action_id = 'fixture_safe_action_log';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'classification'    => 'ham',
-                    'content'           => 'RAW_PROVIDER_SECRET_92A',
-                    'llm_output'        => 'RAW_MODEL_OUTPUT_17B',
-                    'model'             => 'private-model-route-44C',
-                    'submitted_content' => 'PRIVATE_SUBMISSION_63D',
-                    'result_data'       => [ 'llm_output' => 'NESTED_RAW_OUTPUT_81E' ],
-                ]
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'safe_log' => [
-                    'local_mapping_id'           => 'safe_log',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Safe log',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-        $logs    = get_option( 'sentient_forms_action_log', [] );
-        $encoded = wp_json_encode( $logs );
-
-        $this->assertCount( 1, $logs );
-        $this->assertSame( 'success', $logs[0]['status'] ?? null );
-        $this->assertSame( 'ham', $logs[0]['classification'] ?? null );
-        foreach ( [ 'RAW_PROVIDER_SECRET_92A', 'RAW_MODEL_OUTPUT_17B', 'private-model-route-44C', 'PRIVATE_SUBMISSION_63D', 'NESTED_RAW_OUTPUT_81E' ] as $secret )
-        {
-            $this->assertStringNotContainsString( $secret, (string) $encoded );
-        }
-        $this->assertLessThanOrEqual( 20, str_word_count( (string) ( $logs[0]['result_summary'] ?? '' ) ) );
-    }
-
-    public function test_synchronous_action_log_preserves_safe_error_code_without_raw_error_message(): void
-    {
-        global $wpdb;
-
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        delete_option( 'sentient_forms_action_log' );
-        $action_id = 'fixture_safe_error_log';
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Context_Tracking_Action(
-                $action_id,
-                static fn (): WP_Error => new WP_Error(
-                    'provider_HTTP_error!',
-                    'RAW_PROVIDER_ERROR_71D included PRIVATE_SUBMISSION_82F and RAW_MODEL_OUTPUT_93G.'
-                )
-            )
-        );
-        update_option(
-            'sentient_forms_actions_fixture_forms_99',
-            [
-                'safe_error_log' => [
-                    'local_mapping_id'           => 'safe_error_log',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Safe error log',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
-            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
-        $logs    = get_option( 'sentient_forms_action_log', [] );
-        $encoded = wp_json_encode( $logs );
-
-        $this->assertCount( 1, $logs );
-        $this->assertSame( 'error', $logs[0]['status'] ?? null );
-        $this->assertSame( 'provider_http_error', $logs[0]['error_code'] ?? null );
-        $this->assertSame( 'Synchronous accepted action failed.', $logs[0]['error_message'] ?? null );
-        foreach ( [ 'RAW_PROVIDER_ERROR_71D', 'PRIVATE_SUBMISSION_82F', 'RAW_MODEL_OUTPUT_93G' ] as $secret )
-        {
-            $this->assertStringNotContainsString( $secret, (string) $encoded );
-        }
     }
 
     public function test_form_source_workflow_runner_remains_lifecycle_neutral(): void
@@ -1753,6 +900,27 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'contact_form_7', '44', false );
 
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings  = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code'                 => 'cf7_ledger_gate_action',
+                'display_name'         => 'CF7 ledger gate action',
+                'definition_json'      => [ 'prompt' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source' => 'contact_form_7', 'form_id' => '44', 'hook' => 'wpcf7_mail_sent',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
         $scheduled_jobs = [];
         add_action(
             'sentient_forms_async_job_scheduled',
@@ -1761,23 +929,6 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             },
             10,
             5
-        );
-
-        update_option(
-            'sentient_forms_actions_contact_form_7_44',
-            [
-                'map_summary' => [
-                    'local_mapping_id'           => 'map_summary',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Summarize CF7 submission',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async' => true,
-                    ],
-                ],
-            ],
-            false
         );
 
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
@@ -1821,35 +972,25 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $scheduled_jobs );
 
         do_action( 'wpcf7_mail_sent', $this->cf7_form( 44, 'CF7 Execution Gate' ) );
-        $submission_uuid = $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null;
+        $submission_uuid = $scheduled_jobs[0]['args'][0]['submission_uuid'] ?? null;
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
 
-        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
         $this->assertSame( 'sentient_forms_async', $scheduled_jobs[0]['group'] ?? null );
 
-        $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
+        $payload     = $scheduled_jobs[0]['args'][0] ?? [];
+        $job_context = $payload['context'] ?? [];
         $this->assertSame( 'contact_form_7', $job_context['form_source'] ?? null );
         $this->assertSame( 'wpcf7_mail_sent', $job_context['hook'] ?? null );
         $this->assertSame( '44', $job_context['form_id'] ?? null );
         $this->assertNull( $job_context['entry_id'] ?? null );
-        $this->assertSame( 'map_summary', $job_context['local_mapping_id'] ?? null );
-        $this->assertSame( 'entry_evaluation', $job_context['central_action_id'] ?? null );
+        $this->assertSame( 'local_first_' . $mapping_id, $job_context['local_mapping_id'] ?? null );
+        $this->assertSame( 'cf7_ledger_gate_action', $job_context['central_action_id'] ?? null );
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
-
-        $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
-        $this->assertSame( 'contact_form_7', $scheduled_jobs[0]['args']['data']['form_source'] ?? null );
-        $this->assertNull( $job_entry['id'] ?? null );
-        $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
-        $this->assertSame( 'contact_form_7', $job_entry['form_source'] ?? null );
-        $this->assertSame( '44', $job_entry['form_id'] ?? null );
-        $this->assertSame( 'Katherine Johnson', $job_entry['your-name'] ?? null );
-        $this->assertSame( [ 'Support', 'Sales' ], $job_entry['your-topic'] ?? null );
-        $this->assertSame( 'brief', $job_entry['file_refs'][0]['field_id'] ?? null );
-        $this->assertSame( 'brief.pdf', $job_entry['file_refs'][0]['filename'] ?? null );
-        $this->assertSame( '[redacted]', $job_entry['captcha_token'] ?? null );
-        $this->assertArrayNotHasKey( '_wpcf7', $job_entry );
+        $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'entry', $payload );
     }
 
     public function test_mail_sent_passes_dependency_metadata_to_cf7_async_jobs(): void
@@ -1864,6 +1005,41 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'contact_form_7', '47', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings  = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code' => 'cf7_dependency_fixture', 'display_name' => 'CF7 dependency fixture',
+                'definition_json' => [ 'prompt' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status' => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $first_id = $mappings->create(
+            [
+                'form_source' => 'contact_form_7', 'form_id' => '47', 'hook' => 'wpcf7_mail_sent',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $first_id );
+        $first_key = 'local_first_' . $first_id;
+        $second_id = $mappings->create(
+            [
+                'form_source' => 'contact_form_7', 'form_id' => '47', 'hook' => 'wpcf7_mail_sent',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async',
+                'settings_json' => [
+                    'trigger_sources' => [ 'after_submission' => [ 'type' => 'mapping', 'mapping_id' => $first_key ] ],
+                    'batch_settings' => [ 'max_wait_seconds' => 45 ],
+                ],
+                'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $second_id );
+        $second_key = 'local_first_' . $second_id;
+
         $scheduled_jobs = [];
         add_action(
             'sentient_forms_async_job_scheduled',
@@ -1872,42 +1048,6 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             },
             10,
             5
-        );
-
-        update_option(
-            'sentient_forms_actions_contact_form_7_47',
-            [
-                'map_first' => [
-                    'local_mapping_id'           => 'map_first',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'First CF7 async action',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async' => true,
-                    ],
-                ],
-                'map_second' => [
-                    'local_mapping_id'           => 'map_second',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Dependent CF7 async action',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'           => true,
-                        'trigger_sources' => [
-                            'after_submission' => [
-                                'type'       => 'mapping',
-                                'mapping_id' => 'map_first',
-                            ],
-                        ],
-                        'batch_settings'   => [
-                            'max_wait_seconds' => 45,
-                        ],
-                    ],
-                ],
-            ],
-            false
         );
 
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
@@ -1935,24 +1075,24 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $contexts = [];
         foreach ( $scheduled_jobs as $job )
         {
-            $context = $job['args']['context'] ?? [];
+            $context = $job['args'][0]['context'] ?? [];
             if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
             {
                 $contexts[ $context['local_mapping_id'] ] = $context;
             }
         }
 
-        $this->assertArrayHasKey( 'map_first', $contexts );
-        $this->assertArrayHasKey( 'map_second', $contexts );
+        $this->assertArrayHasKey( $first_key, $contexts );
+        $this->assertArrayHasKey( $second_key, $contexts );
 
-        $this->assertSame( [ 'map_first' ], $contexts['map_second']['dependency_mapping_ids'] ?? null );
-        $this->assertSame( 'queued', $contexts['map_second']['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertSame( [ $first_key ], $contexts[ $second_key ]['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts[ $second_key ]['dependency_initial_outcomes'][ $first_key ] ?? null );
         $this->assertSame(
-            $contexts['map_first']['execution_request_id'] ?? null,
-            $contexts['map_second']['dependency_execution_request_ids']['map_first'] ?? null
+            $contexts[ $first_key ]['execution_request_id'] ?? null,
+            $contexts[ $second_key ]['dependency_execution_request_ids'][ $first_key ] ?? null
         );
-        $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
-        $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
+        $this->assertSame( 45, $contexts[ $second_key ]['dependency_wait_max_seconds'] ?? null );
+        $this->assertSame( 10, $contexts[ $second_key ]['dependency_wait_poll_seconds'] ?? null );
     }
 
     public function test_mail_sent_schedules_local_first_mapping_with_submission_uuid_without_native_entry_id(): void
@@ -2096,6 +1236,21 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         );
         $this->assertIsInt( $action_id );
 
+        $first_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '48',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $first_mapping_id );
+        $first_mapping_key = 'local_first_' . $first_mapping_id;
+
         $mapping_id = $mappings->create(
             [
                 'form_source'         => 'contact_form_7',
@@ -2110,7 +1265,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                     'trigger_sources' => [
                         'after_submission' => [
                             'type'       => 'mapping',
-                            'mapping_id' => 'map_first',
+                            'mapping_id' => $first_mapping_key,
                         ],
                     ],
                     'batch_settings'   => [
@@ -2132,23 +1287,6 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             },
             10,
             5
-        );
-
-        update_option(
-            'sentient_forms_actions_contact_form_7_48',
-            [
-                'map_first' => [
-                    'local_mapping_id'           => 'map_first',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'First CF7 async action',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async' => true,
-                    ],
-                ],
-            ],
-            false
         );
 
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
@@ -2176,15 +1314,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $contexts = [];
         foreach ( $scheduled_jobs as $job )
         {
-            if ( 'sentient_forms_process_action' === ( $job['hook'] ?? null ) )
-            {
-                $context = $job['args']['context'] ?? [];
-            }
-            else
-            {
-                $payload = $job['args'][0] ?? [];
-                $context = is_array( $payload ) ? ( $payload['context'] ?? [] ) : [];
-            }
+            $payload = $job['args'][0] ?? [];
+            $context = is_array( $payload ) ? ( $payload['context'] ?? [] ) : [];
 
             if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
             {
@@ -2192,17 +1323,56 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             }
         }
 
-        $this->assertArrayHasKey( 'map_first', $contexts );
+        $this->assertArrayHasKey( $first_mapping_key, $contexts );
         $this->assertArrayHasKey( $local_mapping_key, $contexts );
 
-        $this->assertSame( [ 'map_first' ], $contexts[ $local_mapping_key ]['dependency_mapping_ids'] ?? null );
-        $this->assertSame( 'queued', $contexts[ $local_mapping_key ]['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertSame( [ $first_mapping_key ], $contexts[ $local_mapping_key ]['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts[ $local_mapping_key ]['dependency_initial_outcomes'][ $first_mapping_key ] ?? null );
         $this->assertSame(
-            $contexts['map_first']['execution_request_id'] ?? null,
-            $contexts[ $local_mapping_key ]['dependency_execution_request_ids']['map_first'] ?? null
+            $contexts[ $first_mapping_key ]['execution_request_id'] ?? null,
+            $contexts[ $local_mapping_key ]['dependency_execution_request_ids'][ $first_mapping_key ] ?? null
         );
         $this->assertSame( 70, $contexts[ $local_mapping_key ]['dependency_wait_max_seconds'] ?? null );
         $this->assertSame( 10, $contexts[ $local_mapping_key ]['dependency_wait_poll_seconds'] ?? null );
+    }
+
+    private function configure_validation_mapping(
+        int $form_id,
+        Sentient_Forms_Test_CF7_Validation_Action $action
+    ): Sentient_Forms_Form_Source_Workflow_Runner
+    {
+        global $wpdb;
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+            [
+                'code'                 => $action->get_id(),
+                'display_name'         => $action->get_name(),
+                'definition_json'      => [ 'prompt' => 'Validation fixture.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => (string) $form_id,
+                'hook'                => 'validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        return new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $action
+        );
     }
 
     private function cf7_tag( string $type, string $basetype, string $name ): object

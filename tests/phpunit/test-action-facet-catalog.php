@@ -416,4 +416,32 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
         $this->assertSame( 'execution_requirement', $resolved->get_error_data()['field'] ?? null );
         $this->assertSame( 'invalid_route', $resolved->get_error_data()['facet_code'] ?? null );
     }
+
+    public function test_runtime_gate_enforces_enabled_facets_lifecycle_and_source_capabilities(): void
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
+        $this->assertIsArray( $definition );
+        $gate = new Sentient_Forms_Action_Runtime_Policy_Gate();
+
+        $resolved = $gate->authorize(
+            $definition,
+            [ 'spam_guidance_rationale_generation' ],
+            'validation',
+            []
+        );
+        $this->assertIsArray( $resolved );
+        $this->assertSame( 'active_subscription', $resolved['feature_access'] );
+        $this->assertSame( 'provider_flexible', $resolved['execution_requirement'] );
+
+        $wrong_lifecycle = $gate->authorize( $definition, [], 'real_time', [] );
+        $this->assertWPError( $wrong_lifecycle );
+        $this->assertSame( 'sentient_forms_action_lifecycle_not_eligible', $wrong_lifecycle->get_error_code() );
+
+        $content_validation = Sentient_Forms_Bundled_Action_Templates::get( 'content_validation_v1' );
+        $this->assertIsArray( $content_validation );
+        $missing_capability = $gate->authorize( $content_validation, [], 'validation', [] );
+        $this->assertWPError( $missing_capability );
+        $this->assertSame( 'sentient_forms_action_source_capability_missing', $missing_capability->get_error_code() );
+        $this->assertSame( [ 'field_errors' ], $missing_capability->get_error_data()['missing_capabilities'] ?? null );
+    }
 }

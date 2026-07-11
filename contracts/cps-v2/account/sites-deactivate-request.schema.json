@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/sites-deactivate-request.schema.json",
+  "title": "Sentient Account Site Deactivation Request",
+  "type": "object",
+  "properties": {
+    "license_id": {
+      "type": "string"
+    },
+    "site_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

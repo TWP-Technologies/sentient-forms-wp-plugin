@@ -537,4 +537,30 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
         $this->assertTrue( $row['source_capabilities']['native_enrichment']['webhook_controls'] ?? false );
         $this->assertFalse( $row['runtime_availability']['native_enrichment']['webhook_controls'] ?? true );
     }
+
+    public function test_current_public_copy_matches_validation_and_realtime_contract(): void
+    {
+        foreach ( [ 'README.md', 'readme.txt' ] as $path )
+        {
+            $copy = file_get_contents( dirname( __DIR__, 2 ) . '/' . $path );
+
+            $this->assertIsString( $copy );
+            $this->assertStringContainsString(
+                'Content Validation can block invalid submissions on all four Form Sources',
+                $copy
+            );
+            $this->assertStringContainsString(
+                'Spam Detection uses native spam state for Gravity Forms and Contact Form 7; on WPForms and Elementor Pro Forms it blocks through validation without claiming native spam state.',
+                $copy
+            );
+            $this->assertStringContainsString(
+                'Realtime Clarification Assistant remains Gravity Forms-only.',
+                $copy
+            );
+            $this->assertStringNotContainsString(
+                'do not support validation blocking',
+                $copy
+            );
+        }
+    }
 }

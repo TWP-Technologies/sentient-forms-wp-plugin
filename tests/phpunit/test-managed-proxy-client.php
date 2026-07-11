@@ -38,7 +38,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             }
         );
 
-        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v1' );
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->execute(
             'proxy-secret',
             [
@@ -88,6 +88,39 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] );
         $this->assertSame( 123, $payload['metadata']['mapping_id'] );
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
+    }
+
+    public function test_exact_v1_base_url_fails_closed(): void
+    {
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'http://127.0.0.1:3000/v1' );
+        $result = $client->health();
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+    }
+
+    /**
+     * @dataProvider unsupported_managed_base_urls
+     */
+    public function test_request_fails_closed_for_unsupported_or_hostile_base_url( string $url ): void
+    {
+        $client = new Sentient_Forms_Managed_Proxy_Client( $url );
+        $result = $client->health();
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertStringContainsString( 'managed service URL', $result->get_error_message() );
+    }
+
+    public function unsupported_managed_base_urls(): array
+    {
+        return [
+            'unsupported version' => [ 'https://staging-api.sentientforms.com/v3' ],
+            'versioned subpath'   => [ 'https://staging-api.sentientforms.com/v1/admin' ],
+            'unversioned subpath' => [ 'https://staging-api.sentientforms.com/proxy' ],
+            'hostile userinfo'    => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'query injection'     => [ 'https://staging-api.sentientforms.com/v1?target=https://evil.example' ],
+        ];
     }
 
     public function test_execute_can_send_managed_privacy_route_policy(): void
@@ -201,7 +234,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
 
         $filter = static function (): string {
-            return 'https://staging-api.sentientforms.com/v1';
+            return 'https://staging-api.sentientforms.com/v2';
         };
 
         putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );

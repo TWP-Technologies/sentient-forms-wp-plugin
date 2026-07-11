@@ -84,11 +84,8 @@ class Sentient_Forms_Telemetry_Controller extends Sentient_Forms_Abstract_Base_C
     private function format_response( array $settings ): array
     {
         return [
-            'telemetry_opt_in'  => ! empty( $settings['telemetry_opt_in'] ),
-            'updated_at'        => $settings['updated_at'] ?? null,
-            'synced_at'         => $settings['synced_at'] ?? null,
-            'remote_updated_at' => $settings['remote_updated_at'] ?? null,
-            'last_error'        => $settings['last_error'] ?? null,
+            'telemetry_opt_in' => ! empty( $settings['telemetry_opt_in'] ),
+            'updated_at'       => $settings['updated_at'] ?? null,
         ];
     }
 

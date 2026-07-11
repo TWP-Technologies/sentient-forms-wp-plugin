@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
-import type { SentientFormsConfig } from '$lib/api/http';
+import type { SentientFormsConfig } from '$lib/schemas/runtime-config';
 import type { FormSourceSummary } from '$lib/api/types';
 
 const defaultFormSources: FormSourceSummary[] = [
@@ -13,8 +13,8 @@ const defaultWpHost = existsSync('/.dockerenv')
 const wpHost = process.env.SENTIENT_WP_BASE_URL ?? defaultWpHost;
 const useRestRoute = process.env.SENTIENT_WP_USE_REST_ROUTE === '1';
 const apiBase = useRestRoute
-	? `${wpHost}/index.php?rest_route=/sentient-forms/v1/`
-	: `${wpHost}/wp-json/sentient-forms/v1/`;
+	? '/index.php?rest_route=/sentient-forms/v1/'
+	: '/wp-json/sentient-forms/v1/';
 
 const baseConfig: SentientFormsConfig = {
 	apiBaseUrl: apiBase,

@@ -42,6 +42,7 @@ import type {
 	TopUpCheckoutSessionRequest,
 	TopUpCheckoutSessionResponse
 } from './types';
+import { endpointRegistry } from './endpoint-schemas';
 
 type AsyncSettingsPayload = {
 	maxAttempts?: number;
@@ -147,8 +148,7 @@ export class MockSentientFormsApiClient {
 		return {
 			success: true,
 			message: 'Mock license activated',
-			status: 'active',
-			proxyApiKey: 'mock-proxy-key'
+			status: 'active'
 		};
 	}
 
@@ -207,7 +207,7 @@ export class MockSentientFormsApiClient {
 					current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
 					current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
 					trial_end: null,
-				provider_price_id: 'price_mock_starter'
+					provider_price_id: 'price_mock_starter'
 				}
 			},
 			credits: {
@@ -295,10 +295,7 @@ export class MockSentientFormsApiClient {
 		const timestamp = new Date().toISOString();
 		return {
 			telemetry_opt_in: true,
-			updated_at: timestamp,
-			synced_at: timestamp,
-			remote_updated_at: timestamp,
-			last_error: null
+			updated_at: timestamp
 		};
 	}
 
@@ -338,7 +335,7 @@ export class MockSentientFormsApiClient {
 	}
 
 	async getDashboardSummary(): Promise<DashboardSummaryResponse> {
-		return {
+		return endpointRegistry['dashboard.summary'].response.parse({
 			generated_at: new Date().toISOString(),
 			providers: this.providerCredentials,
 			templates: [],
@@ -348,13 +345,10 @@ export class MockSentientFormsApiClient {
 			recent_events: [],
 			license: await this.getLicenseInfo(),
 			async_health: await this.getAsyncHealth()
-		};
+		});
 	}
 
-	private toLocalCustomActionRecord(
-		action: CustomAction,
-		index: number
-	): LocalCustomActionRecord {
+	private toLocalCustomActionRecord(action: CustomAction, index: number): LocalCustomActionRecord {
 		const parsedId = Number.parseInt(String(action.id), 10);
 		const parsedTemplateId =
 			action.template_id === null ? Number.NaN : Number.parseInt(String(action.template_id), 10);
@@ -382,7 +376,7 @@ export class MockSentientFormsApiClient {
 	async getFormsOverview(formSourceSlug: string): Promise<FormsOverviewResponse> {
 		const forms = await this.getForms(formSourceSlug);
 		const executionStatus = await this.getFormExecutionStatus();
-		return {
+		return endpointRegistry['forms.overview'].response.parse({
 			form_source: formSourceSlug,
 			forms: forms.map((form) => ({
 				...form,
@@ -394,7 +388,7 @@ export class MockSentientFormsApiClient {
 				execution_status: executionStatus
 			})),
 			generated_at: new Date().toISOString()
-		};
+		});
 	}
 
 	async getFormActions(
@@ -467,14 +461,14 @@ export class MockSentientFormsApiClient {
 		);
 		const offset = Math.max(0, options.offset ?? 0);
 		const perPage = Math.max(1, options.perPage ?? 20);
-		return {
+		return endpointRegistry['forms.ledger.records.list'].response.parse({
 			form_source: formSourceSlug,
 			form_id: formIdValue,
 			records: matchingRecords.slice(offset, offset + perPage),
 			total: matchingRecords.length,
 			per_page: perPage,
 			offset
-		};
+		});
 	}
 
 	async getSubmissionLedgerRecord(
@@ -509,7 +503,7 @@ export class MockSentientFormsApiClient {
 			...customActions.actions.map((action) => action.code)
 		]);
 
-		return {
+		return endpointRegistry['forms.actions.bootstrap'].response.parse({
 			form_source: formSourceSlug,
 			form_id: formId,
 			form: forms.find((form) => String(form.id) === String(formId)) ?? null,
@@ -527,7 +521,7 @@ export class MockSentientFormsApiClient {
 			workflow_plan: await this.getWorkflowPlan(formSourceSlug, formId, 'all'),
 			ledger_settings: ledgerSettings,
 			generated_at: new Date().toISOString()
-		};
+		});
 	}
 
 	private buildFormSourceDescriptor(
@@ -886,7 +880,7 @@ export class MockSentientFormsApiClient {
 
 		this.formActions = [...this.formActions, duplicate];
 
-		return {
+		return endpointRegistry['forms.actions.duplicate'].response.parse({
 			duplicate,
 			insertion: {
 				parent: payload.parent,
@@ -894,7 +888,7 @@ export class MockSentientFormsApiClient {
 				skipped_children: [],
 				warnings: []
 			}
-		};
+		});
 	}
 
 	async updateFormAction(

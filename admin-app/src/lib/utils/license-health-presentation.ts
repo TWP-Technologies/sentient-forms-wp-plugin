@@ -52,9 +52,16 @@ function clampPercentage(value: number): number {
 export function resolveTierDisplayName(
 	tier: string | TierSummary | null | undefined
 ): string | null {
+	const launchTierLabels: Readonly<Record<string, string>> = {
+		starter: 'Starter',
+		pro: 'Pro',
+		business: 'Business',
+		free: 'Free'
+	};
+
 	if (typeof tier === 'string') {
 		const trimmed = tier.trim();
-		return trimmed.length > 0 ? trimmed : null;
+		return trimmed.length > 0 ? (launchTierLabels[trimmed.toLowerCase()] ?? trimmed) : null;
 	}
 
 	if (tier && typeof tier === 'object') {
@@ -62,7 +69,8 @@ export function resolveTierDisplayName(
 			return tier.display_name.trim();
 		}
 		if (typeof tier.code === 'string' && tier.code.trim().length > 0) {
-			return tier.code.trim();
+			const code = tier.code.trim();
+			return launchTierLabels[code.toLowerCase()] ?? code;
 		}
 	}
 

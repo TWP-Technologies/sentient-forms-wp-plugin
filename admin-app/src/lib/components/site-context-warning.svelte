@@ -1,10 +1,7 @@
 <script lang="ts">
 	import { Alert } from '$lib/components/ui';
-	import { wpFetch } from '$lib/wp';
-	import {
-		normalizeSiteContextResponse,
-		siteContextWarningMessage
-	} from '$lib/utils/site-context';
+	import { wpRequestEndpoint } from '$lib/wp';
+	import { normalizeSiteContextResponse, siteContextWarningMessage } from '$lib/utils/site-context';
 	import type { SiteContextStatusResponse } from '$lib/api/types';
 	import { onMount } from 'svelte';
 
@@ -25,7 +22,7 @@
 		loading = true;
 		loadFailed = false;
 		try {
-			status = normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'));
+			status = normalizeSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 		} catch (error) {
 			console.error('Failed to load Site Context status', error);
 			loadFailed = true;
@@ -45,7 +42,9 @@
 		class={`sf:py-3 ${className}`}
 		data-testid="site-context-action-warning"
 	>
-		<div class="sf:flex sf:flex-col sf:gap-1 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+		<div
+			class="sf:flex sf:flex-col sf:gap-1 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+		>
 			<p>{message}</p>
 			<a
 				href="#/settings/context"

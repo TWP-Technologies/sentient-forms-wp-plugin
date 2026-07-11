@@ -75,7 +75,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
         try
         {
-            $this->assertSame( 'https://api.sentientforms.com/v1', $plugin->get_cps_base_url_value() );
+            $this->assertSame( 'https://api.sentientforms.com/v2', $plugin->get_cps_base_url_value() );
         }
         finally
         {

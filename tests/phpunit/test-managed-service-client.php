@@ -35,7 +35,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
             }
         );
 
-        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v1' );
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->activate_site(
             [
                 'license_key'           => 'LIC-TEST',
@@ -56,6 +56,51 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'LIC-TEST', $payload['license_key'] );
         $this->assertSame( 'https://example.test', $payload['site_url'] );
         $this->assertSame( 'example-local', $payload['local_site_identifier'] );
+    }
+
+    public function test_exact_v1_base_url_fails_closed(): void
+    {
+        $client = new Sentient_Forms_Managed_Service_Client( 'http://127.0.0.1:3000/v1' );
+        $result = $client->activate_site(
+            [
+                'license_key'           => 'LIC-TEST',
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+    }
+
+    /**
+     * @dataProvider unsupported_managed_base_urls
+     */
+    public function test_request_fails_closed_for_unsupported_or_hostile_base_url( string $url ): void
+    {
+        $client = new Sentient_Forms_Managed_Service_Client( $url );
+        $result = $client->activate_site(
+            [
+                'license_key'           => 'LIC-TEST',
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertStringContainsString( 'managed service URL', $result->get_error_message() );
+    }
+
+    public function unsupported_managed_base_urls(): array
+    {
+        return [
+            'unsupported version' => [ 'https://staging-api.sentientforms.com/v3' ],
+            'versioned subpath'   => [ 'https://staging-api.sentientforms.com/v1/admin' ],
+            'unversioned subpath' => [ 'https://staging-api.sentientforms.com/proxy' ],
+            'hostile userinfo'    => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'query injection'     => [ 'https://staging-api.sentientforms.com/v1?target=https://evil.example' ],
+        ];
     }
 
     public function test_billing_state_uses_v2_get_without_body(): void
@@ -99,7 +144,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
     public function test_base_url_falls_back_to_cps_base_url_resolution(): void
     {
         $filter = static function (): string {
-            return 'https://staging-api.sentientforms.com/v1';
+            return 'https://staging-api.sentientforms.com/v2';
         };
 
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );

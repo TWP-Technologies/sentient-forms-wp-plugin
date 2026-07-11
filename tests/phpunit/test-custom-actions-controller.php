@@ -159,6 +159,33 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertSame( 'rest_invalid_param', $payload->get_error_code() );
     }
 
+    public function test_custom_creation_rejects_every_exact_and_explicit_managed_catalog_code(): void
+    {
+        global $wpdb;
+        $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}sentient_custom_actions" );
+
+        foreach ( Sentient_Forms_Bundled_Action_Templates::codes() as $code )
+        {
+            foreach ( [ $code, Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $code ) ] as $reserved_code )
+            {
+                $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+                $request->set_param( 'code', $reserved_code );
+                $request->set_param( 'display_name', 'Reserved code attempt' );
+                $request->set_param( 'action_kind', 'custom_definition' );
+                $request->set_param( 'definition_version', 1 );
+                $request->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+                $request->set_param( 'definition', [ 'prompt_template' => 'Review {{entry}}.' ] );
+
+                $result = $this->controller->create_custom_action( $request );
+
+                $this->assertWPError( $result, $reserved_code );
+                $this->assertSame( 'sentient_forms_reserved_action_code', $result->get_error_code(), $reserved_code );
+            }
+        }
+
+        $this->assertSame( [], ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->list_filtered( [ 'include_archived' => true ] ) );
+    }
+
     public function test_create_local_custom_definition_does_not_require_template_id_and_preserves_tools(): void
     {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );

@@ -6,6 +6,8 @@
 - button "Review setup"
 - paragraph: Execution history
 - paragraph: /\d+ days/
+- paragraph: Submission Ledger
+- paragraph: /\d+ days/
 - paragraph: Full AI outputs
 - paragraph: Not stored by default
 - paragraph: Uninstall behavior
@@ -16,16 +18,20 @@
 - text: Ready
 - paragraph: Describe what this website does so spam checks, summaries, and other actions can make site-specific decisions instead of generic guesses.
 - button "Manage Site Context"
-- paragraph: Enable telemetry sharing
-- paragraph: Share metadata-only reliability events with Sentient Forms after this site has a connected Sentient identity.
-- button "What is shared?"
+- paragraph: Enforce ZDR for managed service
+- paragraph: Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention and to deny provider data collection. If the selected model is no longer eligible, Sentient Forms uses a comparable ZDR-safe model when available or fails safely.
+- paragraph: Requires an active Sentient Forms Managed Service subscription.
+- text: "Off"
+- checkbox "Enforce ZDR for managed service" [disabled]
+- paragraph: Allow local diagnostic events
+- paragraph: Consent allows metadata-only reliability events to be generated. Enable on-site logging below to write them to the masked log. Nothing is sent off-site in this release.
+- button "What is recorded?"
 - text: "Off"
 - checkbox "Off"
-- paragraph: /Synced \d+-\d+-24T00:\d+:00Z/
-- paragraph: /Remote consent record updated \d+-\d+-24T00:\d+:00Z/
+- paragraph: /Preference saved \d+-\d+-24T00:\d+:00Z/
 - paragraph: Enable on-site logging
 - paragraph:
-  - text: Write masked diagnostic logs to
+  - text: When local diagnostic consent above is also on, write masked logs to
   - code: wp-content/uploads/sentient-forms/logs
   - text: for support.
 - text: "On"
@@ -39,6 +45,14 @@
   - option /\d+ days/ [selected]
   - option /\d+ days/
   - option "Manual cleanup only"
+- text: Submission Ledger records
+- combobox "Submission Ledger records Applies to future captured submissions. Existing expiry dates do not move when this changes.":
+  - option "7 days"
+  - option /\d+ days/
+  - option /\d+ days/ [selected]
+  - option /\d+ days/
+  - option "Manual cleanup only"
+- text: Applies to future captured submissions. Existing expiry dates do not move when this changes.
 - checkbox "Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions."
 - text: Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions.
 - checkbox "Delete local data on uninstall Remove Sentient Forms tables and options when the plugin is uninstalled." [checked]
@@ -50,7 +64,6 @@
   - paragraph: High-sensitivity secret option
   - paragraph: The default vault encrypts saved provider keys locally. If your site has stricter operational controls, switch to a WordPress constant or environment variable instead of storing the key in the database.
 - button "Save retention"
-- paragraph: Manual cleanup only keeps new execution logs until an administrator removes them or changes this setting.
 - paragraph: Execution controls
 - paragraph: Pause Sentient Forms execution globally or by form provider while keeping mappings editable.
 - paragraph: Global execution

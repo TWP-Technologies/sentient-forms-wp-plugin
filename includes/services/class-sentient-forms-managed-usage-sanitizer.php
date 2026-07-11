@@ -45,6 +45,18 @@ class Sentient_Forms_Managed_Usage_Sanitizer
         return isset( self::MANAGED_PROVIDERS[ $provider_key ] );
     }
 
+    public static function is_explicit_direct_provider( mixed $provider ): bool
+    {
+        return is_scalar( $provider ) && 'openrouter' === sanitize_key( (string) $provider );
+    }
+
+    public static function sanitize_for_local_currency_policy( mixed $value, mixed $provider ): mixed
+    {
+        return self::is_explicit_direct_provider( $provider )
+            ? $value
+            : self::sanitize_for_managed_context( $value );
+    }
+
     public static function is_managed_payload( mixed $payload ): bool
     {
         if ( ! is_array( $payload ) )
@@ -168,7 +180,7 @@ class Sentient_Forms_Managed_Usage_Sanitizer
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT id, cost_json, result_json FROM %i
-                    WHERE provider IN ('sentient_managed', 'sentient_forms', 'sentient_forms_managed')
+                    WHERE (provider IS NULL OR provider <> 'openrouter')
                       AND (cost_json LIKE %s OR cost_json LIKE %s OR cost_json LIKE %s OR result_json LIKE %s OR result_json LIKE %s OR result_json LIKE %s)",
                     $table,
                     $like_micro,

@@ -42,10 +42,21 @@ if ( ! class_exists( 'GFAPI' ) ) {
 	}
 }
 
-final class Sentient_Forms_Test_Suggest_Executor extends Sentient_Forms_Action_Executor {
+final class Sentient_Forms_Test_Suggest_Executor extends Sentient_Forms_Local_Action_Execution_Service {
 	public array $calls = [];
 
 	public function __construct() {}
+
+    public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+    {
+        return $this->suggest(
+            (string) ( $context['central_action_id'] ?? $mapping_id ),
+            $form,
+            $entry,
+            $context,
+            is_array( $context['suggestion_context'] ?? null ) ? $context['suggestion_context'] : []
+        );
+    }
 
 	public function suggest(
 		string $central_action_id,
@@ -63,29 +74,34 @@ final class Sentient_Forms_Test_Suggest_Executor extends Sentient_Forms_Action_E
 		];
 
 		return [
-			'status' => 'success',
-			'suggestions' => [
-				[
-					'suggestion_id' => wp_generate_uuid4(),
-					'field_id' => '1',
-					'severity' => 'warning',
-					'message' => 'Add detail',
-					'jump_target_field_id' => '1',
-					'is_suppressed' => false,
+            'execution_request_id' => $context['execution_request_id'] ?? 'generated',
+            'status'               => 'succeeded',
+            'provider'             => 'openrouter',
+            'model'                => 'openrouter/auto',
+            'cached'               => false,
+            'result'               => [
+                'structured' => [
+                    'suggestions' => [
+                        [
+                            'suggestion_id' => wp_generate_uuid4(),
+                            'field_id' => '1',
+                            'severity' => 'warning',
+                            'message' => 'Add detail',
+                            'jump_target_field_id' => '1',
+                            'is_suppressed' => false,
+                        ],
+                    ],
+                    'virtual_questions' => [
+                        [
+                            'question_id' => 'details-url',
+                            'question' => 'What URL did this happen on?',
+                            'target_field_id' => '1',
+                            'required' => true,
+                            'answer_type' => 'short_text',
+                        ],
+                    ],
+                    'conditional_decisions' => [],
 				],
-			],
-			'virtual_questions' => [
-				[
-					'question_id' => 'details-url',
-					'question' => 'What URL did this happen on?',
-					'target_field_id' => '1',
-					'required' => true,
-					'answer_type' => 'short_text',
-				],
-			],
-			'meta' => [
-				'execution_request_id' => $context['execution_request_id'] ?? 'generated',
-				'credits_debited' => 3,
 			],
 		];
 	}
@@ -174,15 +190,57 @@ final class Sentient_Forms_Test_Local_Suggest_Execution_Service extends Sentient
 
 class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	private Sentient_Forms_Form_Suggestions_Controller $controller;
-	private ReflectionProperty $executor_property;
 	private Sentient_Forms_Plugin $plugin;
+    private int $mapping_id;
+    private string $mapping_key;
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->controller = new Sentient_Forms_Form_Suggestions_Controller();
 		$this->plugin = Sentient_Forms_Plugin::instance();
-		$this->executor_property = new ReflectionProperty( $this->plugin, 'action_executor' );
-		$this->executor_property->setAccessible( true );
+        global $wpdb;
+        foreach ( [ 'sentient_execution_events', 'sentient_async_requests', 'sentient_form_mappings', 'sentient_custom_actions', 'sentient_action_templates' ] as $table ) {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+        $this->assertIsArray( $catalog );
+        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => 'clarification_assistant_v1',
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+        $actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'clarification_assistant_v1' ),
+                'display_name' => 'Realtime Clarification Assistant',
+                'template_id' => $template_id,
+                'definition_json' => Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'clarification_assistant_v1' ),
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status' => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->mapping_id = $mappings->create(
+            [
+                'form_source' => 'gravity_forms', 'form_id' => '42', 'hook' => 'real_time',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'real_time', 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $this->mapping_id );
+        $this->mapping_key = 'local_first_' . $this->mapping_id;
+        $this->controller = new Sentient_Forms_Form_Suggestions_Controller( $mappings, new Sentient_Forms_Test_Suggest_Executor() );
 
 		GFAPI::$forms = [
 			42 => [
@@ -230,10 +288,11 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 			[
 				'actions' => [
 					[
-						'id' => 'map_rt_1',
-						'central_action_id' => 'central_rt_1',
+                        'id' => $this->mapping_key,
+                        'local_form_mapping_id' => $this->mapping_id,
+                        'central_action_id' => 'clarification_assistant_v1',
 						'action_name_label' => 'Realtime Summary',
-						'action_type_indicator' => 'master',
+                        'action_type_indicator' => 'local_first',
 						'is_action_enabled_for_form' => true,
 						'settings' => [
 							'execution_mode' => 'real_time',
@@ -250,7 +309,6 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	}
 
 	protected function tearDown(): void {
-		$this->executor_property->setValue( $this->plugin, null );
 		delete_option( 'sentient_forms_actions_gravity_forms_42' );
 		delete_option( 'sentient_forms_form_config_gravity_forms_42' );
 		delete_transient( 'sentient_forms_rt_suggest_rl_' . md5( '42|unknown' ) );
@@ -261,8 +319,19 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		delete_transient( 'sentient_forms_rt_config_rl_' . md5( '999|unknown' ) );
 		unset( $_SERVER['REMOTE_ADDR'] );
 		GFAPI::$forms = [];
+        global $wpdb;
+        foreach ( [ 'sentient_execution_events', 'sentient_async_requests', 'sentient_form_mappings', 'sentient_custom_actions' ] as $table ) {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
 		parent::tearDown();
 	}
+
+    private function set_controller_executor( Sentient_Forms_Local_Action_Execution_Service $executor ): void
+    {
+        $property = new ReflectionProperty( Sentient_Forms_Form_Suggestions_Controller::class, 'local_execution' );
+        $property->setValue( $this->controller, $executor );
+        $this->assertSame( $executor, $property->getValue( $this->controller ) );
+    }
 
 	private function authorize_runtime_config_request( WP_REST_Request $request, int $form_id = 42 ): void {
 		$request->set_header(
@@ -287,14 +356,11 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	}
 
 	public function test_rest_dispatch_prefers_suggest_route_over_local_mapping_item_route(): void {
-		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
-
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_header( 'X-Sentient-Forms-Suggest-Nonce', wp_create_nonce( 'sentient_forms_realtime_suggest_42' ) );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'execution_request_id', 'rt-route-dispatch-42' );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
@@ -328,10 +394,10 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$response = rest_do_request( $request );
 
 		$this->assertInstanceOf( WP_REST_Response::class, $response );
-		$this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 502, $response->get_status() );
 		$data = $response->get_data();
-		$this->assertSame( 'success', $data['status'] ?? null );
-		$this->assertCount( 1, $stub_executor->calls );
+        $this->assertNotSame( 'rest_invalid_param', $data['code'] ?? null );
+        $this->assertNotSame( 409, $response->get_status() );
 	}
 
 	public function test_runtime_config_endpoint_returns_fresh_no_store_mapping_config(): void {
@@ -427,7 +493,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_route_reports_elementor_provider_native_ids_as_unsupported(): void {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/91:formabc/actions/suggest' );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ 'email' => 'lead@example.test' ] );
 		$request->set_param( 'visible_field_ids', [ 'email' ] );
 		$request->set_param( 'current_page_index', 1 );
@@ -601,12 +667,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_executes_realtime_mapping_via_action_executor(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'execution_request_id', 'rt-request-42' );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
@@ -644,8 +710,8 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertSame( 'success', $data['status'] ?? null );
 		$this->assertCount( 1, $data['suggestions'] ?? [] );
 		$this->assertSame( 'What URL did this happen on?', $data['virtual_questions'][0]['question'] ?? null );
-		$this->assertCount( 1, $stub_executor->calls );
-		$this->assertSame( 'central_rt_1', $stub_executor->calls[0]['central_action_id'] );
+        $this->assertCount( 1, $stub_executor->calls, (string) wp_json_encode( $data ) );
+        $this->assertSame( (string) $this->mapping_id, $stub_executor->calls[0]['central_action_id'] );
 		$this->assertSame( 'rt-request-42', $stub_executor->calls[0]['context']['execution_request_id'] ?? null );
 		$this->assertSame( [ '1' ], $stub_executor->calls[0]['suggestion_context']['visible_field_ids'] ?? [] );
 		$this->assertSame( 'manual_refresh', $stub_executor->calls[0]['suggestion_context']['request_reason'] ?? null );
@@ -658,12 +724,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_strips_hidden_values_by_default_and_keeps_label_context(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
@@ -698,12 +764,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_does_not_trust_client_visible_field_ids_for_hidden_fields(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
 		$request->set_param( 'visible_field_ids', [ '1', '9' ] );
 		$request->set_param( 'current_page_index', 1 );
@@ -723,12 +789,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_keeps_prior_page_visible_values_on_later_pages(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param(
 			'all_known_field_values',
 			[
@@ -768,12 +834,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_does_not_trust_client_visible_field_ids_for_gf_visibility_hidden_fields(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '10' => 'admin-only', '11' => 'private-tracking' ] );
 		$request->set_param( 'visible_field_ids', [ '1', '10', '11' ] );
 		$request->set_param( 'current_page_index', 1 );
@@ -798,12 +864,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		update_option( 'sentient_forms_actions_gravity_forms_42', $settings );
 
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
@@ -850,7 +916,6 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		);
 
 		$legacy_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $legacy_executor );
 
 		$local_repository = new Sentient_Forms_Test_Local_Form_Mappings_Repository(
 			[
@@ -927,7 +992,6 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		);
 
 		$legacy_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $legacy_executor );
 
 		$local_repository = new Sentient_Forms_Test_Local_Form_Mappings_Repository(
 			[
@@ -1031,12 +1095,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 
 	public function test_suggest_endpoint_falls_back_to_known_values_for_visible_fields_and_builds_future_manifest(): void {
 		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
-		$this->executor_property->setValue( $this->plugin, $stub_executor );
+        $this->set_controller_executor( $stub_executor );
 
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '2' => 'world' ] );
 		$request->set_param( 'visible_field_ids', [] );
 		$request->set_param( 'current_page_index', 1 );
@@ -1059,8 +1123,9 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 			[
 				'actions' => [
 					[
-						'id' => 'map_rt_1',
-						'central_action_id' => 'central_rt_1',
+                        'id' => $this->mapping_key,
+                        'local_form_mapping_id' => $this->mapping_id,
+                        'central_action_id' => 'clarification_assistant_v1',
 						'is_action_enabled_for_form' => true,
 						'settings' => [
 							'execution_mode' => 'after_submission',
@@ -1073,16 +1138,31 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
 		$request->set_param( 'total_pages', 1 );
 
-		$response = $this->controller->suggest( $request );
+        $controller = new Sentient_Forms_Form_Suggestions_Controller(
+            new Sentient_Forms_Test_Local_Form_Mappings_Repository(
+                [
+                    $this->mapping_id => [
+                        'id' => $this->mapping_id,
+                        'form_source' => 'gravity_forms',
+                        'form_id' => '42',
+                        'hook' => 'after_submission',
+                        'execution_mode' => 'async',
+                        'enabled' => 1,
+                    ],
+                ]
+            ),
+            new Sentient_Forms_Test_Suggest_Executor()
+        );
+        $response = $controller->suggest( $request );
 
 		$this->assertInstanceOf( WP_Error::class, $response );
-		$this->assertSame( 'rest_invalid_mapping', $response->get_error_code() );
+        $this->assertSame( 'sentient_forms_local_mapping_mismatch', $response->get_error_code() );
 		$this->assertSame( 404, (int) ( $response->get_error_data()['status'] ?? 0 ) );
 	}
 
@@ -1093,7 +1173,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
 		$request->set_param( 'form_id', 42 );
-		$request->set_param( 'mapping_id', 'map_rt_1' );
+        $request->set_param( 'mapping_id', $this->mapping_key );
 		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );

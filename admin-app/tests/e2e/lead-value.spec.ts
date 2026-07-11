@@ -266,20 +266,17 @@ const dashboardResponse = {
 	]
 };
 
-const actionConfigEnvelope = {
-	success: true,
-	data: {
-		form_source: 'gravity_forms',
-		form_id: 123,
-		action_id: 'spam_detection_v1',
-		config: {
-			spam_positive_examples: [
-				{ text: 'I need a paid implementation quote.', rationale: 'Specific service intent.' }
-			],
-			spam_negative_examples: [
-				{ text: 'Buy cheap links now.', rationale: 'Unrelated promotional spam.' }
-			]
-		}
+const actionConfigResponse = {
+	form_source: 'gravity_forms',
+	form_id: 123,
+	action_id: 'spam_detection_v1',
+	config: {
+		spam_positive_examples: [
+			{ text: 'I need a paid implementation quote.', rationale: 'Specific service intent.' }
+		],
+		spam_negative_examples: [
+			{ text: 'Buy cheap links now.', rationale: 'Unrelated promotional spam.' }
+		]
 	}
 };
 
@@ -342,7 +339,7 @@ test.describe('lead scoring workspace', () => {
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify(actionConfigEnvelope)
+				body: JSON.stringify(actionConfigResponse)
 			})
 		);
 		await page.route(
@@ -351,7 +348,7 @@ test.describe('lead scoring workspace', () => {
 				route.fulfill({
 					status: 200,
 					contentType: 'application/json',
-					body: JSON.stringify(actionConfigEnvelope)
+					body: JSON.stringify(actionConfigResponse)
 				})
 		);
 		await page.route(
@@ -460,14 +457,18 @@ test.describe('lead scoring workspace', () => {
 		await expect(page.getByRole('heading', { name: 'Scored entries' })).toBeVisible();
 		await expect(page.getByRole('table').getByText('Lead intake').first()).toBeVisible();
 		await expect(page.getByRole('table').getByText('#1001')).toBeVisible();
-		await expect(page.getByRole('table').getByText('Route to sales for same-day follow-up.')).toBeVisible();
+		await expect(
+			page.getByRole('table').getByText('Route to sales for same-day follow-up.')
+		).toBeVisible();
 		await expect(page.getByTestId('lead-scoring-grade-distribution')).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Quick Jump' })).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Configured Forms' })).toBeVisible();
 
 		const gradeBox = await page.getByTestId('lead-scoring-grade-distribution').boundingBox();
 		const quickJumpBox = await page.getByRole('heading', { name: 'Quick Jump' }).boundingBox();
-		const configuredBox = await page.getByRole('heading', { name: 'Configured Forms' }).boundingBox();
+		const configuredBox = await page
+			.getByRole('heading', { name: 'Configured Forms' })
+			.boundingBox();
 		expect(gradeBox?.y ?? 0).toBeLessThan(quickJumpBox?.y ?? 0);
 		expect(quickJumpBox?.y ?? 0).toBeLessThan(configuredBox?.y ?? 0);
 
@@ -475,8 +476,12 @@ test.describe('lead scoring workspace', () => {
 		const configuredFormsList = page.getByTestId('lead-scoring-configured-forms-list');
 		await expect(quickJumpList).toContainText('Gravity Forms');
 		await expect(configuredFormsList).toContainText('Gravity Forms');
-		expect(await quickJumpList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
-		expect(await configuredFormsList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+		expect(await quickJumpList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(
+			true
+		);
+		expect(
+			await configuredFormsList.evaluate((node) => node.scrollHeight > node.clientHeight)
+		).toBe(true);
 	});
 
 	test('keeps local correction and hides Gravity-only replies for Elementor aggregate rows', async ({
@@ -622,19 +627,13 @@ test.describe('lead scoring workspace', () => {
 		await page.goto('/lead-scoring', { waitUntil: 'networkidle' });
 
 		await expect(
-			page
-				.getByRole('row', { name: /Elementor lead form/ })
-				.getByRole('link', { name: 'Setup' })
+			page.getByRole('row', { name: /Elementor lead form/ }).getByRole('link', { name: 'Setup' })
 		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
 		await expect(
-			page
-				.getByTestId('lead-scoring-configured-forms-list')
-				.getByRole('link', { name: 'Setup' })
+			page.getByTestId('lead-scoring-configured-forms-list').getByRole('link', { name: 'Setup' })
 		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
 		await expect(
-			page
-				.getByTestId('lead-scoring-quick-jump-list')
-				.getByRole('link', { name: 'Set Up' })
+			page.getByTestId('lead-scoring-quick-jump-list').getByRole('link', { name: 'Set Up' })
 		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/92(?::|%3A)quote-widget$/);
 	});
 });

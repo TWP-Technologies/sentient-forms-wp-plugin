@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
+	import { localMigrationBundleSchema } from '$lib/api/endpoint-schemas';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, StateTemplate } from '$lib/components/ui';
 	import type {
@@ -8,6 +9,7 @@
 		LocalMigrationDryRunResponse,
 		LocalMigrationImportApplyResponse,
 		LocalMigrationImportDryRunResponse,
+		LocalMigrationImportRequest,
 		LocalMigrationImportReport,
 		LocalMigrationReadinessReport
 	} from '$lib/api/types';
@@ -127,7 +129,9 @@
 				{ showNotifications: false }
 			);
 			importFingerprint = fingerprintBundle(bundle);
-			notifications.success(`Import dry run recorded as migration run #${importDryRunResult.run_id}`);
+			notifications.success(
+				`Import dry run recorded as migration run #${importDryRunResult.run_id}`
+			);
 		} catch (error) {
 			const blocked = extractBlockedImport(error);
 			if (blocked) {
@@ -220,18 +224,18 @@
 		return exactCount + prefixCount;
 	}
 
-	function parseImportBundle(): Record<string, unknown> | null {
+	function parseImportBundle(): LocalMigrationImportRequest['bundle'] | null {
 		importError = null;
 		importApplyResult = null;
 
 		try {
-			const parsed: unknown = JSON.parse(importText);
-			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-				importError = 'Paste a single CPS export JSON object.';
+			const parsed = localMigrationBundleSchema.safeParse(JSON.parse(importText));
+			if (!parsed.success) {
+				importError = 'The CPS export bundle does not match the supported migration contract.';
 				return null;
 			}
 
-			return parsed as Record<string, unknown>;
+			return parsed.data;
 		} catch {
 			importError = 'The CPS export bundle is not valid JSON.';
 			return null;
@@ -240,9 +244,8 @@
 
 	function fingerprintBundleText(value: string): string | null {
 		try {
-			const parsed: unknown = JSON.parse(value);
-			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-			return fingerprintBundle(parsed as Record<string, unknown>);
+			const parsed = localMigrationBundleSchema.safeParse(JSON.parse(value));
+			return parsed.success ? fingerprintBundle(parsed.data) : null;
 		} catch {
 			return null;
 		}
@@ -303,7 +306,8 @@
 		if (!data || typeof data !== 'object') return null;
 		const runId = (data as { run_id?: unknown }).run_id;
 		const blockedReport = (data as { report?: unknown }).report;
-		if (typeof runId !== 'number' || !blockedReport || typeof blockedReport !== 'object') return null;
+		if (typeof runId !== 'number' || !blockedReport || typeof blockedReport !== 'object')
+			return null;
 
 		return {
 			run_id: runId,
@@ -358,16 +362,18 @@
 		</div>
 
 		{#if report.warnings.length > 0}
-				<div class="sf:min-w-0 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
-					<p class="sf:font-semibold sf:text-amber-950">Review before reset</p>
-					<ul class="sf:space-y-1">
-						{#each report.warnings as warning}
-							<li class="sf:min-w-0 sf:break-words sf:text-sm sf:text-amber-950">
-								<span class="sf:font-medium sf:break-all">{warning.code}</span>: {warning.message}
-							</li>
-						{/each}
-					</ul>
-				</div>
+			<div
+				class="sf:min-w-0 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2"
+			>
+				<p class="sf:font-semibold sf:text-amber-950">Review before reset</p>
+				<ul class="sf:space-y-1">
+					{#each report.warnings as warning}
+						<li class="sf:min-w-0 sf:break-words sf:text-sm sf:text-amber-950">
+							<span class="sf:font-medium sf:break-all">{warning.code}</span>: {warning.message}
+						</li>
+					{/each}
+				</ul>
+			</div>
 		{/if}
 
 		<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:lg:grid-cols-2">
@@ -530,7 +536,9 @@
 			</div>
 
 			{#if importError}
-				<p class="sf:rounded-lg sf:border sf:border-rose-200 sf:bg-rose-50 sf:p-3 sf:text-sm sf:text-rose-900">
+				<p
+					class="sf:rounded-lg sf:border sf:border-rose-200 sf:bg-rose-50 sf:p-3 sf:text-sm sf:text-rose-900"
+				>
 					{importError}
 				</p>
 			{/if}
@@ -564,7 +572,9 @@
 
 				<div class="sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200">
 					<table class="sf:min-w-full sf:divide-y sf:divide-slate-200 sf:text-sm">
-						<thead class="sf:bg-slate-50 sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+						<thead
+							class="sf:bg-slate-50 sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500"
+						>
 							<tr>
 								<th class="sf:px-3 sf:py-2">Record type</th>
 								<th class="sf:px-3 sf:py-2">Create</th>
@@ -599,7 +609,9 @@
 				{/if}
 
 				{#if importReport.warnings.length > 0}
-					<div class="sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
+					<div
+						class="sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2"
+					>
 						<p class="sf:font-semibold sf:text-amber-950">Import warnings</p>
 						<ul class="sf:space-y-1">
 							{#each importReport.warnings as warning}

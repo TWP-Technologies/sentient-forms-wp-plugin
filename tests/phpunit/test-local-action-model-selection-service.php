@@ -48,18 +48,17 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__clarification_assistant_v1',
-                'display_name'         => 'Realtime Clarification Assistant',
-                'definition_json'      => [
-                    'template_code' => 'clarification_assistant_v1',
-                ],
-                'model_selection_json' => [
-                    'provider'      => 'openrouter',
-                    'model'         => 'openrouter/auto',
-                    'credential_id' => 999,
-                ],
-            ]
+            array_merge(
+                $this->catalog_action_linkage( 'clarification_assistant_v1' ),
+                [
+                    'display_name'         => 'Realtime Clarification Assistant',
+                    'model_selection_json' => [
+                        'provider'      => 'openrouter',
+                        'model'         => 'openrouter/auto',
+                        'credential_id' => 999,
+                    ],
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -94,22 +93,21 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__clarification_assistant_v1',
-                'display_name'         => 'Realtime Clarification Assistant',
-                'definition_json'      => [
-                    'template_code' => 'clarification_assistant_v1',
-                ],
-                'model_selection_json' => [
-                    'provider'  => 'openrouter',
-                    'model'     => '~google/gemini-flash-latest',
-                    'selection' => [
-                        'primary'   => 'sf_realtime',
+            array_merge(
+                $this->catalog_action_linkage( 'clarification_assistant_v1' ),
+                [
+                    'display_name'         => 'Realtime Clarification Assistant',
+                    'model_selection_json' => [
                         'provider'  => 'openrouter',
-                        'is_preset' => true,
+                        'model'     => '~google/gemini-flash-latest',
+                        'selection' => [
+                            'primary'   => 'sf_realtime',
+                            'provider'  => 'openrouter',
+                            'is_preset' => true,
+                        ],
                     ],
-                ],
-            ]
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -145,17 +143,16 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__spam_detection_v1',
-                'display_name'         => 'Spam Detection',
-                'definition_json'      => [
-                    'template_code' => 'spam_detection_v1',
-                ],
-                'model_selection_json' => [
-                    'provider' => 'openrouter',
-                    'model'    => 'openrouter/auto',
-                ],
-            ]
+            array_merge(
+                $this->catalog_action_linkage( 'spam_detection_v1' ),
+                [
+                    'display_name'         => 'Spam Detection',
+                    'model_selection_json' => [
+                        'provider' => 'openrouter',
+                        'model'    => 'openrouter/auto',
+                    ],
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -204,18 +201,17 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__spam_detection_v1',
-                'display_name'         => 'Spam Detection',
-                'definition_json'      => [
-                    'template_code' => 'spam_detection_v1',
-                ],
-                'model_selection_json' => [
-                    'provider'      => 'openrouter',
-                    'model'         => 'openrouter/auto',
-                    'credential_id' => $openrouter_credential_id,
-                ],
-            ]
+            array_merge(
+                $this->catalog_action_linkage( 'spam_detection_v1' ),
+                [
+                    'display_name'         => 'Spam Detection',
+                    'model_selection_json' => [
+                        'provider'      => 'openrouter',
+                        'model'         => 'openrouter/auto',
+                        'credential_id' => $openrouter_credential_id,
+                    ],
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -279,18 +275,17 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__spam_detection_v1',
-                'display_name'         => 'Spam Detection',
-                'definition_json'      => [
-                    'template_code' => 'spam_detection_v1',
-                ],
-                'model_selection_json' => [
-                    'provider'      => 'openrouter',
-                    'model'         => 'google/gemini-3-flash-preview',
-                    'credential_id' => $preferred_openrouter_credential_id,
-                ],
-            ]
+            array_merge(
+                $this->catalog_action_linkage( 'spam_detection_v1' ),
+                [
+                    'display_name'         => 'Spam Detection',
+                    'model_selection_json' => [
+                        'provider'      => 'openrouter',
+                        'model'         => 'google/gemini-3-flash-preview',
+                        'credential_id' => $preferred_openrouter_credential_id,
+                    ],
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -327,17 +322,16 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertIsInt( $managed_credential_id );
 
         $action_id = $custom_actions->create(
-            [
-                'code'                 => 'bundled__spam_detection_v1',
-                'display_name'         => 'Spam Detection',
-                'definition_json'      => [
-                    'template_code' => 'spam_detection_v1',
-                ],
-                'model_selection_json' => [
-                    'provider' => 'openrouter',
-                    'model'    => 'openrouter/auto',
-                ],
-            ]
+            array_merge(
+                $this->catalog_action_linkage( 'spam_detection_v1' ),
+                [
+                    'display_name'         => 'Spam Detection',
+                    'model_selection_json' => [
+                        'provider' => 'openrouter',
+                        'model'    => 'openrouter/auto',
+                    ],
+                ]
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -602,5 +596,21 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertTrue( $selection['require_zdr'] ?? false );
         $this->assertTrue( $selection['selection']['require_zdr'] ?? false );
         $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
+    }
+
+    /**
+     * @return array{code:string,template_id:int,definition_json:array<string,string>}
+     */
+    private function catalog_action_linkage( string $code ): array
+    {
+        $templates = new Sentient_Forms_Action_Templates_Repository( $this->wpdb );
+        $template  = $templates->get_by_code( $code );
+        $this->assertIsArray( $template );
+
+        return [
+            'code'            => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $code ),
+            'template_id'     => (int) $template['id'],
+            'definition_json' => Sentient_Forms_Bundled_Action_Templates::linkage_definition( $code ),
+        ];
     }
 }

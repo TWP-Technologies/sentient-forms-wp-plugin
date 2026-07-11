@@ -2,7 +2,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	clearSentientFormsApiCache,
 	SentientFormsApiClient,
-	ApiClientError
+	ApiClientError,
+	ApiContractError
 } from '$lib/api/client';
 import {
 	SESSION_EXPIRED_EVENT,
@@ -14,6 +15,7 @@ import {
 } from '$lib/api/security-roadblock';
 import type { LicenseActivationRequest } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
+import { z } from 'zod';
 
 const baseUrl = 'https://example.test/wp-json/sentient-forms/v1/';
 
@@ -24,12 +26,92 @@ const client = new SentientFormsApiClient({
 	getNonce: () => 'nonce'
 });
 
+const objectPayloadSchema = z.record(z.string(), z.unknown());
+
+function requestObject(
+	path: string,
+	options: Parameters<SentientFormsApiClient['requestParsed']>[2] = {}
+) {
+	return client.requestParsed(path, objectPayloadSchema, options);
+}
+
+function licenseInfoFixture(status: string) {
+	return {
+		license_key_masked: 'LIC-…-123',
+		status,
+		proxy_key_present: true,
+		expires_at: null,
+		last_synced: null,
+		tier: null,
+		license_id: 'license-1',
+		site_id: 'site-1',
+		site_url: 'https://example.test'
+	};
+}
+
+function localActionTemplateFixture() {
+	return {
+		id: 1,
+		source: 'plugin',
+		external_id: 'spam_detection_v1',
+		code: 'spam_detection_v1',
+		display_name: 'Spam detection',
+		description: null,
+		prompt_template: null,
+		default_model: null,
+		structured_output_schema: null,
+		override_schema: null,
+		version: '1',
+		is_active: true,
+		created_at: null,
+		updated_at: null
+	};
+}
+
+function localCustomActionFixture(model: string) {
+	return {
+		id: 1,
+		external_id: 'custom-action-1',
+		template_id: null,
+		code: 'custom-action-1',
+		display_name: 'Custom action',
+		definition_json: { model },
+		model_selection_json: null,
+		status: 'active',
+		created_at: null,
+		updated_at: null
+	};
+}
+
 function jsonResponse(body: unknown, status = 200) {
 	return {
 		ok: status >= 200 && status < 300,
 		status,
 		headers: new Headers({ 'content-type': 'application/json' }),
 		json: () => Promise.resolve(body)
+	};
+}
+
+function formActionsBootstrapFixture(providerPathPolicy?: unknown) {
+	return {
+		form_source: 'gravity_forms',
+		form_id: 42,
+		actions: [],
+		execution_status: {
+			status: 'unknown',
+			message: null,
+			entry_id: null,
+			last_error_code: null,
+			last_result: null
+		},
+		disabled_state: {
+			sf_disabled: false,
+			global_disabled: false,
+			provider_disabled: false,
+			effective_disabled: false
+		},
+		...(providerPathPolicy === undefined ? {} : { provider_path_policy: providerPathPolicy }),
+		generated_at: '2030-01-05T10:00:00Z'
 	};
 }
 
@@ -50,12 +132,12 @@ describe('SentientFormsApiClient', () => {
 			json: () => Promise.resolve({ success: true, data: { ready: true } })
 		});
 
-		const first = client.request('meta/capabilities', {
+		const first = requestObject('meta/capabilities', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['meta'],
 			showNotifications: false
 		});
-		const second = client.request('meta/capabilities', {
+		const second = requestObject('meta/capabilities', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['meta'],
 			showNotifications: false
@@ -66,6 +148,205 @@ describe('SentientFormsApiClient', () => {
 			{ success: true, data: { ready: true } }
 		]);
 		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('parses additive versioned responses before returning them', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				version: 'v2',
+				ready: true,
+				future_field: 'accepted without becoming trusted'
+			})
+		);
+
+		const result = await client.requestParsed(
+			'meta/capabilities',
+			z.object({ version: z.literal('v2'), ready: z.boolean() }),
+			{ showNotifications: false }
+		);
+
+		expect(result).toEqual({ version: 'v2', ready: true });
+	});
+
+	it('resolves named endpoint contracts through the central registry', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				session_id: 'bps_123',
+				portal_url: 'https://billing.example.test/session',
+				customer_id: 'cus_123',
+				future_field: 'not trusted'
+			})
+		);
+
+		const result = await client.requestEndpoint('billing.portal.create', {
+			method: 'POST',
+			body: { return_url: 'https://example.test/settings' },
+			showNotifications: false
+		});
+
+		expect(result).toEqual({
+			session_id: 'bps_123',
+			portal_url: 'https://billing.example.test/session',
+			customer_id: 'cus_123'
+		});
+	});
+
+	it('rejects a missing required registered request body before network I/O', async () => {
+		await expect(
+			client.requestEndpoint('provider.openrouter.validate', {
+				method: 'POST',
+				showNotifications: false
+			})
+		).rejects.toBeInstanceOf(ApiContractError);
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it.each(['//evil.example/steal', 'https://evil.example/steal'])(
+		'rejects foreign endpoint override %s before reading the nonce',
+		async (pathOverride) => {
+			const getNonce = vi.fn(() => 'secret-nonce');
+			const isolatedClient = new SentientFormsApiClient({
+				baseUrl,
+				fetchImpl: mockFetch,
+				getNonce
+			});
+
+			await expect(
+				isolatedClient.requestEndpoint(
+					'billing.portal.create',
+					{
+						method: 'POST',
+						body: { return_url: 'https://example.test/settings' },
+						showNotifications: false
+					},
+					pathOverride
+				)
+			).rejects.toThrow('same-origin');
+			expect(getNonce).not.toHaveBeenCalled();
+			expect(mockFetch).not.toHaveBeenCalled();
+		}
+	);
+
+	it('reports contract failures without retaining the rejected payload', async () => {
+		const secret = 'sk-must-not-escape';
+		mockFetch.mockResolvedValue(jsonResponse({ version: 'v2', secret }));
+
+		let rejected: unknown;
+		try {
+			await client.requestParsed(
+				'meta/capabilities',
+				z.object({ version: z.literal('v2'), ready: z.boolean() }),
+				{ showNotifications: false }
+			);
+		} catch (error) {
+			rejected = error;
+		}
+
+		expect(rejected).toBeInstanceOf(ApiContractError);
+		expect(rejected).toMatchObject({
+			endpoint: 'meta/capabilities',
+			issues: [expect.objectContaining({ code: 'invalid_type', path: ['ready'] })]
+		});
+		expect(JSON.stringify(rejected)).not.toContain(secret);
+	});
+
+	it('evicts malformed cached values before retrying the network contract', async () => {
+		mockFetch
+			.mockResolvedValueOnce(jsonResponse({ version: 'v2', ready: 'not-a-boolean' }))
+			.mockResolvedValueOnce(jsonResponse({ version: 'v2', ready: true }));
+		const cacheOptions = {
+			cacheTtlMs: 60_000,
+			cacheTags: ['meta'],
+			cacheStorage: 'session' as const,
+			showNotifications: false
+		};
+
+		await requestObject('meta/capabilities', cacheOptions);
+		const result = await client.requestParsed(
+			'meta/capabilities',
+			z.object({ version: z.literal('v2'), ready: z.boolean() }),
+			cacheOptions
+		);
+		const cachedResult = await client.requestParsed(
+			'meta/capabilities',
+			z.object({ version: z.literal('v2'), ready: z.boolean() }),
+			cacheOptions
+		);
+
+		expect(result).toEqual({ version: 'v2', ready: true });
+		expect(cachedResult).toEqual(result);
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('parses non-2xx endpoint errors without retaining secret-bearing payload fields', async () => {
+		const secret = 'sk-error-must-not-escape';
+		mockFetch.mockResolvedValue(
+			jsonResponse(
+				{
+					error_code: 'checkout_rejected',
+					message: 'Checkout could not be created.',
+					secret,
+					error: {
+						code: 'checkout_rejected',
+						message: 'Checkout could not be created.',
+						provider_secret: secret
+					}
+				},
+				400
+			)
+		);
+
+		let rejected: unknown;
+		try {
+			await client.requestEndpoint('billing.portal.create', {
+				method: 'POST',
+				body: { return_url: 'https://example.test/settings' },
+				showNotifications: false
+			});
+		} catch (error) {
+			rejected = error;
+		}
+
+		expect(rejected).toBeInstanceOf(ApiClientError);
+		expect(rejected).toMatchObject({
+			code: 'checkout_rejected',
+			payload: {
+				code: 'checkout_rejected',
+				message: 'Checkout could not be created.'
+			}
+		});
+		expect(JSON.stringify(rejected)).not.toContain(secret);
+	});
+
+	it('sends the parsed request body and ignores inherited toJSON hooks', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				session_id: 'bps_123',
+				portal_url: 'https://billing.example.test/session',
+				customer_id: 'cus_123'
+			})
+		);
+		class PortalRequestBody {
+			return_url = '  https://example.test/settings  ';
+
+			toJSON() {
+				return { return_url: 'javascript:alert(1)' };
+			}
+		}
+		const body = new PortalRequestBody();
+
+		await client.requestEndpoint('billing.portal.create', {
+			method: 'POST',
+			body,
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/billing/portal-session`,
+			expect.objectContaining({
+				body: JSON.stringify({ return_url: 'https://example.test/settings' })
+			})
+		);
 	});
 
 	it('invalidates tagged in-flight GETs before they can rewrite stale cache entries', async () => {
@@ -96,25 +377,25 @@ describe('SentientFormsApiClient', () => {
 			throw new Error(`Unexpected request: ${method} ${url}`);
 		});
 
-		const firstDashboard = client.request('admin/dashboard-summary', {
+		const firstDashboard = requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard']
 		});
 		expect(dashboardRequests).toBe(1);
 
-		await client.request('settings', {
+		await requestObject('settings', {
 			method: 'PUT',
 			body: { enable_logging: true }
 		});
 
-		const secondDashboard = await client.request('admin/dashboard-summary', {
+		const secondDashboard = await requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard']
 		});
 		resolveStaleDashboard(jsonResponse(staleDashboard));
 		await expect(firstDashboard).resolves.toEqual(staleDashboard);
 
-		const thirdDashboard = await client.request('admin/dashboard-summary', {
+		const thirdDashboard = await requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard']
 		});
@@ -149,13 +430,13 @@ describe('SentientFormsApiClient', () => {
 			throw new Error(`Unexpected request: ${method} ${url}`);
 		});
 
-		const firstDashboard = client.request('admin/dashboard-summary', {
+		const firstDashboard = requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard']
 		});
 		expect(dashboardRequests).toBe(1);
 
-		const forcedDashboard = await client.request('admin/dashboard-summary', {
+		const forcedDashboard = await requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard'],
 			forceRefresh: true
@@ -164,7 +445,7 @@ describe('SentientFormsApiClient', () => {
 		resolveStaleDashboard(jsonResponse(staleDashboard));
 		await expect(firstDashboard).resolves.toEqual(staleDashboard);
 
-		const cachedDashboard = await client.request('admin/dashboard-summary', {
+		const cachedDashboard = await requestObject('admin/dashboard-summary', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['dashboard']
 		});
@@ -184,15 +465,12 @@ describe('SentientFormsApiClient', () => {
 				dashboardRequests += 1;
 				return Promise.resolve(
 					jsonResponse({
-						success: true,
-						data: {
-							generated_at: '2030-01-01T00:00:00Z',
-							providers: [],
-							templates: [],
-							custom_actions: [],
-							recent_events: [],
-							version: dashboardRequests
-						}
+						generated_at: `2030-01-01T00:00:0${dashboardRequests}Z`,
+						providers: [],
+						templates: [],
+						custom_actions: [],
+						recent_events: [],
+						version: dashboardRequests
 					})
 				);
 			}
@@ -204,8 +482,8 @@ describe('SentientFormsApiClient', () => {
 		clearSentientFormsApiCache(['dashboard']);
 		const secondDashboard = await client.getDashboardSummary({ cacheTags: ['custom'] });
 
-		expect(firstDashboard).toMatchObject({ version: 1 });
-		expect(secondDashboard).toMatchObject({ version: 2 });
+		expect(firstDashboard).toMatchObject({ generated_at: '2030-01-01T00:00:01Z' });
+		expect(secondDashboard).toMatchObject({ generated_at: '2030-01-01T00:00:02Z' });
 		expect(dashboardRequests).toBe(2);
 		expect(mockFetch).toHaveBeenCalledTimes(2);
 	});
@@ -239,12 +517,12 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const first = client.request('meta/capabilities', {
+		const first = requestObject('meta/capabilities', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['meta'],
 			showNotifications: false
 		});
-		const second = client.request('meta/capabilities', {
+		const second = requestObject('meta/capabilities', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['meta'],
 			showNotifications: false
@@ -274,12 +552,12 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const first = client.request('settings', {
+		const first = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: false
 		});
-		const second = client.request('settings', {
+		const second = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: true
@@ -316,12 +594,12 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const first = client.request('settings', {
+		const first = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: true
 		});
-		const second = client.request('settings', {
+		const second = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: true
@@ -350,11 +628,11 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const first = client.request('settings', {
+		const first = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings']
 		});
-		const second = client.request('settings', {
+		const second = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings']
 		});
@@ -382,12 +660,12 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const first = client.request('settings', {
+		const first = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: false
 		});
-		const second = client.request('settings', {
+		const second = requestObject('settings', {
 			cacheTtlMs: 60_000,
 			cacheTags: ['settings'],
 			showNotifications: false
@@ -415,14 +693,14 @@ describe('SentientFormsApiClient', () => {
 		});
 
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { value: 'cached' } });
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
@@ -448,14 +726,14 @@ describe('SentientFormsApiClient', () => {
 			});
 
 		await expect(
-			client.request('local/execution-events?limit=5', {
+			requestObject('local/execution-events?limit=5', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['events'],
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { page: 1 } });
 		await expect(
-			client.request('local/execution-events?limit=10', {
+			requestObject('local/execution-events?limit=10', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['events'],
 				showNotifications: false
@@ -481,14 +759,14 @@ describe('SentientFormsApiClient', () => {
 			});
 
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
 			})
 		).rejects.toBeInstanceOf(ApiClientError);
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
@@ -520,21 +798,21 @@ describe('SentientFormsApiClient', () => {
 			});
 
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { version: 'before' } });
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				method: 'PUT',
 				body: { enable_logging: true },
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { saved: true } });
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
@@ -550,7 +828,7 @@ describe('SentientFormsApiClient', () => {
 				ok: true,
 				status: 200,
 				headers: new Headers({ 'content-type': 'application/json' }),
-				json: () => Promise.resolve({ success: true, data: { status: 'active' } })
+				json: () => Promise.resolve(licenseInfoFixture('active'))
 			})
 			.mockResolvedValueOnce({
 				ok: true,
@@ -561,7 +839,7 @@ describe('SentientFormsApiClient', () => {
 				ok: true,
 				status: 200,
 				headers: new Headers({ 'content-type': 'application/json' }),
-				json: () => Promise.resolve({ success: true, data: { status: 'inactive' } })
+				json: () => Promise.resolve(licenseInfoFixture('inactive'))
 			});
 
 		await expect(client.getLicenseInfo({ showNotifications: false })).resolves.toMatchObject({
@@ -603,14 +881,14 @@ describe('SentientFormsApiClient', () => {
 			});
 
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { version: 'before' } });
 		await expect(
-			client.request('meta/capabilities', {
+			requestObject('meta/capabilities', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['capabilities'],
 				cacheStorage: 'session',
@@ -618,21 +896,21 @@ describe('SentientFormsApiClient', () => {
 			})
 		).resolves.toEqual({ success: true, data: { feature: 'cached' } });
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				method: 'PUT',
 				body: { enable_logging: true },
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { saved: true } });
 		await expect(
-			client.request('settings', {
+			requestObject('settings', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['settings'],
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { version: 'after' } });
 		await expect(
-			client.request('meta/capabilities', {
+			requestObject('meta/capabilities', {
 				cacheTtlMs: 60_000,
 				cacheTags: ['capabilities'],
 				cacheStorage: 'session',
@@ -645,24 +923,22 @@ describe('SentientFormsApiClient', () => {
 
 	it('invalidates cached capabilities after license mutations', async () => {
 		const capabilitiesBefore = {
-			providers: [],
 			supports_credits: true,
 			supports_custom_actions: true
 		};
 		const capabilitiesAfter = {
-			providers: [],
 			supports_credits: false,
 			supports_custom_actions: false
 		};
 
 		mockFetch
-			.mockResolvedValueOnce(jsonResponse({ success: true, data: capabilitiesBefore }))
+			.mockResolvedValueOnce(jsonResponse(capabilitiesBefore))
 			.mockResolvedValueOnce(jsonResponse({ success: true, data: { deactivated: true } }))
-			.mockResolvedValueOnce(jsonResponse({ success: true, data: capabilitiesAfter }));
+			.mockResolvedValueOnce(jsonResponse(capabilitiesAfter));
 
 		await expect(client.getCapabilities()).resolves.toEqual(capabilitiesBefore);
 		await expect(
-			client.request('license/deactivate', {
+			requestObject('license/deactivate', {
 				method: 'POST',
 				body: { confirm: true },
 				showNotifications: false
@@ -674,7 +950,7 @@ describe('SentientFormsApiClient', () => {
 	});
 
 	it('keeps local action templates warm after custom action mutations', async () => {
-		const templates = [{ action_id: 'spam_detection_v1', name: 'Spam detection' }];
+		const templates = [localActionTemplateFixture()];
 		mockFetch
 			.mockResolvedValueOnce({
 				ok: true,
@@ -693,7 +969,7 @@ describe('SentientFormsApiClient', () => {
 			templates
 		);
 		await expect(
-			client.request('local/custom-actions', {
+			requestObject('local/custom-actions', {
 				method: 'POST',
 				body: { name: 'Custom action' },
 				showNotifications: false
@@ -713,96 +989,100 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
+					form_source: 'gravity_forms',
+					form_id: 42,
+					form_source_descriptor: {
+						slug: 'gravity_forms',
+						label: 'Gravity Forms',
+						is_active: true,
+						lifecycles: {
+							validation: {
+								id: 'validation',
+								supported: true,
+								label: 'During validation',
+								native_hook: 'gform_validation',
+								execution_mode: 'blocking',
+								requires_ledger: false,
+								unsupported_reason: null
+							}
+						},
+						ledger: {
+							required_for_parity: false,
+							enabled: false,
+							settings_source: 'sentient_submission_ledger_settings',
+							unavailable_reason: null
+						}
+					},
+					actions: [
+						{
+							local_mapping_id: 'map-1',
+							central_action_id: 'spam_detection_v1',
+							action_type_indicator: 'master',
+							trigger_hooks: ['validation']
+						}
+					],
+					execution_status: {
+						status: 'success',
+						message: null,
+						entry_id: 99,
+						last_error_code: null,
+						last_result: null
+					},
+					disabled_state: {
+						sf_disabled: false,
+						global_disabled: false,
+						provider_disabled: false,
+						effective_disabled: false
+					},
+					ledger_settings: {
 						form_source: 'gravity_forms',
 						form_id: 42,
-						form_source_descriptor: {
-							slug: 'gravity_forms',
-							label: 'Gravity Forms',
-							is_active: true,
-							lifecycles: {
-								validation: {
-									id: 'validation',
-									supported: true,
-									label: 'During validation',
-									native_hook: 'gform_validation',
-									execution_mode: 'validation',
-									requires_ledger: false,
-									unsupported_reason: null
-								}
+						enabled: false,
+						enabled_at: null,
+						enabled_by_user_id: null,
+						disabled_at: null,
+						disabled_by_user_id: null,
+						settings_source: 'sentient_submission_ledger_settings',
+						ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
+						record_count: 0
+					},
+					provider_path_policy: {
+						default_provider: 'sentient_managed',
+						providers: {
+							sentient_managed: {
+								ready: true,
+								credential_id: 14,
+								blocked_reason_code: null
 							},
-							ledger: {
-								required_for_parity: false,
-								enabled: false,
-								settings_source: 'sentient_submission_ledger_settings',
-								unavailable_reason: null
+							openrouter: {
+								ready: true,
+								credential_id: 7,
+								blocked_reason_code: null
 							}
 						},
-						actions: [{ local_mapping_id: 'map-1', central_action_id: 'spam_detection_v1' }],
-						execution_status: {
-							status: 'success',
-							message: null,
-							entry_id: 99,
-							last_error_code: null,
-							last_result: null
-						},
-						disabled_state: {
-							sf_disabled: false,
-							global_disabled: false,
-							provider_disabled: false,
-							effective_disabled: false
-						},
-						ledger_settings: {
-							form_source: 'gravity_forms',
-							form_id: 42,
-							enabled: false,
-							enabled_at: null,
-							enabled_by_user_id: null,
-							disabled_at: null,
-							disabled_by_user_id: null,
-							settings_source: 'sentient_submission_ledger_settings',
-							ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
-							record_count: 0
-						},
-						provider_path_policy: {
-							default_provider: 'sentient_managed',
-							providers: {
-								sentient_managed: {
-									ready: true,
+						actions: {
+							spam_detection_v1: {
+								selected_provider: 'sentient_managed',
+								model_selection: {
+									provider: 'sentient_managed',
+									model: 'sf_default',
 									credential_id: 14,
-									blocked_reason_code: null
-								},
-								openrouter: {
-									ready: true,
-									credential_id: 7,
-									blocked_reason_code: null
-								}
-							},
-							actions: {
-								spam_detection_v1: {
-									selected_provider: 'sentient_managed',
-									model_selection: {
+									selection: {
+										primary: 'sf_default',
 										provider: 'sentient_managed',
-										model: 'sf_default',
-										credential_id: 14,
-										selection: {
-											primary: 'sf_default',
-											provider: 'sentient_managed',
-											is_preset: true,
-											credential_id: 14
-										},
-										backup_provider: 'openrouter',
-										backup_credential_id: 7,
-										backup_model: '~openai/gpt-latest'
+										is_preset: true,
+										credential_id: 14
 									},
-									blocked_reason_code: null,
-									requires_structured_output: true
-								}
+									backup_provider: 'openrouter',
+									backup_credential_id: 7,
+									backup_model: '~openai/gpt-latest'
+								},
+								blocked_reason_code: null,
+								requires_structured_output: true
 							}
-						},
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+						}
+					},
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 		});
 
@@ -828,45 +1108,38 @@ describe('SentientFormsApiClient', () => {
 		expect(result.ledger_settings?.ledger_records_endpoint).toContain('/submissions');
 	});
 
-	it('drops malformed provider path policy payloads from form actions bootstrap', async () => {
+	it('rejects malformed provider path policy payloads from the network', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
 			status: 200,
 			headers: new Headers({ 'content-type': 'application/json' }),
-			json: () =>
-				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						actions: [],
-						execution_status: {
-							status: 'unknown',
-							message: null,
-							entry_id: null,
-							last_error_code: null,
-							last_result: null
-						},
-						disabled_state: {
-							sf_disabled: false,
-							global_disabled: false,
-							provider_disabled: false,
-							effective_disabled: false
-						},
-						provider_path_policy: {
-							providers: [],
-							actions: null
-						},
-						generated_at: '2030-01-05T10:00:00Z'
-					}
-				})
+			json: () => Promise.resolve(formActionsBootstrapFixture({ providers: [], actions: null }))
 		});
 
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).rejects.toBeInstanceOf(ApiContractError);
+	});
+
+	it('evicts malformed cached provider policy before retrying the network', async () => {
+		const path = 'gravity_forms/forms/42/actions/bootstrap';
+		mockFetch
+			.mockResolvedValueOnce(
+				jsonResponse(formActionsBootstrapFixture({ providers: [], actions: null }))
+			)
+			.mockResolvedValueOnce(jsonResponse(formActionsBootstrapFixture()));
+
+		await requestObject(path, {
+			cacheTtlMs: 60_000,
+			cacheTags: ['form-actions'],
+			showNotifications: false
+		});
 		const result = await client.getFormActionsBootstrap('gravity_forms', 42, {
 			showNotifications: false
 		});
 
 		expect(result.provider_path_policy).toBeUndefined();
+		expect(mockFetch).toHaveBeenCalledTimes(2);
 	});
 
 	it('rejects malformed form actions bootstrap responses', async () => {
@@ -876,26 +1149,23 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						actions: { map_1: { central_action_id: 'spam_detection_v1' } },
-						execution_status: {
-							status: 'success',
-							message: null,
-							entry_id: 99,
-							last_error_code: null,
-							last_result: null
-						},
-						disabled_state: {
-							sf_disabled: false,
-							global_disabled: false,
-							provider_disabled: false,
-							effective_disabled: false
-						},
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					actions: { map_1: { central_action_id: 'spam_detection_v1' } },
+					execution_status: {
+						status: 'success',
+						message: null,
+						entry_id: 99,
+						last_error_code: null,
+						last_result: null
+					},
+					disabled_state: {
+						sf_disabled: false,
+						global_disabled: false,
+						provider_disabled: false,
+						effective_disabled: false
+					},
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 		});
 
@@ -911,19 +1181,16 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						enabled: true,
-						enabled_at: '2030-01-05T10:00:00Z',
-						enabled_by_user_id: 7,
-						disabled_at: null,
-						disabled_by_user_id: null,
-						settings_source: 'sentient_submission_ledger_settings',
-						ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
-						record_count: 0
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					enabled: true,
+					enabled_at: '2030-01-05T10:00:00Z',
+					enabled_by_user_id: 7,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
+					record_count: 0
 				})
 		});
 
@@ -951,19 +1218,16 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'opaque_forms',
-						form_id: opaqueFormId,
-						enabled: true,
-						enabled_at: '2030-01-05T10:00:00Z',
-						enabled_by_user_id: 7,
-						disabled_at: null,
-						disabled_by_user_id: null,
-						settings_source: 'sentient_submission_ledger_settings',
-						ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
-						record_count: 0
-					}
+					form_source: 'opaque_forms',
+					form_id: opaqueFormId,
+					enabled: true,
+					enabled_at: '2030-01-05T10:00:00Z',
+					enabled_by_user_id: 7,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+					record_count: 0
 				})
 		});
 
@@ -996,19 +1260,16 @@ describe('SentientFormsApiClient', () => {
 					settingsRequests += 1;
 					return Promise.resolve(
 						jsonResponse({
-							success: true,
-							data: {
-								form_source: 'opaque_forms',
-								form_id: opaqueFormId,
-								enabled: settingsRequests > 1,
-								enabled_at: null,
-								enabled_by_user_id: null,
-								disabled_at: null,
-								disabled_by_user_id: null,
-								settings_source: 'sentient_submission_ledger_settings',
-								ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
-								record_count: 0
-							}
+							form_source: 'opaque_forms',
+							form_id: opaqueFormId,
+							enabled: settingsRequests > 1,
+							enabled_at: null,
+							enabled_by_user_id: null,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+							record_count: 0
 						})
 					);
 				}
@@ -1016,19 +1277,16 @@ describe('SentientFormsApiClient', () => {
 				if (method === 'PUT') {
 					return Promise.resolve(
 						jsonResponse({
-							success: true,
-							data: {
-								form_source: 'opaque_forms',
-								form_id: opaqueFormId,
-								enabled: true,
-								enabled_at: '2030-01-05T10:00:00Z',
-								enabled_by_user_id: 7,
-								disabled_at: null,
-								disabled_by_user_id: null,
-								settings_source: 'sentient_submission_ledger_settings',
-								ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
-								record_count: 0
-							}
+							form_source: 'opaque_forms',
+							form_id: opaqueFormId,
+							enabled: true,
+							enabled_at: '2030-01-05T10:00:00Z',
+							enabled_by_user_id: 7,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint: `/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+							record_count: 0
 						})
 					);
 				}
@@ -1059,33 +1317,30 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						submissions: [
-							{
-								id: 11,
-								submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
-								form_source: 'gravity_forms',
-								form_id: 42,
-								native_entry_id: '99',
-								native_entry_url: 'https://example.test/entry/99',
-								source_submitted_at: '2030-01-05T10:00:00Z',
-								captured_at: '2030-01-05T10:00:01Z',
-								logical_fields: { email: 'redacted' },
-								provider_metadata: {},
-								file_refs: [],
-								redaction_summary: { redacted_fields: ['email'] },
-								expires_at: null,
-								detail_endpoint:
-									'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
-							}
-						],
-						count: 1,
-						per_page: 10,
-						offset: 0
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					submissions: [
+						{
+							id: 11,
+							submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+							form_source: 'gravity_forms',
+							form_id: 42,
+							native_entry_id: '99',
+							native_entry_url: 'https://example.test/entry/99',
+							source_submitted_at: '2030-01-05T10:00:00Z',
+							captured_at: '2030-01-05T10:00:01Z',
+							logical_fields: { email: 'redacted' },
+							provider_metadata: {},
+							file_refs: [],
+							redaction_summary: { redacted_fields: ['email'] },
+							expires_at: null,
+							detail_endpoint:
+								'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+						}
+					],
+					count: 1,
+					per_page: 10,
+					offset: 0
 				})
 		});
 
@@ -1110,16 +1365,13 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						submissions: [],
-						total: 0,
-						count: 0,
-						per_page: 25,
-						offset: 50
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					submissions: [],
+					total: 0,
+					count: 0,
+					per_page: 25,
+					offset: 50
 				})
 		});
 
@@ -1148,33 +1400,30 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						records: [
-							{
-								id: 11,
-								submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
-								form_source: 'gravity_forms',
-								form_id: 42,
-								native_entry_id: '99',
-								native_entry_url: null,
-								source_submitted_at: null,
-								captured_at: '2030-01-05T10:00:01Z',
-								logical_fields: { email: 'redacted' },
-								provider_metadata: null,
-								file_refs: null,
-								redaction_summary: null,
-								expires_at: null,
-								detail_endpoint:
-									'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
-							}
-						],
-						total: 1,
-						per_page: 10,
-						offset: 0
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					records: [
+						{
+							id: 11,
+							submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+							form_source: 'gravity_forms',
+							form_id: 42,
+							native_entry_id: '99',
+							native_entry_url: null,
+							source_submitted_at: null,
+							captured_at: '2030-01-05T10:00:01Z',
+							logical_fields: { email: 'redacted' },
+							provider_metadata: null,
+							file_refs: null,
+							redaction_summary: null,
+							expires_at: null,
+							detail_endpoint:
+								'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+						}
+					],
+					total: 1,
+					per_page: 10,
+					offset: 0
 				})
 		});
 
@@ -1190,31 +1439,29 @@ describe('SentientFormsApiClient', () => {
 	it('searches historical spam guidance entries through the spam-specific endpoint', async () => {
 		mockFetch.mockResolvedValue(
 			jsonResponse({
-				success: true,
-				data: {
-					form_source: 'gravity_forms',
-					form_id: '42',
-					availability: {
-						source: 'native',
-						native_read: true,
-						ledger_read: false,
-						unavailable_reason: null
-					},
-					entries: [
-						{
-							id: '99',
-							source_type: 'native',
-							date_created: '2030-01-05T10:00:00Z',
-							status: 'spam',
-							native_entry_id: '99',
-							native_entry_url: 'https://example.test/wp-admin/admin.php?page=gf_entries&id=42&lid=99',
-							field_summary: [
-								{ field_id: '1', label: 'Email', value: 'spam@example.test' },
-								{ field_id: '2', label: 'Message', value: 'Buy crypto traffic now.' }
-							]
-						}
-					]
-				}
+				form_source: 'gravity_forms',
+				form_id: '42',
+				availability: {
+					source: 'native',
+					native_read: true,
+					ledger_read: false,
+					unavailable_reason: null
+				},
+				entries: [
+					{
+						id: '99',
+						source_type: 'native',
+						date_created: '2030-01-05T10:00:00Z',
+						status: 'spam',
+						native_entry_id: '99',
+						native_entry_url:
+							'https://example.test/wp-admin/admin.php?page=gf_entries&id=42&lid=99',
+						field_summary: [
+							{ field_id: '1', label: 'Email', value: 'spam@example.test' },
+							{ field_id: '2', label: 'Message', value: 'Buy crypto traffic now.' }
+						]
+					}
+				]
 			})
 		);
 
@@ -1237,20 +1484,17 @@ describe('SentientFormsApiClient', () => {
 	it('keeps opaque Form Source IDs encoded for historical spam guidance search', async () => {
 		mockFetch.mockResolvedValue(
 			jsonResponse({
-				success: true,
-				data: {
-					form_source: 'elementor_pro_forms',
-					form_id: '123:formabc',
-					availability: {
-						source: 'ledger',
-						native_read: false,
-						ledger_read: true,
-						ledger_enabled: true,
-						unavailable_reason: null,
-						native_unavailable_reason: 'elementor_form_submissions_unavailable'
-					},
-					entries: []
-				}
+				form_source: 'elementor_pro_forms',
+				form_id: '123:formabc',
+				availability: {
+					source: 'ledger',
+					native_read: false,
+					ledger_read: true,
+					ledger_enabled: true,
+					unavailable_reason: null,
+					native_unavailable_reason: 'elementor_form_submissions_unavailable'
+				},
+				entries: []
 			})
 		);
 
@@ -1271,28 +1515,25 @@ describe('SentientFormsApiClient', () => {
 	it('appends reviewed spam guidance examples and preserves provenance in the parsed config', async () => {
 		mockFetch.mockResolvedValue(
 			jsonResponse({
-				success: true,
-				data: {
-					target_scope: 'form',
-					label: 'ham',
-					config: {
-						spam_positive_examples: [
-							{
-								text: 'Email: ada@example.test\nMessage: Please quote a repair.',
-								rationale: 'Specific buyer request.',
-								source: {
-									kind: 'entry',
-									form_source: 'gravity_forms',
-									form_id: '42',
-									entry_id: '99',
-									native_entry_id: '99',
-									selected_at: '2030-01-05T10:05:00Z',
-									selected_by_user_id: 7
-								}
+				target_scope: 'form',
+				label: 'ham',
+				config: {
+					spam_positive_examples: [
+						{
+							text: 'Email: ada@example.test\nMessage: Please quote a repair.',
+							rationale: 'Specific buyer request.',
+							source: {
+								kind: 'entry',
+								form_source: 'gravity_forms',
+								form_id: '42',
+								entry_id: '99',
+								native_entry_id: '99',
+								selected_at: '2030-01-05T10:05:00Z',
+								selected_by_user_id: 7
 							}
-						],
-						spam_negative_examples: []
-					}
+						}
+					],
+					spam_negative_examples: []
 				}
 			})
 		);
@@ -1395,24 +1636,21 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						id: 11,
-						submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
-						form_source: 'gravity_forms',
-						form_id: 42,
-						native_entry_id: '99',
-						native_entry_url: 'https://example.test/entry/99',
-						source_submitted_at: '2030-01-05T10:00:00Z',
-						captured_at: '2030-01-05T10:00:01Z',
-						logical_fields: { email: 'redacted' },
-						provider_metadata: {},
-						file_refs: [],
-						redaction_summary: { redacted_fields: ['email'] },
-						expires_at: null,
-						detail_endpoint:
-							'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
-					}
+					id: 11,
+					submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+					form_source: 'gravity_forms',
+					form_id: 42,
+					native_entry_id: '99',
+					native_entry_url: 'https://example.test/entry/99',
+					source_submitted_at: '2030-01-05T10:00:00Z',
+					captured_at: '2030-01-05T10:00:01Z',
+					logical_fields: { email: 'redacted' },
+					provider_metadata: {},
+					file_refs: [],
+					redaction_summary: { redacted_fields: ['email'] },
+					expires_at: null,
+					detail_endpoint:
+						'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
 				})
 		});
 
@@ -1437,27 +1675,24 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						form_id: 42,
-						actions: [],
-						custom_actions: [],
-						execution_status: {
-							status: 'success',
-							message: null,
-							entry_id: null,
-							last_error_code: null,
-							last_result: null
-						},
-						disabled_state: {
-							sf_disabled: false,
-							global_disabled: false,
-							provider_disabled: false,
-							effective_disabled: false
-						},
-						generated_at: generatedAt
-					}
+					form_source: 'gravity_forms',
+					form_id: 42,
+					actions: [],
+					custom_actions: { actions: [], quota: null },
+					execution_status: {
+						status: 'success',
+						message: null,
+						entry_id: null,
+						last_error_code: null,
+						last_result: null
+					},
+					disabled_state: {
+						sf_disabled: false,
+						global_disabled: false,
+						provider_disabled: false,
+						effective_disabled: false
+					},
+					generated_at: generatedAt
 				})
 		});
 
@@ -1475,7 +1710,7 @@ describe('SentientFormsApiClient', () => {
 			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
 		).resolves.toMatchObject({ generated_at: 'before' });
 		await expect(
-			client.request('local/custom-actions', {
+			requestObject('local/custom-actions', {
 				method: 'POST',
 				body: { name: 'Custom action' },
 				showNotifications: false
@@ -1495,12 +1730,9 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						form_source: 'gravity_forms',
-						forms: [],
-						generated_at: generatedAt
-					}
+					form_source: 'gravity_forms',
+					forms: [],
+					generated_at: generatedAt
 				})
 		});
 
@@ -1518,7 +1750,7 @@ describe('SentientFormsApiClient', () => {
 			client.getFormsOverview('gravity_forms', { showNotifications: false })
 		).resolves.toMatchObject({ generated_at: 'before' });
 		await expect(
-			client.request('local/custom-actions', {
+			requestObject('local/custom-actions', {
 				method: 'POST',
 				body: { name: 'Custom action' },
 				showNotifications: false
@@ -1532,30 +1764,27 @@ describe('SentientFormsApiClient', () => {
 	});
 
 	it('invalidates cached action payloads after provider mutations repair actions', async () => {
-		const customActionsBefore = [{ id: 'custom-action-1', model: 'openrouter/old' }];
-		const customActionsAfter = [{ id: 'custom-action-1', model: 'sf_fast' }];
+		const customActionsBefore = [localCustomActionFixture('openrouter/old')];
+		const customActionsAfter = [localCustomActionFixture('sf_fast')];
 		const bootstrapResponse = (generatedAt: string) => ({
-			success: true,
-			data: {
-				form_source: 'gravity_forms',
-				form_id: 42,
-				actions: [],
-				custom_actions: [],
-				execution_status: {
-					status: 'unknown',
-					message: null,
-					entry_id: null,
-					last_error_code: null,
-					last_result: null
-				},
-				disabled_state: {
-					sf_disabled: false,
-					global_disabled: false,
-					provider_disabled: false,
-					effective_disabled: false
-				},
-				generated_at: generatedAt
-			}
+			form_source: 'gravity_forms',
+			form_id: 42,
+			actions: [],
+			custom_actions: { actions: [], quota: null },
+			execution_status: {
+				status: 'unknown',
+				message: null,
+				entry_id: null,
+				last_error_code: null,
+				last_result: null
+			},
+			disabled_state: {
+				sf_disabled: false,
+				global_disabled: false,
+				provider_disabled: false,
+				effective_disabled: false
+			},
+			generated_at: generatedAt
 		});
 
 		mockFetch
@@ -1570,7 +1799,7 @@ describe('SentientFormsApiClient', () => {
 			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
 		).resolves.toMatchObject({ generated_at: 'before' });
 		await expect(
-			client.request('local/providers/openrouter/constant', {
+			requestObject('local/providers/openrouter/constant', {
 				method: 'POST',
 				body: { constant_name: 'SENTIENT_OPENROUTER_KEY' },
 				showNotifications: false
@@ -1591,16 +1820,13 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						defaults: {
-							spam_detection_v1: {
-								model_selection: { primary: 'sf_fast', is_preset: true }
-							},
-							entry_summary_v1: {}
+					defaults: {
+						spam_detection_v1: {
+							model_selection: { primary: 'sf_fast', is_preset: true }
 						},
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+						entry_summary_v1: {}
+					},
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 		});
 
@@ -1627,11 +1853,8 @@ describe('SentientFormsApiClient', () => {
 
 			return Promise.resolve(
 				jsonResponse({
-					success: true,
-					data: {
-						defaults: Object.fromEntries(ids.map((id) => [id, { action_id: id }])),
-						generated_at: '2030-01-05T10:00:00Z'
-					}
+					defaults: Object.fromEntries(ids.map((id) => [id, { action_id: id }])),
+					generated_at: '2030-01-05T10:00:00Z'
 				})
 			);
 		});
@@ -1646,7 +1869,7 @@ describe('SentientFormsApiClient', () => {
 		expect(requestedBatches[0]).toContain('custom_action_000');
 		expect(requestedBatches[1]).toContain('custom_action_104');
 		expect(Object.keys(result)).toHaveLength(105);
-		expect(result.custom_action_104).toEqual({ action_id: 'custom_action_104' });
+		expect(result.custom_action_104).toEqual({});
 	});
 
 	it('activates license and normalizes response', async () => {
@@ -1662,17 +1885,15 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						success: true,
-						message: 'Activated',
-						status: 'active',
-						proxy_api_key: 'proxy-123',
-						tier: 'starter',
-						expiry_date: '2026-01-01',
-						license_id: 'lic-1',
-						site_id: 'site-1'
-					}
+					status: 'active',
+					license_key_masked: 'LIC-****',
+					proxy_key_present: true,
+					tier: 'starter',
+					expires_at: '2026-01-01',
+					last_synced: '2025-12-01',
+					license_id: 'lic-1',
+					site_id: 'site-1',
+					site_url: 'https://site.test'
 				})
 		});
 
@@ -1686,9 +1907,8 @@ describe('SentientFormsApiClient', () => {
 		);
 		expect(result).toEqual({
 			success: true,
-			message: 'Activated',
+			message: 'License activated successfully.',
 			status: 'active',
-			proxyApiKey: 'proxy-123',
 			tier: 'starter',
 			expiryDate: '2026-01-01',
 			licenseId: 'lic-1',
@@ -1696,25 +1916,37 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
-	it('unwraps license info envelope', async () => {
+	it('rejects empty activation responses instead of assuming success', async () => {
+		mockFetch.mockResolvedValue(jsonResponse({}));
+
+		await expect(
+			client.activateLicense(
+				{
+					licenseKey: 'LIC-123',
+					siteUrl: 'https://site.test',
+					localSiteIdentifier: 'site-guid'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toBeInstanceOf(ApiContractError);
+	});
+
+	it('parses raw license info', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
 			status: 200,
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						license_key_masked: 'LIC-****',
-						status: 'active',
-						proxy_key_present: true,
-						expires_at: '2026-01-01',
-						last_synced: '2025-10-20 00:00:00',
-						tier: 'starter',
-						license_id: 'lic-1',
-						site_id: 'site-1',
-						site_url: 'https://site.test'
-					}
+					license_key_masked: 'LIC-****',
+					status: 'active',
+					proxy_key_present: true,
+					expires_at: '2026-01-01',
+					last_synced: '2025-10-20 00:00:00',
+					tier: 'starter',
+					license_id: 'lic-1',
+					site_id: 'site-1',
+					site_url: 'https://site.test'
 				})
 		});
 
@@ -1739,12 +1971,9 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						status,
-						license_id: 'lic-1',
-						site_id: 'site-1'
-					}
+					status,
+					license_id: 'lic-1',
+					site_id: 'site-1'
 				})
 		});
 
@@ -1782,12 +2011,9 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						status,
-						license_id: 'lic-1',
-						site_id: 'site-1'
-					}
+					status,
+					license_id: 'lic-1',
+					site_id: 'site-1'
 				})
 		});
 		let resolveNormal!: (response: ReturnType<typeof billingStateResponse>) => void;
@@ -1838,11 +2064,8 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						sf_disabled: true,
-						message: 'Sentient Forms disabled for this form.'
-					}
+					sf_disabled: true,
+					message: 'Sentient Forms disabled for this form.'
 				})
 		});
 
@@ -1974,17 +2197,15 @@ describe('SentientFormsApiClient', () => {
 
 		expect(mockFetch).toHaveBeenCalledWith(
 			`${baseUrl}local/providers/openrouter/validate`,
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					api_key: 'sk-or-test',
-					label: 'Test key',
-					save: true,
-					disclosure_version: '2026-04-local-first-openrouter-v1',
-					accepted_external_service_terms: true
-				})
-			})
+			expect.objectContaining({ method: 'POST' })
 		);
+		expect(JSON.parse(String(mockFetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+			api_key: 'sk-or-test',
+			label: 'Test key',
+			save: true,
+			disclosure_version: '2026-04-local-first-openrouter-v1',
+			accepted_external_service_terms: true
+		});
 		expect(result).toMatchObject({
 			status: 'valid',
 			credential_id: 9,
@@ -2022,16 +2243,14 @@ describe('SentientFormsApiClient', () => {
 
 		expect(mockFetch).toHaveBeenCalledWith(
 			`${baseUrl}local/providers/openrouter/constant`,
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY',
-					label: 'OpenRouter server secret',
-					disclosure_version: '2026-04-local-first-openrouter-v1',
-					accepted_external_service_terms: true
-				})
-			})
+			expect.objectContaining({ method: 'POST' })
 		);
+		expect(JSON.parse(String(mockFetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+			constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY',
+			label: 'OpenRouter server secret',
+			disclosure_version: '2026-04-local-first-openrouter-v1',
+			accepted_external_service_terms: true
+		});
 		expect(result).toMatchObject({
 			status: 'valid',
 			credential_id: 12,
@@ -2091,15 +2310,13 @@ describe('SentientFormsApiClient', () => {
 
 		expect(mockFetch).toHaveBeenCalledWith(
 			`${baseUrl}local/providers/sentient-managed/setup`,
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					label: 'Sentient Forms managed service',
-					disclosure_version: '2026-04-sentient-managed-proxy-v1',
-					accepted_external_service_terms: true
-				})
-			})
+			expect.objectContaining({ method: 'POST' })
 		);
+		expect(JSON.parse(String(mockFetch.mock.calls.at(-1)?.[1]?.body))).toEqual({
+			label: 'Sentient Forms managed service',
+			disclosure_version: '2026-04-sentient-managed-proxy-v1',
+			accepted_external_service_terms: true
+		});
 		expect(result).toMatchObject({
 			provider: 'sentient_managed',
 			status: 'valid',
@@ -2119,14 +2336,11 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						checkout_intent_id: 'mci_123',
-						checkout_session_id: 'cs_test_123',
-						checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
-						plan_code: 'starter',
-						consent_recorded: true
-					}
+					checkout_intent_id: 'mci_123',
+					checkout_session_id: 'cs_test_123',
+					checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+					plan_code: 'starter',
+					consent_recorded: true
 				})
 		});
 
@@ -2193,11 +2407,7 @@ describe('SentientFormsApiClient', () => {
 			ok: true,
 			status: 200,
 			headers: new Headers({ 'content-type': 'application/json' }),
-			json: () =>
-				Promise.resolve({
-					success: true,
-					data
-				})
+			json: () => Promise.resolve(data)
 		});
 
 		await expect(
@@ -2221,13 +2431,10 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						session_id: 'cs_legacy_123',
-						checkout_url: 'http://checkout.stripe.test/c/pay/cs_legacy_123',
-						customer_id: 'cus_123',
-						subscription_id: null
-					}
+					session_id: 'cs_legacy_123',
+					checkout_url: 'http://checkout.stripe.test/c/pay/cs_legacy_123',
+					customer_id: 'cus_123',
+					subscription_id: null
 				})
 		});
 
@@ -2250,12 +2457,9 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						session_id: 'bps_123',
-						portal_url: 'http://billing.stripe.test/p/session/bps_123',
-						customer_id: 'cus_123'
-					}
+					session_id: 'bps_123',
+					portal_url: 'http://billing.stripe.test/p/session/bps_123',
+					customer_id: 'cus_123'
 				})
 		});
 
@@ -2276,14 +2480,11 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						session_id: 'cs_top_up_123',
-						checkout_url: 'http://checkout.stripe.test/c/pay/cs_top_up_123',
-						customer_id: 'cus_123',
-						top_up_credits: 1000,
-						pack_code: 'top_up_small'
-					}
+					session_id: 'cs_top_up_123',
+					checkout_url: 'http://checkout.stripe.test/c/pay/cs_top_up_123',
+					customer_id: 'cus_123',
+					top_up_credits: 1000,
+					pack_code: 'top_up_small'
 				})
 		});
 
@@ -2306,15 +2507,12 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					success: true,
-					data: {
-						activation_ready: true,
-						license_id: 'lic-managed-123',
-						site_id: 'site-managed-456',
-						proxy_api_key: 'proxy-issued',
-						credential_id: 88,
-						managed_provider_ready: true
-					}
+					activation_ready: true,
+					license_id: 'lic-managed-123',
+					site_id: 'site-managed-456',
+					proxy_api_key: 'proxy-issued',
+					credential_id: 88,
+					managed_provider_ready: true
 				})
 		});
 
@@ -2900,7 +3098,9 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		await expect(client.request('site-context', { showNotifications: false })).resolves.toBeNull();
+		await expect(
+			client.requestParsed('site-context', z.null(), { showNotifications: false })
+		).resolves.toBeNull();
 	});
 
 	it('surfaces contaminated JSON responses with diagnostic payload', async () => {

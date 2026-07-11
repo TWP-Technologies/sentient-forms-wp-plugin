@@ -36,8 +36,7 @@ function record(index: number, overrides: Record<string, unknown> = {}) {
 
 test.describe('Submission Ledger admin view', () => {
 	test.beforeEach(async ({ page }) => {
-		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+		await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 	});
 
 	test('searches the server ledger and reports filtered totals', async ({ page }) => {
@@ -51,7 +50,7 @@ test.describe('Submission Ledger admin view', () => {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ success: true, data: ledgerSettings })
+					body: JSON.stringify(ledgerSettings)
 				});
 			}
 
@@ -77,16 +76,13 @@ test.describe('Submission Ledger admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							form_source: 'gravity_forms',
-							form_id: '42',
-							submissions: matchingRecords,
-							total: q ? 1 : 61,
-							count: matchingRecords.length,
-							per_page: perPage,
-							offset
-						}
+						form_source: 'gravity_forms',
+						form_id: '42',
+						submissions: matchingRecords,
+						total: q ? 1 : 61,
+						count: matchingRecords.length,
+						per_page: perPage,
+						offset
 					})
 				});
 			}
@@ -107,7 +103,9 @@ test.describe('Submission Ledger admin view', () => {
 		expect(seenSubmissionQueries.some((query) => query.includes('q=needle+prospect'))).toBe(true);
 	});
 
-	test('keeps newer filtered results when an older ledger request resolves later', async ({ page }) => {
+	test('keeps newer filtered results when an older ledger request resolves later', async ({
+		page
+	}) => {
 		let firstSubmissionRequest: (() => void) | null = null;
 		const releaseFirstSubmissionRequest = new Promise<void>((resolve) => {
 			firstSubmissionRequest = resolve;
@@ -121,7 +119,7 @@ test.describe('Submission Ledger admin view', () => {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ success: true, data: ledgerSettings })
+					body: JSON.stringify(ledgerSettings)
 				});
 			}
 
@@ -151,16 +149,13 @@ test.describe('Submission Ledger admin view', () => {
 					status: 200,
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
-						success: true,
-						data: {
-							form_source: 'gravity_forms',
-							form_id: '42',
-							submissions: matchingRecords,
-							total: q ? 1 : 61,
-							count: matchingRecords.length,
-							per_page: perPage,
-							offset
-						}
+						form_source: 'gravity_forms',
+						form_id: '42',
+						submissions: matchingRecords,
+						total: q ? 1 : 61,
+						count: matchingRecords.length,
+						per_page: perPage,
+						offset
 					})
 				});
 			}
@@ -170,11 +165,15 @@ test.describe('Submission Ledger admin view', () => {
 
 		await page.goto('/#/actions/gravity_forms/42/submissions');
 		await page.getByTestId('submission-ledger-search').fill('needle prospect');
-		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText('Showing 1 of 1');
+		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText(
+			'Showing 1 of 1'
+		);
 
 		firstSubmissionRequest?.();
 
-		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText('Showing 1 of 1');
+		await expect(page.getByTestId('submission-ledger-results-summary')).toContainText(
+			'Showing 1 of 1'
+		);
 		await expect(page.getByText('needle-entry-77')).toBeVisible();
 		await expect(page.getByText('Lead 1')).toHaveCount(0);
 	});

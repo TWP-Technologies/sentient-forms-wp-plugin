@@ -2,22 +2,50 @@
 
 class Tests_Bundled_Action_Templates extends WP_UnitTestCase
 {
-    public function test_extract_template_code_from_imported_hashed_custom_action_code(): void
+    public function test_imported_and_suffix_codes_never_promote_to_bundled_actions(): void
     {
-        $this->assertSame(
-            'entry_summary_v1',
-            Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
-                'imported_entry_summary_v1_5cfa445eee8f'
-            )
-        );
+        foreach ( Sentient_Forms_Bundled_Action_Templates::codes() as $code )
+        {
+            $this->assertSame( '', Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( 'imported_' . $code . '_5cfa445eee8f' ) );
+            $this->assertSame( '', Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( 'dogfood_' . $code ) );
+            $this->assertSame( '', Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( 'custom_' . $code ) );
+            $this->assertSame( '', Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( 'managed_local_custom_' . $code ) );
+        }
     }
 
-    public function test_extract_template_code_from_prefixed_dogfood_custom_action_code(): void
+    public function test_exact_and_explicit_managed_codes_exhaustively_resolve_catalog_identity(): void
     {
-        $this->assertSame(
-            'lead_grading_v1',
-            Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
-                'dogfood_lead_grading_v1'
+        foreach ( Sentient_Forms_Bundled_Action_Templates::codes() as $code )
+        {
+            $this->assertSame( $code, Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $code ) );
+            $this->assertSame(
+                $code,
+                Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
+                    Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $code )
+                )
+            );
+        }
+    }
+
+    public function test_bundled_catalog_linkage_is_exact_and_tamper_evident(): void
+    {
+        $linkage = Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'entry_summary_v1' );
+
+        $this->assertSame( [ 'template_code', 'catalog_digest' ], array_keys( $linkage ) );
+        $this->assertSame( 'entry_summary_v1', $linkage['template_code'] );
+        $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $linkage['catalog_digest'] );
+        $this->assertTrue( Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition( $linkage ) );
+
+        $tampered = $linkage;
+        $tampered['prompt_template'] = 'Persisted database override.';
+        $this->assertFalse( Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition( $tampered ) );
+
+        $tampered = $linkage;
+        $tampered['catalog_digest'] = str_repeat( '0', 64 );
+        $this->assertFalse( Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition( $tampered ) );
+        $this->assertFalse(
+            Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition(
+                [ 'template_code' => 'entry_summary_v1' ]
             )
         );
     }

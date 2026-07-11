@@ -18,7 +18,8 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         private ?Sentient_Forms_Local_Custom_Actions_Repository $custom_actions = null,
         private ?Sentient_Forms_Provider_Credentials_Repository $credentials = null,
         private ?Sentient_Forms_Form_Mappings_Repository $form_mappings = null,
-        private ?Sentient_Forms_Model_Cache_Repository $model_cache = null
+        private ?Sentient_Forms_Model_Cache_Repository $model_cache = null,
+        private ?Sentient_Forms_Action_Templates_Repository $templates = null
     )
     {
         global $wpdb;
@@ -27,6 +28,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $this->credentials    = $this->credentials ?? new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
         $this->form_mappings  = $this->form_mappings ?? new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $this->model_cache    = $this->model_cache ?? new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $this->templates      = $this->templates ?? new Sentient_Forms_Action_Templates_Repository( $wpdb );
     }
 
     /**
@@ -745,26 +747,41 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
      */
     private function resolve_bundled_template_code_for_action( array $action, array $definition ): string
     {
-        foreach ( [ 'template_code', 'action_template_code', 'central_action_id' ] as $key )
+        $action_code = isset( $action['code'] ) && is_scalar( $action['code'] )
+            ? (string) $action['code']
+            : '';
+        $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $action_code );
+        if ( '' === $template_code )
         {
-            if ( isset( $definition[ $key ] ) && is_scalar( $definition[ $key ] ) )
-            {
-                $template_code = sanitize_key( (string) $definition[ $key ] );
-                if ( Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
-                {
-                    return $template_code;
-                }
-            }
+            return '';
         }
 
-        if ( isset( $action['code'] ) && is_scalar( $action['code'] ) )
+        $template_id = absint( $action['template_id'] ?? 0 );
+        if ( $template_id <= 0 )
         {
-            return Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
-                (string) $action['code']
+            return '';
+        }
+
+        $template = $this->templates->get( $template_id );
+        $validated_code = isset( $action['_catalog_linkage_validated'] ) && is_scalar( $action['_catalog_linkage_validated'] )
+            ? sanitize_key( (string) $action['_catalog_linkage_validated'] )
+            : '';
+        $has_valid_linkage = $template_code === $validated_code
+            || (
+                Sentient_Forms_Bundled_Action_Templates::is_valid_linkage_definition( $definition )
+                && $template_code === sanitize_key( (string) ( $definition['template_code'] ?? '' ) )
             );
+        if (
+            ! is_array( $template )
+            || 'bundled' !== sanitize_key( (string) ( $template['source'] ?? '' ) )
+            || $template_code !== sanitize_key( (string) ( $template['code'] ?? '' ) )
+            || ! $has_valid_linkage
+        )
+        {
+            return '';
         }
 
-        return '';
+        return $template_code;
     }
 
     /**

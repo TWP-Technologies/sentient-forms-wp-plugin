@@ -16,7 +16,6 @@
 		ResolvedModelSelection
 	} from '$lib/api/types';
 	import { createClientFromConfig } from '$lib/api/client';
-	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
 	import { OPENROUTER_DISCLOSURE_VERSION } from '$lib/constants/external-services';
 	import { notifications } from '$lib/stores/notifications';
 	import {
@@ -48,7 +47,7 @@
 		type ModelReasoningEffort
 	} from '$lib/utils/model-selection';
 	import { loadSharedManagedZdrRequirement } from '$lib/utils/managed-zdr-requirement-cache';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	interface Props {
 		value?: ModelSelection | null;
@@ -583,12 +582,7 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<ModelCatalogResponse | RestEnvelope<ModelCatalogResponse>>(
-				'models'
-			);
-			const catalog = normalizeModelCatalog(
-				unwrapRestResponse<ModelCatalogResponse | Record<string, unknown>>(response)
-			);
+			const catalog = normalizeModelCatalog(await wpRequestEndpoint('models.catalog'));
 			models = catalog.models.length > 0 ? catalog.models : [fallbackModel];
 			presets =
 				catalog.presets.length > 0
@@ -621,11 +615,22 @@
 
 		providerLoading = true;
 		try {
-			const response = await wpFetch<
-				LocalProviderCredential[] | RestEnvelope<LocalProviderCredential[]>
-			>('local/providers/credentials', { showNotifications: false });
-			const credentials = unwrapRestResponse<LocalProviderCredential[]>(response);
-			loadedProviderCredentials = Array.isArray(credentials) ? credentials : [];
+			const credentials = await wpRequestEndpoint('providers.credentials.list', {
+				showNotifications: false
+			});
+			loadedProviderCredentials = credentials.map((credential) => ({
+				id: credential.id,
+				provider: credential.provider,
+				label: credential.label,
+				auth_mode: credential.auth_mode,
+				constant_name: credential.constant_name ?? null,
+				status: credential.status,
+				status_json: credential.status_json ?? null,
+				last_validated_at: credential.last_validated_at ?? null,
+				secret_configured: credential.secret_configured,
+				created_at: credential.created_at ?? null,
+				updated_at: credential.updated_at ?? null
+			}));
 		} catch (e) {
 			console.warn('Failed to load provider credentials for model selector', e);
 			loadedProviderCredentials = [];
@@ -1130,9 +1135,7 @@
 		const resolutionPayload = buildSelectionPayload(selection, { compactTools: true });
 
 		try {
-			const resolvedResponse = await wpFetch<
-				ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>
-			>('models/resolve', {
+			const resolvedResponse = await wpRequestEndpoint('models.resolve', {
 				method: 'POST',
 				body: resolutionPayload,
 				showNotifications: false
@@ -1140,18 +1143,13 @@
 
 			if (requestToken !== resolutionRequestToken) return;
 
-			resolved = normalizeResolvedModel(
-				unwrapRestResponse<ResolvedModelSelection | Record<string, unknown>>(resolvedResponse)
-			);
+			resolved = normalizeResolvedModel(resolvedResponse);
 
 			if (actionId) {
-				const estimateResponse = await wpFetch<
-					ModelEstimateResponse | RestEnvelope<ModelEstimateResponse>
-				>('models/estimate', {
+				const estimate = await wpRequestEndpoint('models.estimate', {
 					method: 'POST',
 					body: {
 						action_id: actionId,
-						template_model_hint: templateModelHint ?? undefined,
 						base_credit_cost: baseCreditCost ?? undefined,
 						...selectionPayload
 					},
@@ -1160,7 +1158,6 @@
 
 				if (requestToken !== resolutionRequestToken) return;
 
-				const estimate = unwrapRestResponse<ModelEstimateResponse>(estimateResponse);
 				const estimateResolved = normalizeResolvedModel(estimate?.resolved_model);
 				if (estimateResolved) resolved = estimateResolved;
 				pricingEstimate = estimate?.pricing_estimate ?? null;

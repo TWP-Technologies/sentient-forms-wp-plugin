@@ -1,15 +1,5 @@
 import { z } from 'zod';
-import type {
-	LocalProvider,
-	ModelSelection,
-	ProviderPathPolicyModelSelection,
-	ProviderPathPolicyResponse
-} from '$lib/api/types';
-
-const providerSchema = z
-	.string()
-	.min(1)
-	.transform((value) => value as LocalProvider);
+const providerSchema = z.string().min(1);
 
 const nullableProviderSchema = providerSchema.nullable();
 const nullableStringSchema = z.string().nullable();
@@ -28,31 +18,27 @@ const modelReasoningSchema = z
 	.nullable()
 	.optional();
 
-const modelSelectionSchema = z
-	.looseObject({
-		primary: z.string().min(1),
-		backup: nullableStringSchema.optional(),
-		is_preset: z.boolean(),
-		provider: nullableProviderSchema.optional(),
-		credential_id: nullableCredentialIdSchema.optional(),
-		require_zdr: z.boolean().optional(),
-		managed_zdr_required: z.boolean().optional(),
-		reasoning: modelReasoningSchema,
-		tools: z.record(z.string(), z.unknown()).nullable().optional()
-	})
-	.transform((value) => value as ModelSelection);
+const modelSelectionSchema = z.looseObject({
+	primary: z.string().min(1),
+	backup: nullableStringSchema.optional(),
+	is_preset: z.boolean(),
+	provider: nullableProviderSchema.optional(),
+	credential_id: nullableCredentialIdSchema.optional(),
+	require_zdr: z.boolean().optional(),
+	managed_zdr_required: z.boolean().optional(),
+	reasoning: modelReasoningSchema,
+	tools: z.record(z.string(), z.json()).nullable().optional()
+});
 
-const providerPathPolicyModelSelectionSchema = z
-	.looseObject({
-		provider: providerSchema,
-		model: nullableStringSchema.optional(),
-		credential_id: nullableCredentialIdSchema.optional(),
-		selection: modelSelectionSchema.optional(),
-		backup_provider: nullableProviderSchema.optional(),
-		backup_credential_id: nullableCredentialIdSchema.optional(),
-		backup_model: nullableStringSchema.optional()
-	})
-	.transform((value) => value as ProviderPathPolicyModelSelection);
+const providerPathPolicyModelSelectionSchema = z.looseObject({
+	provider: providerSchema,
+	model: nullableStringSchema.optional(),
+	credential_id: nullableCredentialIdSchema.optional(),
+	selection: modelSelectionSchema.optional(),
+	backup_provider: nullableProviderSchema.optional(),
+	backup_credential_id: nullableCredentialIdSchema.optional(),
+	backup_model: nullableStringSchema.optional()
+});
 
 const providerPathPolicyProviderStatusSchema = z.looseObject({
 	ready: z.boolean(),
@@ -67,19 +53,18 @@ const providerPathPolicyActionSchema = z.looseObject({
 	requires_structured_output: z.boolean()
 });
 
-export const providerPathPolicyResponseSchema = z
-	.looseObject({
-		default_provider: nullableProviderSchema,
-		providers: z
-			.looseObject({
-				sentient_managed: providerPathPolicyProviderStatusSchema,
-				openrouter: providerPathPolicyProviderStatusSchema
-			}),
-		actions: z.record(z.string(), providerPathPolicyActionSchema)
-	})
-	.transform((value) => value as ProviderPathPolicyResponse);
+export const providerPathPolicyResponseSchema = z.looseObject({
+	default_provider: nullableProviderSchema,
+	providers: z.looseObject({
+		sentient_managed: providerPathPolicyProviderStatusSchema,
+		openrouter: providerPathPolicyProviderStatusSchema
+	}),
+	actions: z.record(z.string(), providerPathPolicyActionSchema)
+});
 
-export function parseProviderPathPolicy(value: unknown): ProviderPathPolicyResponse | undefined {
+export type ProviderPathPolicyBoundary = z.output<typeof providerPathPolicyResponseSchema>;
+
+export function parseProviderPathPolicy(value: unknown): ProviderPathPolicyBoundary | undefined {
 	if (value === null || typeof value === 'undefined') {
 		return undefined;
 	}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	SITE_CONTEXT_DEFAULT_TOOLS,
+	buildSiteContextGenerateRequest,
 	compactSiteContextModelSelection,
 	normalizeSiteContextModelSelection,
 	normalizeSiteContextResponse,
@@ -221,6 +222,33 @@ describe('normalizeSiteContextResponse', () => {
 });
 
 describe('siteContextModelSelectionChanged', () => {
+	it('builds the strict generation request without update-only fields', () => {
+		expect(
+			buildSiteContextGenerateRequest({
+				summary_text: 'Update-only content',
+				auto_include: true,
+				pii_ack: true,
+				consent_status: 'granted',
+				auto_refresh_enabled: true,
+				auto_refresh_days: 30,
+				generation_model_selection: {
+					primary: 'sf_research',
+					is_preset: true,
+					provider: 'openrouter'
+				}
+			})
+		).toEqual({
+			consent_status: 'granted',
+			auto_refresh_enabled: true,
+			auto_refresh_days: 30,
+			generation_model_selection: {
+				primary: 'sf_research',
+				is_preset: true,
+				provider: 'openrouter'
+			}
+		});
+	});
+
 	it('treats semantically identical model selections as unchanged when key order differs', () => {
 		expect(
 			siteContextModelSelectionChanged(

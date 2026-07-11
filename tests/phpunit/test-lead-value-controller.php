@@ -629,17 +629,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
     {
         global $wpdb;
 
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id      = $custom_actions->create(
-            [
-                'code'            => 'lead_grading_v1',
-                'display_name'    => 'Lead Scoring',
-                'definition_json' => [
-                    'template_code' => 'lead_grading_v1',
-                ],
-            ]
-        );
-        $this->assertIsInt( $action_id );
+        $action_id = $this->create_bundled_action_fixture( 'lead_grading_v1', 'Lead Scoring' );
 
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $mapping_id = $mappings->create(
@@ -728,17 +718,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
             ],
         ];
 
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id      = $custom_actions->create(
-            [
-                'code'            => 'lead_grading_v1',
-                'display_name'    => 'Lead Scoring',
-                'definition_json' => [
-                    'template_code' => 'lead_grading_v1',
-                ],
-            ]
-        );
-        $this->assertIsInt( $action_id );
+        $action_id = $this->create_bundled_action_fixture( 'lead_grading_v1', 'Lead Scoring' );
 
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $mapping_id = $mappings->create(
@@ -1007,19 +987,9 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         );
         $this->assertIsInt( $created );
 
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id      = $custom_actions->create(
-            [
-                'code'            => 'suggested_reply_v1',
-                'display_name'    => 'Suggested Reply',
-                'definition_json' => [
-                    'template_code' => 'suggested_reply_v1',
-                ],
-                'status'          => 'active',
-            ]
-        );
-        $this->assertIsInt( $action_id );
+        $action_id = $this->create_bundled_action_fixture( 'suggested_reply_v1', 'Suggested Reply' );
 
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings   = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $mapping_id = $mappings->create(
             [
@@ -1074,19 +1044,9 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
     {
         global $wpdb;
 
-        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $action_id      = $custom_actions->create(
-            [
-                'code'            => 'suggested_reply_v1',
-                'display_name'    => 'Suggested Reply',
-                'definition_json' => [
-                    'template_code' => 'suggested_reply_v1',
-                ],
-                'status'          => 'active',
-            ]
-        );
-        $this->assertIsInt( $action_id );
+        $action_id = $this->create_bundled_action_fixture( 'suggested_reply_v1', 'Suggested Reply' );
 
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings   = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $mapping_id = $mappings->create(
             [
@@ -1576,6 +1536,42 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
             ],
             false
         );
+    }
+
+    private function create_bundled_action_fixture( string $action_code, string $display_name ): int
+    {
+        global $wpdb;
+
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+        $this->assertIsArray( $catalog );
+        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => $action_code,
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+            [
+                'code'            => $action_code,
+                'display_name'    => $display_name,
+                'template_id'     => $template_id,
+                'definition_json' => Sentient_Forms_Bundled_Action_Templates::linkage_definition( $action_code ),
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        return $action_id;
     }
 
     private function seed_spam_guidance(): void

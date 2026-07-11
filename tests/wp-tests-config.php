@@ -9,6 +9,9 @@ define( 'DB_CHARSET', 'utf8' );
 $table_prefix = 'wptests_';
 
 define( 'WP_DEBUG', true );
+// The packaged WordPress test fixture does not include development-only React
+// refresh assets. Exercise the same minified core script path used in production.
+define( 'SCRIPT_DEBUG', false );
 define( 'WP_TESTS_DOMAIN', 'example.org' );
 define( 'WP_TESTS_EMAIL', 'admin@example.org' );
 define( 'WP_TESTS_TITLE', 'WP Tests' );
