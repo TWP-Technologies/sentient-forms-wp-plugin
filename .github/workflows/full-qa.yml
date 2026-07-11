@@ -6,25 +6,7 @@ name: Full QA
     branches:
       - production
       - 'release/**'
-    paths-ignore:
-      - '*.md'
-      - 'AGENTS.md'
-      - 'GEMINI.md'
-      - '**/*.md'
-      - '**/AGENTS.md'
-      - '**/GEMINI.md'
-      - 'agent-logs/**'
-      - 'docs/**'
   pull_request:
-    paths-ignore:
-      - '*.md'
-      - 'AGENTS.md'
-      - 'GEMINI.md'
-      - '**/*.md'
-      - '**/AGENTS.md'
-      - '**/GEMINI.md'
-      - 'agent-logs/**'
-      - 'docs/**'
   workflow_dispatch:
 
 env:
@@ -32,7 +14,60 @@ env:
   PHP_VERSION: '8.3'
 
 jobs:
-  full-qa:
+  changes:
+    name: Full QA Changes
+    runs-on: ubuntu-latest
+    outputs:
+      full_qa: ${{ steps.classify.outputs.full_qa }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      - name: Install YAML validator
+        run: python3 -m pip install --disable-pip-version-check --no-input PyYAML==6.0.2
+
+      - name: Validate workflow and classifier contracts
+        run: |
+          php -l scripts/classify-full-qa-changes.php
+          php -l scripts/tests/check-full-qa-workflow.php
+          php scripts/tests/check-full-qa-workflow.php
+          php scripts/validate-workflow-path-filters.php
+          bash scripts/check-yaml.sh
+
+      - name: Classify required QA
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == 'workflow_dispatch' ]]; then
+            php scripts/classify-full-qa-changes.php --force >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT_NAME" == 'pull_request' ]]; then
+            git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" \
+              | php scripts/classify-full-qa-changes.php >> "$GITHUB_OUTPUT"
+          elif [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            php scripts/classify-full-qa-changes.php --force >> "$GITHUB_OUTPUT"
+          else
+            git diff --no-renames --name-only "$BEFORE_SHA" "$HEAD_SHA" \
+              | php scripts/classify-full-qa-changes.php >> "$GITHUB_OUTPUT"
+          fi
+
+  full_qa:
+    name: Full QA
+    needs: changes
+    if: ${{ needs.changes.outputs.full_qa == 'true' }}
     runs-on: ubuntu-latest
     services:
       mariadb:
@@ -131,6 +166,10 @@ jobs:
           CI: 'true'
         run: ./scripts/run-full-qa.sh
 
+      - name: Verify runtime schema trust boundaries
+        working-directory: admin-app
+        run: bun run zod:guard
+
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v7
@@ -140,3 +179,33 @@ jobs:
             admin-app/playwright-report
             admin-app/test-results
           if-no-files-found: ignore
+
+  required_full_qa:
+    name: Full QA Required Gate
+    if: ${{ always() }}
+    needs: [changes, full_qa]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the classified result
+        env:
+          CLASSIFIER_RESULT: ${{ needs.changes.result }}
+          FULL_QA_REQUIRED: ${{ needs.changes.outputs.full_qa }}
+          FULL_QA_RESULT: ${{ needs.full_qa.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CLASSIFIER_RESULT" != 'success' ]]; then
+            echo "Full QA classification failed: $CLASSIFIER_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$FULL_QA_REQUIRED" == 'true' && "$FULL_QA_RESULT" != 'success' ]]; then
+            echo "Full QA was required but completed with: $FULL_QA_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$FULL_QA_REQUIRED" == 'false' && "$FULL_QA_RESULT" != 'skipped' ]]; then
+            echo "Docs-only Full QA should be skipped, received: $FULL_QA_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$FULL_QA_REQUIRED" != 'true' && "$FULL_QA_REQUIRED" != 'false' ]]; then
+            echo "Full QA classifier returned an invalid requirement: $FULL_QA_REQUIRED" >&2
+            exit 1
+          fi
