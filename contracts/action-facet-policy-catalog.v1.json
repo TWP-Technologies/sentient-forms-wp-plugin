@@ -1,0 +1,15 @@
+{
+  "snapshot_version": 1,
+  "source_sha256": "94527e2c7f050feee2ab91ce7b5fad78f79c481573e6db6e24a1b691963d6d0b",
+  "facets": {
+    "spam_guidance_rationale_generation": {
+      "code": "spam_guidance_rationale_generation",
+      "feature_access": "active_subscription",
+      "execution_requirement": "provider_flexible",
+      "required_form_source_capabilities": [],
+      "required_managed_capabilities": [],
+      "lifecycle_restrictions": [],
+      "metering_class": "standard"
+    }
+  }
+}
