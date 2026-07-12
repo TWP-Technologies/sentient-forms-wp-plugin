@@ -210,8 +210,10 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	const settingsState: Record<string, unknown> = {
 		enable_logging: true,
 		execution_event_retention_days: 90,
+		submission_ledger_retention_days: 90,
 		delete_data_on_uninstall: true,
 		store_full_ai_outputs: false,
+		managed_zdr_required: false,
 		privacy_setup_profile: 'balanced',
 		privacy_setup_completed_at: '2026-04-21T00:00:00Z',
 		execution_global_disabled: false,

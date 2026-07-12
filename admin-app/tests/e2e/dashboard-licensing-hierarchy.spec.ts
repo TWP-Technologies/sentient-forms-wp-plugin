@@ -41,26 +41,64 @@ function dashboardSummary(overrides: Record<string, unknown> = {}) {
 	return {
 		...summary,
 		providers: records(summary.providers, {
-			id: 0, provider: '', label: '', auth_mode: '', constant_name: null, status: '',
-			status_json: null, last_validated_at: null, created_at: null, updated_at: null,
+			id: 0,
+			provider: '',
+			label: '',
+			auth_mode: '',
+			constant_name: null,
+			status: '',
+			status_json: null,
+			last_validated_at: null,
+			created_at: null,
+			updated_at: null,
 			secret_configured: false
 		}),
 		templates: records(summary.templates, {
-			id: 0, source: null, external_id: null, code: null, display_name: null,
-			description: null, prompt_template: null, default_model: null,
-			structured_output_schema: null, override_schema: null, version: null,
-			is_active: false, created_at: null, updated_at: null
+			id: 0,
+			source: null,
+			external_id: null,
+			code: null,
+			display_name: null,
+			description: null,
+			prompt_template: null,
+			default_model: null,
+			structured_output_schema: null,
+			override_schema: null,
+			version: null,
+			is_active: false,
+			created_at: null,
+			updated_at: null
 		}),
 		custom_actions: records(summary.custom_actions, {
-			id: 0, external_id: null, template_id: null, code: null, display_name: null,
-			definition_json: null, model_selection_json: null, status: null,
-			created_at: null, updated_at: null
+			id: 0,
+			external_id: null,
+			template_id: null,
+			code: null,
+			display_name: null,
+			definition_json: null,
+			model_selection_json: null,
+			status: null,
+			created_at: null,
+			updated_at: null
 		}),
 		recent_events: records(summary.recent_events, {
-			id: 0, execution_request_id: null, mapping_id: null, form_source: null,
-			form_id: null, entry_id: null, provider: null, model: null, status: null,
-			token_usage_json: null, cost_json: null, result_json: null, error_code: null,
-			error_message: null, payload_digest: null, created_at: null, updated_at: null,
+			id: 0,
+			execution_request_id: null,
+			mapping_id: null,
+			form_source: null,
+			form_id: null,
+			entry_id: null,
+			provider: null,
+			model: null,
+			status: null,
+			token_usage_json: null,
+			cost_json: null,
+			result_json: null,
+			error_code: null,
+			error_message: null,
+			payload_digest: null,
+			created_at: null,
+			updated_at: null,
 			expires_at: null
 		})
 	};
@@ -80,10 +118,7 @@ async function routeDashboardSummary(
 	);
 }
 
-async function guardLegacyDashboardFanout(
-	page: Page,
-	counter: { value: number }
-): Promise<void> {
+async function guardLegacyDashboardFanout(page: Page, counter: { value: number }): Promise<void> {
 	for (const endpoint of [
 		'local/providers/credentials',
 		'local/action-templates',
@@ -556,6 +591,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			execution_global_disabled: false,
 			execution_provider_disabled: {},
 			execution_event_retention_days: 90,
+			submission_ledger_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
 			privacy_setup_profile: 'balanced',
@@ -647,9 +683,11 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
 		);
 		await page.getByLabel('Enforce ZDR for managed service').check();
-		await expect.poll(() => latestSettingsPayload).toMatchObject({
-			managed_zdr_required: true
-		});
+		await expect
+			.poll(() => latestSettingsPayload)
+			.toMatchObject({
+				managed_zdr_required: true
+			});
 	});
 
 	test('providers points local action setup to the Actions builder', async ({ page }) => {

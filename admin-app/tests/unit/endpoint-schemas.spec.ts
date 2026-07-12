@@ -1,11 +1,128 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
 	endpointRegistry,
 	endpointSchemas,
 	providerCredentialResponseSchema
 } from '$lib/api/endpoint-schemas';
+import type {
+	RegisteredEndpointRequest,
+	RegisteredEndpointResponse
+} from '$lib/api/endpoint-schemas';
+
+type PrivacySetupPreset =
+	| 'balanced'
+	| 'privacy_focused'
+	| 'maximum_privacy'
+	| 'maximum_visibility';
+
+const completeSettingsResponse = {
+	enable_logging: false,
+	execution_global_disabled: false,
+	execution_provider_disabled: {},
+	execution_event_retention_days: 90,
+	submission_ledger_retention_days: 30,
+	delete_data_on_uninstall: true,
+	store_full_ai_outputs: false,
+	managed_zdr_required: false,
+	privacy_setup_profile: 'balanced',
+	privacy_setup_completed_at: null
+};
 
 describe('admin endpoint schema registry', () => {
+	it('requires all server-guaranteed governance fields in additive settings responses', () => {
+		expect(
+			endpointRegistry['settings.read'].response.safeParse({
+				...completeSettingsResponse,
+				future_governance_field: 'accepted'
+			}).success
+		).toBe(true);
+		expect(
+			endpointRegistry['settings.update'].response.safeParse({
+				settings: { ...completeSettingsResponse, future_governance_field: 'accepted' },
+				future_response_field: 'accepted'
+			}).success
+		).toBe(true);
+
+		for (const field of [
+			'enable_logging',
+			'execution_global_disabled',
+			'execution_provider_disabled',
+			'execution_event_retention_days',
+			'submission_ledger_retention_days',
+			'delete_data_on_uninstall',
+			'store_full_ai_outputs',
+			'managed_zdr_required',
+			'privacy_setup_profile',
+			'privacy_setup_completed_at'
+		] as const) {
+			const incomplete = { ...completeSettingsResponse };
+			delete incomplete[field];
+
+			expect(endpointRegistry['settings.read'].response.safeParse(incomplete).success).toBe(false);
+			expect(
+				endpointRegistry['settings.update'].response.safeParse({ settings: incomplete }).success
+			).toBe(false);
+		}
+		expect(
+			endpointRegistry['settings.read'].response.safeParse({
+				...completeSettingsResponse,
+				execution_event_retention_days: 14
+			}).success
+		).toBe(false);
+	});
+
+	it('uses the same four privacy presets in settings response and request types', () => {
+		type SettingsResponse = RegisteredEndpointResponse<'settings.read'>;
+		type SettingsRequest = RegisteredEndpointRequest<'settings.update'>;
+
+		expectTypeOf<SettingsResponse['privacy_setup_profile']>().toEqualTypeOf<PrivacySetupPreset>();
+		expectTypeOf<SettingsRequest['privacy_setup_profile']>().toEqualTypeOf<
+			PrivacySetupPreset | undefined
+		>();
+	});
+
+	it('rejects the derived custom state as a settings response profile', () => {
+		expect(
+			endpointRegistry['settings.read'].response.safeParse({
+				...completeSettingsResponse,
+				privacy_setup_profile: 'custom'
+			}).success
+		).toBe(false);
+	});
+
+	it('normalizes PHP empty provider maps only in settings responses', () => {
+		const read = endpointRegistry['settings.read'].response.parse({
+			...completeSettingsResponse,
+			execution_provider_disabled: []
+		});
+		const update = endpointRegistry['settings.update'].response.parse({
+			settings: {
+				...completeSettingsResponse,
+				execution_provider_disabled: []
+			}
+		});
+
+		expect(read.execution_provider_disabled).toEqual({});
+		expect('settings' in update && update.settings.execution_provider_disabled).toEqual({});
+		expect(
+			endpointRegistry['settings.update'].request.safeParse({ execution_provider_disabled: [] })
+				.success
+		).toBe(false);
+	});
+
+	it('keeps settings updates strict, partial, and within client-owned governance fields', () => {
+		const request = endpointRegistry['settings.update'].request;
+		expect(request.safeParse({ submission_ledger_retention_days: 0 }).success).toBe(true);
+		expect(request.safeParse({ submission_ledger_retention_days: 14 }).success).toBe(false);
+		expect(request.safeParse({ privacy_setup_profile: 'custom' }).success).toBe(false);
+		expect(
+			request.safeParse({ privacy_setup_completed_at: '2026-07-11T12:00:00Z' }).success
+		).toBe(false);
+		expect(
+			request.safeParse({ submission_ledger_retention_days: 30, invented_setting: true }).success
+		).toBe(false);
+	});
+
 	it('accepts additive fields in raw billing responses', () => {
 		const result = endpointSchemas['billing.portal.create'].parse({
 			session_id: 'bps_123',

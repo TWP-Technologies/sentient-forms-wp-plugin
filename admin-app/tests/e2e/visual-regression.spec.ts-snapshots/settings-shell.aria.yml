@@ -37,21 +37,21 @@
 - text: "On"
 - checkbox "On" [checked]
 - paragraph: Local data retention
-- paragraph: Choose how long local execution history stays available and whether Sentient Forms should keep full AI responses for inspection.
+- paragraph: Choose how long execution events and Submission Ledger records remain on this site. Changes affect future records only.
 - text: Execution logs
 - combobox "Execution logs":
   - option "7 days"
   - option /\d+ days/
   - option /\d+ days/ [selected]
   - option /\d+ days/
-  - option "Manual cleanup only"
+  - option "Manual deletion only"
 - text: Submission Ledger records
 - combobox "Submission Ledger records Applies to future captured submissions. Existing expiry dates do not move when this changes.":
   - option "7 days"
   - option /\d+ days/
   - option /\d+ days/ [selected]
   - option /\d+ days/
-  - option "Manual cleanup only"
+  - option "Manual deletion only"
 - text: Applies to future captured submissions. Existing expiry dates do not move when this changes.
 - checkbox "Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions."
 - text: Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions.
@@ -63,13 +63,13 @@
 - alert:
   - paragraph: High-sensitivity secret option
   - paragraph: The default vault encrypts saved provider keys locally. If your site has stricter operational controls, switch to a WordPress constant or environment variable instead of storing the key in the database.
-- button "Save retention"
+- button "Save retention" [disabled]
 - paragraph: Execution controls
 - paragraph: Pause Sentient Forms execution globally or by form provider while keeping mappings editable.
 - paragraph: Global execution
 - paragraph: Keep all providers running. Turn this off to pause everything.
 - text: Running
-- checkbox "Running" [checked]
+- checkbox "Global execution" [checked]
 - paragraph: Gravity Forms
 - text: Plugin active Running
 - checkbox "Running" [checked]

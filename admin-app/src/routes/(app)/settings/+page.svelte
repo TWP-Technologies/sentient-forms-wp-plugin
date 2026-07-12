@@ -22,15 +22,25 @@
 	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
+	type RetentionDays = PluginSettingsResponse['execution_event_retention_days'];
 
 	interface PrivacyPresetDefinition {
 		label: string;
-		executionEventRetentionDays: number;
-		submissionLedgerRetentionDays: number;
+		executionEventRetentionDays: RetentionDays;
+		submissionLedgerRetentionDays: RetentionDays;
 		deleteDataOnUninstall: boolean;
 		storeFullAiOutputs: boolean;
 		enableLogging: boolean;
 	}
+
+	interface RetentionSnapshot {
+		executionEventRetentionDays: RetentionDays;
+		submissionLedgerRetentionDays: RetentionDays;
+		deleteDataOnUninstall: boolean;
+		storeFullAiOutputs: boolean;
+	}
+
+	type RetentionFeedback = { type: 'success' | 'error'; message: string };
 
 	const telemetry = telemetryStore;
 	const asyncSettings = asyncSettingsStore;
@@ -56,10 +66,23 @@
 	let retentionSaving = $state(false);
 	let managedZdrSaving = $state(false);
 	let settingsWriteInFlight = $derived(executionSaving || retentionSaving || managedZdrSaving);
-	let executionEventRetentionDays = $state(90);
-	let submissionLedgerRetentionDays = $state(90);
+	let executionEventRetentionDays = $state<RetentionDays>(90);
+	let submissionLedgerRetentionDays = $state<RetentionDays>(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
+	let retentionSavedSnapshot = $state<RetentionSnapshot>({
+		executionEventRetentionDays: 90,
+		submissionLedgerRetentionDays: 90,
+		deleteDataOnUninstall: true,
+		storeFullAiOutputs: false
+	});
+	let retentionFeedback = $state<RetentionFeedback | null>(null);
+	let retentionDirty = $derived(
+		executionEventRetentionDays !== retentionSavedSnapshot.executionEventRetentionDays ||
+			submissionLedgerRetentionDays !== retentionSavedSnapshot.submissionLedgerRetentionDays ||
+			deleteDataOnUninstall !== retentionSavedSnapshot.deleteDataOnUninstall ||
+			storeFullAiOutputs !== retentionSavedSnapshot.storeFullAiOutputs
+	);
 	let managedZdrRequired = $state(false);
 	let managedAccountReady = $derived(
 		['active', 'trial', 'valid'].includes(licenseState.status) &&
@@ -124,7 +147,7 @@
 		{ value: 30, label: '30 days' },
 		{ value: 90, label: '90 days' },
 		{ value: 180, label: '180 days' },
-		{ value: 0, label: 'Manual cleanup only' }
+		{ value: 0, label: 'Manual deletion only' }
 	];
 
 	function getManualRetentionHelp(
@@ -135,13 +158,13 @@
 		const ledgerIsManual = ledgerRetentionDays === 0;
 
 		if (executionIsManual && ledgerIsManual) {
-			return 'Manual cleanup keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.';
+			return 'Manual deletion keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.';
 		}
 		if (executionIsManual) {
-			return 'Manual cleanup keeps new execution logs until an administrator removes them or changes this setting.';
+			return 'Manual deletion keeps new execution logs until an administrator removes them or changes this setting.';
 		}
 		if (ledgerIsManual) {
-			return 'Manual cleanup keeps new Submission Ledger records until an administrator removes them or changes this setting.';
+			return 'Manual deletion keeps new Submission Ledger records until an administrator removes them or changes this setting.';
 		}
 
 		return null;
@@ -213,35 +236,36 @@
 	});
 
 	function syncGovernanceSettings(settings: PluginSettingsResponse): void {
+		syncExecutionControls(settings);
+		syncRetentionSettings(settings);
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
+		governanceLoggingEnabled =
+			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
+		governanceLoaded = true;
+		governanceLoadError = null;
+	}
+
+	function syncExecutionControls(settings: PluginSettingsResponse): void {
 		executionGlobalDisabled = Boolean(settings.execution_global_disabled);
 		executionProviderDisabled = normalizeProviderDisabledMap(
 			settings.execution_provider_disabled,
 			formSources
 		);
-		executionEventRetentionDays =
-			typeof settings.execution_event_retention_days === 'number'
-				? settings.execution_event_retention_days
-				: 90;
-		submissionLedgerRetentionDays =
-			typeof settings.submission_ledger_retention_days === 'number'
-				? settings.submission_ledger_retention_days
-				: isKnownPrivacyProfile(settings.privacy_setup_profile)
-					? privacyPresetDefinitions[settings.privacy_setup_profile].submissionLedgerRetentionDays
-					: 90;
-		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
-		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
-		managedZdrRequired = Boolean(settings.managed_zdr_required);
-		governanceLoggingEnabled =
-			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
-		privacySetupProfile = (settings.privacy_setup_profile ?? 'balanced') as NonNullable<
-			PluginSettingsResponse['privacy_setup_profile']
-		>;
-		privacySetupCompletedAt =
-			typeof settings.privacy_setup_completed_at === 'string'
-				? settings.privacy_setup_completed_at
-				: null;
-		governanceLoaded = true;
-		governanceLoadError = null;
+	}
+
+	function syncRetentionSettings(settings: PluginSettingsResponse): void {
+		executionEventRetentionDays = settings.execution_event_retention_days;
+		submissionLedgerRetentionDays = settings.submission_ledger_retention_days;
+		deleteDataOnUninstall = settings.delete_data_on_uninstall;
+		storeFullAiOutputs = settings.store_full_ai_outputs;
+		retentionSavedSnapshot = {
+			executionEventRetentionDays,
+			submissionLedgerRetentionDays,
+			deleteDataOnUninstall,
+			storeFullAiOutputs
+		};
+		privacySetupProfile = settings.privacy_setup_profile;
+		privacySetupCompletedAt = settings.privacy_setup_completed_at;
 	}
 
 	function syncManagedZdrSetting(settings: PluginSettingsResponse): void {
@@ -331,7 +355,7 @@
 				},
 				{ showNotifications: false }
 			);
-			syncGovernanceSettings(settings);
+			syncExecutionControls(settings);
 			notifications.success(
 				executionGlobalDisabled ? 'Global execution paused' : 'Global execution resumed'
 			);
@@ -355,7 +379,7 @@
 				},
 				{ showNotifications: false }
 			);
-			syncGovernanceSettings(settings);
+			syncExecutionControls(settings);
 			notifications.success(
 				nextDisabled
 					? `Execution paused for ${providerSlug}`
@@ -371,7 +395,9 @@
 
 	async function saveRetentionSettings(event: SubmitEvent) {
 		event.preventDefault();
+		if (!retentionDirty || retentionSaving) return;
 		retentionSaving = true;
+		retentionFeedback = null;
 		try {
 			const settings = await client.updateSettings(
 				{
@@ -383,12 +409,24 @@
 				{ showNotifications: false }
 			);
 			syncGovernanceSettings(settings);
+			retentionFeedback = {
+				type: 'success',
+				message: 'Retention settings saved on this site.'
+			};
 			notifications.success('Local data retention saved');
 		} catch {
+			retentionFeedback = {
+				type: 'error',
+				message: 'Unable to update local data retention. Your unsaved choices are still here.'
+			};
 			notifications.error('Unable to update local data retention');
 		} finally {
 			retentionSaving = false;
 		}
+	}
+
+	function markRetentionChanged(): void {
+		retentionFeedback = null;
 	}
 
 	function toggle(event: Event) {
@@ -571,7 +609,7 @@
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution history</p>
 					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
 						{executionEventRetentionDays === 0
-							? 'Manual cleanup only'
+							? 'Manual deletion only'
 							: `${executionEventRetentionDays} days`}
 					</p>
 				</div>
@@ -582,7 +620,7 @@
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Submission Ledger</p>
 					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
 						{submissionLedgerRetentionDays === 0
-							? 'Manual cleanup only'
+							? 'Manual deletion only'
 							: `${submissionLedgerRetentionDays} days`}
 					</p>
 				</div>
@@ -935,10 +973,17 @@
 		onsubmit={saveRetentionSettings}
 	>
 		<div class="sf:space-y-1">
-			<p class="sf:font-medium sf:text-slate-900">Local data retention</p>
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+				<p class="sf:font-medium sf:text-slate-900">Local data retention</p>
+				{#if retentionDirty}
+					<span data-testid="settings-retention-unsaved">
+						<Badge variant="warning">Unsaved changes</Badge>
+					</span>
+				{/if}
+			</div>
 			<p class="sf:text-sm sf:text-slate-600">
-				Choose how long local execution history stays available and whether Sentient Forms should
-				keep full AI responses for inspection.
+				Choose how long execution events and Submission Ledger records remain on this site. Changes
+				affect future records only.
 			</p>
 		</div>
 
@@ -946,10 +991,30 @@
 			<StateTemplate
 				variant="loading"
 				title="Loading retention controls"
-				message="Retrieving the saved execution history and uninstall defaults before editing."
+				message="Retrieving Execution logs and Submission Ledger records settings before editing."
 				inline
 				testId="settings-retention-loading-state"
 			/>
+			<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Execution logs</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-slate-500"
+						disabled
+					>
+						<option>Loading…</option>
+					</select>
+				</label>
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Submission Ledger records</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-slate-500"
+						disabled
+					>
+						<option>Loading…</option>
+					</select>
+				</label>
+			</div>
 		{:else if governanceLoadError}
 			<StateTemplate
 				variant="error"
@@ -960,6 +1025,26 @@
 				inline
 				testId="settings-retention-error-state"
 			/>
+			<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Execution logs</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-slate-500"
+						disabled
+					>
+						<option>Unavailable</option>
+					</select>
+				</label>
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Submission Ledger records</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-slate-500"
+						disabled
+					>
+						<option>Unavailable</option>
+					</select>
+				</label>
+			</div>
 		{:else}
 			<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
 				<label class="sf:flex sf:flex-col sf:gap-1">
@@ -967,6 +1052,7 @@
 					<select
 						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						bind:value={executionEventRetentionDays}
+						onchange={markRetentionChanged}
 						disabled={settingsWriteInFlight || executionLoading}
 					>
 						{#each retentionOptions as option}
@@ -980,6 +1066,7 @@
 					<select
 						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						bind:value={submissionLedgerRetentionDays}
+						onchange={markRetentionChanged}
 						disabled={settingsWriteInFlight || executionLoading}
 						data-testid="settings-submission-ledger-retention"
 					>
@@ -1000,6 +1087,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={storeFullAiOutputs}
+						onchange={markRetentionChanged}
 						disabled={settingsWriteInFlight || executionLoading}
 						data-testid="settings-store-full-ai-outputs"
 					/>
@@ -1021,6 +1109,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={deleteDataOnUninstall}
+						onchange={markRetentionChanged}
 						disabled={settingsWriteInFlight || executionLoading}
 					/>
 					<span class="sf:space-y-1">
@@ -1056,8 +1145,25 @@
 				</p>
 			</Alert>
 
+			{#if retentionFeedback}
+				<Alert
+					variant={retentionFeedback.type === 'success' ? 'success' : 'danger'}
+					role={retentionFeedback.type === 'success' ? 'status' : 'alert'}
+					aria-live={retentionFeedback.type === 'success' ? 'polite' : 'assertive'}
+					data-testid={retentionFeedback.type === 'success'
+						? 'settings-retention-success'
+						: 'settings-retention-error'}
+				>
+					{retentionFeedback.message}
+				</Alert>
+			{/if}
+
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-				<Button type="submit" disabled={settingsWriteInFlight || executionLoading}>
+				<Button
+					type="submit"
+					loading={retentionSaving}
+					disabled={!retentionDirty || settingsWriteInFlight || executionLoading}
+				>
 					{retentionSaving ? 'Saving…' : 'Save retention'}
 				</Button>
 				{#if manualRetentionHelp}
@@ -1105,6 +1211,7 @@
 				<input
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					aria-label="Global execution"
 					checked={!executionGlobalDisabled}
 					disabled={settingsWriteInFlight || executionLoading}
 					onchange={(event) =>

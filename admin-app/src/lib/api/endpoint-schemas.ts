@@ -775,21 +775,42 @@ const asyncSettingsUpdateRequestSchema = z.strictObject({
 	base_delay_seconds: z.number().int().optional(),
 	max_delay_seconds: z.number().int().optional()
 });
+const retentionDaysSchema = z.union([
+	z.literal(0),
+	z.literal(7),
+	z.literal(30),
+	z.literal(90),
+	z.literal(180)
+]);
+const privacySetupProfileSchema = z.enum([
+	'balanced',
+	'privacy_focused',
+	'maximum_privacy',
+	'maximum_visibility'
+]);
 const pluginSettingsSchema = z.object({
+	enable_logging: z.boolean(),
+	execution_global_disabled: z.boolean(),
+	execution_provider_disabled: phpMap(z.record(z.string(), z.boolean())),
+	execution_event_retention_days: retentionDaysSchema,
+	submission_ledger_retention_days: retentionDaysSchema,
+	delete_data_on_uninstall: z.boolean(),
+	store_full_ai_outputs: z.boolean(),
+	managed_zdr_required: z.boolean(),
+	privacy_setup_profile: privacySetupProfileSchema,
+	privacy_setup_completed_at: nullableTextSchema
+});
+const pluginSettingsUpdateRequestSchema = z.strictObject({
 	enable_logging: z.boolean().optional(),
 	execution_global_disabled: z.boolean().optional(),
 	execution_provider_disabled: z.record(z.string(), z.boolean()).optional(),
-	execution_event_retention_days: z.number().int().optional(),
-	submission_ledger_retention_days: z.number().int().optional(),
+	execution_event_retention_days: retentionDaysSchema.optional(),
+	submission_ledger_retention_days: retentionDaysSchema.optional(),
 	delete_data_on_uninstall: z.boolean().optional(),
 	store_full_ai_outputs: z.boolean().optional(),
 	managed_zdr_required: z.boolean().optional(),
-	privacy_setup_profile: z
-		.enum(['balanced', 'privacy_focused', 'maximum_privacy', 'maximum_visibility', 'custom'])
-		.optional(),
-	privacy_setup_completed_at: nullableTextSchema.optional()
+	privacy_setup_profile: privacySetupProfileSchema.optional()
 });
-const pluginSettingsUpdateRequestSchema = pluginSettingsSchema.strict();
 const pluginSettingsUpdateResponseSchema = z.union([
 	pluginSettingsSchema,
 	z.object({ settings: pluginSettingsSchema })

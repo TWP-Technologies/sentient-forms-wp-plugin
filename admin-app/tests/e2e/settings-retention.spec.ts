@@ -58,8 +58,10 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 180,
+					submission_ledger_retention_days: 180,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: true,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'maximum_visibility',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -109,7 +111,10 @@ test.describe('Settings retention controls', () => {
 
 		const navigation = page.goto('/#/settings');
 		await expect(page.getByTestId('settings-governance-loading-state')).toBeVisible();
-		await expect(page.getByTestId('settings-retention-loading-state')).toBeVisible();
+		const retentionLoading = page.getByTestId('settings-retention-loading-state');
+		await expect(retentionLoading).toBeVisible();
+		await expect(retentionLoading).toContainText('Execution logs');
+		await expect(retentionLoading).toContainText('Submission Ledger records');
 
 		resolveSettingsRequest?.();
 		await navigation;
@@ -218,26 +223,40 @@ test.describe('Settings retention controls', () => {
 			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
 		);
 		await expect(page.getByText('Local data retention')).toBeVisible();
+		const saveRetention = page.getByRole('button', { name: 'Save retention' });
+		await expect(saveRetention).toBeDisabled();
 		const manualRetentionHelp = page.getByTestId('settings-manual-retention-help');
 		await expect(manualRetentionHelp).toHaveCount(0);
 		await page.getByLabel('Execution logs').selectOption('0');
 		await expect(manualRetentionHelp).toHaveText(
-			'Manual cleanup keeps new execution logs until an administrator removes them or changes this setting.'
+			'Manual deletion keeps new execution logs until an administrator removes them or changes this setting.'
 		);
 		await page.getByLabel('Submission Ledger records').selectOption('0');
 		await expect(manualRetentionHelp).toHaveText(
-			'Manual cleanup keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.'
+			'Manual deletion keeps new execution logs and Submission Ledger records until an administrator removes them or changes these settings.'
 		);
 		await page.getByLabel('Execution logs').selectOption('30');
 		await expect(manualRetentionHelp).toHaveText(
-			'Manual cleanup keeps new Submission Ledger records until an administrator removes them or changes this setting.'
+			'Manual deletion keeps new Submission Ledger records until an administrator removes them or changes this setting.'
 		);
 		await page.getByLabel('Submission Ledger records').selectOption('7');
+		await expect(page.getByTestId('settings-retention-unsaved')).toContainText('Unsaved changes');
+		await expect(saveRetention).toBeEnabled();
 		await expect(manualRetentionHelp).toHaveCount(0);
 		await page.getByLabel('Execution logs').selectOption('30');
 		await page.getByLabel('Submission Ledger records').selectOption('7');
 		await page.getByLabel('Store full AI outputs locally').check();
 		await page.getByLabel('Delete local data on uninstall').check();
+		await page.getByLabel('Global execution').uncheck();
+		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
+		expect(capturedPayloads.at(-1)).toMatchObject({
+			execution_global_disabled: true
+		});
+		await expect(page.getByLabel('Execution logs')).toHaveValue('30');
+		await expect(page.getByLabel('Submission Ledger records')).toHaveValue('7');
+		await expect(page.getByLabel('Store full AI outputs locally')).toBeChecked();
+		await expect(page.getByLabel('Delete local data on uninstall')).toBeChecked();
+		await expect(page.getByTestId('settings-retention-unsaved')).toContainText('Unsaved changes');
 
 		await page.getByLabel('Enforce ZDR for managed service').check();
 		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
@@ -249,7 +268,7 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByLabel('Delete local data on uninstall')).toBeChecked();
 
 		const retentionPayloadCount = capturedPayloads.length;
-		await page.getByRole('button', { name: 'Save retention' }).click();
+		await saveRetention.click();
 
 		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(retentionPayloadCount);
 		expect(capturedPayloads.at(-1)).toMatchObject({
@@ -262,6 +281,11 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByLabel('Submission Ledger records')).toHaveValue('7');
 		await expect(page.getByLabel('Store full AI outputs locally')).toBeChecked();
 		await expect(page.getByLabel('Delete local data on uninstall')).toBeChecked();
+		await expect(page.getByTestId('settings-retention-success')).toContainText(
+			'Retention settings saved on this site.'
+		);
+		await expect(page.getByText('Local data retention saved')).toBeVisible();
+		await expect(saveRetention).toBeDisabled();
 	});
 
 	test('shows a custom profile state when saved controls diverge from the last preset', async ({
@@ -285,6 +309,7 @@ test.describe('Settings retention controls', () => {
 					submission_ledger_retention_days: 180,
 					delete_data_on_uninstall: false,
 					store_full_ai_outputs: true,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'maximum_visibility',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -363,8 +388,10 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 90,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: false,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'balanced',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -419,5 +446,27 @@ test.describe('Settings retention controls', () => {
 		).toBeVisible();
 		await expect(page.getByText('Stops all providers when enabled.')).toHaveCount(0);
 		await expect(page.getByText('Running', { exact: true }).first()).toBeVisible();
+	});
+
+	test('keeps both retention controls explicit and disabled when settings are unavailable', async ({
+		page
+	}) => {
+		await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
+		await mockResponsiveApi(page);
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			await route.fulfill({
+				status: 503,
+				contentType: 'application/json',
+				body: JSON.stringify({ code: 'settings_unavailable', message: 'Settings unavailable' })
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
+
+		await expect(page.getByTestId('settings-retention-error-state')).toBeVisible();
+		await expect(page.getByLabel('Execution logs')).toBeVisible();
+		await expect(page.getByLabel('Execution logs')).toBeDisabled();
+		await expect(page.getByLabel('Submission Ledger records')).toBeVisible();
+		await expect(page.getByLabel('Submission Ledger records')).toBeDisabled();
 	});
 });

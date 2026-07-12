@@ -1,3 +1,34 @@
+<script module lang="ts">
+	import type { Notification } from '$lib/stores/notifications';
+
+	type NotificationToastOptions = {
+		id: string;
+		duration: number;
+	};
+
+	type NotificationToastSink = Record<
+		Notification['type'],
+		(message: string, options: NotificationToastOptions) => unknown
+	>;
+
+	export function createNotificationForwarder(sink: NotificationToastSink) {
+		const renderedNotificationIds = new Set<number>();
+
+		return (items: Notification[]): void => {
+			for (const item of items) {
+				if (renderedNotificationIds.has(item.id)) continue;
+				renderedNotificationIds.add(item.id);
+				const timeout = item.timeout ?? 4000;
+				const options = {
+					id: `sentient-notification-${item.id}`,
+					duration: timeout <= 0 ? Number.POSITIVE_INFINITY : timeout
+				};
+				sink[item.type](item.message, options);
+			}
+		};
+	}
+</script>
+
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount, type ComponentType, type SvelteComponent } from 'svelte';
@@ -27,7 +58,7 @@
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { runAdminCssHealthCheck } from '$lib/utils/admin-css-health';
-	import { Toaster } from 'sonner-svelte';
+	import { Toaster, toast } from 'sonner-svelte';
 	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 	interface Props {
@@ -55,6 +86,8 @@
 	let softRepairAttempted = $state(false);
 	let hardRepairAttempted = $state(false);
 	let privacySettings = $state<PluginSettingsResponse | null>(null);
+	let privacySettingsLoading = $state(false);
+	let privacySettingsLoadError = $state<string | null>(null);
 	let privacyAssistantOpen = $state(false);
 	let privacyAssistantSaving = $state(false);
 	let privacyApplyError = $state<string | null>(null);
@@ -65,13 +98,14 @@
 	let securityRoadblock = $state<SecurityRoadblockDetail | null>(null);
 	let securityRoadblockDetailsOpen = $state(false);
 	type SonnerToasterProps = {
-		position?: 'bottom-right';
+		position?: 'top-center';
 		richColors?: boolean;
 	};
 
 	// sonner-svelte ships Svelte 4 style declarations that mark defaulted props as required
 	// under Svelte 5. Keep the compatibility cast local to the root toaster mount.
 	const SonnerToaster = Toaster as unknown as ComponentType<SvelteComponent<SonnerToasterProps>>;
+	const forwardNotifications = createNotificationForwarder(toast);
 	const hasSecurityRoadblockDetails = $derived(
 		Boolean(securityRoadblock?.rayId || securityRoadblock?.providerDetails?.length)
 	);
@@ -162,6 +196,8 @@
 		const openAssistantWhenIncomplete = options.openAssistantWhenIncomplete ?? true;
 		if (runtime?.currentUser && !runtime.currentUser.canManage) return;
 
+		privacySettingsLoading = true;
+		privacySettingsLoadError = null;
 		try {
 			const settings = await client.getSettings({ showNotifications: false });
 			privacySettings = settings;
@@ -171,6 +207,12 @@
 			}
 		} catch (error) {
 			console.error('Failed to load Sentient Forms privacy settings', error);
+			privacySettingsLoadError = readableSettingsError(
+				error,
+				'Privacy settings could not be loaded. Retry before applying a preset.'
+			);
+		} finally {
+			privacySettingsLoading = false;
 		}
 	}
 
@@ -267,6 +309,8 @@
 			void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
 		}
 
+		const unsubscribeNotifications = notifications.subscribe(forwardNotifications);
+
 		void loadPrivacySettings();
 		updateWpAdminOffset();
 		runAdminCssHealthCheck();
@@ -308,6 +352,7 @@
 		});
 
 		return () => {
+			unsubscribeNotifications();
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
 			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
 			window.removeEventListener(SECURITY_ROADBLOCK_EVENT, handleSecurityRoadblock);
@@ -464,16 +509,21 @@
 	</div>
 </div>
 
-<SonnerToaster position="bottom-right" richColors />
+<SonnerToaster position="top-center" richColors />
 
 <PrivacySetupAssistant
 	open={privacyAssistantOpen}
 	settings={privacySettings}
+	loading={privacySettingsLoading}
+	loadError={privacySettingsLoadError}
 	saving={privacyAssistantSaving}
 	applyError={privacyApplyError}
 	{managedAccountReady}
 	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
 	onapply={applyPrivacyPreset}
+	onretry={() => {
+		void loadPrivacySettings({ openAssistantWhenIncomplete: false });
+	}}
 	onclose={() => {
 		if (privacySettings?.privacy_setup_completed_at) {
 			privacyAssistantOpen = false;

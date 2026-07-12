@@ -213,4 +213,21 @@ test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 		await assertElementWithinViewport(mappingModal, 'mapping-config-modal');
 		await assertNoPageOverflow(page, 'mobile /#/actions/gravity_forms/123 mapping modal');
 	});
+
+	test('privacy setup uses one viewport-bounded scroll shell on narrow widths', async ({ page }) => {
+		await page.setViewportSize({ width: 360, height: 800 });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
+		await page.getByRole('button', { name: 'Review setup' }).click();
+
+		const modal = page.getByTestId('privacy-setup-assistant');
+		const footer = page.getByTestId('privacy-setup-action-footer');
+		await expect(modal).toBeVisible();
+		await expect(footer).toBeVisible();
+		await assertElementWithinViewport(modal, 'privacy-setup-assistant');
+		await assertElementWithinViewport(footer, 'privacy-setup-action-footer');
+		await assertNoPageOverflow(page, 'mobile /#/settings privacy setup');
+		expect(
+			await modal.locator(':scope > div').nth(1).evaluate((element) => getComputedStyle(element).overflowY)
+		).toBe('auto');
+	});
 });
