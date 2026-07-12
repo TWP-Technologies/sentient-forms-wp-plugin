@@ -3054,6 +3054,8 @@
 	function openAddActionPanel() {
 		if (!canConfigureFormSource) return;
 
+		selectedHooks = new Set();
+		lastPresetKey = null;
 		selectedCreateDependencyIds = new Set();
 		createError = null;
 		localBuilderResult = null;

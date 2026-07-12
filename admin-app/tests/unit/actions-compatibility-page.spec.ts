@@ -178,6 +178,43 @@ describe('Add action compatibility evidence', () => {
 		cleanup();
 		harness.api.checkActionCompatibility.mockReset();
 		harness.createFormAction.mockReset();
+		harness.formActionsState.bootstrap.form_source_descriptor.lifecycles.validation.supported = false;
+	});
+
+	it('reapplies lifecycle defaults when the add-action drawer is reopened for the same action', async () => {
+		harness.formActionsState.bootstrap.form_source_descriptor.lifecycles.validation.supported = true;
+		render(ActionsPage, { data: { formSourceSlug: 'contact_form_7', formId: '42' } });
+
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Add action' })[0]);
+		let drawer = screen.getByTestId('add-action-drawer');
+		await fireEvent.click(within(drawer).getByRole('radio', { name: /Spam Detection/i }));
+
+		const afterSubmission = within(drawer).getByRole('checkbox', {
+			name: 'After submission'
+		}) as HTMLInputElement;
+		const validation = within(drawer).getByRole('checkbox', {
+			name: 'During validation'
+		}) as HTMLInputElement;
+		await waitFor(() => expect(validation.checked).toBe(true));
+		await fireEvent.click(afterSubmission);
+		await fireEvent.click(validation);
+		expect(afterSubmission.checked).toBe(true);
+		expect(validation.checked).toBe(false);
+
+		await fireEvent.click(within(drawer).getByRole('button', { name: 'Close' }));
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Add action' })[0]);
+		drawer = screen.getByTestId('add-action-drawer');
+
+		await waitFor(() =>
+			expect(
+				(within(drawer).getByRole('checkbox', { name: 'During validation' }) as HTMLInputElement)
+					.checked
+			).toBe(true)
+		);
+		expect(
+			(within(drawer).getByRole('checkbox', { name: 'After submission' }) as HTMLInputElement)
+				.checked
+		).toBe(false);
 	});
 
 	it('keeps unsupported realtime actions visible and shows nonmutating rejection evidence', async () => {
@@ -211,7 +248,7 @@ describe('Add action compatibility evidence', () => {
 		expect(
 			within(drawer).getByText('No mapping was created and no provider request ran.')
 		).toBeTruthy();
-			expect(harness.api.checkActionCompatibility).toHaveBeenCalledWith(
+		expect(harness.api.checkActionCompatibility).toHaveBeenCalledWith(
 			'contact_form_7',
 			'42',
 			{ action_code: 'clarification_assistant_v1', lifecycle: 'real_time' },
