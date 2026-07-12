@@ -436,7 +436,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         if (
             sanitize_key( (string) ( $local_mapping['form_source'] ?? '' ) ) !== sanitize_key( (string) ( $context['form_source'] ?? '' ) )
             || sanitize_text_field( (string) ( $local_mapping['form_id'] ?? '' ) ) !== sanitize_text_field( (string) ( $context['form_id'] ?? '' ) )
-            || 'real_time' !== sanitize_key( (string) ( $local_mapping['execution_mode'] ?? $local_mapping['hook'] ?? '' ) )
+            || 'real_time' !== sanitize_key( (string) ( $local_mapping['hook'] ?? '' ) )
         ) {
             return $this->prepare_error_response(
                 'sentient_forms_local_mapping_mismatch',

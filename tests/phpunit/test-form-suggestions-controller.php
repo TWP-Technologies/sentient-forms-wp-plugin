@@ -924,7 +924,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
                     'form_source' => 'gravity_forms',
                     'form_id' => '42',
                     'hook' => 'real_time',
-                    'execution_mode' => 'real_time',
+                    'execution_mode' => 'sync',
                     'enabled' => 1,
                 ],
             ]
