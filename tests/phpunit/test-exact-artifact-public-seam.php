@@ -130,6 +130,28 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
 
     private string $observation_path = '';
 
+    public function test_exact_artifact_test_identity_distinguishes_action_facet_policy(): void
+    {
+        $base = [
+            'action_code'                 => 'spam_detection_v1',
+            'form_source'                 => 'gravity_forms',
+            'lifecycle'                   => 'after_submission',
+            'required_semantic_outcome'   => 'effect_applied',
+            'facet_scenario_assignment'   => 'base_action',
+            'policy_basis_assignment'     => 'action_catalog',
+        ];
+        $facet = array_merge(
+            $base,
+            [
+                'facet_scenario_assignment' => 'spam_guidance_rationale_generation',
+                'policy_basis_assignment'   => 'action_facet_catalog',
+            ]
+        );
+
+        $this->assertNotSame( self::build_test_id( $base ), self::build_test_id( $facet ) );
+        $this->assertSame( self::build_test_id( $base ), self::build_test_id( $base ) );
+    }
+
     public function test_exact_artifact_assignment_public_seam(): void
     {
         $this->load_and_verify_assignment();
@@ -1038,6 +1060,23 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
     }
 
+    /** @param array<string, mixed> $assignment */
+    private static function build_test_id( array $assignment ): string
+    {
+        return implode(
+            ':',
+            [
+                'phpunit-public-seam',
+                $assignment['action_code'],
+                $assignment['form_source'],
+                $assignment['lifecycle'],
+                $assignment['required_semantic_outcome'],
+                $assignment['facet_scenario_assignment'],
+                $assignment['policy_basis_assignment'],
+            ]
+        );
+    }
+
     /** @param array<string, mixed> $identities */
     private function write_observation( array $identities ): void
     {
@@ -1045,16 +1084,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'observation_version'   => 1,
             'run_id'                => $this->assignment['id'],
             'status'                => 'passed',
-            'test_id'               => implode(
-                ':',
-                [
-                    'phpunit-public-seam',
-                    $this->assignment['action_code'],
-                    $this->assignment['form_source'],
-                    $this->assignment['lifecycle'],
-                    $this->assignment['required_semantic_outcome'],
-                ]
-            ),
+            'test_id'               => self::build_test_id( $this->assignment ),
             'observed_effect'       => $this->expected_effect['description'],
             'observed_effect_code'  => $this->expected_effect['code'],
             'observed_effect_sha256' => $this->expected_effect['description_sha256'],
