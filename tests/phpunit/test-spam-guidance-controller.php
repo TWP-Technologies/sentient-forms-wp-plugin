@@ -534,8 +534,11 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
                 $this->assertStringContainsString( 'Please quote a warranty repair.', (string) ( $context['text'] ?? '' ) );
 
                 return [
-                    'rationale' => 'Specific warranty request from a plausible customer.',
-                    'route'     => 'test',
+                    'rationale'                 => 'Specific warranty request from a plausible customer.',
+                    'route'                     => 'openrouter',
+                    'provider_observation_type' => 'subscription_gated_direct_response',
+                    'provider_observation_id'   => 'fallback-openrouter:gen-pre-filter-observation',
+                    'route_decision_reason'     => 'direct_ready',
                 ];
             },
             10,
@@ -569,6 +572,9 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertSame( '10', $example['source']['entry_id'] ?? null );
         $this->assertSame( '10', $example['source']['native_entry_id'] ?? null );
         $this->assertSame( self::$admin_id, $example['source']['selected_by_user_id'] ?? null );
+        $this->assertSame( 'subscription_gated_direct_response', $data['generation']['provider_observation_type'] ?? null );
+        $this->assertSame( 'fallback-openrouter:gen-pre-filter-observation', $data['generation']['provider_observation_id'] ?? null );
+        $this->assertSame( 'direct_ready', $data['generation']['route_decision_reason'] ?? null );
     }
 
     public function test_append_entry_examples_generate_rationales_for_ledger_backed_sources(): void
@@ -960,7 +966,10 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             'sentient_forms_spam_guidance_managed_generation_response',
             function ( $response, array $payload ) use ( &$captured_payload ): array {
                 $captured_payload = $payload;
-                return [ 'output' => [ 'text' => '{"rationale":"Looks like a real warranty inquiry with product context."}' ] ];
+                return [
+                    'execution_request_id' => 'spam-guidance-managed-observation',
+                    'output'               => [ 'text' => '{"rationale":"Looks like a real warranty inquiry with product context."}' ],
+                ];
             },
             10,
             2
@@ -980,6 +989,9 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
 
         $this->assertIsArray( $result, is_wp_error( $result ) ? $result->get_error_message() : '' );
         $this->assertSame( 'sentient_managed', $result['route'] ?? null );
+        $this->assertSame( 'cps_managed_lifecycle', $result['provider_observation_type'] ?? null );
+        $this->assertSame( 'cps-lifecycle:spam-guidance-managed-observation', $result['provider_observation_id'] ?? null );
+        $this->assertSame( 'managed_ready_with_capacity', $result['route_decision_reason'] ?? null );
         $this->assertSame( 'Looks like a real warranty inquiry with product context.', $result['rationale'] ?? null );
         $this->assertIsArray( $captured_payload );
         $this->assertSame( 'spam_guidance_rationale_v1', $captured_payload['action_code'] ?? null );
@@ -1206,6 +1218,37 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertFalse( $managed_called );
     }
 
+    public function test_rationale_generation_rejects_empty_managed_provider_observation_id(): void
+    {
+        $this->seed_active_managed_entitlement();
+        $this->create_managed_proxy_credential();
+
+        add_filter(
+            'sentient_forms_spam_guidance_billing_state',
+            fn (): array => $this->active_subscription_billing_state( 25 )
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_managed_generation_response',
+            static fn (): array => [
+                'execution_request_id' => '   ',
+                'output'               => [ 'text' => '{"rationale":"Looks like a real warranty inquiry with product context."}' ],
+            ]
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_openrouter_generation_response',
+            static fn (): WP_Error => new WP_Error( 'unexpected_openrouter', 'OpenRouter should not be used.' )
+        );
+
+        $service = new Sentient_Forms_Spam_Guidance_Rationale_Service();
+        $result  = $service->generate( $this->rationale_context( 'ham', 'Message: Please quote a warranty repair.' ) );
+
+        $this->assertIsArray( $result, is_wp_error( $result ) ? $result->get_error_message() : '' );
+        $this->assertSame( 'sentient_managed', $result['route'] ?? null );
+        $this->assertSame( 'managed_ready_with_capacity', $result['route_decision_reason'] ?? null );
+        $this->assertArrayNotHasKey( 'provider_observation_type', $result );
+        $this->assertArrayNotHasKey( 'provider_observation_id', $result );
+    }
+
     public function test_rationale_generation_accepts_real_v2_billing_state_shape(): void
     {
         $this->seed_active_managed_entitlement();
@@ -1282,7 +1325,10 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             function ( $response, string $api_key, array $payload ) use ( &$captured_payload ): array {
                 $this->assertSame( 'sk-or-paid-test', $api_key );
                 $captured_payload = $payload;
-                return [ 'choices' => [ [ 'message' => [ 'content' => '{"rationale":"Mass-market crypto offer with no business-specific intent."}' ] ] ] ];
+                return [
+                    'id'      => 'gen-spam-guidance-direct-observation',
+                    'choices' => [ [ 'message' => [ 'content' => '{"rationale":"Mass-market crypto offer with no business-specific intent."}' ] ] ],
+                ];
             },
             10,
             3
@@ -1293,6 +1339,9 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
 
         $this->assertIsArray( $result, is_wp_error( $result ) ? $result->get_error_message() : '' );
         $this->assertSame( 'openrouter', $result['route'] ?? null );
+        $this->assertSame( 'subscription_gated_direct_response', $result['provider_observation_type'] ?? null );
+        $this->assertSame( 'fallback-openrouter:gen-spam-guidance-direct-observation', $result['provider_observation_id'] ?? null );
+        $this->assertSame( 'direct_ready', $result['route_decision_reason'] ?? null );
         $this->assertSame( 'Mass-market crypto offer with no business-specific intent.', $result['rationale'] ?? null );
         $this->assertIsArray( $captured_payload );
         $user_message = is_array( $captured_payload['messages'][1] ?? null )

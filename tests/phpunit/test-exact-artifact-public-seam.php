@@ -120,6 +120,8 @@ final class Sentient_Forms_Test_Exact_Artifact_Accepted_Adapter implements
 
 class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
 {
+    private const SPAM_GUIDANCE_FACET_EFFECT_DESCRIPTION = 'Authenticated Spam Guidance generates and saves one historical-entry rationale through Direct OpenRouter only after an active Sentient Forms subscription authorizes the facet and the managed route is unavailable.';
+
     /** @var array<string, mixed> */
     private array $assignment = [];
 
@@ -140,9 +142,13 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'lifecycle_id'       => null,
         ];
 
-        if ( 'source_contract_rejection' === $this->assignment['required_semantic_outcome'] )
+        if ( 'base_action' !== $this->assignment['facet_scenario_assignment'] )
         {
-            $this->exercise_authenticated_source_contract_rejection();
+            $identities = $this->exercise_action_facet_assignment();
+        }
+        elseif ( 'source_contract_rejection' === $this->assignment['required_semantic_outcome'] )
+        {
+            $identities = $this->exercise_authenticated_source_contract_rejection();
         }
         elseif ( 'validation' === $this->assignment['lifecycle'] )
         {
@@ -259,7 +265,16 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $source = $this->assignment['form_source'];
         $lifecycle = $this->assignment['lifecycle'];
         $outcome = $this->assignment['required_semantic_outcome'];
-        if ( 'source_contract_rejection' === $outcome )
+        if ( 'spam_guidance_rationale_generation' === $this->assignment['facet_scenario_assignment'] )
+        {
+            $this->assertSame( 'spam_detection_v1', $action );
+            $this->assertSame( 'gravity_forms', $source );
+            $this->assertSame( 'after_submission', $lifecycle );
+            $this->assertSame( 'effect_applied', $outcome );
+            $code = 'spam_guidance_rationale_generation_effect_applied';
+            $description = self::SPAM_GUIDANCE_FACET_EFFECT_DESCRIPTION;
+        }
+        elseif ( 'source_contract_rejection' === $outcome )
         {
             $this->assertSame( 'intentional_unsupported', $row['support_status'] ?? null );
             $code = implode( '_', [ $action, $source, $lifecycle, 'source_contract_rejection' ] );
@@ -294,7 +309,165 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         return [ 'code' => $code, 'description' => $description, 'description_sha256' => hash( 'sha256', $description ) ];
     }
 
-    /** @return array<string, string|null> */
+    /** @return array<string, mixed> */
+    private function exercise_action_facet_assignment(): array
+    {
+        $this->assertSame( 'spam_guidance_rationale_generation', $this->assignment['facet_scenario_assignment'] );
+        $this->assertNull( $this->assignment['provider_route_assignment'] ?? null );
+        $this->assertSame( 'action_facet_catalog', $this->assignment['policy_basis_assignment'] ?? null );
+        $this->assertSame( 'active_subscription', $this->assignment['effective_feature_access_assignment'] ?? null );
+        $this->assertSame( 'provider_flexible', $this->assignment['effective_execution_requirement_assignment'] ?? null );
+
+        Sentient_Forms_Installer::maybe_upgrade();
+        $administrator = self::factory()->user->create( [ 'role' => 'administrator' ] );
+        wp_set_current_user( $administrator );
+        $form_id  = (string) self::factory()->post->create( [ 'post_title' => 'Exact-artifact Spam Guidance form' ] );
+        $entry_id = (string) self::factory()->post->create( [ 'post_title' => 'Exact-artifact Spam Guidance entry' ] );
+        $fixture_request_id = wp_generate_uuid4();
+
+        $this->assertTrue( class_exists( 'GFAPI' ) );
+        $this->assertTrue( property_exists( 'GFAPI', 'forms' ) );
+        $this->assertTrue( property_exists( 'GFAPI', 'entries' ) );
+        GFAPI::$forms[ (int) $form_id ] = [
+            'id'     => (int) $form_id,
+            'title'  => 'Exact-artifact Spam Guidance form',
+            'fields' => [
+                [ 'id' => '1', 'label' => 'Email' ],
+                [ 'id' => '2', 'label' => 'Message' ],
+            ],
+        ];
+        GFAPI::$entries[ (int) $entry_id ] = [
+            'id'           => (int) $entry_id,
+            'form_id'      => (int) $form_id,
+            'status'       => 'active',
+            'date_created' => gmdate( 'Y-m-d H:i:s' ),
+            '1'            => 'exact-artifact@example.test',
+            '2'            => 'Please quote a warranty repair for this exact-artifact proof.',
+        ];
+
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'exact-artifact-spam-guidance-proxy',
+                'site_id'        => 'exact-artifact-spam-guidance-site',
+                'tier'           => 'starter',
+            ]
+        );
+        global $wpdb;
+        $vault     = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted = $vault->encrypt( 'sk-or-exact-artifact-boundary-fixture' );
+        $this->assertIsString( $encrypted );
+        $credential_id = ( new Sentient_Forms_Provider_Credentials_Repository( $wpdb ) )->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Exact-artifact paid Direct boundary',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'status_json'       => [ 'is_free_tier' => false ],
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $billing_filter = static fn (): array => [
+            'status'  => 'active',
+            'plan'    => [ 'code' => 'starter' ],
+            'billing' => [
+                'managed_enabled' => true,
+                'subscription'    => [ 'status' => 'active' ],
+            ],
+            'credits' => [ 'current_balance' => 0 ],
+        ];
+        $provider_calls  = 0;
+        $provider_filter = static function () use ( $fixture_request_id, &$provider_calls ): array {
+            ++$provider_calls;
+
+            return [
+                'id'      => 'gen-' . $fixture_request_id,
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => '{"rationale":"Specific warranty request from an authenticated historical entry."}',
+                        ],
+                    ],
+                ],
+            ];
+        };
+        add_filter( 'sentient_forms_spam_guidance_billing_state', $billing_filter );
+        add_filter( 'sentient_forms_spam_guidance_openrouter_generation_response', $provider_filter );
+
+        $route = '/sentient-forms/v1/spam-guidance/forms/gravity_forms/' . $form_id . '/examples';
+        $body  = [
+            'target_scope' => 'form',
+            'label'        => 'ham',
+            'entry_id'     => $entry_id,
+        ];
+
+        try
+        {
+            $controller = new Sentient_Forms_Spam_Guidance_Controller();
+            add_action( 'rest_api_init', [ $controller, 'register_routes' ] );
+            try
+            {
+                do_action( 'rest_api_init', rest_get_server() );
+            }
+            finally
+            {
+                remove_action( 'rest_api_init', [ $controller, 'register_routes' ] );
+            }
+
+            $denied_request = new WP_REST_Request( 'POST', $route );
+            $denied_request->set_param( 'form_source', 'gravity_forms' );
+            $denied_request->set_param( 'form_id', $form_id );
+            $denied_request->set_body_params( $body );
+            $denied_response = rest_get_server()->dispatch( $denied_request );
+
+            $this->assertSame( 403, $denied_response->get_status(), wp_json_encode( $denied_response->get_data() ) );
+            $this->assertSame( 'rest_forbidden', $denied_response->get_data()['code'] ?? null );
+            $this->assertSame( 0, $provider_calls, 'A request without the required REST nonce must not reach the provider boundary.' );
+            $this->assertEmpty( get_option( 'sentient_forms_form_config_gravity_forms_' . $form_id, [] ) );
+
+            $request = new WP_REST_Request( 'POST', $route );
+            $request->set_param( 'form_source', 'gravity_forms' );
+            $request->set_param( 'form_id', $form_id );
+            $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $request->set_body_params( $body );
+
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_spam_guidance_billing_state', $billing_filter );
+            remove_filter( 'sentient_forms_spam_guidance_openrouter_generation_response', $provider_filter );
+        }
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 1, $provider_calls );
+        $data = $response->get_data();
+        $this->assertSame( 'openrouter', $data['generation']['route'] ?? null );
+        $this->assertSame( 'subscription_gated_direct_response', $data['generation']['provider_observation_type'] ?? null );
+        $this->assertSame( 'fallback-openrouter:gen-' . $fixture_request_id, $data['generation']['provider_observation_id'] ?? null );
+        $this->assertSame( 'direct_ready', $data['generation']['route_decision_reason'] ?? null );
+        $this->assertSame(
+            'Specific warranty request from an authenticated historical entry.',
+            $data['config']['spam_positive_examples'][0]['rationale'] ?? null
+        );
+
+        return [
+            'request_trace_id'          => $fixture_request_id,
+            'rejection_trace_id'        => null,
+            'submission_id'             => $entry_id,
+            'execution_id'              => $fixture_request_id,
+            'lifecycle_id'              => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:' . $fixture_request_id,
+            'observed_provider_route'   => 'openrouter',
+            'applied_facets'            => [ 'spam_guidance_rationale_generation' ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
     private function exercise_concrete_validation_hook(): array
     {
         $mode = 'validation_rejection' === $this->assignment['required_semantic_outcome'] ? 'reject' : 'accept';
@@ -313,16 +486,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertContains( $result['native_hook'], $result['native_hooks'] );
         $this->assertNotEmpty( $result['observed_effect'] ?? null );
 
+        $request_id = is_string( $result['request_id'] ?? null ) && '' !== $result['request_id']
+            ? $result['request_id']
+            : wp_generate_uuid4();
+
         return [
             'request_trace_id'   => is_string( $result['request_id'] ?? null ) ? $result['request_id'] : null,
             'rejection_trace_id' => is_string( $result['trace_id'] ?? null ) ? $result['trace_id'] : null,
             'submission_id'      => null,
             'execution_id'       => is_string( $result['request_id'] ?? null ) ? $result['request_id'] : null,
             'lifecycle_id'       => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:' . $request_id,
+            'observed_provider_route'   => null,
+            'applied_facets'            => [],
         ];
     }
 
-    /** @return array<string, string|null> */
+    /** @return array<string, mixed> */
     private function exercise_accepted_submission_runner(): array
     {
         Sentient_Forms_Installer::maybe_upgrade();
@@ -419,6 +600,10 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'submission_id'      => $submission_uuid,
             'execution_id'       => $request_id,
             'lifecycle_id'       => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:' . $request_id,
+            'observed_provider_route'   => null,
+            'applied_facets'            => [],
         ];
     }
 
@@ -546,7 +731,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertNotEmpty( gform_get_meta( $entry_id, 'sentient_forms_last_response' ) );
     }
 
-    /** @return array<string, string|null> */
+    /** @return array<string, mixed> */
     private function exercise_gravity_realtime_persistence(): array
     {
         require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
@@ -658,18 +843,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         );
 
         // The callback fixture proves persisted payload correlation, but it does not
-        // execute the realtime request-creation seam. Do not publish fixture-created
-        // correlation values as captured runtime identities.
+        // execute the realtime request-creation seam. Identify only this automated
+        // public-seam observation, not the fixture-created provider correlation.
+        $public_seam_id = wp_generate_uuid4();
         return [
             'request_trace_id'   => null,
             'rejection_trace_id' => null,
             'submission_id'      => null,
             'execution_id'       => null,
             'lifecycle_id'       => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:' . $public_seam_id,
+            'observed_provider_route'   => null,
+            'applied_facets'            => [],
         ];
     }
 
-    private function exercise_authenticated_source_contract_rejection(): void
+    /** @return array<string, mixed> */
+    private function exercise_authenticated_source_contract_rejection(): array
     {
         $source = $this->assignment['form_source'];
         $this->assertContains( $source, [ 'contact_form_7', 'wpforms', 'elementor_pro_forms' ] );
@@ -709,6 +900,18 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             [ 'rest_unsupported_form_source_lifecycle', 'rest_unsupported_action_source' ]
         );
         $this->assertSame( $before, $after, 'Rejected source contracts must not create a mapping.' );
+
+        return [
+            'request_trace_id'          => null,
+            'rejection_trace_id'        => null,
+            'submission_id'             => null,
+            'execution_id'              => null,
+            'lifecycle_id'              => null,
+            'provider_observation_type' => 'source_contract_rejection',
+            'provider_observation_id'   => 'source-rejection:' . wp_generate_uuid4(),
+            'observed_provider_route'   => null,
+            'applied_facets'            => [],
+        ];
     }
 
     private function create_source_contract_probe_form( string $source ): string
@@ -835,7 +1038,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
     }
 
-    /** @param array<string, string|null> $identities */
+    /** @param array<string, mixed> $identities */
     private function write_observation( array $identities ): void
     {
         $observation = [
@@ -860,6 +1063,10 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'submission_id'         => $identities['submission_id'],
             'execution_id'          => $identities['execution_id'],
             'lifecycle_id'          => $identities['lifecycle_id'],
+            'provider_observation_type' => $identities['provider_observation_type'] ?? null,
+            'provider_observation_id'   => $identities['provider_observation_id'] ?? null,
+            'observed_provider_route'   => $identities['observed_provider_route'] ?? null,
+            'applied_facets'            => $identities['applied_facets'] ?? [],
         ];
         $handle = fopen( $this->observation_path, 'x' );
         $this->assertIsResource( $handle );

@@ -53,7 +53,7 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
 
     /**
      * @param array<string,mixed> $context
-     * @return array{rationale:string,route:string,model?:string}|WP_Error
+     * @return array{rationale:string,route:string,model?:string,provider_observation_type?:string,provider_observation_id?:string,route_decision_reason?:string}|WP_Error
      */
     public function generate( array $context ): array | WP_Error
     {
@@ -148,10 +148,10 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
 
         if ( 'sentient_managed' === $route['provider'] )
         {
-            return $this->run_managed_generation( $managed_context, $prompt, $context, $execution_contract );
+            return $this->run_managed_generation( $managed_context, $prompt, $context, $execution_contract, $route['decision_reason'] );
         }
 
-        return $this->run_openrouter_generation( $prompt, $context, $openrouter_credential, $execution_contract );
+        return $this->run_openrouter_generation( $prompt, $context, $openrouter_credential, $execution_contract, $route['decision_reason'] );
     }
 
     /**
@@ -531,13 +531,14 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
     /**
      * @param array{proxy_api_key:string,site_id:string} $managed_context
      * @param array<string,mixed>                        $context
-     * @return array{rationale:string,route:string,model?:string}|WP_Error
+     * @return array{rationale:string,route:string,model?:string,provider_observation_type?:string,provider_observation_id?:string,route_decision_reason:string}|WP_Error
      */
     private function run_managed_generation(
         array $managed_context,
         string $prompt,
         array $context,
-        array $execution_contract
+        array $execution_contract,
+        string $decision_reason
     ): array | WP_Error
     {
         $payload = [
@@ -590,24 +591,34 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             return $result;
         }
 
-        return [
-            'rationale' => $result['rationale'],
-            'route'     => 'sentient_managed',
-            'model'     => isset( $response['model'] ) && is_scalar( $response['model'] )
+        $generation = [
+            'rationale'             => $result['rationale'],
+            'route'                 => 'sentient_managed',
+            'model'                 => isset( $response['model'] ) && is_scalar( $response['model'] )
                 ? sanitize_text_field( (string) $response['model'] )
                 : $execution_contract['model'],
+            'route_decision_reason' => sanitize_key( $decision_reason ),
         ];
+        $observation_id = $this->typed_provider_observation_id( 'cps-lifecycle:', $response['execution_request_id'] ?? null );
+        if ( null !== $observation_id )
+        {
+            $generation['provider_observation_type'] = 'cps_managed_lifecycle';
+            $generation['provider_observation_id']   = $observation_id;
+        }
+
+        return $generation;
     }
 
     /**
      * @param array<string,mixed> $context
-     * @return array{rationale:string,route:string,model?:string}|WP_Error
+     * @return array{rationale:string,route:string,model?:string,provider_observation_type?:string,provider_observation_id?:string,route_decision_reason:string}|WP_Error
      */
     private function run_openrouter_generation(
         string $prompt,
         array $context,
         array $credential,
-        array $execution_contract
+        array $execution_contract,
+        string $decision_reason
     ): array | WP_Error
     {
         $api_key = $this->resolve_openrouter_api_key( $credential );
@@ -664,11 +675,20 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             return $result;
         }
 
-        return [
-            'rationale' => $result['rationale'],
-            'route'     => 'openrouter',
-            'model'     => $execution_contract['model'],
+        $generation = [
+            'rationale'             => $result['rationale'],
+            'route'                 => 'openrouter',
+            'model'                 => $execution_contract['model'],
+            'route_decision_reason' => sanitize_key( $decision_reason ),
         ];
+        $observation_id = $this->typed_provider_observation_id( 'fallback-openrouter:', $response['id'] ?? null, 'gen-' );
+        if ( null !== $observation_id )
+        {
+            $generation['provider_observation_type'] = 'subscription_gated_direct_response';
+            $generation['provider_observation_id']   = $observation_id;
+        }
+
+        return $generation;
     }
 
     /**
@@ -815,7 +835,7 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
     }
 
     /**
-     * @return array{rationale:string,route:string}|WP_Error
+     * @return array{rationale:string,route:string,model?:string,provider_observation_type?:string,provider_observation_id?:string,route_decision_reason?:string}|WP_Error
      */
     private function normalize_generation_result( mixed $result, string $route, int $max_length ): array | WP_Error
     {
@@ -838,12 +858,89 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             );
         }
 
-        return [
+        $normalized = [
             'rationale' => $rationale,
             'route'     => isset( $result['route'] ) && is_scalar( $result['route'] )
                 ? sanitize_key( (string) $result['route'] )
                 : $route,
         ];
+        if ( isset( $result['model'] ) && is_scalar( $result['model'] ) )
+        {
+            $normalized['model'] = sanitize_text_field( (string) $result['model'] );
+        }
+        if (
+            isset( $result['provider_observation_type'], $result['provider_observation_id'] )
+            && is_scalar( $result['provider_observation_type'] )
+            && is_scalar( $result['provider_observation_id'] )
+        )
+        {
+            $type           = sanitize_key( (string) $result['provider_observation_type'] );
+            $observation_id = $this->safe_provider_observation_id( (string) $result['provider_observation_id'] );
+            if ( $this->provider_observation_pair_is_valid( $type, $observation_id ) )
+            {
+                $normalized['provider_observation_type'] = $type;
+                $normalized['provider_observation_id']   = $observation_id;
+            }
+        }
+        if ( isset( $result['route_decision_reason'] ) && is_scalar( $result['route_decision_reason'] ) )
+        {
+            $reason = sanitize_key( (string) $result['route_decision_reason'] );
+            if ( '' !== $reason )
+            {
+                $normalized['route_decision_reason'] = $reason;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function typed_provider_observation_id( string $prefix, mixed $raw_id, string $required_raw_prefix = '' ): ?string
+    {
+        if ( ! is_scalar( $raw_id ) )
+        {
+            return null;
+        }
+
+        $raw_id = trim( (string) $raw_id );
+        if ( '' === $raw_id )
+        {
+            return null;
+        }
+
+        if ( '' !== $required_raw_prefix && ! str_starts_with( $raw_id, $required_raw_prefix ) )
+        {
+            return null;
+        }
+
+        return $this->safe_provider_observation_id( $prefix . $raw_id );
+    }
+
+    private function provider_observation_pair_is_valid( string $type, ?string $observation_id ): bool
+    {
+        if ( null === $observation_id )
+        {
+            return false;
+        }
+
+        return match ( $type )
+        {
+            'subscription_gated_direct_response' => str_starts_with( $observation_id, 'fallback-openrouter:gen-' ),
+            'cps_managed_lifecycle'               => str_starts_with( $observation_id, 'cps-lifecycle:' ),
+            default                               => false,
+        };
+    }
+
+    private function safe_provider_observation_id( string $observation_id ): ?string
+    {
+        $observation_id = trim( $observation_id );
+        if ( '' === $observation_id || strlen( $observation_id ) > 255 )
+        {
+            return null;
+        }
+
+        return 1 === preg_match( '/^[A-Za-z0-9][A-Za-z0-9._:-]*$/', $observation_id )
+            ? $observation_id
+            : null;
     }
 
     /**

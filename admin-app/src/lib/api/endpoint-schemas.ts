@@ -1404,14 +1404,73 @@ const spamGuidanceAppendRequestSchema = z.strictObject({
 	rationale: z.string().optional(),
 	mapping_id: z.union([z.number(), z.string()]).optional()
 });
+const spamGuidanceGenerationBaseShape = {
+	model: nullableTextSchema.optional()
+};
+const spamGuidanceDirectDecisionReasonSchema = z.enum([
+	'direct_preferred_and_ready',
+	'managed_preferred_without_capacity_direct_ready',
+	'direct_ready'
+]);
+const spamGuidanceManagedDecisionReasonSchema = z.enum([
+	'managed_preferred_and_ready',
+	'managed_ready_with_capacity'
+]);
+const spamGuidanceProviderObservationSchema = z.discriminatedUnion(
+	'provider_observation_type',
+	[
+		z.object({
+			...spamGuidanceGenerationBaseShape,
+			route: z.literal('openrouter'),
+			route_decision_reason: spamGuidanceDirectDecisionReasonSchema,
+			provider_observation_type: z.literal('subscription_gated_direct_response'),
+			provider_observation_id: z
+				.string()
+				.regex(/^fallback-openrouter:gen-[A-Za-z0-9._:-]+$/)
+				.max(255)
+		}),
+		z.object({
+			...spamGuidanceGenerationBaseShape,
+			route: z.literal('sentient_managed'),
+			route_decision_reason: spamGuidanceManagedDecisionReasonSchema,
+			provider_observation_type: z.literal('cps_managed_lifecycle'),
+			provider_observation_id: z
+				.string()
+				.regex(/^cps-lifecycle:[A-Za-z0-9][A-Za-z0-9._:-]+$/)
+				.max(255)
+		})
+	]
+);
+const spamGuidanceNoObservationBaseShape = {
+	...spamGuidanceGenerationBaseShape,
+	provider_observation_type: z.undefined().optional(),
+	provider_observation_id: z.undefined().optional()
+};
+const spamGuidanceGenerationBoundarySchema = z.union([
+	spamGuidanceProviderObservationSchema,
+	z.union([
+		z.object({
+			...spamGuidanceNoObservationBaseShape,
+			route: z.literal('openrouter'),
+			route_decision_reason: spamGuidanceDirectDecisionReasonSchema
+		}),
+		z.object({
+			...spamGuidanceNoObservationBaseShape,
+			route: z.literal('sentient_managed'),
+			route_decision_reason: spamGuidanceManagedDecisionReasonSchema
+		}),
+		z.object({
+			...spamGuidanceNoObservationBaseShape,
+			route: z.undefined().optional(),
+			route_decision_reason: z.undefined().optional()
+		})
+	])
+]);
 const spamGuidanceAppendBoundarySchema = z.object({
 	target_scope: z.enum(['form', 'mapping', 'action']),
 	label: z.enum(['ham', 'spam']),
 	config: formActionConfigBoundarySchema,
-	generation: z
-		.object({ route: z.string().optional(), model: nullableTextSchema.optional() })
-		.nullable()
-		.optional()
+	generation: spamGuidanceGenerationBoundarySchema.nullable().optional()
 });
 const conditionOperatorBoundarySchema = z.enum([
 	'eq',

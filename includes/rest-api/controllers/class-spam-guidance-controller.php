@@ -248,11 +248,23 @@ class Sentient_Forms_Spam_Guidance_Controller extends Sentient_Forms_Abstract_Ba
                 'label'        => $label,
                 'config'       => $saved,
                 'generation'   => is_array( $generation )
-                    ? [
-                        'route' => isset( $generation['route'] ) && is_scalar( $generation['route'] ) ? sanitize_key( (string) $generation['route'] ) : '',
-                        'model' => isset( $generation['model'] ) && is_scalar( $generation['model'] ) ? sanitize_text_field( (string) $generation['model'] ) : '',
-                    ]
-                    : null,
+                    ? array_filter(
+                        [
+                            'route'                     => isset( $generation['route'] ) && is_scalar( $generation['route'] ) ? sanitize_key( (string) $generation['route'] ) : '',
+                            'model'                     => isset( $generation['model'] ) && is_scalar( $generation['model'] ) ? sanitize_text_field( (string) $generation['model'] ) : '',
+                            'provider_observation_type' => isset( $generation['provider_observation_type'] ) && is_scalar( $generation['provider_observation_type'] )
+                                ? sanitize_key( (string) $generation['provider_observation_type'] )
+                                : '',
+                            'provider_observation_id'   => isset( $generation['provider_observation_id'] ) && is_scalar( $generation['provider_observation_id'] )
+                                ? sanitize_text_field( (string) $generation['provider_observation_id'] )
+                                : '',
+                            'route_decision_reason'     => isset( $generation['route_decision_reason'] ) && is_scalar( $generation['route_decision_reason'] )
+                                ? sanitize_key( (string) $generation['route_decision_reason'] )
+                                : '',
+                        ],
+                        static fn( string $value ): bool => '' !== $value
+                    )
+                        : null,
             ]
         );
     }

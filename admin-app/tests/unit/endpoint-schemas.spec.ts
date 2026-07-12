@@ -25,6 +25,134 @@ const completeSettingsResponse = {
 };
 
 describe('admin endpoint schema registry', () => {
+	it('parses safe Spam Guidance facet provider observations', () => {
+		const schema = endpointRegistry['spamGuidance.examples.append'].response;
+		const parsed = schema.parse({
+			target_scope: 'form',
+			label: 'ham',
+			config: {},
+			generation: {
+				route: 'openrouter',
+				model: 'google/gemini-3-flash-preview',
+				provider_observation_type: 'subscription_gated_direct_response',
+				provider_observation_id: 'fallback-openrouter:gen-safe-observation',
+				route_decision_reason: 'direct_ready'
+			}
+		});
+
+		expect(parsed.generation?.provider_observation_id).toBe(
+			'fallback-openrouter:gen-safe-observation'
+		);
+		expect(
+			schema.safeParse({
+				...parsed,
+				generation: {
+					...parsed.generation,
+					provider_observation_id: 'fallback-openrouter:secret value'
+				}
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...parsed,
+				generation: {
+					route: 'openrouter',
+					provider_observation_type: 'subscription_gated_direct_response',
+					route_decision_reason: 'direct_ready'
+				}
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...parsed,
+				generation: {
+					...parsed.generation,
+					route: 'sentient_managed'
+				}
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...parsed,
+				generation: {
+					...parsed.generation,
+					route_decision_reason: 'managed_ready_with_capacity'
+				}
+			}).success
+		).toBe(false);
+	});
+
+	it('binds managed Spam Guidance observations to the managed route contract', () => {
+		const schema = endpointRegistry['spamGuidance.examples.append'].response;
+		const managed = {
+			target_scope: 'form',
+			label: 'ham',
+			config: {},
+			generation: {
+				route: 'sentient_managed',
+				model: 'openrouter/auto',
+				provider_observation_type: 'cps_managed_lifecycle',
+				provider_observation_id: 'cps-lifecycle:managed-observation',
+				route_decision_reason: 'managed_ready_with_capacity'
+			}
+		};
+
+		expect(schema.safeParse(managed).success).toBe(true);
+		expect(
+			schema.safeParse({
+				...managed,
+				generation: { ...managed.generation, route: 'openrouter' }
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...managed,
+				generation: { ...managed.generation, route_decision_reason: 'direct_ready' }
+			}).success
+		).toBe(false);
+	});
+
+	it('binds Spam Guidance route decisions even when no provider observation is published', () => {
+		const schema = endpointRegistry['spamGuidance.examples.append'].response;
+		const response = {
+			target_scope: 'form',
+			label: 'ham',
+			config: {}
+		};
+
+		expect(
+			schema.safeParse({
+				...response,
+				generation: { route: 'openrouter', route_decision_reason: 'direct_ready' }
+			}).success
+		).toBe(true);
+		expect(
+			schema.safeParse({
+				...response,
+				generation: {
+					route: 'sentient_managed',
+					route_decision_reason: 'managed_ready_with_capacity'
+				}
+			}).success
+		).toBe(true);
+		expect(
+			schema.safeParse({
+				...response,
+				generation: {
+					route: 'openrouter',
+					route_decision_reason: 'managed_ready_with_capacity'
+				}
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...response,
+				generation: { route: 'sentient_managed', route_decision_reason: 'direct_ready' }
+			}).success
+		).toBe(false);
+		expect(schema.safeParse({ ...response, generation: {} }).success).toBe(true);
+	});
+
 	it('parses action compatibility evidence as an authorized or rejected decision', () => {
 		const requestSchema = endpointRegistry['forms.actions.compatibility'].request;
 		const schema = endpointRegistry['forms.actions.compatibility'].response;
