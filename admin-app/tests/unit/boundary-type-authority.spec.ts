@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, expectTypeOf, it } from 'vitest';
@@ -133,13 +133,6 @@ const methodAuthority = {
 	updateCustomAction: { key: 'customActions.update', mode: 'direct' },
 	archiveCustomAction: { key: 'customActions.archive', mode: 'direct' },
 	reactivateCustomAction: { key: 'customActions.reactivate', mode: 'direct' },
-	getFormMappings: { key: 'mappings.list', mode: 'direct' },
-	getFormMappingTemplates: { key: 'mappings.templates', mode: 'direct' },
-	getFormMapping: { key: 'mappings.read', mode: 'direct' },
-	createFormMapping: { key: 'mappings.create', mode: 'direct' },
-	updateFormMapping: { key: 'mappings.update', mode: 'direct' },
-	deleteFormMapping: { key: 'mappings.delete', mode: 'transform', transform: 'void' },
-	cloneFormMappingTemplate: { key: 'mappings.clone', mode: 'direct' },
 	getExecutionStatus: { key: 'forms.entryExecutionStatus.read', mode: 'direct' }
 } satisfies Record<string, MethodAuthority>;
 
@@ -199,10 +192,7 @@ describe('registered endpoint response type authority', () => {
 			LocalMigrationImportApplyRequest: 'migration.import.apply',
 			LocalMigrationApprovedResetRequest: 'migration.approvedReset',
 			DuplicateFormActionRequest: 'forms.actions.duplicate',
-			RequestTraceRequest: 'forms.requestTrace.run',
-			CreateFormMappingRequest: 'mappings.create',
-			UpdateFormMappingRequest: 'mappings.update',
-			CloneTemplateMappingRequest: 'mappings.clone'
+			RequestTraceRequest: 'forms.requestTrace.run'
 		});
 	});
 
@@ -394,5 +384,64 @@ describe('registered endpoint response type authority', () => {
 		}
 
 		expect(gaps).toEqual([]);
+	});
+
+	it('does not expose the retired form-mapping template library', () => {
+		const projectRoot = resolve(import.meta.dirname, '../..');
+		const componentPath = resolve(projectRoot, 'src/lib/components/ui/TemplateLibrary.svelte');
+		const storePath = resolve(projectRoot, 'src/lib/stores/form-mappings.svelte.ts');
+		const pageSource = readFileSync(
+			resolve(projectRoot, 'src/routes/(app)/actions/[formSourceSlug]/[formId]/+page.svelte'),
+			'utf8'
+		);
+		const clientSource = readFileSync(resolve(projectRoot, 'src/lib/api/client.ts'), 'utf8');
+		const endpointSource = readFileSync(
+			resolve(projectRoot, 'src/lib/api/endpoint-schemas.ts'),
+			'utf8'
+		);
+		const typesSource = readFileSync(resolve(projectRoot, 'src/lib/api/types.ts'), 'utf8');
+		const uiIndexSource = readFileSync(resolve(projectRoot, 'src/lib/components/ui/index.ts'), 'utf8');
+		const mockSource = readFileSync(resolve(projectRoot, 'tests/e2e/utils/mock-wpjson.ts'), 'utf8');
+
+		expect(pageSource).not.toContain('Import from Library');
+		expect(pageSource).not.toContain('Save as Template');
+		expect(pageSource).not.toContain('TemplateLibrary');
+		for (const method of [
+			'getFormMappings',
+			'getFormMappingTemplates',
+			'getFormMapping',
+			'createFormMapping',
+			'updateFormMapping',
+			'deleteFormMapping',
+			'cloneFormMappingTemplate'
+		]) {
+			expect(clientSource).not.toContain(method);
+		}
+		expect(clientSource).not.toContain("normalizedPath.startsWith('mappings')");
+		for (const endpoint of [
+			'mappings.list',
+			'mappings.templates',
+			'mappings.read',
+			'mappings.create',
+			'mappings.update',
+			'mappings.delete',
+			'mappings.clone'
+		]) {
+			expect(endpointSource).not.toContain(`'${endpoint}'`);
+		}
+		for (const legacyDeclaration of [
+			'export interface MappingSettings',
+			'export interface FormMapping',
+			'export type CreateFormMappingRequest',
+			'export type UpdateFormMappingRequest',
+			'export type CloneTemplateMappingRequest'
+		]) {
+			expect(typesSource).not.toContain(legacyDeclaration);
+		}
+		expect(uiIndexSource).not.toContain('TemplateLibrary');
+		expect(mockSource).not.toContain('mappingTemplates');
+		expect(mockSource).not.toContain('/mappings/templates');
+		expect(existsSync(componentPath)).toBe(false);
+		expect(existsSync(storePath)).toBe(false);
 	});
 });

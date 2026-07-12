@@ -149,13 +149,6 @@ vi.mock('$lib/stores/custom-actions', () => ({
 	customActionsState: { actions: [], loading: false, error: null },
 	customActionsStore: { hydrate: vi.fn() }
 }));
-vi.mock('$lib/stores/license.svelte', () => ({
-	licenseState: { siteId: null }
-}));
-vi.mock('$lib/stores/form-mappings.svelte', () => ({
-	formMappingsStore: { createMapping: vi.fn() }
-}));
-
 import ActionsPage from '../../src/routes/(app)/actions/[formSourceSlug]/[formId]/+page.svelte';
 
 const rejectedEvidence = {

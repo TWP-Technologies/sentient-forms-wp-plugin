@@ -36,8 +36,6 @@ import type {
 	BillingPortalSessionResponse,
 	BillingStateResponse,
 	AsyncHealthResponse,
-	CloneTemplateMappingRequest,
-	CreateFormMappingRequest,
 	CustomActionCreatePayload,
 	CustomActionFilters,
 	CustomActionUpdatePayload,
@@ -95,7 +93,6 @@ import type {
 	PluginSettingsResponse,
 	TopUpCheckoutSessionRequest,
 	TopUpCheckoutSessionResponse,
-	UpdateFormMappingRequest
 } from '$lib/api/types';
 
 export interface ClientConfig {
@@ -337,7 +334,7 @@ function inferMutationInvalidationTags(path: string): string[] {
 		return ['actions', 'custom-actions', 'action-defaults', 'dashboard'];
 	}
 
-	if (normalizedPath.startsWith('local/form-mappings') || normalizedPath.startsWith('mappings')) {
+	if (normalizedPath.startsWith('local/form-mappings')) {
 		return ['actions', 'form-actions', 'forms', 'dashboard'];
 	}
 
@@ -2303,117 +2300,6 @@ export class SentientFormsApiClient {
 			},
 			`custom-actions/${encodeURIComponent(id)}/reactivate`
 		);
-	}
-
-	// ==========================================================================
-	// Phase 7: Form Mappings (CSM - Cross-Site Mapping Portability)
-	// ==========================================================================
-
-	/**
-	 * Get all form mappings for the current license.
-	 * CSM-001: local mapping storage
-	 */
-	async getFormMappings(
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.list'>> {
-		const response = await this.requestEndpoint('mappings.list', {
-			showNotifications: false,
-			...options
-		});
-		return response;
-	}
-
-	/**
-	 * Get template mappings only (reusable across sites).
-	 * CSM-003: Save as Template
-	 */
-	async getFormMappingTemplates(
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.templates'>> {
-		const response = await this.requestEndpoint('mappings.templates', {
-			showNotifications: false,
-			...options
-		});
-		return response;
-	}
-
-	/**
-	 * Get a single form mapping by ID.
-	 */
-	async getFormMapping(
-		id: string,
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.read'>> {
-		const response = await this.requestEndpoint(
-			'mappings.read',
-			{ showNotifications: false, ...options },
-			`mappings/${encodeURIComponent(id)}`
-		);
-		return response;
-	}
-
-	/**
-	 * Create a new form mapping.
-	 * CSM-001: local mapping storage
-	 */
-	async createFormMapping(
-		payload: CreateFormMappingRequest,
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.create'>> {
-		const response = await this.requestEndpoint('mappings.create', {
-			method: 'POST',
-			body: payload,
-			...options
-		});
-		return response;
-	}
-
-	/**
-	 * Update an existing form mapping.
-	 */
-	async updateFormMapping(
-		id: string,
-		payload: UpdateFormMappingRequest,
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.update'>> {
-		const response = await this.requestEndpoint(
-			'mappings.update',
-			{ method: 'PUT', body: payload, ...options },
-			`mappings/${encodeURIComponent(id)}`
-		);
-		return response;
-	}
-
-	/**
-	 * Delete a form mapping.
-	 */
-	async deleteFormMapping(id: string, options: RequestOptions = {}): Promise<void> {
-		const response: RegisteredEndpointResponse<'mappings.delete'> = await this.requestEndpoint(
-			'mappings.delete',
-			{
-				method: 'DELETE',
-				...options
-			},
-			`mappings/${encodeURIComponent(id)}`
-		);
-		void response;
-	}
-
-	/**
-	 * Clone a template mapping to a specific site and form.
-	 * CSM-004: Import from Library
-	 */
-	async cloneFormMappingTemplate(
-		templateId: string,
-		payload: CloneTemplateMappingRequest,
-		options: RequestOptions = {}
-	): Promise<RegisteredEndpointResponse<'mappings.clone'>> {
-		const response = await this.requestEndpoint(
-			'mappings.clone',
-			{ method: 'POST', body: payload, ...options },
-			`mappings/${encodeURIComponent(templateId)}/clone`
-		);
-		return response;
 	}
 
 	async getExecutionStatus(

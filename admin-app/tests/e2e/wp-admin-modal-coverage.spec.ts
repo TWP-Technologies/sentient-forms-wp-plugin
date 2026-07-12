@@ -173,7 +173,7 @@ async function coverActionsOverviewDefaults(page: Page): Promise<void> {
 async function coverFormActionPanelsAndModals(page: Page): Promise<void> {
 	await openFirstFormActions(page);
 	await coverAddActionDrawer(page);
-	await coverTemplateLibrary(page);
+	await assertNoLegacyTemplateLibrary(page);
 	await coverMappingConfigAndGraph(page);
 }
 
@@ -199,15 +199,11 @@ async function coverAddActionDrawer(page: Page): Promise<void> {
 	await expect(drawer).toBeHidden();
 }
 
-async function coverTemplateLibrary(page: Page): Promise<void> {
-	await page.getByRole('button', { name: 'Import from Library' }).click();
-	const libraryDialog = page
-		.getByRole('dialog')
-		.filter({ hasText: 'Import from Template Library' });
-	await expect(libraryDialog).toBeVisible();
-	await attachLocatorScreenshot(page, libraryDialog, 'template-library');
-	await libraryDialog.getByRole('button', { name: 'Close' }).click();
-	await expect(libraryDialog).toBeHidden();
+async function assertNoLegacyTemplateLibrary(page: Page): Promise<void> {
+	await expect(page.getByRole('button', { name: 'Import from Library' })).toHaveCount(0);
+	await expect(page.getByRole('dialog').filter({ hasText: 'Import from Template Library' })).toHaveCount(
+		0
+	);
 }
 
 async function coverMappingConfigAndGraph(page: Page): Promise<void> {

@@ -2089,74 +2089,6 @@ const customActionMutationBoundarySchema = z.object({
 	action: customActionBoundarySchema,
 	quota: customActionQuotaBoundarySchema
 });
-const mappingSettingsBoundarySchema = z.object({
-	trigger_hooks: z.array(z.string()).optional(),
-	dependency_ids: z.array(z.string()).optional(),
-	input_mapping: z
-		.object({
-			mode: z.enum(['all', 'selected', 'exclude']),
-			field_ids: z.array(z.string()).optional(),
-			include_metadata: z.boolean().optional()
-		})
-		.optional(),
-	attachment_mapping: z
-		.object({
-			mode: z.enum(['none', 'gf_upload', 'media_library', 'mixed']),
-			gf_upload_field_ids: z.array(z.string()).optional(),
-			media_ids: z.array(z.number().int()).optional(),
-			max_files: z.number().int().optional()
-		})
-		.optional(),
-	conditions: conditionsBoundarySchema.optional(),
-	effect_mapping: z
-		.record(
-			z.string(),
-			z.object({
-				mark_spam: z.boolean().optional(),
-				notify_admin: z.boolean().optional(),
-				reject_submission: z.boolean().optional()
-			})
-		)
-		.optional(),
-	portable_fields: z.array(z.object({ label: z.string(), type: z.string() })).optional(),
-	field_mapping: z.record(z.string(), z.string()).optional()
-});
-const formMappingBoundarySchema = z.object({
-	id: z.string(),
-	license_id: z.string(),
-	site_id: nullableTextSchema,
-	form_source: z.string(),
-	form_id: z.number().int().nullable(),
-	action_template_id: nullableTextSchema,
-	custom_action_id: nullableTextSchema,
-	display_name: z.string(),
-	settings: mappingSettingsBoundarySchema,
-	is_template: z.boolean(),
-	created_at: z.string(),
-	updated_at: z.string()
-});
-const createFormMappingRequestBoundarySchema = z.strictObject({
-	site_id: nullableTextSchema.optional(),
-	form_source: z.string(),
-	form_id: z.number().int().nullable().optional(),
-	action_template_id: nullableTextSchema.optional(),
-	action_template_code: nullableTextSchema.optional(),
-	custom_action_id: nullableTextSchema.optional(),
-	display_name: z.string(),
-	settings: mappingSettingsBoundarySchema,
-	is_template: z.boolean().optional()
-});
-const updateFormMappingRequestBoundarySchema = z.strictObject({
-	display_name: z.string().optional(),
-	settings: mappingSettingsBoundarySchema.optional(),
-	is_template: z.boolean().optional()
-});
-const cloneFormMappingRequestBoundarySchema = z.strictObject({
-	site_id: z.string(),
-	form_source: z.string(),
-	form_id: z.union([z.string(), z.number()]),
-	field_mapping: z.record(z.string(), z.string()).optional()
-});
 const workflowMeteringBoundarySchema = z.object({
 	status: z.string(),
 	credits_total: z.number(),
@@ -2660,47 +2592,6 @@ export const endpointRegistry = {
 		request: emptyRequestSchema.describe('customActions.reactivate request'),
 		response: customActionMutationBoundarySchema.describe('customActions.reactivate response'),
 		error: endpointErrorSchema.describe('customActions.reactivate error')
-	},
-	'mappings.list': {
-		path: 'mappings',
-		response: z.array(formMappingBoundarySchema).describe('mappings.list response'),
-		error: endpointErrorSchema.describe('mappings.list error')
-	},
-	'mappings.templates': {
-		path: 'mappings/templates',
-		response: z.array(formMappingBoundarySchema).describe('mappings.templates response'),
-		error: endpointErrorSchema.describe('mappings.templates error')
-	},
-	'mappings.read': {
-		path: 'mappings/{id}',
-		response: formMappingBoundarySchema.describe('mappings.read response'),
-		error: endpointErrorSchema.describe('mappings.read error')
-	},
-	'mappings.create': {
-		path: 'mappings',
-		request: createFormMappingRequestBoundarySchema.describe('mappings.create request'),
-		response: formMappingBoundarySchema.describe('mappings.create response'),
-		error: endpointErrorSchema.describe('mappings.create error')
-	},
-	'mappings.update': {
-		path: 'mappings/{id}',
-		request: updateFormMappingRequestBoundarySchema.describe('mappings.update request'),
-		response: formMappingBoundarySchema.describe('mappings.update response'),
-		error: endpointErrorSchema.describe('mappings.update error')
-	},
-	'mappings.delete': {
-		path: 'mappings/{id}',
-		request: emptyRequestSchema.describe('mappings.delete request'),
-		response: z
-			.union([emptyResponseSchema, z.object({ deleted: z.boolean().optional() })])
-			.describe('mappings.delete response'),
-		error: endpointErrorSchema.describe('mappings.delete error')
-	},
-	'mappings.clone': {
-		path: 'mappings/{id}/clone',
-		request: cloneFormMappingRequestBoundarySchema.describe('mappings.clone request'),
-		response: formMappingBoundarySchema.describe('mappings.clone response'),
-		error: endpointErrorSchema.describe('mappings.clone error')
 	},
 	'forms.entryExecutionStatus.read': {
 		path: '{source}/forms/{formId}/actions/entries/{entryId}/status',

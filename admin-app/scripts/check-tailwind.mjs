@@ -19,7 +19,6 @@ function hasDisallowedClass(className) {
 const HEX_PATTERN = /#[0-9a-fA-F]{3,8}\b/g;
 const HEX_ALLOW_LIST = new Set([
 	'src/lib/styles/tailwind.css',
-	'src/lib/components/ui/TemplateLibrary.svelte',
 	// XYFlow handle rendering currently relies on inline SVG/canvas-style colors.
 	'src/lib/utils/mapping-dependency-xyflow.ts',
 	'src/lib/components/ui/mapping-dependency-graph.svelte',
