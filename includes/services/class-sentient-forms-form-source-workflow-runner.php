@@ -347,6 +347,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'central_action_id'     => $action_id,
                     'effective_action_policy' => $mapping['effective_action_policy'] ?? null,
                     'enabled_facets'        => $mapping['settings']['enabled_facets'] ?? [],
+                    Sentient_Forms_Local_Action_Execution_Service::WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY => true,
+                    'settings'              => isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                        ? $mapping['settings']
+                        : [],
                 ] + $dependency_context
             );
         }
@@ -989,6 +993,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                                 'submission_uuid'  => $submission_uuid,
                                 'effective_action_policy' => $action_settings['effective_action_policy'] ?? null,
                                 'enabled_facets'   => $action_settings['settings']['enabled_facets'] ?? [],
+                                Sentient_Forms_Local_Action_Execution_Service::WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY => true,
+                                'settings'         => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                                    ? $action_settings['settings']
+                                    : [],
                             ] + $dependency_context
                         )
                     );
@@ -2272,6 +2280,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'central_action_id'     => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
                 'effective_action_policy' => $action_settings['effective_action_policy'] ?? null,
                 'enabled_facets'        => $action_settings['settings']['enabled_facets'] ?? [],
+                Sentient_Forms_Local_Action_Execution_Service::WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY => true,
                 'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                     ? $action_settings['settings']
                     : [],

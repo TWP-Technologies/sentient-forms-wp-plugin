@@ -684,6 +684,11 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $contexts, 'form_source' ) );
         $this->assertSame( [ 'local_first_' . $mapping_ids[0], 'local_first_' . $mapping_ids[1] ], array_column( $contexts, 'local_mapping_id' ) );
         $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $contexts, 'submission_uuid' ) );
+        $this->assertSame( [ 'first', 'second' ], array_map(
+            static fn( array $context ): string => (string) ( $context['settings']['marker'] ?? '' ),
+            $contexts
+        ) );
+        $this->assertSame( [ true, true ], array_column( $contexts, '_sentient_forms_workflow_settings_snapshot' ) );
         $request_ids = array_column( $contexts, 'execution_request_id' );
         $this->assertCount( 2, array_unique( $request_ids ) );
         $this->assertNotEmpty( $request_ids[0] );

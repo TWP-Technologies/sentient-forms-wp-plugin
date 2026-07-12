@@ -98,6 +98,123 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_provider_route_unavailable', $unavailable->get_error_code() );
     }
 
+    public function test_provider_flexible_policy_honors_an_explicit_ready_direct_preference(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'active_subscription',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_available' => true,
+                'direct_ready'               => true,
+            ],
+            'openrouter'
+        );
+
+        $this->assertSame(
+            [
+                'provider'        => 'openrouter',
+                'decision_reason' => 'direct_preferred_and_ready',
+            ],
+            $decision
+        );
+    }
+
+    public function test_provider_flexible_policy_honors_an_explicit_ready_managed_preference(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'unrestricted',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_available' => true,
+                'direct_ready'               => true,
+            ],
+            'sentient_managed'
+        );
+
+        $this->assertSame(
+            [
+                'provider'        => 'sentient_managed',
+                'decision_reason' => 'managed_preferred_and_ready',
+            ],
+            $decision
+        );
+    }
+
+    public function test_provider_flexible_policy_does_not_silently_replace_an_unavailable_direct_preference(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'unrestricted',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_available' => true,
+                'direct_ready'               => false,
+            ],
+            'openrouter'
+        );
+
+        $this->assertWPError( $decision );
+        $this->assertSame( 'sentient_forms_provider_route_preferred_unavailable', $decision->get_error_code() );
+        $this->assertSame( 'openrouter', $decision->get_error_data()['provider'] ?? null );
+    }
+
+    public function test_managed_preference_uses_ready_direct_route_when_managed_capacity_is_unavailable(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'unrestricted',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_available' => false,
+                'direct_ready'               => true,
+            ],
+            'sentient_managed'
+        );
+
+        $this->assertSame(
+            [
+                'provider'        => 'openrouter',
+                'decision_reason' => 'managed_preferred_without_capacity_direct_ready',
+            ],
+            $decision
+        );
+    }
+
+    public function test_managed_preference_does_not_treat_unknown_capacity_as_zero_capacity(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'unrestricted',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_known'     => false,
+                'managed_capacity_available' => false,
+                'direct_ready'               => true,
+            ],
+            'sentient_managed'
+        );
+
+        $this->assertWPError( $decision );
+        $this->assertSame( 'sentient_forms_provider_route_managed_capacity_unknown', $decision->get_error_code() );
+    }
+
     public function test_managed_only_policy_requires_subscription_readiness_and_capacity_without_direct_fallback(): void
     {
         $router = new Sentient_Forms_Provider_Route_Decision();
@@ -163,6 +280,27 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
         );
     }
 
+    public function test_managed_only_policy_rejects_a_saved_direct_preference(): void
+    {
+        $decision = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            [
+                'feature_access'        => 'active_subscription',
+                'execution_requirement' => 'managed_only',
+            ],
+            [
+                'subscription_active'        => true,
+                'managed_ready'              => true,
+                'managed_capacity_available' => true,
+                'direct_ready'               => true,
+            ],
+            'openrouter'
+        );
+
+        $this->assertWPError( $decision );
+        $this->assertSame( 'sentient_forms_provider_route_preference_incompatible', $decision->get_error_code() );
+        $this->assertSame( 'openrouter', $decision->get_error_data()['provider'] ?? null );
+    }
+
     public function test_malformed_policy_or_runtime_state_fails_closed(): void
     {
         $router = new Sentient_Forms_Provider_Route_Decision();
@@ -210,6 +348,17 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
         $this->assertWPError( $non_boolean_state_decision );
         $this->assertSame( 'sentient_forms_provider_route_state_invalid', $non_boolean_state_decision->get_error_code() );
         $this->assertSame( 'managed_ready', $non_boolean_state_decision->get_error_data()['field'] ?? null );
+
+        $invalid_preference = $router->decide(
+            [
+                'feature_access'        => 'unrestricted',
+                'execution_requirement' => 'provider_flexible',
+            ],
+            $state,
+            'legacy_proxy'
+        );
+        $this->assertWPError( $invalid_preference );
+        $this->assertSame( 'sentient_forms_provider_route_preference_invalid', $invalid_preference->get_error_code() );
     }
 
     public function test_router_rejects_provider_selection_without_completed_policy_preflight(): void

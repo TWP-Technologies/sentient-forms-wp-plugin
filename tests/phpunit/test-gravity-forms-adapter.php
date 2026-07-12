@@ -1200,6 +1200,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertCount( 1, $scheduled_jobs );
+        $this->assertTrue( $scheduled_jobs[0]['args'][0]['context']['_sentient_forms_workflow_settings_snapshot'] ?? false );
         $settings = $scheduled_jobs[0]['args'][0]['context']['settings'] ?? [];
         $this->assertTrue( $settings['suppress_notifications_on_spam'] ?? false );
         $this->assertSame( 'sf_balanced', $settings['model_selection']['primary'] ?? null );
@@ -5296,7 +5297,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_first_runtime_tables();
 
-        $fixture = $this->create_local_mapping_fixture( 7901, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $fixture = $this->create_local_mapping_fixture(
+            7901,
+            'content_validation_v1',
+            'gform_validation',
+            [
+                'async'           => false,
+                'model_selection' => [
+                    'primary'   => 'anthropic/claude-sonnet-4.6',
+                    'is_preset' => false,
+                    'provider'  => 'openrouter',
+                ],
+            ]
+        );
         $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
         $service->results[ $fixture['mapping_id'] ] = [
             'result_data' => [
@@ -5327,6 +5340,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertCount( 1, $service->calls );
         $this->assertSame( $native_context, $service->calls[0]['context']['native_validation_context'] ?? null );
+        $this->assertSame(
+            'openrouter',
+            $service->calls[0]['context']['settings']['model_selection']['provider'] ?? null
+        );
+        $this->assertTrue( $service->calls[0]['context']['_sentient_forms_workflow_settings_snapshot'] ?? false );
         $this->assertFalse( $result['is_valid'] );
         $this->assertTrue( $result['form']['failed_validation'] );
         $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );

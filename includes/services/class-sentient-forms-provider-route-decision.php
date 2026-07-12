@@ -22,9 +22,14 @@ final class Sentient_Forms_Provider_Route_Decision
      *
      * @param array<string, mixed> $effective_policy
      * @param array<string, mixed> $runtime_state
+     * @param string|null          $provider_preference Explicit saved execution-route preference.
      * @return array{provider:string,decision_reason:string}|WP_Error
      */
-    public function decide( array $effective_policy, array $runtime_state ): array | WP_Error
+    public function decide(
+        array $effective_policy,
+        array $runtime_state,
+        ?string $provider_preference = null
+    ): array | WP_Error
     {
         foreach (
             [
@@ -43,6 +48,12 @@ final class Sentient_Forms_Provider_Route_Decision
             {
                 return $this->invalid_input_error( 'policy', $field );
             }
+        }
+
+        $managed_capacity_known = $runtime_state['managed_capacity_known'] ?? true;
+        if ( ! is_bool( $managed_capacity_known ) )
+        {
+            return $this->invalid_input_error( 'state', 'managed_capacity_known' );
         }
 
         foreach (
@@ -71,6 +82,23 @@ final class Sentient_Forms_Provider_Route_Decision
             );
         }
 
+        $provider_preference = null === $provider_preference
+            ? null
+            : sanitize_key( $provider_preference );
+        if ( '' === $provider_preference )
+        {
+            $provider_preference = null;
+        }
+        if ( null !== $provider_preference && ! in_array( $provider_preference, [ 'openrouter', 'sentient_managed' ], true ) )
+        {
+            return $this->error(
+                'sentient_forms_provider_route_preference_invalid',
+                __( 'The saved Action execution route is invalid.', 'sentient-forms' ),
+                [ 'provider' => $provider_preference ],
+                500
+            );
+        }
+
         if (
             'active_subscription' === $effective_policy['feature_access']
             && ! $runtime_state['subscription_active']
@@ -84,6 +112,15 @@ final class Sentient_Forms_Provider_Route_Decision
 
         if ( 'managed_only' === $effective_policy['execution_requirement'] )
         {
+            if ( 'openrouter' === $provider_preference )
+            {
+                return $this->error(
+                    'sentient_forms_provider_route_preference_incompatible',
+                    __( 'This Action requires Sentient Forms Managed Service and cannot use the saved Direct OpenRouter route.', 'sentient-forms' ),
+                    [ 'provider' => 'openrouter' ]
+                );
+            }
+
             if ( ! $runtime_state['subscription_active'] )
             {
                 return $this->error(
@@ -100,6 +137,11 @@ final class Sentient_Forms_Provider_Route_Decision
                 );
             }
 
+            if ( ! $managed_capacity_known )
+            {
+                return $this->managed_capacity_unknown_error();
+            }
+
             if ( ! $runtime_state['managed_capacity_available'] )
             {
                 return $this->error(
@@ -113,9 +155,57 @@ final class Sentient_Forms_Provider_Route_Decision
 
         if ( 'provider_flexible' === $effective_policy['execution_requirement'] )
         {
+            if ( 'openrouter' === $provider_preference )
+            {
+                return $runtime_state['direct_ready']
+                    ? $this->selection( 'openrouter', 'direct_preferred_and_ready' )
+                    : $this->error(
+                        'sentient_forms_provider_route_preferred_unavailable',
+                        __( 'The saved Direct OpenRouter execution route is not ready.', 'sentient-forms' ),
+                        [ 'provider' => 'openrouter' ]
+                    );
+            }
+
+            if ( 'sentient_managed' === $provider_preference )
+            {
+                if ( ! $runtime_state['subscription_active'] || ! $runtime_state['managed_ready'] )
+                {
+                    return $this->error(
+                        'sentient_forms_provider_route_preferred_unavailable',
+                        __( 'The saved Sentient Forms Managed Service execution route is not ready.', 'sentient-forms' ),
+                        [ 'provider' => 'sentient_managed' ]
+                    );
+                }
+
+                if ( ! $managed_capacity_known )
+                {
+                    return $this->managed_capacity_unknown_error();
+                }
+
+                if ( $runtime_state['managed_capacity_available'] )
+                {
+                    return $this->selection( 'sentient_managed', 'managed_preferred_and_ready' );
+                }
+
+                if (
+                    ! $runtime_state['managed_capacity_available']
+                    && $runtime_state['direct_ready']
+                )
+                {
+                    return $this->selection( 'openrouter', 'managed_preferred_without_capacity_direct_ready' );
+                }
+
+                return $this->error(
+                    'sentient_forms_provider_route_preferred_unavailable',
+                    __( 'The saved Sentient Forms Managed Service execution route is not ready.', 'sentient-forms' ),
+                    [ 'provider' => 'sentient_managed' ]
+                );
+            }
+
             if (
                 $runtime_state['subscription_active']
                 && $runtime_state['managed_ready']
+                && $managed_capacity_known
                 && $runtime_state['managed_capacity_available']
             )
             {
@@ -131,6 +221,16 @@ final class Sentient_Forms_Provider_Route_Decision
         return $this->error(
             'sentient_forms_provider_route_unavailable',
             __( 'No eligible provider route is currently available.', 'sentient-forms' )
+        );
+    }
+
+    private function managed_capacity_unknown_error(): WP_Error
+    {
+        return $this->error(
+            'sentient_forms_provider_route_managed_capacity_unknown',
+            __( 'Sentient Forms could not verify current Managed Service capacity.', 'sentient-forms' ),
+            [],
+            503
         );
     }
 

@@ -373,6 +373,592 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 1, $this->events->list_recent() );
     }
 
+    public function test_provider_flexible_bundled_action_honors_saved_direct_execution_route(): void
+    {
+        $this->seed_openrouter_model_cache();
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'template_code' => 'spam_detection_v1' ],
+            [
+                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.97,
+                    'justification'  => 'Contact looks legitimate.',
+                    'indicators'     => [],
+                ],
+                'anthropic/claude-sonnet-4.6'
+            )
+        );
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'saved-direct-route',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'output'               => [
+                    'text' => wp_json_encode(
+                        [
+                            'classification' => 'ham',
+                            'confidence'     => 0.97,
+                            'justification'  => 'Contact looks legitimate.',
+                            'indicators'     => [],
+                        ]
+                    ),
+                ],
+                'token_usage'          => [
+                    'input_tokens'  => 10,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 15,
+                ],
+                'metering'             => [
+                    'event_id'        => '33333333-3333-4333-8333-333333333333',
+                    'free_usage'      => false,
+                    'debited_credits' => 1,
+                ],
+            ]
+        );
+        $service = $this->create_service( $openrouter, $managed_proxy );
+        $billing = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'saved-direct-route',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'anthropic/claude-sonnet-4.6',
+                            'is_preset'     => false,
+                            'provider'      => 'openrouter',
+                            'credential_id' => $fixture['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
+    public function test_saved_managed_route_uses_direct_backup_when_authoritative_capacity_is_unavailable(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service = $this->create_service( $openrouter, $managed_proxy );
+        $billing = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 0, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'saved-managed-no-capacity',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $fixture['secret'], $openrouter->chat_calls[0]['api_key'] ?? null );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
+    public function test_saved_managed_route_uses_selected_direct_backup_credential_when_multiple_are_ready(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $second_credential = $this->create_ready_openrouter_credential( 'Secondary OpenRouter', 'sk-or-secondary-secret' );
+        $this->assertGreaterThan( $fixture['credential_id'], $second_credential );
+
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $updated_action = $this->custom_actions->update(
+            (int) $mapping['action_id'],
+            [
+                'model_selection_json' => [
+                    'provider'             => 'sentient_managed',
+                    'model'                => 'sf_default',
+                    'credential_id'        => $managed['credential_id'],
+                    'backup_provider'      => 'openrouter',
+                    'backup_model'         => 'openrouter/auto',
+                    'backup_credential_id' => $fixture['credential_id'],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated_action );
+        $updated_mapping = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated_mapping );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 0, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'selected-direct-backup-credential',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $fixture['secret'], $openrouter->chat_calls[0]['api_key'] ?? null );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
+    public function test_persisted_mapping_provider_selection_overrides_stale_caller_context(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'is_preset'     => false,
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'persisted-route-authority',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $fixture['secret'], $openrouter->chat_calls[0]['api_key'] ?? null );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
+    public function test_marked_workflow_snapshot_overrides_later_persisted_mapping_selection(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'is_preset'     => false,
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                                         => 'gform_after_submission',
+                    'execution_request_id'                         => 'workflow-settings-snapshot',
+                    '_sentient_forms_workflow_settings_snapshot'   => true,
+                    'effective_action_policy'                      => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                                     => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'sentient_managed', $result['provider'] ?? null );
+        $this->assertSame( [], $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+    }
+
+    public function test_marked_workflow_snapshot_preserves_absent_model_selection_after_mapping_edit(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'is_preset'     => false,
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [ 'current_balance' => 100, 'credit_debt' => 0 ],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                                       => 'gform_after_submission',
+                    'execution_request_id'                       => 'workflow-settings-snapshot-absent-selection',
+                    '_sentient_forms_workflow_settings_snapshot' => true,
+                    'effective_action_policy'                    => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                    'settings'                                   => [ 'temperature' => 0.2 ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'sentient_managed', $result['provider'] ?? null );
+        $this->assertSame( [], $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+    }
+
+    public function test_persisted_selected_direct_credential_is_honored_when_multiple_are_ready(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $second_credential = $this->create_ready_openrouter_credential( 'Secondary OpenRouter', 'sk-or-secondary-secret' );
+        $this->assertGreaterThan( $fixture['credential_id'], $second_credential );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'is_preset'     => false,
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $result = $this->create_service( $openrouter )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+            [
+                'hook'                    => 'gform_after_submission',
+                'execution_request_id'    => 'selected-direct-credential',
+                'effective_action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $fixture['secret'], $openrouter->chat_calls[0]['api_key'] ?? null );
+    }
+
+    public function test_saved_managed_route_does_not_fallback_direct_when_billing_capacity_is_unknown(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => new WP_Error( 'billing_unavailable', 'CPS billing unavailable.' );
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'managed-capacity-unknown',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_managed_capacity_unknown', $result->get_error_code() );
+        $this->assertSame( [], $openrouter->chat_calls );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
+    public function test_saved_managed_route_rejects_billing_snapshot_without_validated_capacity(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $billing       = static fn() => [
+            'status'  => 'active',
+            'billing' => [ 'managed_enabled' => true ],
+            'credits' => [],
+        ];
+        add_filter( 'sentient_forms_action_policy_billing_state', $billing, 10, 2 );
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [ 'id' => 99, '1' => 'Ada', '2' => 'ada@example.test' ],
+                [
+                    'hook'                    => 'gform_after_submission',
+                    'execution_request_id'    => 'managed-capacity-malformed',
+                    'effective_action_policy' => [
+                        'feature_access'                    => 'unrestricted',
+                        'execution_requirement'             => 'provider_flexible',
+                        'required_form_source_capabilities' => [],
+                        'required_managed_capabilities'     => [],
+                        'eligible_lifecycles'                => [ 'after_submission' ],
+                        'metering_class'                     => 'standard',
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_policy_billing_state', $billing, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_managed_capacity_unknown', $result->get_error_code() );
+        $this->assertSame( 503, (int) ( $result->get_error_data()['status'] ?? 0 ) );
+        $this->assertSame( [], $openrouter->chat_calls );
+        $this->assertSame( [], $managed_proxy->execute_calls );
+    }
+
     public function test_subscription_only_direct_route_fails_closed_when_authoritative_billing_is_unavailable(): void
     {
         $fixture = $this->create_local_openrouter_mapping();

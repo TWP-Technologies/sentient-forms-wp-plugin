@@ -10,6 +10,8 @@ if ( ! defined( 'ABSPATH' ) )
 
 class Sentient_Forms_Local_Action_Execution_Service
 {
+    public const WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY = '_sentient_forms_workflow_settings_snapshot';
+
     private const REALTIME_STRUCTURED_OUTPUT_MIN_MAX_TOKENS = 1800;
     private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
     private const PRIVACY_ROUTE_FALLBACK_SCHEMA = 'sentient_forms_privacy_route_fallback.v1';
@@ -116,6 +118,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $action;
         }
         $mapping = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
+        $context = $this->apply_authoritative_mapping_model_selection( $mapping, $context );
 
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
         $action_code                = $this->resolve_action_code( $action, $definition );
@@ -170,7 +173,21 @@ class Sentient_Forms_Local_Action_Execution_Service
             : null;
         if ( is_array( $effective_policy ) )
         {
-            $model_selection = $this->route_model_selection_for_policy( $effective_policy, $model_selection );
+            $provider_preference = null;
+            $runtime_settings    = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+            $runtime_selection   = is_array( $runtime_settings['model_selection'] ?? null )
+                ? $runtime_settings['model_selection']
+                : [];
+            if ( isset( $runtime_selection['provider'] ) && is_scalar( $runtime_selection['provider'] ) )
+            {
+                $provider_preference = sanitize_key( (string) $runtime_selection['provider'] );
+            }
+
+            $model_selection = $this->route_model_selection_for_policy(
+                $effective_policy,
+                $model_selection,
+                $provider_preference
+            );
             if ( is_wp_error( $model_selection ) )
             {
                 return $model_selection;
@@ -1747,12 +1764,17 @@ class Sentient_Forms_Local_Action_Execution_Service
      *
      * @param array<string, mixed> $effective_policy
      * @param array<string, mixed> $selection
+     * @param string|null          $provider_preference
      * @return array<string, mixed>|WP_Error
      */
-    private function route_model_selection_for_policy( array $effective_policy, array $selection ): array | WP_Error
+    private function route_model_selection_for_policy(
+        array $effective_policy,
+        array $selection,
+        ?string $provider_preference = null
+    ): array | WP_Error
     {
-        $managed = $this->model_selection_service->find_single_ready_credential_for_provider( 'sentient_managed' );
-        $direct  = $this->model_selection_service->find_single_ready_credential_for_provider( 'openrouter' );
+        $managed = $this->resolve_route_credential( 'sentient_managed', $selection );
+        $direct  = $this->resolve_route_credential( 'openrouter', $selection );
         $requires_active_subscription = 'active_subscription' === sanitize_key( (string) ( $effective_policy['feature_access'] ?? '' ) );
         $requires_managed_execution   = 'managed_only' === sanitize_key( (string) ( $effective_policy['execution_requirement'] ?? '' ) );
         $requires_authoritative_state = $requires_active_subscription || $requires_managed_execution;
@@ -1771,6 +1793,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        $managed_capacity_known = is_array( $billing );
         $authoritative_subscription_active = is_array( $billing )
             ? $this->billing_snapshot_has_active_subscription( $billing )
             : $this->model_selection_service->managed_account_is_active();
@@ -1780,6 +1803,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $state   = [
             'subscription_active'        => $authoritative_subscription_active,
             'managed_ready'              => is_array( $managed ) && $this->provider_consent_exists( 'sentient_managed' ),
+            'managed_capacity_known'     => $managed_capacity_known,
             'managed_capacity_available' => is_array( $managed ) && $authoritative_managed_capacity,
             'direct_ready'               => is_array( $direct ) && $this->provider_consent_exists( 'openrouter' ),
         ];
@@ -1788,13 +1812,18 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $state = $filtered;
         }
-        if ( $requires_authoritative_state )
+        if ( $requires_authoritative_state || 'sentient_managed' === $provider_preference )
         {
             $state['subscription_active']        = $authoritative_subscription_active;
+            $state['managed_capacity_known']     = $managed_capacity_known;
             $state['managed_capacity_available'] = $authoritative_managed_capacity;
         }
 
-        $route = ( new Sentient_Forms_Provider_Route_Decision() )->decide( $effective_policy, $state );
+        $route = ( new Sentient_Forms_Provider_Route_Decision() )->decide(
+            $effective_policy,
+            $state,
+            $provider_preference
+        );
         if ( is_wp_error( $route ) )
         {
             return $route;
@@ -1828,6 +1857,64 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return $selection;
+    }
+
+    /**
+     * Persisted mapping selection is the direct-call authority. The workflow
+     * runner may explicitly mark the settings snapshot captured when work was
+     * accepted; otherwise caller settings are only an inherited/default fallback
+     * when the mapping has no saved model-selection field.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $context
+     * @return array<string, mixed>
+     */
+    private function apply_authoritative_mapping_model_selection( array $mapping, array $context ): array
+    {
+        $workflow_snapshot = true === ( $context[ self::WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY ] ?? false );
+        unset( $context[ self::WORKFLOW_SETTINGS_SNAPSHOT_CONTEXT_KEY ] );
+
+        $runtime_settings = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+        if ( $workflow_snapshot )
+        {
+            return $context;
+        }
+
+        $persisted_settings = is_array( $mapping['settings_json'] ?? null ) ? $mapping['settings_json'] : [];
+        if ( ! array_key_exists( 'model_selection', $persisted_settings ) || ! is_array( $persisted_settings['model_selection'] ) )
+        {
+            return $context;
+        }
+
+        $runtime_settings['model_selection'] = $persisted_settings['model_selection'];
+        $context['settings'] = $runtime_settings;
+        return $context;
+    }
+
+    /**
+     * Prefer an explicit selection credential. Singleton discovery is only a
+     * fallback for routes without a selected credential.
+     *
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>|WP_Error|null
+     */
+    private function resolve_route_credential( string $provider, array $selection ): array | WP_Error | null
+    {
+        $selected_provider = sanitize_key( (string) ( $selection['provider'] ?? '' ) );
+        $credential_id     = absint( $selection['credential_id'] ?? 0 );
+        if ( $provider === $selected_provider && $credential_id > 0 )
+        {
+            return $this->model_selection_service->resolve_execution_credential( $provider, $credential_id );
+        }
+
+        $backup_provider      = sanitize_key( (string) ( $selection['backup_provider'] ?? '' ) );
+        $backup_credential_id = absint( $selection['backup_credential_id'] ?? 0 );
+        if ( $provider === $backup_provider && $backup_credential_id > 0 )
+        {
+            return $this->model_selection_service->resolve_execution_credential( $provider, $backup_credential_id );
+        }
+
+        return $this->model_selection_service->find_single_ready_credential_for_provider( $provider );
     }
 
     private function provider_consent_exists( string $provider ): bool
@@ -1879,7 +1966,40 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        $billing_details = is_array( $billing['billing'] ?? null ) ? $billing['billing'] : null;
+        $credits         = is_array( $billing['credits'] ?? null ) ? $billing['credits'] : null;
+        if (
+            null === $billing_details
+            || ! array_key_exists( 'managed_enabled', $billing_details )
+            || ! is_bool( $billing_details['managed_enabled'] )
+            || null === $credits
+            || ! array_key_exists( 'current_balance', $credits )
+            || ! $this->billing_value_is_finite_number( $credits['current_balance'] )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_subscription_unavailable',
+                __( 'Sentient Forms received billing state without validated managed capacity.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( [ 'credit_debt', 'debt', 'outstanding_debt' ] as $field )
+        {
+            if ( array_key_exists( $field, $credits ) && ! $this->billing_value_is_finite_number( $credits[ $field ] ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_provider_route_subscription_unavailable',
+                    __( 'Sentient Forms received billing state with invalid managed debt.', 'sentient-forms' )
+                );
+            }
+        }
+
         return $billing;
+    }
+
+    private function billing_value_is_finite_number( mixed $value ): bool
+    {
+        return ( is_int( $value ) || is_float( $value ) ) && is_finite( (float) $value );
     }
 
     /**
@@ -1897,25 +2017,20 @@ class Sentient_Forms_Local_Action_Execution_Service
      */
     private function billing_snapshot_has_managed_capacity( array $billing ): bool
     {
-        if ( isset( $billing['billing']['managed_enabled'] ) && ! rest_sanitize_boolean( $billing['billing']['managed_enabled'] ) )
+        $billing_details = is_array( $billing['billing'] ?? null ) ? $billing['billing'] : [];
+        if ( true !== ( $billing_details['managed_enabled'] ?? null ) )
         {
             return false;
         }
 
-        $credits = is_array( $billing['credits'] ?? null ) ? $billing['credits'] : $billing;
-        $balance = null;
-        foreach ( [ 'current_balance', 'available_balance', 'balance' ] as $field )
-        {
-            if ( isset( $credits[ $field ] ) && is_numeric( $credits[ $field ] ) )
-            {
-                $balance = (float) $credits[ $field ];
-                break;
-            }
-        }
+        $credits = is_array( $billing['credits'] ?? null ) ? $billing['credits'] : [];
+        $balance = $this->billing_value_is_finite_number( $credits['current_balance'] ?? null )
+            ? (float) $credits['current_balance']
+            : null;
         $debt = 0.0;
         foreach ( [ 'credit_debt', 'debt', 'outstanding_debt' ] as $field )
         {
-            if ( isset( $credits[ $field ] ) && is_numeric( $credits[ $field ] ) )
+            if ( array_key_exists( $field, $credits ) && $this->billing_value_is_finite_number( $credits[ $field ] ) )
             {
                 $debt = max( $debt, (float) $credits[ $field ] );
             }
