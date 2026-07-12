@@ -124,6 +124,39 @@ describe('admin endpoint schema registry', () => {
 		});
 	});
 
+	it('normalizes PHP empty-map arrays in async health responses', () => {
+		const result = endpointRegistry['asyncHealth.read'].response.parse({
+			queue_depth: 0,
+			oldest_run_at: null,
+			recent_failures: [],
+			warnings: []
+		});
+
+		expect(result.recent_failures).toEqual({});
+	});
+
+	it('normalizes PHP empty-map arrays in the model catalog', () => {
+		const result = endpointRegistry['models.catalog'].response.parse({
+			models: [
+				{
+					id: 'example/model',
+					display_name: 'Example Model',
+					provider: 'openrouter',
+					speed_tier: 'fast',
+					cost_tier: 'free',
+					capabilities: { reasoning: false, tools: false },
+					context_window: 8_192,
+					category_rankings: [],
+					ranking_snapshot: []
+				}
+			],
+			presets: []
+		});
+
+		expect(result.models[0]?.category_rankings).toEqual({});
+		expect(result.models[0]?.ranking_snapshot).toEqual({});
+	});
+
 	it.each([
 		[
 			'model resolution numeric ZDR',

@@ -26,7 +26,14 @@ function rawOrSuccessEnvelope<TSchema extends z.ZodType>(data: TSchema) {
 	}, data);
 }
 
-const jsonObjectSchema = z.record(z.string(), z.json());
+function phpMap<TSchema extends z.ZodType>(schema: TSchema) {
+	return z.preprocess(
+		(payload) => (Array.isArray(payload) && payload.length === 0 ? {} : payload),
+		schema
+	);
+}
+
+const jsonObjectSchema = phpMap(z.record(z.string(), z.json()));
 const nullableString = z.string().nullable();
 
 const executionStatusDataSchema = z.object({
@@ -85,7 +92,7 @@ const modelInfoSchema = z.object({
 	zdr_source: nullableString.optional(),
 	zdr_checked_at: nullableString.optional(),
 	recommendation_categories: z.array(z.string()).optional(),
-	category_rankings: z.record(z.string(), z.number()).optional(),
+	category_rankings: phpMap(z.record(z.string(), z.number())).optional(),
 	ranking_snapshot: jsonObjectSchema.optional(),
 	benchmark_notes: z.array(z.string()).optional(),
 	source_urls: z.array(z.string()).optional(),
@@ -790,7 +797,7 @@ const pluginSettingsUpdateResponseSchema = z.union([
 const asyncHealthSchema = z.object({
 	queue_depth: z.number().int(),
 	oldest_run_at: z.number().nullable(),
-	recent_failures: z.record(z.string(), z.number()),
+	recent_failures: phpMap(z.record(z.string(), z.number())),
 	warnings: z.array(z.object({ code: z.string(), level: z.string(), message: z.string() }))
 });
 const asyncPurgeResponseSchema = z.object({ removed: z.number().int(), message: z.string() });
