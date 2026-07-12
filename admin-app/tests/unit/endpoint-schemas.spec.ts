@@ -26,7 +26,21 @@ const completeSettingsResponse = {
 
 describe('admin endpoint schema registry', () => {
 	it('parses action compatibility evidence as an authorized or rejected decision', () => {
+		const requestSchema = endpointRegistry['forms.actions.compatibility'].request;
 		const schema = endpointRegistry['forms.actions.compatibility'].response;
+		expect(
+			requestSchema.parse({
+				action_code: 'clarification_assistant_v1',
+				lifecycle: 'real_time'
+			})
+		).toEqual({ action_code: 'clarification_assistant_v1', lifecycle: 'real_time' });
+		expect(
+			requestSchema.safeParse({
+				action_code: 'clarification_assistant_v1',
+				lifecycle: 'real_time',
+				untrusted: true
+			}).success
+		).toBe(false);
 		const rejected = schema.parse({
 			form_source: 'contact_form_7',
 			form_id: 42,

@@ -1991,6 +1991,10 @@ const compatibilityLifecycleBoundarySchema = z.enum([
 	'after_submission',
 	'real_time'
 ]);
+const actionCompatibilityRequestBoundarySchema = z.strictObject({
+	action_code: z.string().min(1),
+	lifecycle: compatibilityLifecycleBoundarySchema
+});
 const compatibilityRequestTraceIdBoundarySchema = z
 	.string()
 	.regex(/^request-trace:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
@@ -2526,6 +2530,9 @@ export const endpointRegistry = {
 	},
 	'forms.actions.compatibility': {
 		path: '{source}/forms/{formId}/actions/compatibility',
+		request: actionCompatibilityRequestBoundarySchema.describe(
+			'forms.actions.compatibility request'
+		),
 		response: actionCompatibilityEvidenceBoundarySchema.describe(
 			'forms.actions.compatibility response'
 		),

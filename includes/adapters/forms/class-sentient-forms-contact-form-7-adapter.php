@@ -33,6 +33,11 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
     /** @var array<string, array<int, mixed>> */
     private array $validation_tags_by_submission = [];
 
+    /**
+     * @param Sentient_Forms_Plugin                                     $plugin                   Plugin instance.
+     * @param Sentient_Forms_Form_Source_Workflow_Runner|null           $workflow_runner          Source-neutral workflow runner.
+     * @param Sentient_Forms_Validation_Rejection_Trace_Emitter|null    $validation_trace_emitter Validation evidence emitter.
+     */
     public function __construct(
         Sentient_Forms_Plugin $plugin,
         ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
@@ -265,6 +270,12 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
     {
     }
 
+    /**
+     * Run source-neutral validation from Contact Form 7's validation hook.
+     *
+     * @param mixed $validation_result Contact Form 7 validation result.
+     * @param mixed $tags              Contact Form 7 form tags.
+     */
     public function handle_validation( mixed $validation_result, mixed $tags ): mixed
     {
         $result     = $this->get_workflow_runner()->run_validation( $this, $validation_result, $tags );

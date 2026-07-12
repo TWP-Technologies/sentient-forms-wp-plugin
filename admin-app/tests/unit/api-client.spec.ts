@@ -1195,8 +1195,7 @@ describe('SentientFormsApiClient', () => {
 		const result = await client.checkActionCompatibility(
 			'contact_form_7',
 			42,
-			'clarification_assistant_v1',
-			'real_time',
+			{ action_code: 'clarification_assistant_v1', lifecycle: 'real_time' },
 			{ showNotifications: false }
 		);
 
@@ -1231,8 +1230,7 @@ describe('SentientFormsApiClient', () => {
 			client.checkActionCompatibility(
 				'contact_form_7',
 				42,
-				'clarification_assistant_v1',
-				'real_time',
+				{ action_code: 'clarification_assistant_v1', lifecycle: 'real_time' },
 				{ showNotifications: false }
 			)
 		).rejects.toBeInstanceOf(ApiContractError);

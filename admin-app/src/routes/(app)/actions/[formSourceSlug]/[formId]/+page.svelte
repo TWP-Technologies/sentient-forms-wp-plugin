@@ -523,6 +523,7 @@
 	let creating = $state(false);
 	let compatibilityCheckState = $state<CompatibilityCheckState>('initial');
 	let compatibilityEvidence = $state<ActionCompatibilityEvidence | null>(null);
+	let compatibilityProbeLifecycle = $state<ActionCompatibilityLifecycle | null>(null);
 	let compatibilityResultHeading = $state<HTMLHeadingElement | null>(null);
 	let showAddPanel = $state(false);
 	let showTemplateLibrary = $state(false);
@@ -1949,6 +1950,9 @@
 			? unsupportedLifecycleForDefinition(selectedDefinition)
 			: null
 	);
+	const selectedCompatibilityLifecycle = $derived(
+		compatibilityProbeLifecycle ?? selectedUnsupportedLifecycle
+	);
 	const selectedCustomAction = $derived(
 		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
@@ -2066,6 +2070,7 @@
 		createKind;
 		compatibilityCheckState = 'initial';
 		compatibilityEvidence = null;
+		compatibilityProbeLifecycle = null;
 	});
 	const selectedActionKey = $derived(
 		`${createKind}:${
@@ -2677,7 +2682,7 @@
 	}
 
 	async function runCompatibilityCheck(): Promise<void> {
-		if (!selectedDefinition || !selectedUnsupportedLifecycle) return;
+		if (!selectedDefinition || !selectedCompatibilityLifecycle) return;
 
 		if (
 			compatibilityCheckState === 'contract-rejected' ||
@@ -2696,8 +2701,10 @@
 			const evidence = await providerClient.checkActionCompatibility(
 				data.formSourceSlug,
 				data.formId,
-				selectedDefinition.id,
-				selectedUnsupportedLifecycle,
+				{
+					action_code: selectedDefinition.id,
+					lifecycle: selectedCompatibilityLifecycle
+				},
 				{ showNotifications: false }
 			);
 			compatibilityEvidence = evidence;
@@ -2709,6 +2716,55 @@
 			await tick();
 			compatibilityResultHeading?.focus();
 		}
+	}
+
+	async function preflightBuiltInCompatibility(
+		actionCode: string,
+		hooks: string[]
+	): Promise<boolean> {
+		const lifecycles = Array.from(
+			new Set(
+				hooks
+					.map((hook) => lifecycleIdForHook(hook))
+					.filter(
+						(lifecycle): lifecycle is ActionCompatibilityLifecycle =>
+							lifecycle === 'validation' ||
+							lifecycle === 'after_submission' ||
+							lifecycle === 'real_time'
+					)
+			)
+		);
+
+		for (const lifecycle of lifecycles) {
+			compatibilityProbeLifecycle = lifecycle;
+			compatibilityCheckState = 'loading';
+			compatibilityEvidence = null;
+			try {
+				const evidence = await providerClient.checkActionCompatibility(
+					data.formSourceSlug,
+					data.formId,
+					{ action_code: actionCode, lifecycle },
+					{ showNotifications: false }
+				);
+				if (evidence.policy_decision === 'rejected') {
+					compatibilityEvidence = evidence;
+					compatibilityCheckState = 'contract-rejected';
+					await tick();
+					compatibilityResultHeading?.focus();
+					return false;
+				}
+			} catch {
+				compatibilityCheckState = 'system-error';
+				await tick();
+				compatibilityResultHeading?.focus();
+				return false;
+			}
+		}
+
+		compatibilityProbeLifecycle = null;
+		compatibilityCheckState = 'initial';
+		compatibilityEvidence = null;
+		return true;
 	}
 
 	function dependencyBadgeLabel(mappingId: string): string {
@@ -4087,6 +4143,13 @@
 		if (createKind === 'template' && !chosenDefinition) {
 			createError = 'Select a built-in action to link.';
 			return;
+		}
+
+		if (createKind === 'template' && chosenDefinition) {
+			creating = true;
+			const compatible = await preflightBuiltInCompatibility(chosenDefinition.id, hooks);
+			creating = false;
+			if (!compatible) return;
 		}
 
 		if (createKind === 'custom' && !chosenCustom) {
@@ -6709,7 +6772,7 @@
 							</div>
 						{/if}
 
-						{#if createKind === 'template' && selectedDefinition && selectedUnsupportedLifecycle}
+						{#if createKind === 'template' && selectedDefinition && selectedCompatibilityLifecycle}
 							<section
 								class="sf:min-w-0 sf:space-y-3 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-3"
 								aria-label="Action compatibility"

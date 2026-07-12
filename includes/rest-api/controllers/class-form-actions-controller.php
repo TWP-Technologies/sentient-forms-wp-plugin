@@ -1251,12 +1251,22 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         );
     }
 
+    /**
+     * Validate a bundled Action code used by the compatibility preview route.
+     *
+     * @param mixed $value Candidate request parameter.
+     */
     public function validate_compatibility_action_code_param( mixed $value ): bool
     {
         return is_scalar( $value )
             && Sentient_Forms_Bundled_Action_Templates::has( sanitize_key( (string) $value ) );
     }
 
+    /**
+     * Validate a lifecycle used by the compatibility preview route.
+     *
+     * @param mixed $value Candidate request parameter.
+     */
     public function validate_compatibility_lifecycle_param( mixed $value ): bool
     {
         return is_scalar( $value )
@@ -1819,6 +1829,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     /**
      * Return a read-only Action/Form Source compatibility decision for admin previews.
+     *
+     * @param WP_REST_Request $request Compatibility preview request.
      */
     public function get_action_form_source_compatibility( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
@@ -1827,53 +1839,26 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $action_code = sanitize_key( (string) $request->get_param( 'action_code' ) );
         $lifecycle   = sanitize_key( (string) $request->get_param( 'lifecycle' ) );
 
-        try
+        $row = $this->get_bundled_action_source_compatibility_row( $form_source, $action_code );
+        if ( is_wp_error( $row ) )
         {
-            $manifest = new Sentient_Forms_Action_Source_Compatibility_Manifest();
-            $row      = $manifest->get( $action_code, $form_source );
-        }
-        catch ( LogicException )
-        {
-            return $this->prepare_error_response(
-                'rest_action_source_contract_missing',
-                __( 'The bundled Action compatibility contract is unavailable.', 'sentient-forms' ),
-                500
-            );
-        }
-
-        if ( ! is_array( $row ) )
-        {
-            return $this->prepare_error_response(
-                'rest_action_source_contract_missing',
-                __( 'The bundled Action compatibility contract is unavailable for this Form Source.', 'sentient-forms' ),
-                409
-            );
+            return $row;
         }
 
         $source_validation = $this->validate_form_source_trigger_hooks( $form_source, [ $lifecycle ] );
-        $allowed = ! is_wp_error( $source_validation )
-            && true === ( $row['supported'] ?? false )
-            && in_array( $lifecycle, (array) ( $row['supported_lifecycles'] ?? [] ), true )
-            && array_key_exists( $lifecycle, (array) ( $row['lifecycle_contracts'] ?? [] ) );
+        $compatibility = is_wp_error( $source_validation )
+            ? $source_validation
+            : $this->validate_bundled_action_lifecycles_against_row( $row, [ $lifecycle ] );
+        $allowed = true === $compatibility;
 
         $rejection_code = null;
         $reason         = null;
         if ( ! $allowed )
         {
-            if ( is_wp_error( $source_validation ) )
+            if ( is_wp_error( $compatibility ) )
             {
-                $rejection_code = $source_validation->get_error_code();
-                $reason         = $source_validation->get_error_message();
-            }
-            elseif ( true !== ( $row['supported'] ?? false ) )
-            {
-                $rejection_code = 'rest_unsupported_action_source';
-                $reason         = __( 'This bundled Action is not supported for the selected Form Source.', 'sentient-forms' );
-            }
-            else
-            {
-                $rejection_code = 'rest_invalid_action_lifecycle';
-                $reason         = __( 'The selected lifecycle is not supported by this bundled Action for the selected Form Source.', 'sentient-forms' );
+                $rejection_code = $compatibility->get_error_code();
+                $reason         = $compatibility->get_error_message();
             }
         }
 
@@ -6143,6 +6128,35 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return $this->validate_custom_realtime_trigger_policy( $trigger_hooks, $settings );
         }
 
+        $requested_lifecycles = $trigger_hooks;
+        if ( null !== $execution_lifecycle )
+        {
+            $requested_lifecycles[] = $execution_lifecycle;
+        }
+        $requested_lifecycles = array_values( array_unique( $requested_lifecycles ) );
+
+        $row = $this->get_bundled_action_source_compatibility_row(
+            $form_source_slug,
+            $bundled_action_code
+        );
+        if ( is_wp_error( $row ) )
+        {
+            return $row;
+        }
+
+        return $this->validate_bundled_action_lifecycles_against_row( $row, $requested_lifecycles );
+    }
+
+    /**
+     * Resolve a bundled Action/Form Source row from the canonical compatibility manifest.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function get_bundled_action_source_compatibility_row(
+        string $form_source_slug,
+        string $bundled_action_code
+    ): array | WP_Error
+    {
         if ( ! class_exists( 'Sentient_Forms_Action_Source_Compatibility_Manifest' ) )
         {
             return $this->prepare_error_response(
@@ -6165,6 +6179,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 500
             );
         }
+
         if ( ! is_array( $row ) )
         {
             return $this->prepare_error_response(
@@ -6174,6 +6189,24 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        return $row;
+    }
+
+    /**
+     * Validate bundled Action lifecycles against a canonical compatibility row.
+     *
+     * @param array<string, mixed> $row                  Compatibility manifest row.
+     * @param array<int, string>   $requested_lifecycles Requested lifecycle identifiers.
+     */
+    private function validate_bundled_action_lifecycles_against_row(
+        array $row,
+        array $requested_lifecycles
+    ): true | WP_Error
+    {
+        $requested_lifecycles = array_values(
+            array_unique( $this->sanitize_trigger_hooks( $requested_lifecycles ) )
+        );
+
         if ( true !== ( $row['supported'] ?? false ) )
         {
             return $this->prepare_error_response(
@@ -6182,13 +6215,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 400
             );
         }
-
-        $requested_lifecycles = $trigger_hooks;
-        if ( null !== $execution_lifecycle )
-        {
-            $requested_lifecycles[] = $execution_lifecycle;
-        }
-        $requested_lifecycles = array_values( array_unique( $requested_lifecycles ) );
 
         $supported_lifecycles = is_array( $row['supported_lifecycles'] ?? null )
             ? $row['supported_lifecycles']

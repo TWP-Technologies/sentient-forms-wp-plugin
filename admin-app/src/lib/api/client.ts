@@ -27,7 +27,7 @@ import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefaultsBatchResponse,
 	ActionCompatibilityEvidence,
-	ActionCompatibilityLifecycle,
+	ActionCompatibilityRequest,
 	ApiErrorPayload,
 	AsyncSettingsResponse,
 	BillingCheckoutSessionRequest,
@@ -1724,17 +1724,21 @@ export class SentientFormsApiClient {
 	async checkActionCompatibility(
 		formSourceSlug: string,
 		formId: FormSourceFormId,
-		actionCode: string,
-		lifecycle: ActionCompatibilityLifecycle,
+		request: ActionCompatibilityRequest,
 		options: RequestOptions = {}
 	): Promise<ActionCompatibilityEvidence> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
-		const query = new URLSearchParams({ action_code: actionCode, lifecycle });
+		const parsedRequest = parseRegisteredEndpointRequest(
+			'forms.actions.compatibility',
+			request
+		);
+		const query = new URLSearchParams(parsedRequest);
 		const response = await this.requestEndpoint(
 			'forms.actions.compatibility',
 			{ ...options, method: 'GET' },
-			`${slug}/forms/${formIdSegment}/actions/compatibility?${query.toString()}`
+			`${slug}/forms/${formIdSegment}/actions/compatibility?${query.toString()}`,
+			parsedRequest
 		);
 		return this.unwrap(response);
 	}
@@ -2447,17 +2451,23 @@ export class SentientFormsApiClient {
 	async requestEndpoint<TName extends EndpointName>(
 		name: TName,
 		options: RequestOptions = {},
-		pathOverride?: string
+		pathOverride?: string,
+		requestPayload?: RegisteredEndpointRequest<TName>
 	): Promise<RegisteredEndpointResponse<TName>> {
 		const definition = endpointRegistry[name];
 		const path = pathOverride ?? definition.path;
 		let body = options.body;
 
 		if ('request' in definition) {
-			body = this.parseContractPayload(path, body, {
+			const parsedRequest = this.parseContractPayload(
+				path,
+				requestPayload === undefined ? body : requestPayload,
+				{
 				schema: definition.request,
 				name: definition.request.description ?? `${name} request`
-			});
+				}
+			);
+			if (requestPayload === undefined) body = parsedRequest;
 		}
 
 		return (await this.requestParsed(

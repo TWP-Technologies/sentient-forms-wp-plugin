@@ -10,13 +10,20 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
+/**
+ * Emits metadata-only validation rejection evidence through a response header.
+ */
 final class Sentient_Forms_Validation_Rejection_Trace_Emitter
 {
+    /** Header carrying URL-encoded validation rejection evidence. */
     public const HEADER_NAME = 'X-Sentient-Forms-Validation-Trace';
 
     /** @var callable */
     private $header_sink;
 
+    /**
+     * @param callable|null $header_sink Header writer used by the current Form Source transport.
+     */
     public function __construct( ?callable $header_sink = null )
     {
         $this->header_sink = $header_sink ?? static function ( string $name, string $value, bool $replace ): void {
@@ -27,6 +34,9 @@ final class Sentient_Forms_Validation_Rejection_Trace_Emitter
         };
     }
 
+    /**
+     * Emit validated metadata-only rejection traces for a visitor validation run.
+     */
     public function emit( Sentient_Forms_Validation_Run_Result $result ): void
     {
         $traces = $result->get_validation_rejection_traces();

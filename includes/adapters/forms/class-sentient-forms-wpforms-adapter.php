@@ -36,6 +36,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
 
     private Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter;
 
+    /**
+     * @param Sentient_Forms_Plugin                                     $plugin                   Plugin instance.
+     * @param Sentient_Forms_Form_Source_Workflow_Runner|null           $workflow_runner          Source-neutral workflow runner.
+     * @param Sentient_Forms_Validation_Rejection_Trace_Emitter|null    $validation_trace_emitter Validation evidence emitter.
+     */
     public function __construct(
         Sentient_Forms_Plugin $plugin,
         ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
@@ -312,6 +317,13 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     {
     }
 
+    /**
+     * Run source-neutral validation from WPForms' process hook.
+     *
+     * @param mixed $fields    Submitted field values.
+     * @param mixed $entry     Submitted entry values.
+     * @param mixed $form_data WPForms form definition.
+     */
     public function handle_validation( mixed $fields, mixed $entry, mixed $form_data ): void
     {
         $native_validation = [

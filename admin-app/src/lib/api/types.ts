@@ -1811,6 +1811,8 @@ export type SubmissionLedgerRecordsResponse =
 
 export type FormActionsBootstrapResponse = RegisteredEndpointResponse<'forms.actions.bootstrap'>;
 
+export type ActionCompatibilityRequest =
+	RegisteredEndpointRequest<'forms.actions.compatibility'>;
 export type ActionCompatibilityEvidence = RegisteredEndpointResponse<'forms.actions.compatibility'>;
 export type ActionCompatibilityLifecycle = ActionCompatibilityEvidence['lifecycle'];
 

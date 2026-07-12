@@ -26,6 +26,14 @@ type Routes = {
 		ledgerSettings?: unknown;
 		createResponse?: (payload: Record<string, unknown>) => unknown;
 		requestTrace?: unknown | ((payload: Record<string, unknown>) => unknown);
+		compatibility?:
+			| unknown
+			| ((
+					sourceSlug: string,
+					formId: string | number,
+					actionCode: string,
+					lifecycle: string
+			  ) => unknown);
 	};
 	customActions?: {
 		list?: unknown;
@@ -945,6 +953,40 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					ledger_settings: ledgerSettings,
 					generated_at: '2026-04-22T00:00:00Z'
 				})
+			});
+		}
+
+		const compatibilityMatch = urlWithoutQuery.match(
+			/\/([^/]+)\/forms\/([^/]+)\/actions\/compatibility$/
+		);
+		if (compatibilityMatch && method === 'GET') {
+			const sourceSlug = compatibilityMatch[1];
+			const currentFormId = routeFormId(compatibilityMatch[2] ?? String(formId));
+			const actionCode = parsedUrl.searchParams.get('action_code') ?? '';
+			const lifecycle = parsedUrl.searchParams.get('lifecycle') ?? '';
+			const configured = routes.actions?.compatibility;
+			const payload =
+				typeof configured === 'function'
+					? configured(sourceSlug, currentFormId, actionCode, lifecycle)
+					: configured ?? {
+							form_source: sourceSlug,
+							form_id: currentFormId,
+							action_code: actionCode,
+							lifecycle,
+							policy_decision: 'authorized',
+							rejection_code: null,
+							reason: null,
+							request_trace_id: 'request-trace:00000000-0000-4000-8000-000000000001',
+							rejection_trace_id: null,
+							mapping_created: false,
+							provider_request_executed: false,
+							generated_at: '2026-07-12T00:00:00Z'
+						};
+
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: jsonBody(payload)
 			});
 		}
 

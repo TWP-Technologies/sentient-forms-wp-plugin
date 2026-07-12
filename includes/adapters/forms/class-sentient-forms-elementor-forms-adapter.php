@@ -32,6 +32,11 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
      */
     private ?array $discovered_elementor_forms = null;
 
+    /**
+     * @param Sentient_Forms_Plugin                                     $plugin                   Plugin instance.
+     * @param Sentient_Forms_Form_Source_Workflow_Runner|null           $workflow_runner          Source-neutral workflow runner.
+     * @param Sentient_Forms_Validation_Rejection_Trace_Emitter|null    $validation_trace_emitter Validation evidence emitter.
+     */
     public function __construct(
         Sentient_Forms_Plugin $plugin,
         ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
@@ -312,6 +317,12 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     {
     }
 
+    /**
+     * Run source-neutral validation from Elementor Pro Forms' validation hook.
+     *
+     * @param mixed $record  Elementor form record.
+     * @param mixed $handler Elementor response handler.
+     */
     public function handle_validation( mixed $record, mixed $handler ): void
     {
         $native_validation = [

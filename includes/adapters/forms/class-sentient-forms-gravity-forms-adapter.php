@@ -118,7 +118,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     /**
      * Constructor
      *
-     * @param Sentient_Forms_Plugin $plugin Plugin instance.
+     * @param Sentient_Forms_Plugin                                     $plugin                   Plugin instance.
+     * @param Sentient_Forms_Form_Source_Workflow_Runner|null           $workflow_runner          Source-neutral workflow runner.
+     * @param Sentient_Forms_Validation_Rejection_Trace_Emitter|null    $validation_trace_emitter Validation evidence emitter.
      */
     public function __construct(
         Sentient_Forms_Plugin $plugin,
@@ -1093,6 +1095,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * Handle form validation
      *
      * @param array $validation_result The validation result.
+     * @param mixed $native_context    Gravity Forms validation context.
      *
      * @return array The modified validation result.
      */

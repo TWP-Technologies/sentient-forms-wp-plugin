@@ -42,6 +42,14 @@ const harness = vi.hoisted(() => {
 			source: 'bundled',
 			hooks: ['real_time'],
 			modelHint: 'openrouter/auto'
+		},
+		{
+			id: 'entry_summary_v1',
+			label: 'Entry Summary',
+			description: 'Summarize an accepted submission.',
+			source: 'bundled',
+			hooks: ['after_submission'],
+			modelHint: 'openrouter/auto'
 		}
 	];
 	const providerActions = Object.fromEntries(
@@ -65,6 +73,7 @@ const harness = vi.hoisted(() => {
 			checkActionCompatibility: vi.fn(),
 			getActionDefaultsBatch: vi.fn().mockResolvedValue({ defaults: {} })
 		},
+		createFormAction: vi.fn(),
 		formActionsState: {
 			loading: false,
 			error: null,
@@ -127,7 +136,7 @@ vi.mock('$lib/stores/form-actions.svelte', () => ({
 		load: vi.fn(),
 		refresh: vi.fn(),
 		reset: vi.fn(),
-		create: vi.fn(),
+		create: harness.createFormAction,
 		remove: vi.fn(),
 		toggleEnabled: vi.fn(),
 		updateAction: vi.fn(),
@@ -164,10 +173,18 @@ const rejectedEvidence = {
 	generated_at: '2030-01-05T10:00:00Z'
 };
 
+const actionSpecificRejectedEvidence = {
+	...rejectedEvidence,
+	action_code: 'entry_summary_v1',
+	lifecycle: 'after_submission' as const,
+	reason: 'Entry Summary is intentionally unavailable for this source contract'
+};
+
 describe('Add action compatibility evidence', () => {
 	afterEach(() => {
 		cleanup();
 		harness.api.checkActionCompatibility.mockReset();
+		harness.createFormAction.mockReset();
 	});
 
 	it('keeps unsupported realtime actions visible and shows nonmutating rejection evidence', async () => {
@@ -201,17 +218,40 @@ describe('Add action compatibility evidence', () => {
 		expect(
 			within(drawer).getByText('No mapping was created and no provider request ran.')
 		).toBeTruthy();
-		expect(harness.api.checkActionCompatibility).toHaveBeenCalledWith(
+			expect(harness.api.checkActionCompatibility).toHaveBeenCalledWith(
 			'contact_form_7',
 			'42',
-			'clarification_assistant_v1',
-			'real_time',
+			{ action_code: 'clarification_assistant_v1', lifecycle: 'real_time' },
 			expect.objectContaining({ showNotifications: false })
 		);
 
 		await fireEvent.click(within(drawer).getByText('Technical details'));
 		expect(within(drawer).getByText(rejectedEvidence.request_trace_id)).toBeTruthy();
 		expect(within(drawer).getByText(rejectedEvidence.rejection_trace_id)).toBeTruthy();
+	});
+
+	it('preflights an apparently supported Action/Form Source cell before creating a mapping', async () => {
+		harness.api.checkActionCompatibility.mockResolvedValue(actionSpecificRejectedEvidence);
+		render(ActionsPage, { data: { formSourceSlug: 'contact_form_7', formId: '42' } });
+
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Add action' })[0]);
+		const drawer = screen.getByTestId('add-action-drawer');
+		await fireEvent.click(within(drawer).getByRole('radio', { name: /Entry Summary/i }));
+		const linkAction = within(drawer).getByRole('button', { name: 'Link action' });
+		await waitFor(() => expect((linkAction as HTMLButtonElement).disabled).toBe(false));
+		await fireEvent.click(linkAction);
+
+		const heading = await within(drawer).findByRole('heading', {
+			name: actionSpecificRejectedEvidence.reason
+		});
+		expect(document.activeElement).toBe(heading);
+		expect(harness.api.checkActionCompatibility).toHaveBeenCalledWith(
+			'contact_form_7',
+			'42',
+			{ action_code: 'entry_summary_v1', lifecycle: 'after_submission' },
+			expect.objectContaining({ showNotifications: false })
+		);
+		expect(harness.createFormAction).not.toHaveBeenCalled();
 	});
 
 	it('shows loading and system-error states while preserving retry focus', async () => {
