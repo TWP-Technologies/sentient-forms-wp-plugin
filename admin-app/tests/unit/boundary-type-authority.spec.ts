@@ -81,6 +81,7 @@ const methodAuthority = {
 	getSubmissionLedgerRecords: { key: 'forms.ledger.records.list', mode: 'direct' },
 	getSubmissionLedgerRecord: { key: 'forms.ledger.records.read', mode: 'direct' },
 	getFormActions: { key: 'forms.actions.list', mode: 'direct' },
+	checkActionCompatibility: { key: 'forms.actions.compatibility', mode: 'direct' },
 	getWorkflowPlan: { key: 'forms.workflowPlan.read', mode: 'direct' },
 	runRequestTrace: { key: 'forms.requestTrace.run', mode: 'direct' },
 	getFormDisabled: { key: 'forms.disabled.read', mode: 'direct' },

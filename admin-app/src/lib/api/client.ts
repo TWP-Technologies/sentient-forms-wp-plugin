@@ -26,6 +26,8 @@ import {
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefaultsBatchResponse,
+	ActionCompatibilityEvidence,
+	ActionCompatibilityLifecycle,
 	ApiErrorPayload,
 	AsyncSettingsResponse,
 	BillingCheckoutSessionRequest,
@@ -1715,6 +1717,24 @@ export class SentientFormsApiClient {
 				tags: ['actions', 'form-actions', formCacheTag(formSourceSlug, formId)]
 			}),
 			`${slug}/forms/${formIdSegment}/actions`
+		);
+		return this.unwrap(response);
+	}
+
+	async checkActionCompatibility(
+		formSourceSlug: string,
+		formId: FormSourceFormId,
+		actionCode: string,
+		lifecycle: ActionCompatibilityLifecycle,
+		options: RequestOptions = {}
+	): Promise<ActionCompatibilityEvidence> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const query = new URLSearchParams({ action_code: actionCode, lifecycle });
+		const response = await this.requestEndpoint(
+			'forms.actions.compatibility',
+			{ ...options, method: 'GET' },
+			`${slug}/forms/${formIdSegment}/actions/compatibility?${query.toString()}`
 		);
 		return this.unwrap(response);
 	}

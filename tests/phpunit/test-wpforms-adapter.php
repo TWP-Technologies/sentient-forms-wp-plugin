@@ -203,7 +203,13 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                 }
             )
         );
-        $adapter = $this->initialize_validation_adapter( $process );
+        $headers = [];
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
+        $adapter = $this->initialize_validation_adapter( $process, false, $emitter );
 
         global $wp_filter;
         $accepted_args = null;
@@ -227,6 +233,10 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Tell us what you need built.', $process->errors[ $form_id ][2] ?? null );
         $this->assertSame( sanitize_text_field( $untrusted_form_error ), $process->errors[ $form_id ]['header'] ?? null );
         $this->assertStringNotContainsString( '<', (string) ( $process->errors[ $form_id ]['header'] ?? '' ) );
+        $this->assertSame( 'X-Sentient-Forms-Validation-Trace', $headers[0][0] ?? null );
+        $trace_header = json_decode( rawurldecode( $headers[0][1] ?? '' ), true );
+        $this->assertSame( 'validation-rejection:', substr( $trace_header['rejections'][0]['rejection_trace_id'] ?? '', 0, 21 ) );
+        $this->assertNotEmpty( $trace_header['rejections'][0]['request_trace_id'] ?? '' );
     }
 
     public function test_wpforms_native_form_error_boundary_sanitizes_untrusted_html(): void
@@ -1504,7 +1514,11 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->validation_executor = $action;
     }
 
-    private function initialize_validation_adapter( object $process, bool $spy = false ): Sentient_Forms_WPForms_Adapter
+    private function initialize_validation_adapter(
+        object $process,
+        bool $spy = false,
+        ?Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter = null
+    ): Sentient_Forms_WPForms_Adapter
     {
         add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
         add_filter(
@@ -1520,8 +1534,8 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
             $this->validation_executor
         );
         $adapter = $spy
-            ? new Sentient_Forms_Test_WPForms_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner )
-            : new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+            ? new Sentient_Forms_Test_WPForms_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner, $validation_trace_emitter )
+            : new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance(), $runner, $validation_trace_emitter );
         $adapter->init();
 
         return $adapter;

@@ -25,6 +25,8 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
 
     private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner;
 
+    private Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter;
+
     /** @var array<string, Sentient_Forms_Validation_Run_Result> */
     private array $validation_results_by_submission = [];
 
@@ -33,11 +35,13 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
 
     public function __construct(
         Sentient_Forms_Plugin $plugin,
-        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null
+        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
+        ?Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter = null
     )
     {
         $this->plugin          = $plugin;
         $this->workflow_runner = $workflow_runner;
+        $this->validation_trace_emitter = $validation_trace_emitter ?? new Sentient_Forms_Validation_Rejection_Trace_Emitter();
     }
 
     public function get_id(): string
@@ -264,6 +268,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
     public function handle_validation( mixed $validation_result, mixed $tags ): mixed
     {
         $result     = $this->get_workflow_runner()->run_validation( $this, $validation_result, $tags );
+        $this->validation_trace_emitter->emit( $result );
         $submission = $this->current_submission( $validation_result );
         $cache_key  = $this->validation_submission_cache_key( $submission );
         if ( null !== $cache_key )

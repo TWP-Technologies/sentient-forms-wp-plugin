@@ -34,13 +34,17 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
 
     private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner;
 
+    private Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter;
+
     public function __construct(
         Sentient_Forms_Plugin $plugin,
-        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null
+        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
+        ?Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter = null
     )
     {
         $this->plugin          = $plugin;
         $this->workflow_runner = $workflow_runner;
+        $this->validation_trace_emitter = $validation_trace_emitter ?? new Sentient_Forms_Validation_Rejection_Trace_Emitter();
     }
 
     public function get_id(): string
@@ -316,6 +320,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             'form_data' => is_array( $form_data ) ? $form_data : [],
         ];
         $result = $this->get_workflow_runner()->run_validation( $this, $native_validation );
+        $this->validation_trace_emitter->emit( $result );
         $this->apply_validation_result( $native_validation, $result );
     }
 

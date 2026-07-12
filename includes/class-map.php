@@ -139,6 +139,7 @@ return [
 	'Sentient_Forms_Telemetry_Service' => __DIR__ . '/services/class-sentient-forms-telemetry-service.php',
 	'Sentient_Forms_Url_Policy' => __DIR__ . '/security/class-sentient-forms-url-policy.php',
 	'Sentient_Forms_Validation_Adapter_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-validation-adapter.php',
+	'Sentient_Forms_Validation_Rejection_Trace_Emitter' => __DIR__ . '/services/class-sentient-forms-validation-rejection-trace-emitter.php',
 	'Sentient_Forms_Validation_Run_Result' => __DIR__ . '/services/class-sentient-forms-validation-run-result.php',
 	'Sentient_Forms_Validation_Utils_Trait' => __DIR__ . '/rest-api/validators/trait-validation-utils.php',
 	'Sentient_Forms_WPForms_Adapter' => __DIR__ . '/adapters/forms/class-sentient-forms-wpforms-adapter.php',

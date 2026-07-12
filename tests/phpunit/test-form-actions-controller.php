@@ -303,6 +303,88 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         return $page_id;
     }
 
+    private function create_compatibility_probe_form( string $form_source ): string
+    {
+        if ( 'gravity_forms' === $form_source )
+        {
+            GFAPI::$forms[671] = [
+                'id'        => 671,
+                'title'     => 'Gravity compatibility probe',
+                'is_active' => true,
+            ];
+
+            return '671';
+        }
+
+        if ( 'contact_form_7' === $form_source )
+        {
+            add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+            add_filter(
+                'sentient_forms_contact_form_7_forms',
+                static fn(): array => [
+                    new class {
+                        public function id(): int
+                        {
+                            return 672;
+                        }
+
+                        public function title(): string
+                        {
+                            return 'CF7 compatibility probe';
+                        }
+                    },
+                ]
+            );
+            add_filter(
+                'sentient_forms_contact_form_7_form_object',
+                static fn( $form, $form_id ) => 672 === absint( $form_id )
+                    ? new class {
+                        public function id(): int
+                        {
+                            return 672;
+                        }
+
+                        public function title(): string
+                        {
+                            return 'CF7 compatibility probe';
+                        }
+                    }
+                    : $form,
+                10,
+                2
+            );
+
+            return '672';
+        }
+
+        if ( 'wpforms' === $form_source )
+        {
+            add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+            $form_id = self::factory()->post->create(
+                [
+                    'post_type'    => 'wpforms',
+                    'post_status'  => 'publish',
+                    'post_title'   => 'WPForms compatibility probe',
+                    'post_content' => wp_json_encode(
+                        [
+                            'settings' => [ 'form_title' => 'WPForms compatibility probe' ],
+                            'fields'   => [],
+                        ]
+                    ),
+                ]
+            );
+
+            return (string) $form_id;
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+
+        return $page_id . ':formabc';
+    }
+
     public function test_form_source_and_id_permission_checks_auth_before_source_or_form_existence(): void
     {
         wp_set_current_user( 0 );
@@ -5000,6 +5082,71 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'unknown', $forms_by_id[2]['execution_status']['status'] ?? null );
     }
 
+    public function test_contact_form_7_forms_overview_serializes_empty_input_mapping_as_object(): void
+    {
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_forms',
+            static fn(): array => [
+                new class {
+                    public function id(): int
+                    {
+                        return 42;
+                    }
+
+                    public function title(): string
+                    {
+                        return 'CF7 Support Intake';
+                    }
+                },
+            ]
+        );
+
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'cf7_empty_input_mapping',
+                'display_name'    => 'CF7 empty input mapping',
+                'definition_json' => [
+                    'prompt_template' => 'Summarize {{entry}}.',
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/contact_form_7/forms/overview' );
+        $request->set_param( 'form_source_slug', 'contact_form_7' );
+
+        $response = $this->controller->get_forms_overview( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $serialized = json_decode( wp_json_encode( $response->get_data() ) );
+
+        $input_mapping = $serialized->forms[0]->actions[0]->settings->input_mapping ?? null;
+
+        $this->assertInstanceOf( stdClass::class, $input_mapping );
+        $this->assertSame( 'selected', $input_mapping->mode ?? null );
+        $this->assertFalse( $input_mapping->include_metadata ?? true );
+    }
+
     public function test_elementor_pro_forms_overview_includes_descriptor_and_provider_native_form_id(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
@@ -5100,9 +5247,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayHasKey( 'workflow_plan', $data );
         $this->assertIsArray( $data['definitions'] );
         $this->assertIsArray( $data['provider_credentials'] );
-        $this->assertIsArray( $data['form_action_configs'] );
+        $this->assertInstanceOf( stdClass::class, $data['form_action_configs'] );
         $this->assertIsArray( $data['form_fields'] );
-        $this->assertIsArray( $data['action_defaults'] );
+        $this->assertInstanceOf( stdClass::class, $data['action_defaults'] );
         $this->assertIsArray( $data['provider_path_policy'] );
         $this->assertIsArray( $data['workflow_plan'] );
         $this->assertSame( 'gravity_forms', $data['form_source_descriptor']['slug'] ?? null );
@@ -5262,6 +5409,207 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
         $this->assertSame( 'your-name', $data['form_fields'][0]['id'] ?? null );
         $this->assertTrue( $data['form_fields'][0]['storage_eligible'] ?? false );
+    }
+
+    public function test_contact_form_7_bootstrap_serializes_empty_record_values_as_objects(): void
+    {
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_forms',
+            static fn(): array => [
+                new class {
+                    public function id(): int
+                    {
+                        return 660;
+                    }
+
+                    public function title(): string
+                    {
+                        return 'CF7 Browser Bootstrap';
+                    }
+                },
+            ]
+        );
+        add_filter(
+            'sentient_forms_contact_form_7_form_object',
+            static fn( $form, $form_id ) => 660 === absint( $form_id )
+                ? new class {
+                    public function id(): int
+                    {
+                        return 660;
+                    }
+
+                    public function title(): string
+                    {
+                        return 'CF7 Browser Bootstrap';
+                    }
+
+                    public function scan_form_tags(): array
+                    {
+                        return [];
+                    }
+                }
+                : $form,
+            10,
+            2
+        );
+
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'cf7_bootstrap_empty_records',
+                'display_name'    => 'CF7 bootstrap empty records',
+                'definition_json' => [
+                    'prompt_template' => 'Summarize {{entry}}.',
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/contact_form_7/forms/660/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'contact_form_7' );
+        $request->set_param( 'form_id', 660 );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $serialized = json_decode( wp_json_encode( $response->get_data() ) );
+        $issues     = [];
+
+        if ( ! ( $serialized->form->settings ?? null ) instanceof stdClass )
+        {
+            $issues[] = 'form.settings';
+        }
+        if ( property_exists( $serialized->capabilities, 'cps_version' ) )
+        {
+            $issues[] = 'capabilities.cps_version';
+        }
+        foreach ( $serialized->custom_actions->actions ?? [] as $action )
+        {
+            if ( ! ( $action->prompt_overrides ?? null ) instanceof stdClass )
+            {
+                $issues[] = 'custom_actions.actions.prompt_overrides';
+            }
+        }
+        if ( ! ( $serialized->form_action_configs ?? null ) instanceof stdClass )
+        {
+            $issues[] = 'form_action_configs';
+        }
+        foreach ( (array) ( $serialized->action_defaults ?? [] ) as $defaults )
+        {
+            if ( ! $defaults instanceof stdClass )
+            {
+                $issues[] = 'action_defaults.*';
+            }
+        }
+
+        $this->assertSame( [], array_values( array_unique( $issues ) ) );
+    }
+
+    /**
+     * @dataProvider action_form_source_compatibility_probe_provider
+     */
+    public function test_action_form_source_compatibility_probe_is_authenticated_non_mutating_and_manifest_backed(
+        string $form_source,
+        string $lifecycle,
+        bool $expected_allowed
+    ): void
+    {
+        $form_id = $this->create_compatibility_probe_form( $form_source );
+
+        global $wpdb;
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $before   = $mappings->list_for_form( $form_source, $form_id );
+
+        $request = $this->authenticate_rest_request(
+            new WP_REST_Request(
+                'GET',
+                sprintf(
+                    '/sentient-forms/v1/%s/forms/%s/actions/compatibility',
+                    $form_source,
+                    rawurlencode( $form_id )
+                )
+            )
+        );
+        $request->set_param( 'form_source_slug', $form_source );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'action_code', 'clarification_assistant_v1' );
+        $request->set_param( 'lifecycle', $lifecycle );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( $form_source, $data['form_source'] ?? null );
+        $this->assertSame( $form_id, (string) ( $data['form_id'] ?? '' ) );
+        $this->assertSame( 'clarification_assistant_v1', $data['action_code'] ?? null );
+        $this->assertSame( $lifecycle, $data['lifecycle'] ?? null );
+        $this->assertSame( $expected_allowed ? 'authorized' : 'rejected', $data['policy_decision'] ?? null );
+        $this->assertSame( $expected_allowed ? null : 'rest_unsupported_form_source_lifecycle', $data['rejection_code'] ?? null );
+        $this->assertMatchesRegularExpression(
+            '/^request-trace:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+            $data['request_trace_id'] ?? ''
+        );
+        $this->assertFalse( $data['mapping_created'] ?? true );
+        $this->assertFalse( $data['provider_request_executed'] ?? true );
+        $this->assertMatchesRegularExpression( '/^\d{4}-\d{2}-\d{2}T/', $data['generated_at'] ?? '' );
+
+        if ( $expected_allowed )
+        {
+            $this->assertNull( $data['rejection_trace_id'] ?? null );
+            $this->assertNull( $data['reason'] ?? null );
+        }
+        else
+        {
+            $this->assertMatchesRegularExpression(
+                '/^source-rejection:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
+                $data['rejection_trace_id'] ?? ''
+            );
+            $this->assertNotSame( '', $data['reason'] ?? '' );
+        }
+
+        $this->assertSame( $before, $mappings->list_for_form( $form_source, $form_id ) );
+    }
+
+    public function action_form_source_compatibility_probe_provider(): array
+    {
+        return [
+            'Contact Form 7 rejects realtime' => [ 'contact_form_7', 'real_time', false ],
+            'WPForms rejects realtime'        => [ 'wpforms', 'real_time', false ],
+            'Elementor rejects realtime'      => [ 'elementor_pro_forms', 'real_time', false ],
+            'Gravity Forms allows realtime'   => [ 'gravity_forms', 'real_time', true ],
+        ];
+    }
+
+    public function test_action_form_source_compatibility_probe_rejects_malformed_input_without_mutation(): void
+    {
+        $form_id = $this->create_compatibility_probe_form( 'gravity_forms' );
+
+        global $wpdb;
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $before   = $mappings->list_for_form( 'gravity_forms', $form_id );
+
+        $request = $this->authenticate_rest_request(
+            new WP_REST_Request(
+                'GET',
+                '/sentient-forms/v1/gravity_forms/forms/' . $form_id . '/actions/compatibility'
+            )
+        );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'action_code', 'clarification_assistant_v1' );
+        $request->set_param( 'lifecycle', 'not-a-lifecycle' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'rest_invalid_param', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, $mappings->list_for_form( 'gravity_forms', $form_id ) );
     }
 
     public function test_wpforms_bootstrap_exposes_paid_like_native_links_and_ledger_state_without_unsupported_claims(): void

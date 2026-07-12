@@ -21,6 +21,7 @@ final class Sentient_Forms_Validation_Run_Result
      * @param array<string, string>               $spam_classifications
      * @param array<string, string>               $execution_request_ids
      * @param array<string, array<string, mixed>> $spam_payloads
+     * @param array<string, array{request_trace_id: string, rejection_trace_id: string}> $validation_rejection_traces
      */
     public function __construct(
         private array $mapping_outcomes = [],
@@ -31,7 +32,8 @@ final class Sentient_Forms_Validation_Run_Result
         private array $field_errors = [],
         private array $spam_classifications = [],
         private array $execution_request_ids = [],
-        private array $spam_payloads = []
+        private array $spam_payloads = [],
+        private array $validation_rejection_traces = []
     )
     {
     }
@@ -116,5 +118,13 @@ final class Sentient_Forms_Validation_Run_Result
     public function get_execution_request_ids(): array
     {
         return $this->execution_request_ids;
+    }
+
+    /**
+     * @return array<string, array{request_trace_id: string, rejection_trace_id: string}>
+     */
+    public function get_validation_rejection_traces(): array
+    {
+        return $this->validation_rejection_traces;
     }
 }

@@ -92,6 +92,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $form_error            = null;
         $spam_classifications  = [];
         $execution_request_ids = [];
+        $validation_rejection_traces = [];
 
         foreach ( (array) ( $plan['cycle_ids'] ?? [] ) as $cycle_id )
         {
@@ -247,6 +248,13 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $validation = is_array( $result ) ? $this->extract_validation_payload( $result ) : null;
             if ( is_array( $validation ) && false === ( $validation['is_valid'] ?? true ) )
             {
+                if ( '' !== $request_id )
+                {
+                    $validation_rejection_traces[ $mapping_key ] = [
+                        'request_trace_id'   => $request_id,
+                        'rejection_trace_id' => 'validation-rejection:' . $request_id,
+                    ];
+                }
                 $message = sanitize_text_field( (string) ( $validation['message'] ?? '' ) );
                 if ( '' !== $message && null === $form_error )
                 {
@@ -290,7 +298,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $form_error,
             $field_errors,
             $spam_classifications,
-            $execution_request_ids
+            $execution_request_ids,
+            [],
+            $validation_rejection_traces
         );
     }
 

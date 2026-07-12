@@ -432,15 +432,23 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             ? $this->filter_effect_mapping_for_form_source_capabilities( $form_source, $row['effect_mapping_json'] )
             : null;
         $settings       = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
+        $input_mapping  = is_array( $row['input_bindings_json'] ?? null )
+            ? $row['input_bindings_json']
+            : [];
+        if ( [] === $input_mapping )
+        {
+            $input_mapping = [
+                'mode'             => 'selected',
+                'include_metadata' => false,
+            ];
+        }
         $settings       = array_replace_recursive(
             $settings,
             [
                 'local_form_mapping_id' => $id,
                 'execution_mode'        => $execution_mode,
                 'dispatch_mode'         => $dispatch_mode,
-                'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
-                    ? $row['input_bindings_json']
-                    : [],
+                'input_mapping'         => $input_mapping,
                 'effect_mapping_json'   => $effect_mapping,
                 'linked_action_status'  => $identity['linked_action_status'],
                 'repair_state'          => $identity['repair_state'],
@@ -819,6 +827,37 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     'callback'            => [ $this, 'get_form_actions_bootstrap' ],
                     'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
                     'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/compatibility',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_action_form_source_compatibility' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => array_merge(
+                        $this->get_collection_args(),
+                        [
+                            'action_code' => [
+                                'description'       => __( 'Bundled Action code to check.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => true,
+                                'sanitize_callback' => 'sanitize_key',
+                                'validate_callback' => [ $this, 'validate_compatibility_action_code_param' ],
+                            ],
+                            'lifecycle' => [
+                                'description'       => __( 'Canonical Action lifecycle to check.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => true,
+                                'sanitize_callback' => 'sanitize_key',
+                                'validate_callback' => [ $this, 'validate_compatibility_lifecycle_param' ],
+                            ],
+                        ]
+                    ),
                 ],
             ],
         );
@@ -1210,6 +1249,26 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 ],
             ],
         );
+    }
+
+    public function validate_compatibility_action_code_param( mixed $value ): bool
+    {
+        return is_scalar( $value )
+            && Sentient_Forms_Bundled_Action_Templates::has( sanitize_key( (string) $value ) );
+    }
+
+    public function validate_compatibility_lifecycle_param( mixed $value ): bool
+    {
+        return is_scalar( $value )
+            && in_array(
+                sanitize_key( (string) $value ),
+                [
+                    Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                    Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
+                    Sentient_Forms_Form_Source_Lifecycles::REAL_TIME,
+                ],
+                true
+            );
     }
 
     /** Permission check for form source and ID. */
@@ -1693,27 +1752,145 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $actions = $this->build_form_actions_payload( $form_source_slug, $form_id );
         $definitions = $this->get_bootstrap_action_definitions();
         $custom_actions = $this->get_bootstrap_custom_actions();
+        $form = $this->get_bootstrap_form_summary( $form_source_slug, $form_id );
+        if ( is_array( $form ) && isset( $form['settings'] ) && is_array( $form['settings'] ) )
+        {
+            $form['settings'] = (object) $form['settings'];
+        }
+
+        $capabilities = $this->get_bootstrap_capabilities();
+        if ( array_key_exists( 'cps_version', $capabilities ) && null === $capabilities['cps_version'] )
+        {
+            unset( $capabilities['cps_version'] );
+        }
+
+        foreach ( $custom_actions['actions'] as &$custom_action )
+        {
+            if ( is_array( $custom_action ) && isset( $custom_action['prompt_overrides'] ) && is_array( $custom_action['prompt_overrides'] ) )
+            {
+                $custom_action['prompt_overrides'] = (object) $custom_action['prompt_overrides'];
+            }
+        }
+        unset( $custom_action );
+
+        $form_action_configs = $this->get_bootstrap_form_action_configs( $form_source_slug, $form_id );
+        foreach ( $form_action_configs as &$form_action_config )
+        {
+            if ( is_array( $form_action_config ) )
+            {
+                $form_action_config = (object) $form_action_config;
+            }
+        }
+        unset( $form_action_config );
+
+        $action_defaults = $this->get_bootstrap_action_defaults( $definitions, $custom_actions );
+        foreach ( $action_defaults as &$action_default )
+        {
+            if ( is_array( $action_default ) )
+            {
+                $action_default = (object) $action_default;
+            }
+        }
+        unset( $action_default );
 
         return $this->prepare_item_for_response(
             [
                 'form_source'      => $form_source_slug,
                 'form_id'          => $this->response_form_id( $form_source_slug, $form_id ),
-                'form'             => $this->get_bootstrap_form_summary( $form_source_slug, $form_id ),
+                'form'             => $form,
                 'form_source_descriptor' => $this->get_form_source_descriptor( $form_source_slug ),
                 'ledger_settings'  => $this->get_bootstrap_submission_ledger_settings( $form_source_slug, $form_id ),
                 'actions'          => $actions,
                 'execution_status' => $this->build_form_execution_status( $form_source_slug, $form_id ),
                 'disabled_state'   => $this->build_form_disabled_state( $form_source_slug, $form_id ),
-                'capabilities'     => $this->get_bootstrap_capabilities(),
+                'capabilities'     => $capabilities,
                 'definitions'      => $definitions,
                 'custom_actions'   => $custom_actions,
                 'provider_credentials' => $this->get_bootstrap_provider_credentials(),
-                'form_action_configs'  => $this->get_bootstrap_form_action_configs( $form_source_slug, $form_id ),
+                'form_action_configs'  => (object) $form_action_configs,
                 'form_fields'          => $this->get_bootstrap_form_fields( $form_source_slug, $form_id ),
-                'action_defaults'      => $this->get_bootstrap_action_defaults( $definitions, $custom_actions ),
+                'action_defaults'      => (object) $action_defaults,
                 'provider_path_policy' => $this->get_bootstrap_provider_path_policy(),
                 'workflow_plan'        => $this->get_bootstrap_workflow_plan( $form_source_slug, $form_id, $actions ),
                 'generated_at'     => gmdate( 'c' ),
+            ]
+        );
+    }
+
+    /**
+     * Return a read-only Action/Form Source compatibility decision for admin previews.
+     */
+    public function get_action_form_source_compatibility( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $form_source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $form_id     = $this->get_request_form_id( $request );
+        $action_code = sanitize_key( (string) $request->get_param( 'action_code' ) );
+        $lifecycle   = sanitize_key( (string) $request->get_param( 'lifecycle' ) );
+
+        try
+        {
+            $manifest = new Sentient_Forms_Action_Source_Compatibility_Manifest();
+            $row      = $manifest->get( $action_code, $form_source );
+        }
+        catch ( LogicException )
+        {
+            return $this->prepare_error_response(
+                'rest_action_source_contract_missing',
+                __( 'The bundled Action compatibility contract is unavailable.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        if ( ! is_array( $row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_action_source_contract_missing',
+                __( 'The bundled Action compatibility contract is unavailable for this Form Source.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        $source_validation = $this->validate_form_source_trigger_hooks( $form_source, [ $lifecycle ] );
+        $allowed = ! is_wp_error( $source_validation )
+            && true === ( $row['supported'] ?? false )
+            && in_array( $lifecycle, (array) ( $row['supported_lifecycles'] ?? [] ), true )
+            && array_key_exists( $lifecycle, (array) ( $row['lifecycle_contracts'] ?? [] ) );
+
+        $rejection_code = null;
+        $reason         = null;
+        if ( ! $allowed )
+        {
+            if ( is_wp_error( $source_validation ) )
+            {
+                $rejection_code = $source_validation->get_error_code();
+                $reason         = $source_validation->get_error_message();
+            }
+            elseif ( true !== ( $row['supported'] ?? false ) )
+            {
+                $rejection_code = 'rest_unsupported_action_source';
+                $reason         = __( 'This bundled Action is not supported for the selected Form Source.', 'sentient-forms' );
+            }
+            else
+            {
+                $rejection_code = 'rest_invalid_action_lifecycle';
+                $reason         = __( 'The selected lifecycle is not supported by this bundled Action for the selected Form Source.', 'sentient-forms' );
+            }
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'form_source'              => $form_source,
+                'form_id'                  => $this->response_form_id( $form_source, $form_id ),
+                'action_code'              => $action_code,
+                'lifecycle'                => $lifecycle,
+                'policy_decision'          => $allowed ? 'authorized' : 'rejected',
+                'rejection_code'           => $rejection_code,
+                'reason'                   => $reason,
+                'request_trace_id'         => 'request-trace:' . wp_generate_uuid4(),
+                'rejection_trace_id'       => $allowed ? null : 'source-rejection:' . wp_generate_uuid4(),
+                'mapping_created'          => false,
+                'provider_request_executed' => false,
+                'generated_at'             => gmdate( 'c' ),
             ]
         );
     }

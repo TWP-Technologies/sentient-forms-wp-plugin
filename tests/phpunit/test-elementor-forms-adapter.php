@@ -271,7 +271,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                     ];
                 }
             );
-        $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $headers = [];
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
+        $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance(), null, $emitter );
         $this->configure_validation_mapping( $adapter, $form_id, $action );
         $adapter->init();
 
@@ -301,6 +307,10 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             $handler->field_error_calls
         );
         $this->assertSame( [ 'Please review your submission.' ], $handler->form_error_calls );
+        $this->assertSame( 'X-Sentient-Forms-Validation-Trace', $headers[0][0] ?? null );
+        $trace_header = json_decode( rawurldecode( $headers[0][1] ?? '' ), true );
+        $this->assertSame( 'validation-rejection:', substr( $trace_header['rejections'][0]['rejection_trace_id'] ?? '', 0, 21 ) );
+        $this->assertNotEmpty( $trace_header['rejections'][0]['request_trace_id'] ?? '' );
         $this->assertSame( 0, $adapter->native_mutation_calls );
         $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
         $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );

@@ -1986,6 +1986,41 @@ const requestTraceRequestBoundarySchema = z.strictObject({
 	include_drafts: z.boolean().optional(),
 	draft_mappings: z.array(formActionLinkageBoundarySchema).optional()
 });
+const compatibilityLifecycleBoundarySchema = z.enum([
+	'validation',
+	'after_submission',
+	'real_time'
+]);
+const compatibilityRequestTraceIdBoundarySchema = z
+	.string()
+	.regex(/^request-trace:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const compatibilityRejectionTraceIdBoundarySchema = z
+	.string()
+	.regex(/^source-rejection:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const actionCompatibilityEvidenceBaseBoundarySchema = z.strictObject({
+	form_source: z.string().min(1),
+	form_id: z.union([z.string(), z.number()]),
+	action_code: z.string().min(1),
+	lifecycle: compatibilityLifecycleBoundarySchema,
+	request_trace_id: compatibilityRequestTraceIdBoundarySchema,
+	mapping_created: z.literal(false),
+	provider_request_executed: z.literal(false),
+	generated_at: z.string().min(1)
+});
+const actionCompatibilityEvidenceBoundarySchema = z.discriminatedUnion('policy_decision', [
+	actionCompatibilityEvidenceBaseBoundarySchema.extend({
+		policy_decision: z.literal('authorized'),
+		rejection_code: z.null(),
+		reason: z.null(),
+		rejection_trace_id: z.null()
+	}),
+	actionCompatibilityEvidenceBaseBoundarySchema.extend({
+		policy_decision: z.literal('rejected'),
+		rejection_code: z.string().min(1),
+		reason: z.string().min(1),
+		rejection_trace_id: compatibilityRejectionTraceIdBoundarySchema
+	})
+]);
 const duplicateParentBoundarySchema = z.strictObject({
 	type: z.enum(['hook_root', 'mapping']),
 	hook: z.string(),
@@ -2488,6 +2523,13 @@ export const endpointRegistry = {
 		request: requestTraceRequestBoundarySchema.describe('forms.requestTrace.run request'),
 		response: requestTraceBoundarySchema.describe('forms.requestTrace.run response'),
 		error: endpointErrorSchema.describe('forms.requestTrace.run error')
+	},
+	'forms.actions.compatibility': {
+		path: '{source}/forms/{formId}/actions/compatibility',
+		response: actionCompatibilityEvidenceBoundarySchema.describe(
+			'forms.actions.compatibility response'
+		),
+		error: endpointErrorSchema.describe('forms.actions.compatibility error')
 	},
 	'forms.disabled.read': {
 		path: '{source}/forms/{formId}/disabled',

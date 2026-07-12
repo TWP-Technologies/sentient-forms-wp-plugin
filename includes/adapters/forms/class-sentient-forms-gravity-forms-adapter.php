@@ -68,6 +68,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner;
 
+    private Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter;
+
     private ?Sentient_Forms_Action_Runtime_Settings_Resolver $runtime_settings_resolver = null;
 
     /**
@@ -120,11 +122,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function __construct(
         Sentient_Forms_Plugin $plugin,
-        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null
+        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null,
+        ?Sentient_Forms_Validation_Rejection_Trace_Emitter $validation_trace_emitter = null
     )
     {
         $this->plugin          = $plugin;
         $this->workflow_runner = $workflow_runner;
+        $this->validation_trace_emitter = $validation_trace_emitter ?? new Sentient_Forms_Validation_Rejection_Trace_Emitter();
     }
 
     /**
@@ -1095,6 +1099,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function handle_validation( array $validation_result, mixed $native_context = null ): array
     {
         $result  = $this->get_workflow_runner()->run_validation( $this, $validation_result, $native_context );
+        $this->validation_trace_emitter->emit( $result );
         $form_id = absint( $validation_result['form']['id'] ?? 0 );
         if ( $form_id > 0 )
         {

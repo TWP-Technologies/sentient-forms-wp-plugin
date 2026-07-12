@@ -9,11 +9,7 @@ import type {
 	RegisteredEndpointResponse
 } from '$lib/api/endpoint-schemas';
 
-type PrivacySetupPreset =
-	| 'balanced'
-	| 'privacy_focused'
-	| 'maximum_privacy'
-	| 'maximum_visibility';
+type PrivacySetupPreset = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 
 const completeSettingsResponse = {
 	enable_logging: false,
@@ -29,6 +25,52 @@ const completeSettingsResponse = {
 };
 
 describe('admin endpoint schema registry', () => {
+	it('parses action compatibility evidence as an authorized or rejected decision', () => {
+		const schema = endpointRegistry['forms.actions.compatibility'].response;
+		const rejected = schema.parse({
+			form_source: 'contact_form_7',
+			form_id: 42,
+			action_code: 'clarification_assistant_v1',
+			lifecycle: 'real_time',
+			policy_decision: 'rejected',
+			rejection_code: 'rest_unsupported_form_source_lifecycle',
+			reason: 'Realtime lifecycle unavailable',
+			request_trace_id: 'request-trace:123e4567-e89b-42d3-a456-426614174000',
+			rejection_trace_id: 'source-rejection:123e4567-e89b-42d3-a456-426614174001',
+			mapping_created: false,
+			provider_request_executed: false,
+			generated_at: '2030-01-05T10:00:00Z'
+		});
+
+		expect(rejected.policy_decision).toBe('rejected');
+		expect(rejected.rejection_trace_id).toMatch(/^source-rejection:/);
+		expect(
+			schema.safeParse({
+				...rejected,
+				policy_decision: 'authorized',
+				rejection_code: 'rest_unsupported_form_source_lifecycle'
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...rejected,
+				request_trace_id: 'trace-without-required-prefix'
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...rejected,
+				request_trace_id: 'request-trace:123e4567-e89b-12d3-a456-426614174000'
+			}).success
+		).toBe(false);
+		expect(
+			schema.safeParse({
+				...rejected,
+				mapping_created: true
+			}).success
+		).toBe(false);
+	});
+
 	it('requires all server-guaranteed governance fields in additive settings responses', () => {
 		expect(
 			endpointRegistry['settings.read'].response.safeParse({
@@ -115,9 +157,9 @@ describe('admin endpoint schema registry', () => {
 		expect(request.safeParse({ submission_ledger_retention_days: 0 }).success).toBe(true);
 		expect(request.safeParse({ submission_ledger_retention_days: 14 }).success).toBe(false);
 		expect(request.safeParse({ privacy_setup_profile: 'custom' }).success).toBe(false);
-		expect(
-			request.safeParse({ privacy_setup_completed_at: '2026-07-11T12:00:00Z' }).success
-		).toBe(false);
+		expect(request.safeParse({ privacy_setup_completed_at: '2026-07-11T12:00:00Z' }).success).toBe(
+			false
+		);
 		expect(
 			request.safeParse({ submission_ledger_retention_days: 30, invented_setting: true }).success
 		).toBe(false);

@@ -1174,6 +1174,70 @@ describe('SentientFormsApiClient', () => {
 		).rejects.toThrow();
 	});
 
+	it('checks action compatibility without creating a mapping or provider request', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				form_source: 'contact_form_7',
+				form_id: 42,
+				action_code: 'clarification_assistant_v1',
+				lifecycle: 'real_time',
+				policy_decision: 'rejected',
+				rejection_code: 'rest_unsupported_form_source_lifecycle',
+				reason: 'Realtime lifecycle unavailable',
+				request_trace_id: 'request-trace:123e4567-e89b-42d3-a456-426614174000',
+				rejection_trace_id: 'source-rejection:123e4567-e89b-42d3-a456-426614174001',
+				mapping_created: false,
+				provider_request_executed: false,
+				generated_at: '2030-01-05T10:00:00Z'
+			})
+		);
+
+		const result = await client.checkActionCompatibility(
+			'contact_form_7',
+			42,
+			'clarification_assistant_v1',
+			'real_time',
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}contact_form_7/forms/42/actions/compatibility?action_code=clarification_assistant_v1&lifecycle=real_time`,
+			expect.objectContaining({ method: 'GET', credentials: 'same-origin' })
+		);
+		expect(result.policy_decision).toBe('rejected');
+		expect(result.mapping_created).toBe(false);
+		expect(result.provider_request_executed).toBe(false);
+	});
+
+	it('rejects malformed action compatibility evidence from the network', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				form_source: 'contact_form_7',
+				form_id: 42,
+				action_code: 'clarification_assistant_v1',
+				lifecycle: 'real_time',
+				policy_decision: 'rejected',
+				rejection_code: 'rest_unsupported_form_source_lifecycle',
+				reason: 'Realtime lifecycle unavailable',
+				request_trace_id: 'invalid-trace',
+				rejection_trace_id: null,
+				mapping_created: false,
+				provider_request_executed: false,
+				generated_at: '2030-01-05T10:00:00Z'
+			})
+		);
+
+		await expect(
+			client.checkActionCompatibility(
+				'contact_form_7',
+				42,
+				'clarification_assistant_v1',
+				'real_time',
+				{ showNotifications: false }
+			)
+		).rejects.toBeInstanceOf(ApiContractError);
+	});
+
 	it('updates submission ledger settings through the form-scoped endpoint', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

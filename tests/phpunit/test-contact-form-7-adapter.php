@@ -358,9 +358,15 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                 }
             );
         $runner = $this->configure_validation_mapping( $form_id, $action );
+        $headers = [];
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
         add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner, $emitter );
         $adapter->init();
 
         global $wp_filter;
@@ -383,6 +389,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $result->invalidations );
         $this->assertSame( $tag, $result->invalidations[0]['tag'] ?? null );
         $this->assertSame( 'Tell us what you need built.', $result->invalidations[0]['message'] ?? null );
+        $this->assertSame( 'X-Sentient-Forms-Validation-Trace', $headers[0][0] ?? null );
+        $trace_header = json_decode( rawurldecode( $headers[0][1] ?? '' ), true );
+        $this->assertSame( 'validation-rejection:', substr( $trace_header['rejections'][0]['rejection_trace_id'] ?? '', 0, 21 ) );
+        $this->assertNotEmpty( $trace_header['rejections'][0]['request_trace_id'] ?? '' );
     }
 
     public function test_cf7_spam_hook_reuses_validation_outcome_without_second_execution(): void

@@ -1811,6 +1811,9 @@ export type SubmissionLedgerRecordsResponse =
 
 export type FormActionsBootstrapResponse = RegisteredEndpointResponse<'forms.actions.bootstrap'>;
 
+export type ActionCompatibilityEvidence = RegisteredEndpointResponse<'forms.actions.compatibility'>;
+export type ActionCompatibilityLifecycle = ActionCompatibilityEvidence['lifecycle'];
+
 export interface FormSourceSummary {
 	slug: string;
 	label: string;

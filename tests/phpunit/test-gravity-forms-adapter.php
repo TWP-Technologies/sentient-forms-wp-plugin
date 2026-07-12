@@ -5309,13 +5309,21 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             ],
         ];
         $this->set_action_executor( $service );
+        $headers = [];
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner, $emitter );
 
         $field = (object) [ 'id' => 3, 'failed_validation' => false, 'validation_message' => '' ];
         $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7901, 'failed_validation' => false, 'fields' => [ $field ] ] ];
         $native_context = [ 'source' => 'form-submit', 'page_number' => 2 ];
 
-        $result = $this->adapter->handle_validation( $validation, $native_context );
-        $replay = $this->adapter->handle_validation( $validation, $native_context );
+        $result = $adapter->handle_validation( $validation, $native_context );
+        $replay = $adapter->handle_validation( $validation, $native_context );
 
         $this->assertCount( 1, $service->calls );
         $this->assertSame( $native_context, $service->calls[0]['context']['native_validation_context'] ?? null );
@@ -5323,6 +5331,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $result['form']['failed_validation'] );
         $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
         $this->assertFalse( $replay['is_valid'] );
+        $this->assertCount( 2, $headers );
+        $trace_header = json_decode( rawurldecode( $headers[0][1] ?? '' ), true );
+        $this->assertSame( 'validation-rejection:', substr( $trace_header['rejections'][0]['rejection_trace_id'] ?? '', 0, 21 ) );
+        $this->assertNotEmpty( $trace_header['rejections'][0]['request_trace_id'] ?? '' );
+
+        $runner_result = $runner->run_validation( $adapter, $validation, $native_context );
+        $traces        = $runner_result->get_validation_rejection_traces();
+        $mapping_key   = $fixture['runtime_key'];
+        $this->assertSame( $runner_result->get_execution_request_ids()[ $mapping_key ] ?? null, $traces[ $mapping_key ]['request_trace_id'] ?? null );
+        $this->assertSame(
+            'validation-rejection:' . ( $runner_result->get_execution_request_ids()[ $mapping_key ] ?? '' ),
+            $traces[ $mapping_key ]['rejection_trace_id'] ?? null
+        );
     }
 
     public function test_persisted_local_validation_failure_fails_open_blocks_dependents_and_redacts_provider_details(): void
@@ -5368,6 +5389,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $logs );
         $this->assertSame( 'Validation action failed open.', $logs[0]['error_message'] ?? null );
         $this->assertStringNotContainsString( 'RAW_PROVIDER_TIMEOUT_7902', (string) wp_json_encode( $logs ) );
+        $this->assertSame( [], $outcome->get_validation_rejection_traces() );
     }
 
     public function test_persisted_local_validation_logs_structural_validity_without_raw_provider_content(): void
@@ -5387,7 +5409,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $this->set_action_executor( $service );
 
             $validation = [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ];
-            $this->assertSame( $validation, $this->adapter->handle_validation( $validation, [ 'source' => 'form-submit' ] ) );
+            $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+                ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+            $this->assertSame( $validation, $this->adapter->apply_validation_result( $validation, $outcome ) );
+            $this->assertSame( [], $outcome->get_validation_rejection_traces() );
             $logs = get_option( 'sentient_forms_action_log', [] );
 
             $this->assertCount( 1, $logs );
@@ -5396,6 +5421,14 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $this->assertStringNotContainsString( $secret, (string) wp_json_encode( $logs ) );
             $this->set_action_executor( null );
         }
+
+        $skipped = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_validation(
+                $this->adapter,
+                [ 'is_valid' => true, 'form' => [ 'id' => 7999, 'fields' => [] ] ],
+                [ 'source' => 'form-submit' ]
+            );
+        $this->assertSame( [], $skipped->get_validation_rejection_traces() );
     }
 
     public function test_persisted_local_spam_validation_bridges_once_to_saved_entry(): void

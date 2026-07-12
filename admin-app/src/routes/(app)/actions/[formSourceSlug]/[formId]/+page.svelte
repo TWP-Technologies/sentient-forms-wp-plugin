@@ -2,7 +2,7 @@
 	import { z } from 'zod';
 	import { readValidatedStorage } from '$lib/storage/validated-storage';
 	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import {
 		Section,
 		Card,
@@ -55,6 +55,8 @@
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
 		ActionDefinition,
+		ActionCompatibilityEvidence,
+		ActionCompatibilityLifecycle,
 		AttachmentMapping,
 		CustomAction,
 		CustomActionPostExecutionActionPayload,
@@ -119,6 +121,7 @@
 
 	type Props = { data: { formSourceSlug: string; formId: string } };
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
+	type CompatibilityCheckState = 'initial' | 'loading' | 'contract-rejected' | 'system-error';
 	type LocalBuilderExecutionMode = 'sync' | 'async';
 	type LocalBuilderTemplateKey = 'spam_filter' | 'summary' | 'lead_qualification' | 'sentiment';
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -518,6 +521,9 @@
 	let selectedHooks = $state<Set<string>>(new Set());
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
+	let compatibilityCheckState = $state<CompatibilityCheckState>('initial');
+	let compatibilityEvidence = $state<ActionCompatibilityEvidence | null>(null);
+	let compatibilityResultHeading = $state<HTMLHeadingElement | null>(null);
 	let showAddPanel = $state(false);
 	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
@@ -1938,6 +1944,11 @@
 	const selectedDefinition = $derived(
 		selectedTemplateId ? definitionLookup[selectedTemplateId] : undefined
 	);
+	const selectedUnsupportedLifecycle = $derived.by<ActionCompatibilityLifecycle | null>(() =>
+		createKind === 'template' && selectedDefinition
+			? unsupportedLifecycleForDefinition(selectedDefinition)
+			: null
+	);
 	const selectedCustomAction = $derived(
 		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
@@ -2041,6 +2052,7 @@
 	);
 	const linkActionDisabled = $derived(
 		creating ||
+			selectedUnsupportedLifecycle !== null ||
 			!canConfigureFormSource ||
 			selectedHooks.size === 0 ||
 			(!hasDefinitions && createKind === 'template') ||
@@ -2048,6 +2060,13 @@
 			(createKind === 'custom' && customActions.length === 0) ||
 			(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)
 	);
+
+	$effect(() => {
+		selectedTemplateId;
+		createKind;
+		compatibilityCheckState = 'initial';
+		compatibilityEvidence = null;
+	});
 	const selectedActionKey = $derived(
 		`${createKind}:${
 			createKind === 'template'
@@ -2622,6 +2641,74 @@
 		}
 
 		return `${base} sf:cursor-pointer sf:border-slate-200 sf:hover:border-primary-300`;
+	}
+
+	function unsupportedLifecycleForDefinition(
+		definition: ActionDefinition
+	): ActionCompatibilityLifecycle | null {
+		if (!formSourceDescriptor) return null;
+
+		const lifecycles = normalizeDefinitionHooks(definition.hooks)
+			.map((hook) => lifecycleIdForHook(hook))
+			.filter(
+				(lifecycle): lifecycle is ActionCompatibilityLifecycle =>
+					lifecycle === 'validation' ||
+					lifecycle === 'after_submission' ||
+					lifecycle === 'real_time'
+			);
+		if (lifecycles.some((lifecycle) => formSourceDescriptor.lifecycles[lifecycle]?.supported)) {
+			return null;
+		}
+
+		return (
+			lifecycles.find(
+				(lifecycle) => formSourceDescriptor.lifecycles[lifecycle]?.supported === false
+			) ?? null
+		);
+	}
+
+	async function copyCompatibilityIdentifier(value: string, label: string): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(value);
+			notifications.success(`${label} copied.`);
+		} catch {
+			notifications.error(`Could not copy ${label.toLowerCase()}.`);
+		}
+	}
+
+	async function runCompatibilityCheck(): Promise<void> {
+		if (!selectedDefinition || !selectedUnsupportedLifecycle) return;
+
+		if (
+			compatibilityCheckState === 'contract-rejected' ||
+			compatibilityCheckState === 'system-error'
+		) {
+			document
+				.querySelector<HTMLButtonElement>('[data-testid="action-compatibility-check-button"]')
+				?.focus();
+			await tick();
+		}
+
+		compatibilityCheckState = 'loading';
+		compatibilityEvidence = null;
+
+		try {
+			const evidence = await providerClient.checkActionCompatibility(
+				data.formSourceSlug,
+				data.formId,
+				selectedDefinition.id,
+				selectedUnsupportedLifecycle,
+				{ showNotifications: false }
+			);
+			compatibilityEvidence = evidence;
+			compatibilityCheckState =
+				evidence.policy_decision === 'rejected' ? 'contract-rejected' : 'system-error';
+		} catch {
+			compatibilityCheckState = 'system-error';
+		} finally {
+			await tick();
+			compatibilityResultHeading?.focus();
+		}
 	}
 
 	function dependencyBadgeLabel(mappingId: string): string {
@@ -6319,18 +6406,22 @@
 										{@const definitionProviderPolicy = providerPolicyForDefinition(definition)}
 										{@const definitionProviderBlocked =
 											providerPolicyIsBlocked(definitionProviderPolicy)}
+										{@const definitionUnsupportedLifecycle =
+											unsupportedLifecycleForDefinition(definition)}
 										<label
-											class={builtInOptionClass(definitionProviderPolicy)}
+											class={builtInOptionClass(
+												definitionUnsupportedLifecycle ? null : definitionProviderPolicy
+											)}
 											data-testid={`built-in-action-option-${definition.id}`}
 										>
 											<input
 												type="radio"
 												name="template-choice"
 												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												checked={!definitionProviderBlocked && selectedTemplateId === definition.id}
-												disabled={definitionProviderBlocked}
+												checked={selectedTemplateId === definition.id}
+												disabled={definitionProviderBlocked && !definitionUnsupportedLifecycle}
 												onchange={() => {
-													if (!definitionProviderBlocked) {
+													if (!definitionProviderBlocked || definitionUnsupportedLifecycle) {
 														selectedTemplateId = definition.id;
 													}
 												}}
@@ -6348,6 +6439,11 @@
 															{providerPolicyRouteLabel(definitionProviderPolicy)}
 														</Badge>
 													</span>
+													{#if definitionUnsupportedLifecycle}
+														<Badge variant="warning">
+															Unsupported on {currentFormAdapterLabel}
+														</Badge>
+													{/if}
 												</div>
 												<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 												<p class="sf:text-xs sf:text-slate-500">
@@ -6611,6 +6707,117 @@
 									</div>
 								{/if}
 							</div>
+						{/if}
+
+						{#if createKind === 'template' && selectedDefinition && selectedUnsupportedLifecycle}
+							<section
+								class="sf:min-w-0 sf:space-y-3 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-3"
+								aria-label="Action compatibility"
+								data-testid="action-compatibility-check"
+							>
+								<div
+									class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+								>
+									<div class="sf:min-w-0 sf:space-y-1">
+										<p class="sf:text-sm sf:font-semibold sf:text-amber-950">
+											Unsupported on {currentFormAdapterLabel}
+										</p>
+										<p class="sf:text-xs sf:text-amber-900">
+											Check the source contract without creating a mapping or contacting a provider.
+										</p>
+									</div>
+									<Button
+										type="button"
+										size="sm"
+										variant="secondary"
+										onclick={runCompatibilityCheck}
+										disabled={compatibilityCheckState === 'loading' ||
+											compatibilityCheckState === 'contract-rejected'}
+										data-testid="action-compatibility-check-button"
+									>
+										{compatibilityCheckState === 'loading'
+											? 'Checking compatibility…'
+											: compatibilityCheckState === 'initial'
+												? 'Check compatibility'
+												: compatibilityCheckState === 'contract-rejected'
+													? 'Compatibility checked'
+													: 'Retry check'}
+									</Button>
+								</div>
+
+								{#if compatibilityCheckState === 'contract-rejected' && compatibilityEvidence?.policy_decision === 'rejected'}
+									{@const rejectedCompatibilityEvidence = compatibilityEvidence}
+									<div class="sf:min-w-0 sf:space-y-2" data-testid="action-compatibility-rejected">
+										<h3
+											class="sf:text-sm sf:font-semibold sf:text-amber-950 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500"
+											tabindex="-1"
+											bind:this={compatibilityResultHeading}
+										>
+											{rejectedCompatibilityEvidence.reason}
+										</h3>
+										<p class="sf:text-sm sf:text-amber-950">
+											No mapping was created and no provider request ran.
+										</p>
+										<details class="sf:min-w-0 sf:text-xs sf:text-slate-700">
+											<summary class="sf:cursor-pointer sf:font-medium">Technical details</summary>
+											<div class="sf:mt-2 sf:min-w-0 sf:space-y-2">
+												<div class="sf:min-w-0 sf:rounded sf:bg-white sf:p-2">
+													<p class="sf:font-medium">Request trace ID</p>
+													<code class="sf:block sf:max-w-full sf:break-all"
+														>{rejectedCompatibilityEvidence.request_trace_id}</code
+													>
+													<Button
+														type="button"
+														size="sm"
+														variant="ghost"
+														onclick={() =>
+															copyCompatibilityIdentifier(
+																rejectedCompatibilityEvidence.request_trace_id,
+																'Request trace ID'
+															)}
+													>
+														Copy request trace ID
+													</Button>
+												</div>
+												<div class="sf:min-w-0 sf:rounded sf:bg-white sf:p-2">
+													<p class="sf:font-medium">Source rejection ID</p>
+													<code class="sf:block sf:max-w-full sf:break-all"
+														>{rejectedCompatibilityEvidence.rejection_trace_id}</code
+													>
+													<Button
+														type="button"
+														size="sm"
+														variant="ghost"
+														onclick={() =>
+															copyCompatibilityIdentifier(
+																rejectedCompatibilityEvidence.rejection_trace_id,
+																'Source rejection ID'
+															)}
+													>
+														Copy source rejection ID
+													</Button>
+												</div>
+											</div>
+										</details>
+									</div>
+								{:else if compatibilityCheckState === 'system-error'}
+									<div
+										class="sf:min-w-0 sf:space-y-2"
+										data-testid="action-compatibility-system-error"
+									>
+										<h3
+											class="sf:text-sm sf:font-semibold sf:text-red-800 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500"
+											tabindex="-1"
+											bind:this={compatibilityResultHeading}
+										>
+											Compatibility check unavailable
+										</h3>
+										<p class="sf:text-sm sf:text-red-800">
+											No mapping was created and no provider request ran.
+										</p>
+									</div>
+								{/if}
+							</section>
 						{/if}
 
 						<div>
