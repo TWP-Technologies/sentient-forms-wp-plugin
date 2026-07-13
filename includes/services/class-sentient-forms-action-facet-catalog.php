@@ -206,7 +206,7 @@ final class Sentient_Forms_Action_Facet_Catalog
             }
 
             $raw_byte_limit = $field_contract['max_length'] * self::MAX_UTF8_BYTES_PER_CHARACTER;
-            $raw_value = substr( (string) $provided_untrusted[ $field ], 0, $raw_byte_limit );
+            $raw_value = mb_strcut( (string) $provided_untrusted[ $field ], 0, $raw_byte_limit, 'UTF-8' );
             $untrusted[ $field ] = mb_substr(
                 sanitize_textarea_field( $raw_value ),
                 0,

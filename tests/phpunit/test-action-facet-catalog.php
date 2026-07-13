@@ -127,6 +127,7 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
     {
         $catalog = new Sentient_Forms_Action_Facet_Catalog();
         $allowed = str_repeat( 'a', 800 );
+        $overflow = 'OVERFLOW_MUST_NOT_REACH_THE_PROMPT';
 
         $prompt = $catalog->render_prompt(
             'spam_guidance_rationale_generation',
@@ -139,13 +140,16 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
                     'existing_guidance' => [ 'legitimate' => [], 'spam' => [] ],
                 ],
                 'untrusted_context' => [
-                    'selected_entry_excerpt' => str_repeat( 'a', 3200 ) . "\xFF",
+                    'selected_entry_excerpt' => str_repeat( 'a', 3199 ) . 'é' . $overflow,
                 ],
             ]
         );
 
         $this->assertIsString( $prompt, is_wp_error( $prompt ) ? $prompt->get_error_message() : '' );
+        $this->assertTrue( mb_check_encoding( $prompt, 'UTF-8' ) );
         $this->assertStringContainsString( $allowed, $prompt );
+        $this->assertStringNotContainsString( 'é', $prompt );
+        $this->assertStringNotContainsString( $overflow, $prompt );
     }
 
     public function test_catalog_fails_closed_for_an_excessive_declared_untrusted_context_bound(): void
