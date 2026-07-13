@@ -4,6 +4,7 @@
   "title": "Sentient Managed Checkout Complete Request",
   "type": "object",
   "required": [
+    "activation_token",
     "site_url",
     "local_site_identifier"
   ],

@@ -15,7 +15,11 @@
   "properties": {
     "plan_code": {
       "type": "string",
-      "minLength": 1,
+      "enum": [
+        "starter",
+        "pro",
+        "business"
+      ],
       "description": "Normalized by CPS to starter, pro, or business."
     },
     "billing_interval": {

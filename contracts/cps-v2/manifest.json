@@ -120,6 +120,9 @@
     {
       "method": "GET",
       "path": "/v2/metering/summary",
+      "request_transport": {
+        "kind": "query_parameters"
+      },
       "schemas": {
         "request": "metering/summary-query.schema.json",
         "success": "metering/summary-success.schema.json",
