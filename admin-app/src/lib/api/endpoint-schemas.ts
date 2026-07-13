@@ -644,7 +644,7 @@ const licenseActivationRequestSchema = z.strictObject({
 const managedCheckoutCompleteRequestSchema = z.strictObject({
 	checkout_intent_id: nullableTextSchema.optional(),
 	checkout_session_id: nullableTextSchema.optional(),
-	activation_token: nullableTextSchema.optional()
+	activation_token: z.string().min(1)
 });
 const managedCheckoutCompleteSchema = z.object({
 	activation_ready: z.boolean(),

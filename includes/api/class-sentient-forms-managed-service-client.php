@@ -587,13 +587,22 @@ class Sentient_Forms_Managed_Service_Client
         $normalized['site_url']              = $site_url;
         $normalized['local_site_identifier'] = sanitize_text_field( (string) $payload['local_site_identifier'] );
 
-        foreach ( [ 'checkout_intent_id', 'checkout_session_id', 'activation_token' ] as $optional_text )
+        foreach ( [ 'checkout_intent_id', 'checkout_session_id' ] as $optional_text )
         {
             if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
             {
                 $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
             }
         }
+
+        if ( ! isset( $payload['activation_token'] ) || ! is_scalar( $payload['activation_token'] ) || '' === trim( (string) $payload['activation_token'] ) )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_missing_activation_token',
+                __( 'Managed checkout completion requires the activation token from the checkout return URL.', 'sentient-forms' )
+            );
+        }
+        $normalized['activation_token'] = sanitize_text_field( (string) $payload['activation_token'] );
 
         if ( empty( $normalized['checkout_intent_id'] ) && empty( $normalized['checkout_session_id'] ) )
         {

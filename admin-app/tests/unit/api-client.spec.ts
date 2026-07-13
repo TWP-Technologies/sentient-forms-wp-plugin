@@ -2606,6 +2606,19 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('rejects managed checkout completion without an activation token before fetch', async () => {
+		await expect(
+			client.completeManagedCheckout(
+				{
+					checkout_intent_id: 'mci_123',
+					checkout_session_id: 'cs_test_123'
+				} as never
+			)
+		).rejects.toThrow();
+
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
 	it('reads cached OpenRouter model metadata from the local provider endpoint', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

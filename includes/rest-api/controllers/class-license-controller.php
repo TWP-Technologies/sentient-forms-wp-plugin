@@ -196,7 +196,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'sanitize_callback' => 'sanitize_text_field',
                         ],
                         'activation_token' => [
-                            'required'          => false,
+                            'required'          => true,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_text_field',
                         ],

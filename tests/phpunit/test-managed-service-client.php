@@ -332,6 +332,35 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'token-123', $payload['activation_token'] );
     }
 
+    public function test_managed_checkout_complete_requires_activation_token_before_http(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return self::success_response( [ 'activation_ready' => false ] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->complete_managed_checkout(
+            [
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+                'checkout_intent_id'    => 'mci_123',
+                'checkout_session_id'   => 'cs_test_123',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_checkout_missing_activation_token', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
     public function test_portal_session_posts_to_v2_billing_route(): void
     {
         $calls = [];

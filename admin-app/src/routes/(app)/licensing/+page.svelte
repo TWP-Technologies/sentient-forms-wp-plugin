@@ -54,7 +54,7 @@
 	interface ManagedCheckoutReference {
 		checkoutIntentId?: string | null;
 		checkoutSessionId?: string | null;
-		activationToken?: string | null;
+		activationToken: string;
 	}
 
 	type BillingActionContext = 'billing_state' | 'checkout' | 'portal';
@@ -576,17 +576,19 @@
 			return null;
 		}
 
-		const reference = {
-			checkoutIntentId: params.get('checkout_intent_id'),
-			checkoutSessionId: params.get('checkout_session_id') ?? params.get('stripe_session_id'),
-			activationToken: params.get('activation_token')
-		};
+		const activationToken = params.get('activation_token');
+		const checkoutIntentId = params.get('checkout_intent_id');
+		const checkoutSessionId = params.get('checkout_session_id') ?? params.get('stripe_session_id');
 
-		if (!reference.checkoutIntentId && !reference.checkoutSessionId) {
+		if ((!checkoutIntentId && !checkoutSessionId) || !activationToken) {
 			return null;
 		}
 
-		return reference;
+		return {
+			checkoutIntentId,
+			checkoutSessionId,
+			activationToken
+		};
 	}
 
 	function clearManagedCheckoutReturnParams(): void {
