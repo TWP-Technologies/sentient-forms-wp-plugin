@@ -9,7 +9,7 @@
   "account/sites-activate-success.schema.json": "f6dc442070e45b32c6a9453e50a86b71a4acebbe9f099d0616e0343446d0e523",
   "account/sites-deactivate-request.schema.json": "6acd3e374715bc8ace051c66400bb918e1da2624b6c363f73209e0cf62626ffc",
   "account/sites-deactivate-success.schema.json": "de5d10e805e8e8975d4e0fe1d3d72da7cb4c9b655e0e30fe3992baf45a508d6c",
-  "billing/checkout-session-request.schema.json": "5a691c759f009159ddbdd7efcb8cb49d627af6ed1491013ba9de8d61f54aa302",
+  "billing/checkout-session-request.schema.json": "ac2a53916f62de58933dc714c281b95a9cec37512243c7a09abeb491af96ff71",
   "billing/checkout-session-success.schema.json": "6a6bf682821d9384f76bb8a895e4c8fd2b4f9f60c3acc94fcd1b73cd75e26350",
   "billing/portal-session-request.schema.json": "36a95bafaf14d17c83b768681fd106d6531ae1faf3cdd3d6852bfa28794faacb",
   "billing/portal-session-success.schema.json": "13a23efb9355560157c92e0e2c3a3d9aca7af2acea2c2a990a06703ac416d6c0",
