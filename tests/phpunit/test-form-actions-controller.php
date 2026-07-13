@@ -5082,6 +5082,75 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'unknown', $forms_by_id[2]['execution_status']['status'] ?? null );
     }
 
+    public function test_forms_overview_canonicalizes_persisted_model_selection_wire_shapes(): void
+    {
+        GFAPI::$forms = [
+            793 => [
+                'id'        => 793,
+                'title'     => 'Exact fixture',
+                'is_active' => true,
+            ],
+        ];
+
+        update_option(
+            'sentient_forms_actions_gravity_forms_793',
+            [
+                'canonical_empty_backup' => [
+                    'local_mapping_id'           => 'canonical_empty_backup',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'backup'        => '',
+                            'is_preset'     => true,
+                            'provider'      => 'openrouter',
+                            'credential_id' => 42,
+                        ],
+                    ],
+                ],
+                'legacy_model_key'        => [
+                    'local_mapping_id'           => 'legacy_model_key',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'model_selection' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openai/gpt-oss-20b:free',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+
+        $response = $this->controller->get_forms_overview( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $wire = json_decode( wp_json_encode( $response->get_data() ), true );
+        $this->assertIsArray( $wire );
+        $actions = array_column( $wire['forms'][0]['actions'] ?? [], null, 'local_mapping_id' );
+
+        $canonical = $actions['canonical_empty_backup']['settings']['model_selection'] ?? null;
+        $this->assertIsArray( $canonical );
+        $this->assertSame( 'sf_default', $canonical['primary'] ?? null );
+        $this->assertTrue( $canonical['is_preset'] ?? false );
+        $this->assertNull( $canonical['backup'] ?? null );
+
+        $legacy = $actions['legacy_model_key']['settings']['model_selection'] ?? null;
+        $this->assertIsArray( $legacy );
+        $this->assertSame( 'openai/gpt-oss-20b:free', $legacy['primary'] ?? null );
+        $this->assertFalse( $legacy['is_preset'] ?? true );
+        $this->assertSame( 'openrouter', $legacy['provider'] ?? null );
+        $this->assertArrayNotHasKey( 'model', $legacy );
+    }
+
     public function test_contact_form_7_forms_overview_serializes_empty_input_mapping_as_object(): void
     {
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );

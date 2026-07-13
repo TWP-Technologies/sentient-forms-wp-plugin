@@ -534,7 +534,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
             'description'               => isset( $definition['description'] ) && is_scalar( $definition['description'] )
                 ? sanitize_text_field( (string) $definition['description'] )
                 : null,
-            'prompt_overrides'          => $prompt_overrides,
+            'prompt_overrides'          => [] === $prompt_overrides ? (object) [] : $prompt_overrides,
             'model_hint'                => isset( $row['model_selection_json']['model'] ) && is_scalar( $row['model_selection_json']['model'] )
                 ? sanitize_text_field( (string) $row['model_selection_json']['model'] )
                 : null,

@@ -3730,11 +3730,157 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 continue;
             }
 
+            if ( isset( $action['settings'] ) && is_array( $action['settings'] ) && array_key_exists( 'model_selection', $action['settings'] ) )
+            {
+                $model_selection = $this->normalize_model_selection_for_response( $action['settings']['model_selection'] );
+                if ( null === $model_selection )
+                {
+                    unset( $action['settings']['model_selection'] );
+                }
+                else
+                {
+                    $action['settings']['model_selection'] = $model_selection;
+                }
+            }
+
             $action['source'] = $action['source'] ?? 'local';
             $normalized[]     = $action;
         }
 
         return $normalized;
+    }
+
+    /**
+     * Canonicalize persisted model selections for strict public response contracts.
+     *
+     * Older local mappings used `model` instead of `primary`, and canonical writes may
+     * retain an empty backup string. Normalize those storage shapes without mutating the
+     * saved mapping or weakening request validation.
+     *
+     * @param mixed $value Persisted model selection.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function normalize_model_selection_for_response( mixed $value ): ?array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return null;
+        }
+
+        $primary_source = $value['primary'] ?? $value['model'] ?? null;
+        $primary        = is_scalar( $primary_source ) ? trim( sanitize_text_field( (string) $primary_source ) ) : '';
+        if ( '' === $primary )
+        {
+            return null;
+        }
+
+        $backup = null;
+        if ( isset( $value['backup'] ) && is_scalar( $value['backup'] ) )
+        {
+            $candidate = trim( sanitize_text_field( (string) $value['backup'] ) );
+            $backup    = '' !== $candidate ? $candidate : null;
+        }
+
+        $selection = [
+            'primary'   => $primary,
+            'backup'    => $backup,
+            'is_preset' => array_key_exists( 'is_preset', $value ) ? (bool) $value['is_preset'] : false,
+        ];
+
+        if ( isset( $value['provider'] ) && is_scalar( $value['provider'] ) )
+        {
+            $provider = sanitize_key( (string) $value['provider'] );
+            if ( in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) )
+            {
+                $selection['provider'] = $provider;
+            }
+        }
+
+        if ( isset( $value['credential_id'] ) && is_scalar( $value['credential_id'] ) )
+        {
+            $credential_id = absint( $value['credential_id'] );
+            if ( $credential_id > 0 )
+            {
+                $selection['credential_id'] = $credential_id;
+            }
+        }
+
+        foreach ( [ 'require_zdr', 'managed_zdr_required' ] as $boolean_key )
+        {
+            if ( array_key_exists( $boolean_key, $value ) )
+            {
+                $selection[ $boolean_key ] = rest_sanitize_boolean( $value[ $boolean_key ] );
+            }
+        }
+
+        $reasoning = $this->normalize_model_reasoning_for_response( $value['reasoning'] ?? null );
+        if ( null !== $reasoning )
+        {
+            $selection['reasoning'] = $reasoning;
+        }
+
+        if ( is_array( $value['tools'] ?? null ) )
+        {
+            $tools = $value['tools'];
+            if ( [] === $tools )
+            {
+                $selection['tools'] = (object) [];
+            }
+            elseif ( ! array_is_list( $tools ) )
+            {
+                $selection['tools'] = $tools;
+            }
+        }
+
+        return $selection;
+    }
+
+    /**
+     * @return string|array<string, mixed>|null
+     */
+    private function normalize_model_reasoning_for_response( mixed $value ): string | array | null
+    {
+        $allowed_efforts = [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ];
+        if ( is_scalar( $value ) )
+        {
+            $effort = sanitize_key( (string) $value );
+            return in_array( $effort, $allowed_efforts, true ) ? $effort : null;
+        }
+
+        if ( ! is_array( $value ) || array_is_list( $value ) )
+        {
+            return null;
+        }
+
+        $reasoning = [];
+        if ( isset( $value['effort'] ) && is_scalar( $value['effort'] ) )
+        {
+            $effort = sanitize_key( (string) $value['effort'] );
+            if ( in_array( $effort, $allowed_efforts, true ) )
+            {
+                $reasoning['effort'] = $effort;
+            }
+        }
+
+        if ( isset( $value['max_tokens'] ) && is_scalar( $value['max_tokens'] ) )
+        {
+            $max_tokens = absint( $value['max_tokens'] );
+            if ( $max_tokens > 0 )
+            {
+                $reasoning['max_tokens'] = $max_tokens;
+            }
+        }
+
+        foreach ( [ 'exclude', 'enabled' ] as $boolean_key )
+        {
+            if ( array_key_exists( $boolean_key, $value ) )
+            {
+                $reasoning[ $boolean_key ] = rest_sanitize_boolean( $value[ $boolean_key ] );
+            }
+        }
+
+        return [] !== $reasoning ? $reasoning : null;
     }
     /**
      * CA-MAP-001: Retrieve form fields for FieldSelector component.

@@ -30,6 +30,42 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'base_credit_cost', $args );
     }
 
+    public function test_list_serializes_empty_prompt_overrides_as_object(): void
+    {
+        $create = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $create->set_param( 'code', 'empty-prompt-map-' . substr( md5( (string) wp_rand() ), 0, 8 ) );
+        $create->set_param( 'display_name', 'Empty Prompt Map' );
+        $create->set_param( 'action_kind', 'custom_definition' );
+        $create->set_param( 'definition_version', 1 );
+        $create->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+        $create->set_param( 'definition', [ 'prompt_template' => 'Summarize {{entry}}.' ] );
+
+        $created_response = $this->controller->create_custom_action( $create );
+        $this->assertInstanceOf( WP_REST_Response::class, $created_response );
+        $created_id = (string) ( $created_response->get_data()['action']['id'] ?? '' );
+        $this->assertNotSame( '', $created_id );
+
+        $list = new WP_REST_Request( 'GET', '/sentient-forms/v1/custom-actions' );
+        $list->set_param( 'status', 'active' );
+        $response = $this->controller->list_custom_actions( $list );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $wire = json_decode( wp_json_encode( $response->get_data() ) );
+        $this->assertIsObject( $wire );
+        $matched = null;
+        foreach ( $wire->actions ?? [] as $action )
+        {
+            if ( $created_id === (string) ( $action->id ?? '' ) )
+            {
+                $matched = $action;
+                break;
+            }
+        }
+
+        $this->assertIsObject( $matched );
+        $this->assertIsObject( $matched->prompt_overrides ?? null );
+    }
+
     public function test_build_create_payload_ignores_base_credit_cost_input(): void
     {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
