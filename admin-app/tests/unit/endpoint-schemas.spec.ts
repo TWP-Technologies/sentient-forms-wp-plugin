@@ -394,20 +394,70 @@ describe('admin endpoint schema registry', () => {
 		expect(wrongManagedShape.success).toBe(false);
 	});
 
-	it('requires the scalar tier shape returned by the PHP license controller', () => {
-		const result = endpointRegistry['license.read'].response.safeParse({
+	it('accepts the tier summary object returned by the PHP license controller', () => {
+		const tier = { code: 'pro', display_name: 'Pro' };
+		const result = endpointRegistry['license.read'].response.parse({
 			license_key_masked: 'LIC-****',
 			status: 'active',
 			proxy_key_present: true,
 			expires_at: null,
 			last_synced: null,
-			tier: { code: 'pro', display_name: 'Pro' },
+			tier,
 			license_id: 'lic-1',
 			site_id: 'site-1',
 			site_url: 'https://example.test'
 		});
 
-		expect(result.success).toBe(false);
+		expect(result.tier).toEqual(tier);
+	});
+
+	it('normalizes legacy input mappings and empty PHP settings maps in form overviews', () => {
+		const executionStatus = {
+			status: 'unknown',
+			message: null,
+			entry_id: null,
+			last_error_code: null
+		};
+		const action = {
+			local_mapping_id: 'local_first_49',
+			central_action_id: 'entry_summary_v1',
+			action_type_indicator: 'local_first',
+			trigger_hooks: ['after_submission'],
+			settings: {
+				input_mapping: { name: '1', email: 2, comments: '3' }
+			}
+		};
+		const result = endpointRegistry['forms.overview'].response.parse({
+			form_source: 'gravity_forms',
+			forms: [
+				{
+					id: 351,
+					title: 'Imported summary',
+					adapter: 'gravity_forms',
+					actions: [action],
+					action_count: 1,
+					enabled_action_count: 1,
+					execution_status: executionStatus
+				},
+				{
+					id: 710,
+					title: 'Empty settings',
+					adapter: 'gravity_forms',
+					actions: [{ ...action, local_mapping_id: 'legacy-empty', settings: [] }],
+					action_count: 1,
+					enabled_action_count: 1,
+					execution_status: executionStatus
+				}
+			],
+			generated_at: '2030-01-05T10:00:00Z'
+		});
+
+		expect(result.forms[0].actions[0].settings?.input_mapping).toEqual({
+			mode: 'selected',
+			field_ids: ['1', '2', '3'],
+			include_metadata: false
+		});
+		expect(result.forms[1].actions[0].settings).toEqual({});
 	});
 
 	it('retires remote telemetry delivery state at the admin boundary', () => {

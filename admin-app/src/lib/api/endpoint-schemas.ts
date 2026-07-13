@@ -631,7 +631,7 @@ const licenseInfoSchema = z.object({
 	proxy_key_present: z.boolean(),
 	expires_at: nullableTextSchema,
 	last_synced: nullableTextSchema,
-	tier: nullableTextSchema,
+	tier: tierValueSchema.nullable(),
 	license_id: nullableTextSchema,
 	site_id: nullableTextSchema,
 	site_url: z.string()
@@ -1534,49 +1534,59 @@ const postExecutionActionBoundarySchema = z.object({
 	method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
 	headers: z.record(z.string(), z.string()).optional()
 });
-const formActionSettingsBoundarySchema = z.object({
-	input_mapping: z
-		.object({
-			mode: z.enum(['all', 'selected', 'exclude']),
-			field_ids: z.array(z.string()).optional(),
-			include_metadata: z.boolean().optional()
-		})
-		.optional(),
-	attachment_mapping: z
-		.object({
-			mode: z.enum(['none', 'gf_upload', 'media_library', 'mixed']),
-			gf_upload_field_ids: z.array(z.string()).optional(),
-			media_ids: z.array(z.number().int()).optional(),
-			max_files: z.number().int().optional()
-		})
-		.optional(),
-	dependency_ids: z.array(z.string()).optional(),
-	trigger_sources: z
-		.record(
-			z.string(),
-			z.object({ type: z.enum(['hook_root', 'mapping']), mapping_id: z.string().optional() })
-		)
-		.optional(),
-	skip_on_upstream_spam: z.boolean().optional(),
-	suppress_notifications_on_spam: z.boolean().optional(),
-	suppress_webhooks_on_spam: z.boolean().optional(),
-	skip_downstream_on_spam: z.boolean().optional(),
-	spam_result_display_mode: z.string().optional(),
-	spam_indicators_display: z.string().optional(),
-	spam_positive_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
-	spam_negative_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
-	action_customization: z.string().optional(),
-	conditions: conditionsBoundarySchema.optional(),
-	prompt_overrides: jsonRecordValueSchema.optional(),
-	post_execution_actions: z.array(postExecutionActionBoundarySchema).optional(),
-	execution_mode: z.enum(['validation', 'after_submission', 'real_time']).optional(),
-	realtime_settings: realtimeSettingsBoundarySchema.optional(),
-	batch_settings: z
-		.object({ enabled: z.boolean(), delay_seconds: z.number(), max_wait_seconds: z.number() })
-		.optional(),
-	linked_action_status: z.string().optional(),
-	repair_state: z.string().optional()
+const canonicalInputMappingBoundarySchema = z.object({
+	mode: z.enum(['all', 'selected', 'exclude']),
+	field_ids: z.array(z.string()).optional(),
+	include_metadata: z.boolean().optional()
 });
+const legacyInputMappingBoundarySchema = phpMap(
+	z.record(z.string(), z.union([z.string(), z.number()]))
+).transform((mapping) => ({
+	mode: 'selected' as const,
+	field_ids: [...new Set(Object.values(mapping).map(String))],
+	include_metadata: false
+}));
+const formActionSettingsBoundarySchema = phpMap(
+	z.object({
+		input_mapping: z
+			.union([canonicalInputMappingBoundarySchema, legacyInputMappingBoundarySchema])
+			.optional(),
+		attachment_mapping: z
+			.object({
+				mode: z.enum(['none', 'gf_upload', 'media_library', 'mixed']),
+				gf_upload_field_ids: z.array(z.string()).optional(),
+				media_ids: z.array(z.number().int()).optional(),
+				max_files: z.number().int().optional()
+			})
+			.optional(),
+		dependency_ids: z.array(z.string()).optional(),
+		trigger_sources: z
+			.record(
+				z.string(),
+				z.object({ type: z.enum(['hook_root', 'mapping']), mapping_id: z.string().optional() })
+			)
+			.optional(),
+		skip_on_upstream_spam: z.boolean().optional(),
+		suppress_notifications_on_spam: z.boolean().optional(),
+		suppress_webhooks_on_spam: z.boolean().optional(),
+		skip_downstream_on_spam: z.boolean().optional(),
+		spam_result_display_mode: z.string().optional(),
+		spam_indicators_display: z.string().optional(),
+		spam_positive_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
+		spam_negative_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
+		action_customization: z.string().optional(),
+		conditions: conditionsBoundarySchema.optional(),
+		prompt_overrides: jsonRecordValueSchema.optional(),
+		post_execution_actions: z.array(postExecutionActionBoundarySchema).optional(),
+		execution_mode: z.enum(['validation', 'after_submission', 'real_time']).optional(),
+		realtime_settings: realtimeSettingsBoundarySchema.optional(),
+		batch_settings: z
+			.object({ enabled: z.boolean(), delay_seconds: z.number(), max_wait_seconds: z.number() })
+			.optional(),
+		linked_action_status: z.string().optional(),
+		repair_state: z.string().optional()
+	})
+);
 const formActionLinkageBoundarySchema = z.object({
 	local_mapping_id: z.string(),
 	central_action_id: z.string(),

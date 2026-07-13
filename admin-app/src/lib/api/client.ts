@@ -686,7 +686,7 @@ export class SentientFormsApiClient {
 			success: true,
 			message: 'License activated successfully.',
 			status: data.status,
-			tier: data.tier ?? undefined,
+			tier: typeof data.tier === 'string' ? data.tier : data.tier?.code,
 			expiryDate: data.expires_at,
 			licenseId: data.license_id ?? undefined,
 			siteId: data.site_id ?? undefined

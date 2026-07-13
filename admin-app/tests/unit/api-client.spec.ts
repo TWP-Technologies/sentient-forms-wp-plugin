@@ -1950,7 +1950,7 @@ describe('SentientFormsApiClient', () => {
 					status: 'active',
 					license_key_masked: 'LIC-****',
 					proxy_key_present: true,
-					tier: 'starter',
+					tier: { code: 'starter', display_name: 'Starter' },
 					expires_at: '2026-01-01',
 					last_synced: '2025-12-01',
 					license_id: 'lic-1',
