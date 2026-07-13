@@ -43,14 +43,25 @@
               "site_url",
               "local_site_identifier",
               "tier"
-            ]
+            ],
+            "properties": {
+              "pending_reason": false
+            }
           },
           "else": {
             "required": [
               "pending_reason",
               "site_url",
               "local_site_identifier"
-            ]
+            ],
+            "properties": {
+              "license_key": false,
+              "proxy_api_key": false,
+              "license_id": false,
+              "site_id": false,
+              "tier": false,
+              "expiry_date": false
+            }
           }
         }
       ],

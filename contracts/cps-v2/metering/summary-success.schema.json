@@ -30,15 +30,18 @@
         },
         "execution_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "All managed metering rows, including executions that are still running."
         },
         "succeeded_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The terminal succeeded subset of execution_count."
         },
         "failed_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "The terminal failed subset of execution_count."
         },
         "token_usage": {
           "type": "object",
@@ -51,15 +54,18 @@
           "properties": {
             "input_tokens": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Provider-reported input token component."
             },
             "output_tokens": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Provider-reported output token component."
             },
             "total_tokens": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Provider-authoritative aggregate, which may include provider-specific token categories not exposed as separate components."
             }
           }
         }

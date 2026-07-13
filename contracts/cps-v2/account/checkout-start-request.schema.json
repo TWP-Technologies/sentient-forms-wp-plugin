@@ -20,6 +20,10 @@
     },
     "billing_interval": {
       "type": "string",
+      "enum": [
+        "monthly",
+        "month"
+      ],
       "description": "CPS currently accepts only the monthly interval and its month alias."
     },
     "site_url": {

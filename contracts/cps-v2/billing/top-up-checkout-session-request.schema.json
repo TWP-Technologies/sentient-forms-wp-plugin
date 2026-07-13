@@ -12,6 +12,20 @@
     "pack_code": {
       "type": "string",
       "minLength": 1,
+      "enum": [
+        "top_up_small",
+        "small",
+        "pack_1000",
+        "1000",
+        "top_up_medium",
+        "medium",
+        "pack_5000",
+        "5000",
+        "top_up_large",
+        "large",
+        "pack_10000",
+        "10000"
+      ],
       "description": "CPS accepts canonical top-up pack codes and their documented numeric aliases."
     },
     "success_url": {
