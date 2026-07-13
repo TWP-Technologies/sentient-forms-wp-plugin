@@ -14,6 +14,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'             => false,
                 'managed_capacity_available' => false,
                 'direct_ready'              => true,
+                'policy_preflight_complete' => true,
             ]
         );
 
@@ -41,6 +42,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                     'managed_ready'              => true,
                     'managed_capacity_available' => true,
                     'direct_ready'               => true,
+                    'policy_preflight_complete' => true,
                 ]
             )
         );
@@ -57,6 +59,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                     'managed_ready'              => true,
                     'managed_capacity_available' => false,
                     'direct_ready'               => true,
+                    'policy_preflight_complete' => true,
                 ]
             )
         );
@@ -76,6 +79,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                     'managed_ready'              => true,
                     'managed_capacity_available' => true,
                     'direct_ready'               => true,
+                    'policy_preflight_complete' => true,
                 ]
             )
         );
@@ -87,6 +91,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => false,
                 'direct_ready'               => false,
+                'policy_preflight_complete' => true,
             ]
         );
         $this->assertWPError( $unavailable );
@@ -108,6 +113,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => true,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ]
         );
         $this->assertWPError( $inactive );
@@ -120,6 +126,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => false,
                 'managed_capacity_available' => true,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ]
         );
         $this->assertWPError( $not_ready );
@@ -132,6 +139,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => false,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ]
         );
         $this->assertWPError( $no_capacity );
@@ -149,6 +157,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                     'managed_ready'              => true,
                     'managed_capacity_available' => true,
                     'direct_ready'               => false,
+                    'policy_preflight_complete' => true,
                 ]
             )
         );
@@ -162,6 +171,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
             'managed_ready'              => false,
             'managed_capacity_available' => false,
             'direct_ready'               => true,
+            'policy_preflight_complete' => true,
         ];
 
         $invalid_policy = $router->decide(
@@ -200,5 +210,30 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
         $this->assertWPError( $non_boolean_state_decision );
         $this->assertSame( 'sentient_forms_provider_route_state_invalid', $non_boolean_state_decision->get_error_code() );
         $this->assertSame( 'managed_ready', $non_boolean_state_decision->get_error_data()['field'] ?? null );
+    }
+
+    public function test_router_rejects_provider_selection_without_completed_policy_preflight(): void
+    {
+        $router = new Sentient_Forms_Provider_Route_Decision();
+        $policy = [
+            'feature_access'        => 'unrestricted',
+            'execution_requirement' => 'provider_flexible',
+        ];
+        $state = [
+            'subscription_active'        => false,
+            'managed_ready'              => false,
+            'managed_capacity_available' => false,
+            'direct_ready'               => true,
+        ];
+
+        $missing = $router->decide( $policy, $state );
+        $this->assertWPError( $missing );
+        $this->assertSame( 'sentient_forms_provider_route_state_invalid', $missing->get_error_code() );
+        $this->assertSame( 'policy_preflight_complete', $missing->get_error_data()['field'] ?? null );
+
+        $state['policy_preflight_complete'] = false;
+        $incomplete = $router->decide( $policy, $state );
+        $this->assertWPError( $incomplete );
+        $this->assertSame( 'sentient_forms_provider_route_policy_not_preflighted', $incomplete->get_error_code() );
     }
 }

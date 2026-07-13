@@ -32,6 +32,11 @@ final class Sentient_Forms_Action_Policy_Resolver
         $this->catalog = $this->catalog ?? new Sentient_Forms_Action_Facet_Catalog();
     }
 
+    public function facet_catalog(): Sentient_Forms_Action_Facet_Catalog
+    {
+        return $this->catalog;
+    }
+
     /**
      * Resolve one executable Action definition and its explicitly enabled facets.
      *

@@ -989,6 +989,148 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'selected_by_user_id', $prompt );
     }
 
+    public function test_rationale_generation_consumes_the_catalog_owned_facet_execution_contract(): void
+    {
+        $this->seed_active_managed_entitlement();
+        $this->create_managed_proxy_credential();
+
+        $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
+        $this->assertIsArray( $definition );
+        $definition['execution_contract']['model'] = 'test/catalog-owned-model';
+        $definition['execution_contract']['accounting_action_code'] = 'catalog_owned_rationale_v2';
+        $definition['execution_contract']['prompt']['task'] = 'Catalog-owned prompt sentinel.';
+        $definition['execution_contract']['output_schema']['properties']['rationale']['maxLength'] = 731;
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [ 'spam_guidance_rationale_generation' => $definition ]
+        );
+
+        $captured_payload = null;
+        add_filter(
+            'sentient_forms_spam_guidance_billing_state',
+            fn (): array => $this->active_subscription_billing_state( 25 )
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_managed_generation_response',
+            function ( $response, array $payload ) use ( &$captured_payload ): array {
+                $captured_payload = $payload;
+                return [ 'output' => [ 'text' => '{"rationale":"Catalog-owned execution contract was used."}' ] ];
+            },
+            10,
+            2
+        );
+
+        $service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
+            null,
+            null,
+            null,
+            null,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog ),
+            new Sentient_Forms_Provider_Route_Decision()
+        );
+        $result = $service->generate( $this->rationale_context( 'ham', 'Message: Please quote a warranty repair.' ) );
+
+        $this->assertIsArray( $result, is_wp_error( $result ) ? $result->get_error_message() : '' );
+        $this->assertSame( 'test/catalog-owned-model', $captured_payload['model'] ?? null );
+        $this->assertSame( 'catalog_owned_rationale_v2', $captured_payload['action_code'] ?? null );
+        $this->assertStringContainsString( 'Catalog-owned prompt sentinel.', (string) ( $captured_payload['prompt'] ?? '' ) );
+        $this->assertSame(
+            731,
+            $captured_payload['output_contract']['schema']['properties']['rationale']['maxLength'] ?? null
+        );
+    }
+
+    public function test_rationale_generation_fails_before_routing_when_metering_is_not_preflighted(): void
+    {
+        $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
+        $this->assertIsArray( $definition );
+        $definition['metering_class'] = 'secondary_preflight';
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [ 'spam_guidance_rationale_generation' => $definition ]
+        );
+        $provider_called = false;
+        add_filter(
+            'sentient_forms_spam_guidance_managed_generation_response',
+            function () use ( &$provider_called ): WP_Error {
+                $provider_called = true;
+                return new WP_Error( 'unexpected_managed', 'Provider routing must not run.' );
+            }
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_openrouter_generation_response',
+            function () use ( &$provider_called ): WP_Error {
+                $provider_called = true;
+                return new WP_Error( 'unexpected_openrouter', 'Provider routing must not run.' );
+            }
+        );
+
+        $service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
+            null,
+            null,
+            null,
+            null,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog ),
+            new Sentient_Forms_Provider_Route_Decision()
+        );
+        $result = $service->generate( $this->rationale_context( 'ham', 'Message: Please quote a warranty repair.' ) );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_spam_rationale_policy_preflight_failed', $result->get_error_code() );
+        $this->assertSame( 'metering_class', $result->get_error_data()['field'] ?? null );
+        $this->assertFalse( $provider_called );
+    }
+
+    public function test_rationale_generation_keeps_managed_capabilities_route_conditional_for_direct(): void
+    {
+        $this->seed_active_managed_entitlement();
+        $this->create_managed_proxy_credential();
+        $this->create_paid_openrouter_credential();
+
+        $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
+        $this->assertIsArray( $definition );
+        $definition['required_managed_capabilities'] = [ 'file_streaming' ];
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [ 'spam_guidance_rationale_generation' => $definition ]
+        );
+        $managed_called = false;
+        add_filter(
+            'sentient_forms_spam_guidance_billing_state',
+            fn (): array => $this->active_subscription_billing_state( 25 )
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_managed_generation_response',
+            function () use ( &$managed_called ): WP_Error {
+                $managed_called = true;
+                return new WP_Error( 'unexpected_managed', 'Unsupported managed capabilities must not be routed.' );
+            }
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_openrouter_generation_response',
+            static fn (): array => [
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => '{"rationale":"Direct remains eligible for provider-flexible execution."}',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
+            null,
+            null,
+            null,
+            null,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog ),
+            new Sentient_Forms_Provider_Route_Decision()
+        );
+        $result = $service->generate( $this->rationale_context( 'ham', 'Message: Please quote a warranty repair.' ) );
+
+        $this->assertIsArray( $result, is_wp_error( $result ) ? $result->get_error_message() : '' );
+        $this->assertSame( 'openrouter', $result['route'] ?? null );
+        $this->assertFalse( $managed_called );
+    }
+
     public function test_rationale_generation_accepts_real_v2_billing_state_shape(): void
     {
         $this->seed_active_managed_entitlement();
@@ -1141,18 +1283,13 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             }
         );
 
+        $managed_only_definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get(
+            'spam_guidance_rationale_generation'
+        );
+        $this->assertIsArray( $managed_only_definition );
+        $managed_only_definition['execution_requirement'] = 'managed_only';
         $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
-            [
-                'spam_guidance_rationale_generation' => [
-                    'code'                              => 'spam_guidance_rationale_generation',
-                    'feature_access'                    => 'active_subscription',
-                    'execution_requirement'             => 'managed_only',
-                    'required_form_source_capabilities' => [],
-                    'required_managed_capabilities'     => [],
-                    'lifecycle_restrictions'            => [],
-                    'metering_class'                    => 'standard',
-                ],
-            ]
+            [ 'spam_guidance_rationale_generation' => $managed_only_definition ]
         );
         $service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
             null,

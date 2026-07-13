@@ -16,7 +16,9 @@ final class Sentient_Forms_Provider_Route_Decision
      * Decide an execution provider without performing provider work.
      *
      * Runtime readiness values must already include route-specific consent,
-     * privacy, credential, and other eligibility checks.
+     * privacy, credential, and other eligibility checks. The caller must also
+     * attest that lifecycle, capability, and metering policy was preflighted
+     * by the module that owns that execution context.
      *
      * @param array<string, mixed> $effective_policy
      * @param array<string, mixed> $runtime_state
@@ -49,6 +51,7 @@ final class Sentient_Forms_Provider_Route_Decision
                 'managed_ready',
                 'managed_capacity_available',
                 'direct_ready',
+                'policy_preflight_complete',
             ] as $field
         )
         {
@@ -56,6 +59,16 @@ final class Sentient_Forms_Provider_Route_Decision
             {
                 return $this->invalid_input_error( 'state', $field );
             }
+        }
+
+        if ( ! $runtime_state['policy_preflight_complete'] )
+        {
+            return $this->error(
+                'sentient_forms_provider_route_policy_not_preflighted',
+                __( 'The Action policy must pass execution preflight before provider routing.', 'sentient-forms' ),
+                [],
+                500
+            );
         }
 
         if (
