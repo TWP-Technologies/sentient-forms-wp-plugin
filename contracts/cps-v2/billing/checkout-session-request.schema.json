@@ -4,29 +4,19 @@
   "title": "Sentient Billing Checkout Session Request",
   "type": "object",
   "required": [
+    "plan_code",
     "success_url",
     "cancel_url"
   ],
-  "anyOf": [
-    {
-      "required": [
-        "price_id"
-      ]
-    },
-    {
-      "required": [
-        "plan_code"
-      ]
-    }
-  ],
   "properties": {
-    "price_id": {
-      "type": "string",
-      "minLength": 1
-    },
+    "price_id": false,
     "plan_code": {
       "type": "string",
-      "minLength": 1
+      "enum": [
+        "starter",
+        "pro",
+        "business"
+      ]
     },
     "success_url": {
       "type": "string",

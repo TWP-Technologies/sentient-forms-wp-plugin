@@ -390,7 +390,7 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @return array<string, mixed>|WP_Error
      */
-    private function normalize_checkout_payload( array $payload ): array | WP_Error
+    private function normalize_checkout_payload( array $payload, bool $requires_plan = true ): array | WP_Error
     {
         $normalized = [];
 
@@ -417,7 +417,28 @@ class Sentient_Forms_Managed_Service_Client
             $normalized[ $required_url ] = $url;
         }
 
-        foreach ( [ 'price_id', 'plan_code', 'customer_email', 'customer_name' ] as $optional_text )
+        if ( $requires_plan )
+        {
+            if ( array_key_exists( 'price_id', $payload ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    __( 'Managed billing checkout does not accept client-selected Stripe price identifiers.', 'sentient-forms' )
+                );
+            }
+
+            if ( ! isset( $payload['plan_code'] ) || ! is_string( $payload['plan_code'] ) || ! in_array( $payload['plan_code'], [ 'starter', 'pro', 'business' ], true ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    __( 'Managed billing checkout requires a supported plan_code.', 'sentient-forms' )
+                );
+            }
+
+            $normalized['plan_code'] = $payload['plan_code'];
+        }
+
+        foreach ( [ 'customer_email', 'customer_name' ] as $optional_text )
         {
             if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
             {
@@ -427,7 +448,27 @@ class Sentient_Forms_Managed_Service_Client
 
         if ( isset( $payload['quantity'] ) )
         {
-            $normalized['quantity'] = max( 1, (int) $payload['quantity'] );
+            $quantity = filter_var(
+                $payload['quantity'],
+                FILTER_VALIDATE_INT,
+                [
+                    'options' => [
+                        'min_range' => 1,
+                    ],
+                ]
+            );
+
+            if ( false === $quantity || ( $requires_plan && 1 !== $quantity ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    $requires_plan
+                        ? __( 'Managed billing checkout quantity must be exactly 1.', 'sentient-forms' )
+                        : __( 'Managed billing top-up quantity must be a positive integer.', 'sentient-forms' )
+                );
+            }
+
+            $normalized['quantity'] = $quantity;
         }
 
         if ( isset( $payload['allow_promotion_codes'] ) )
@@ -445,7 +486,7 @@ class Sentient_Forms_Managed_Service_Client
      */
     private function normalize_top_up_checkout_payload( array $payload ): array | WP_Error
     {
-        $normalized = $this->normalize_checkout_payload( $payload );
+        $normalized = $this->normalize_checkout_payload( $payload, false );
         if ( is_wp_error( $normalized ) )
         {
             return $normalized;
@@ -587,12 +628,23 @@ class Sentient_Forms_Managed_Service_Client
         $normalized['site_url']              = $site_url;
         $normalized['local_site_identifier'] = sanitize_text_field( (string) $payload['local_site_identifier'] );
 
-        foreach ( [ 'checkout_intent_id', 'checkout_session_id' ] as $optional_text )
+        if ( isset( $payload['checkout_intent_id'] ) && is_scalar( $payload['checkout_intent_id'] ) && '' !== trim( (string) $payload['checkout_intent_id'] ) )
         {
-            if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
+            $checkout_intent_id = sanitize_text_field( (string) $payload['checkout_intent_id'] );
+            if ( ! wp_is_uuid( $checkout_intent_id ) )
             {
-                $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
+                return new WP_Error(
+                    'sentient_managed_checkout_invalid_reference',
+                    __( 'Managed checkout completion requires a valid checkout intent UUID.', 'sentient-forms' )
+                );
             }
+
+            $normalized['checkout_intent_id'] = $checkout_intent_id;
+        }
+
+        if ( isset( $payload['checkout_session_id'] ) && is_scalar( $payload['checkout_session_id'] ) && '' !== trim( (string) $payload['checkout_session_id'] ) )
+        {
+            $normalized['checkout_session_id'] = sanitize_text_field( (string) $payload['checkout_session_id'] );
         }
 
         if ( ! isset( $payload['activation_token'] ) || ! is_scalar( $payload['activation_token'] ) || '' === trim( (string) $payload['activation_token'] ) )

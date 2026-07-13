@@ -189,16 +189,21 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'required'          => false,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => [ $this, 'validate_checkout_intent_id' ],
                         ],
                         'checkout_session_id' => [
                             'required'          => false,
                             'type'              => 'string',
+                            'minLength'         => 1,
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => 'rest_validate_request_arg',
                         ],
                         'activation_token' => [
                             'required'          => true,
                             'type'              => 'string',
+                            'minLength'         => 1,
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => 'rest_validate_request_arg',
                         ],
                     ],
                 ],
@@ -214,15 +219,10 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'create_checkout_session' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
-                        'price_id' => [
-                            'required'          => false,
-                            'type'              => 'string',
-                            'sanitize_callback' => 'sanitize_text_field',
-                        ],
                         'plan_code' => [
-                            'required'          => false,
+                            'required'          => true,
                             'type'              => 'string',
-                            'sanitize_callback' => 'sanitize_key',
+                            'enum'              => [ 'starter', 'pro', 'business' ],
                         ],
                         'success_url' => [
                             'required'          => true,
@@ -238,10 +238,14 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'required' => false,
                             'type'     => 'integer',
                             'default'  => 1,
+                            'minimum'  => 1,
+                            'maximum'  => 1,
                         ],
                         'trial_period_days' => [
                             'required' => false,
                             'type'     => 'integer',
+                            'minimum'  => 0,
+                            'maximum'  => 0,
                         ],
                     ],
                 ],
@@ -552,13 +556,24 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
     public function complete_managed_checkout( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        $checkout_intent_id  = trim( (string) $request->get_param( 'checkout_intent_id' ) );
+        $checkout_session_id = trim( (string) $request->get_param( 'checkout_session_id' ) );
+        if ( '' === $checkout_intent_id && '' === $checkout_session_id )
+        {
+            return $this->prepare_error_response(
+                'sentient_managed_checkout_missing_reference',
+                __( 'Managed checkout completion requires a checkout intent or Stripe session reference.', 'sentient-forms' ),
+                400,
+            );
+        }
+
         $client = $this->get_managed_service_client();
         $response = $client->complete_managed_checkout(
             [
                 'site_url'              => home_url(),
                 'local_site_identifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
-                'checkout_intent_id'    => (string) $request->get_param( 'checkout_intent_id' ),
-                'checkout_session_id'   => (string) $request->get_param( 'checkout_session_id' ),
+                'checkout_intent_id'    => $checkout_intent_id,
+                'checkout_session_id'   => $checkout_session_id,
                 'activation_token'      => (string) $request->get_param( 'activation_token' ),
             ]
         );
@@ -653,31 +668,32 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             return $proxy_key;
         }
 
-        $payload = [
-            'success_url'       => (string) $request->get_param( 'success_url' ),
-            'cancel_url'        => (string) $request->get_param( 'cancel_url' ),
-            'quantity'          => max( 1, (int) $request->get_param( 'quantity' ) ),
-        ];
-        $price_id = trim( (string) $request->get_param( 'price_id' ) );
-        if ( '' !== $price_id )
-        {
-            $payload['price_id'] = $price_id;
-        }
-
-        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
-        if ( '' !== $plan_code )
-        {
-            $payload['plan_code'] = $plan_code;
-        }
-
-        if ( empty( $payload['price_id'] ) && empty( $payload['plan_code'] ) )
+        $json_params = $request->get_json_params();
+        if ( is_array( $json_params ) && array_key_exists( 'price_id', $json_params ) )
         {
             return $this->prepare_error_response(
                 'invalid_request',
-                __( 'price_id or plan_code is required.', 'sentient-forms' ),
+                __( 'Stripe price identifiers are selected by Sentient Forms from plan_code.', 'sentient-forms' ),
                 400,
             );
         }
+
+        $plan_code = (string) $request->get_param( 'plan_code' );
+        if ( ! in_array( $plan_code, [ 'starter', 'pro', 'business' ], true ) )
+        {
+            return $this->prepare_error_response(
+                'invalid_request',
+                __( 'plan_code must be one of starter, pro, or business.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $payload = [
+            'plan_code'        => $plan_code,
+            'success_url'       => (string) $request->get_param( 'success_url' ),
+            'cancel_url'        => (string) $request->get_param( 'cancel_url' ),
+            'quantity'          => 1,
+        ];
 
         $client   = $this->get_managed_service_client();
         $response = $client->create_checkout_session( $proxy_key, $payload );
@@ -804,6 +820,24 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                 sprintf(
                     /* translators: %s: REST parameter name. */
                     __( '%s has an invalid format.', 'sentient-forms' ),
+                    $param
+                ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        return true;
+    }
+
+    public function validate_checkout_intent_id( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( ! is_string( $value ) || ! wp_is_uuid( $value ) )
+        {
+            return new WP_Error(
+                'rest_invalid_format',
+                sprintf(
+                    /* translators: %s: REST parameter name. */
+                    __( '%s must be a valid UUID.', 'sentient-forms' ),
                     $param
                 ),
                 [ 'status' => 400 ]

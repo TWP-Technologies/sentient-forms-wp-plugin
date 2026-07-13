@@ -563,11 +563,16 @@ class Sentient_Forms_Managed_Proxy_Client
     /**
      * @param mixed $metadata
      *
-     * @return array<string, scalar|null>|WP_Error
+     * @return stdClass|WP_Error
      */
-    private function normalize_identifier_metadata( mixed $metadata ): array | WP_Error
+    private function normalize_identifier_metadata( mixed $metadata ): stdClass | WP_Error
     {
-        if ( ! is_array( $metadata ) || array_is_list( $metadata ) )
+        if ( $metadata instanceof stdClass )
+        {
+            $metadata = get_object_vars( $metadata );
+        }
+
+        if ( ! is_array( $metadata ) )
         {
             return new WP_Error(
                 'sentient_managed_metadata_not_identifier_only',
@@ -578,8 +583,9 @@ class Sentient_Forms_Managed_Proxy_Client
         $normalized = [];
         foreach ( $metadata as $key => $value )
         {
-            $key = sanitize_key( (string) $key );
-            if ( '' === $key || strlen( $key ) > 64 )
+            $key             = (string) $key;
+            $character_count = preg_match_all( '/./us', $key );
+            if ( 1 !== preg_match( '/(*UCP)\S/u', $key ) || false === $character_count || $character_count > 64 )
             {
                 return new WP_Error(
                     'sentient_managed_invalid_metadata_key',
@@ -612,7 +618,7 @@ class Sentient_Forms_Managed_Proxy_Client
             $normalized[ $key ] = $value;
         }
 
-        return $normalized;
+        return (object) $normalized;
     }
 
     private function resolve_base_url( ?string $base_url ): string

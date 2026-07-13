@@ -502,6 +502,116 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( 'entry_payload', $result->get_error_data()['metadata_key'] );
     }
 
+    public function test_execute_preserves_distinct_schema_valid_metadata_keys(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = compact( 'args', 'url' );
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-metadata-keys',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'metadata'             => [
+                    'A B'    => 'first',
+                    'ab'     => 'second',
+                    'résumé' => 'visible-unicode',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( 'first', $payload['metadata']['A B'] );
+        $this->assertSame( 'second', $payload['metadata']['ab'] );
+        $this->assertSame( 'visible-unicode', $payload['metadata']['résumé'] );
+    }
+
+    public function test_execute_rejects_unicode_whitespace_metadata_key_before_http_request(): void
+    {
+        $this->mock_http(
+            static function (): WP_Error {
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-unicode-space',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'metadata'             => [
+                    "\u{00A0}" => 'value',
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_metadata_key', $result->get_error_code() );
+    }
+
+    public function test_execute_preserves_numeric_metadata_keys_as_an_object(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = compact( 'args', 'url' );
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-numeric-keys',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'metadata'             => [
+                    '0' => 'zero',
+                    '1' => 'one',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $payload = json_decode( $calls[0]['args']['body'] );
+        $this->assertInstanceOf( stdClass::class, $payload->metadata );
+        $metadata = get_object_vars( $payload->metadata );
+        $this->assertSame( 'zero', $metadata['0'] );
+        $this->assertSame( 'one', $metadata['1'] );
+    }
+
     public function test_execute_rejects_missing_proxy_key_before_http_request(): void
     {
         $this->mock_http(

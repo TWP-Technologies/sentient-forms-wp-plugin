@@ -623,8 +623,8 @@
 		try {
 			const result = await client.completeManagedCheckout(
 				{
-					checkout_intent_id: reference.checkoutIntentId,
-					checkout_session_id: reference.checkoutSessionId,
+					checkout_intent_id: reference.checkoutIntentId ?? undefined,
+					checkout_session_id: reference.checkoutSessionId ?? undefined,
 					activation_token: reference.activationToken
 				},
 				{ showNotifications: false }

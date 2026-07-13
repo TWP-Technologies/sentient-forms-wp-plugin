@@ -67,6 +67,11 @@
     },
     "metadata": {
       "type": "object",
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "\\S"
+      },
       "additionalProperties": {
         "type": [
           "string",

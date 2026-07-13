@@ -292,11 +292,10 @@ const billingPortalSessionRequestSchema = z.strictObject({
 });
 
 const billingCheckoutSessionRequestSchema = z.strictObject({
-	price_id: z.string().optional(),
-	plan_code: z.string().optional(),
+	plan_code: z.enum(['starter', 'pro', 'business']),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
-	quantity: z.number().int().positive().optional()
+	quantity: z.literal(1).optional()
 });
 
 const billingCheckoutSessionSchema = z.object({
@@ -316,7 +315,7 @@ const managedCheckoutStartRequestSchema = z.strictObject({
 });
 
 const managedCheckoutStartSchema = z.object({
-	checkout_intent_id: z.string(),
+	checkout_intent_id: z.uuid(),
 	checkout_session_id: z.string(),
 	checkout_url: httpsUrlSchema,
 	plan_code: z.string().optional(),
@@ -641,11 +640,19 @@ const licenseActivationRequestSchema = z.strictObject({
 	site_url: z.string().url(),
 	local_site_identifier: z.string().min(1)
 });
-const managedCheckoutCompleteRequestSchema = z.strictObject({
-	checkout_intent_id: nullableTextSchema.optional(),
-	checkout_session_id: nullableTextSchema.optional(),
-	activation_token: z.string().min(1)
-});
+const managedCheckoutCompleteRequestSchema = z
+	.strictObject({
+		checkout_intent_id: z.uuid().optional(),
+		checkout_session_id: z.string().min(1).optional(),
+		activation_token: z.string().min(1)
+	})
+	.refine(
+		(payload) =>
+			payload.checkout_intent_id !== undefined || payload.checkout_session_id !== undefined,
+		{
+			message: 'Managed checkout completion requires a checkout intent or session reference.'
+		}
+	);
 const managedCheckoutCompleteSchema = z.object({
 	activation_ready: z.boolean(),
 	status: z.string().optional(),

@@ -254,7 +254,7 @@ test('first-time managed checkout starts from the recommended license path with 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				checkout_intent_id: 'mci_test_123',
+				checkout_intent_id: '33333333-3333-4333-8333-333333333333',
 				checkout_session_id: 'cs_test_123',
 				checkout_url: managedCheckoutRedirectUrl,
 				status: 'open',
@@ -329,7 +329,7 @@ test('managed checkout return with completed status resumes activation on the li
 					activation_token?: string;
 			  }
 			| undefined;
-		expect(body?.checkout_intent_id).toBe('mci_test_123');
+		expect(body?.checkout_intent_id).toBe('33333333-3333-4333-8333-333333333333');
 		expect(body?.checkout_session_id).toBe('cs_test_123');
 		expect(body?.activation_token).toBe('activation-token');
 
@@ -338,7 +338,7 @@ test('managed checkout return with completed status resumes activation on the li
 			body: JSON.stringify({
 				activation_ready: false,
 				status: 'pending_webhook',
-				checkout_intent_id: 'mci_test_123',
+				checkout_intent_id: '33333333-3333-4333-8333-333333333333',
 				checkout_session_id: 'cs_test_123'
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -346,7 +346,7 @@ test('managed checkout return with completed status resumes activation on the li
 	});
 
 	await page.goto(
-		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=mci_test_123&stripe_session_id=cs_test_123&activation_token=activation-token'
+		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=33333333-3333-4333-8333-333333333333&stripe_session_id=cs_test_123&activation_token=activation-token'
 	);
 
 	await expect.poll(() => completeRequests).toBe(1);
@@ -414,7 +414,7 @@ test('managed checkout activation reloads the license before the forced billing 
 					activation_token?: string;
 			  }
 			| undefined;
-		expect(body?.checkout_intent_id).toBe('mci_test_ready');
+		expect(body?.checkout_intent_id).toBe('44444444-4444-4444-8444-444444444444');
 		expect(body?.checkout_session_id).toBe('cs_test_ready');
 		expect(body?.activation_token).toBe('activation-token-ready');
 
@@ -423,7 +423,7 @@ test('managed checkout activation reloads the license before the forced billing 
 			body: JSON.stringify({
 				activation_ready: true,
 				status: 'active',
-				checkout_intent_id: 'mci_test_ready',
+				checkout_intent_id: '44444444-4444-4444-8444-444444444444',
 				checkout_session_id: 'cs_test_ready'
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -486,7 +486,7 @@ test('managed checkout activation reloads the license before the forced billing 
 	});
 
 	await page.goto(
-		'/licensing?sentient_managed_checkout=success&checkout_intent_id=mci_test_ready&stripe_session_id=cs_test_ready&activation_token=activation-token-ready'
+		'/licensing?sentient_managed_checkout=success&checkout_intent_id=44444444-4444-4444-8444-444444444444&stripe_session_id=cs_test_ready&activation_token=activation-token-ready'
 	);
 
 	await expect.poll(() => completeRequests).toBe(1);

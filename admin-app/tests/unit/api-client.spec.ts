@@ -2398,7 +2398,7 @@ describe('SentientFormsApiClient', () => {
 			headers: new Headers({ 'content-type': 'application/json' }),
 			json: () =>
 				Promise.resolve({
-					checkout_intent_id: 'mci_123',
+					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123',
 					checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
 					plan_code: 'starter',
@@ -2431,7 +2431,7 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 		expect(result).toMatchObject({
-			checkout_intent_id: 'mci_123',
+			checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 			checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
 			consent_recorded: true
 		});
@@ -2441,7 +2441,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'missing checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				plan_code: 'starter'
 			}
@@ -2449,7 +2449,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'non-string checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				checkout_url: 42,
 				plan_code: 'starter'
@@ -2458,7 +2458,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'non-HTTPS checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				checkout_url: 'http://checkout.stripe.test/c/pay/cs_test_123',
 				plan_code: 'starter'
@@ -2510,6 +2510,41 @@ describe('SentientFormsApiClient', () => {
 				{ showNotifications: false }
 			)
 		).rejects.toThrow();
+	});
+
+	it.each([
+		['missing plan', { success_url: 'https://example.test/success', cancel_url: 'https://example.test/cancel' }],
+		[
+			'unsupported plan',
+			{
+				plan_code: 'future',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		],
+		[
+			'client-selected price',
+			{
+				plan_code: 'starter',
+				price_id: 'price_client_owned',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		],
+		[
+			'multi-site quantity',
+			{
+				plan_code: 'starter',
+				quantity: 2,
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		]
+	])('rejects billing checkout request with %s before fetch', async (_label, payload) => {
+		await expect(
+			client.createCheckoutSession(payload as never, { showNotifications: false })
+		).rejects.toBeInstanceOf(ApiContractError);
+		expect(mockFetch).not.toHaveBeenCalled();
 	});
 
 	it('rejects billing portal responses with non-HTTPS redirect URLs', async () => {
@@ -2580,7 +2615,7 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.completeManagedCheckout(
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				activation_token: 'token-123'
 			},
@@ -2592,7 +2627,7 @@ describe('SentientFormsApiClient', () => {
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify({
-					checkout_intent_id: 'mci_123',
+					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123',
 					activation_token: 'token-123'
 				})
@@ -2610,11 +2645,33 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.completeManagedCheckout(
 				{
-					checkout_intent_id: 'mci_123',
+					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123'
 				} as never
 			)
 		).rejects.toThrow();
+
+		expect(mockFetch).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		[
+			'missing checkout reference',
+			{
+				activation_token: 'token-123'
+			}
+		],
+		[
+			'non-UUID checkout intent',
+			{
+				checkout_intent_id: 'mci_123',
+				activation_token: 'token-123'
+			}
+		]
+	])('rejects managed checkout completion with %s before fetch', async (_label, payload) => {
+		await expect(client.completeManagedCheckout(payload as never)).rejects.toBeInstanceOf(
+			ApiContractError
+		);
 
 		expect(mockFetch).not.toHaveBeenCalled();
 	});

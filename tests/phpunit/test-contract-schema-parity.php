@@ -100,6 +100,26 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         $this->assertSame( 128, $capability['maxLength'] ?? null );
     }
 
+    public function test_billing_checkout_and_managed_metadata_boundaries_match_cps(): void
+    {
+        $checkout = $this->decode_json_file( self::SNAPSHOT_ROOT . '/billing/checkout-session-request.schema.json' );
+        $this->assertContains( 'plan_code', $checkout['required'] ?? [] );
+        $this->assertFalse( $checkout['properties']['price_id'] ?? true );
+        $this->assertSame(
+            [ 'starter', 'pro', 'business' ],
+            $checkout['properties']['plan_code']['enum'] ?? null
+        );
+        $this->assertSame( 1, $checkout['properties']['quantity']['minimum'] ?? null );
+        $this->assertSame( 1, $checkout['properties']['quantity']['maximum'] ?? null );
+
+        $managed       = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-request.schema.json' );
+        $property_names = $managed['properties']['metadata']['propertyNames'] ?? null;
+        $this->assertIsArray( $property_names );
+        $this->assertSame( 1, $property_names['minLength'] ?? null );
+        $this->assertSame( 64, $property_names['maxLength'] ?? null );
+        $this->assertSame( '\\S', $property_names['pattern'] ?? null );
+    }
+
     private function decode_json_file( string $path ): array
     {
         $this->assertFileExists( $path, 'Required public CPS contract snapshot is missing: ' . $path );
