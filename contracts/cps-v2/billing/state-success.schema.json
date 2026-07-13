@@ -162,7 +162,8 @@
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "format": "date-time"
             },
             "capacity_policy": {
               "type": "string",
@@ -337,7 +338,8 @@
           "minLength": 1
         },
         "quantity": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 1
         },
         "cancel_at_period_end": {
           "type": "boolean"
@@ -346,19 +348,22 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "format": "date-time"
         },
         "current_period_end": {
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "format": "date-time"
         },
         "trial_end": {
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "format": "date-time"
         },
         "provider_price_id": {
           "type": [
