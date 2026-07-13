@@ -174,6 +174,11 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             }
         }
 
+        if ( [] !== $effective_policy['required_form_source_capabilities'] )
+        {
+            return $this->policy_preflight_error( 'required_form_source_capabilities' );
+        }
+
         if ( 'administrative' !== sanitize_key( (string) ( $execution_contract['execution_scope'] ?? '' ) ) )
         {
             return $this->policy_preflight_error( 'execution_scope' );

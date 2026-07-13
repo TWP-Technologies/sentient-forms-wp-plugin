@@ -1079,6 +1079,46 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
         $this->assertFalse( $provider_called );
     }
 
+    public function test_rationale_generation_rejects_form_source_capabilities_without_administrative_evidence(): void
+    {
+        $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
+        $this->assertIsArray( $definition );
+        $definition['required_form_source_capabilities'] = [ 'field_errors' ];
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [ 'spam_guidance_rationale_generation' => $definition ]
+        );
+        $provider_called = false;
+        add_filter(
+            'sentient_forms_spam_guidance_managed_generation_response',
+            function () use ( &$provider_called ): WP_Error {
+                $provider_called = true;
+                return new WP_Error( 'unexpected_managed', 'Provider routing must not run.' );
+            }
+        );
+        add_filter(
+            'sentient_forms_spam_guidance_openrouter_generation_response',
+            function () use ( &$provider_called ): WP_Error {
+                $provider_called = true;
+                return new WP_Error( 'unexpected_openrouter', 'Provider routing must not run.' );
+            }
+        );
+
+        $service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
+            null,
+            null,
+            null,
+            null,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog ),
+            new Sentient_Forms_Provider_Route_Decision()
+        );
+        $result = $service->generate( $this->rationale_context( 'ham', 'Message: Please quote a warranty repair.' ) );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_spam_rationale_policy_preflight_failed', $result->get_error_code() );
+        $this->assertSame( 'required_form_source_capabilities', $result->get_error_data()['field'] ?? null );
+        $this->assertFalse( $provider_called );
+    }
+
     public function test_rationale_generation_keeps_managed_capabilities_route_conditional_for_direct(): void
     {
         $this->seed_active_managed_entitlement();
