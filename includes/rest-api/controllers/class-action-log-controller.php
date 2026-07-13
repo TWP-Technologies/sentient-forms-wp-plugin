@@ -1617,6 +1617,12 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 : $fallback_label,
         ];
 
+        $event_action = $this->resolve_persisted_event_action( $event, $fallback );
+        if ( null !== $event_action )
+        {
+            return $event_action;
+        }
+
         if ( $is_managed )
         {
             $managed_action = $this->resolve_managed_execution_action_from_event( $event );
@@ -1628,12 +1634,6 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         if ( $mapping_id <= 0 )
         {
-            $event_action = $this->resolve_provider_native_event_action( $event, $fallback );
-            if ( null !== $event_action )
-            {
-                return $event_action;
-            }
-
             return $fallback;
         }
 
@@ -1650,8 +1650,26 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             $action = $this->get_local_custom_action( $action_id );
             if ( $action )
             {
+                $action_code = sanitize_key( (string) ( $action['code'] ?? $fallback['code'] ) );
+                if ( class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
+                {
+                    $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
+                        $action_code
+                    );
+                    if ( '' !== $template_code )
+                    {
+                        $definition = Sentient_Forms_Bundled_Action_Templates::get( $template_code );
+                        return [
+                            'code'  => $template_code,
+                            'label' => sanitize_text_field(
+                                (string) ( $definition['display_name'] ?? $action['display_name'] ?? $fallback['label'] )
+                            ),
+                        ];
+                    }
+                }
+
                 return [
-                    'code'  => sanitize_key( (string) ( $action['code'] ?? $fallback['code'] ) ),
+                    'code'  => $action_code,
                     'label' => sanitize_text_field( (string) ( $action['display_name'] ?? $fallback['label'] ) ),
                 ];
             }
@@ -1686,7 +1704,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         return $mapping_id > 0 ? 'local_first_' . $mapping_id : null;
     }
 
-    private function resolve_provider_native_event_action( array $event, array $fallback ): ?array
+    private function resolve_persisted_event_action( array $event, array $fallback ): ?array
     {
         $action_code = isset( $event['action_code'] ) && is_scalar( $event['action_code'] )
             ? sanitize_key( (string) $event['action_code'] )
@@ -1695,15 +1713,54 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             ? sanitize_text_field( (string) $event['action_label'] )
             : '';
 
-        if ( '' === $action_code && '' === $action_label )
+        if ( '' === $action_code || $this->is_placeholder_persisted_action_code( $action_code ) )
         {
             return null;
+        }
+
+        if ( '' !== $action_code && class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
+        {
+            $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
+                $action_code
+            );
+            if ( '' !== $template_code )
+            {
+                $action_code = $template_code;
+            }
+
+            if ( Sentient_Forms_Bundled_Action_Templates::has( $action_code ) )
+            {
+                $definition   = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+                $action_label = is_array( $definition )
+                    ? sanitize_text_field( (string) ( $definition['display_name'] ?? '' ) )
+                    : '';
+            }
+        }
+
+        if ( '' === $action_label && '' !== $action_code )
+        {
+            $action_label = $this->humanize_action_code( $action_code );
         }
 
         return [
             'code'  => '' !== $action_code ? $action_code : $fallback['code'],
             'label' => '' !== $action_label ? $action_label : $fallback['label'],
         ];
+    }
+
+    private function is_placeholder_persisted_action_code( string $action_code ): bool
+    {
+        return str_starts_with( $action_code, 'local_first_' )
+            || in_array(
+                $action_code,
+                [
+                    'sentient_forms_local_custom_action',
+                    'sentient_forms_managed_action',
+                    'local_openrouter_action',
+                    'unclassified_action',
+                ],
+                true
+            );
     }
 
     private function resolve_managed_execution_action_from_event( array $event ): ?array

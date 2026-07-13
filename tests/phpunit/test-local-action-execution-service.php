@@ -1047,6 +1047,40 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
     }
 
+    public function test_bundled_action_execution_persists_canonical_catalog_identity(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [],
+            [
+                'code'         => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+                'display_name' => 'Mutable Entry Summary Label',
+            ]
+        );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'entry_summary_v1', $event['action_code'] );
+        $this->assertSame( 'Entry Summary', $event['action_label'] );
+    }
+
     public function test_local_execution_events_link_to_submission_uuid_when_runtime_context_has_ledger_submission(): void
     {
         $fixture         = $this->create_local_openrouter_mapping();

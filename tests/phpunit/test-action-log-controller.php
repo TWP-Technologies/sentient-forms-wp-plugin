@@ -738,6 +738,106 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_filters_bundled_custom_actions_by_canonical_catalog_code(): void
+    {
+        $this->seed_local_custom_action_mapping_and_event(
+            'bundled__entry_summary_v1',
+            'Entry Summary',
+            'req-bundled-entry-summary-log'
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '7' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'req-bundled-entry-summary-log', $data['entries'][0]['execution_request_id'] );
+    }
+
+    public function test_get_log_entries_preserves_persisted_action_identity_after_mapping_deletion(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event(
+            'bundled__entry_summary_v1',
+            'Entry Summary',
+            'req-persisted-entry-summary-log',
+            'entry_summary_v1',
+            'Entry Summary'
+        );
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->assertTrue( $mappings->delete( $mapping_id ) );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '7' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'req-persisted-entry-summary-log', $data['entries'][0]['execution_request_id'] );
+    }
+
+    public function test_get_log_entries_uses_live_mapping_for_historical_placeholder_event_identity(): void
+    {
+        $this->seed_local_custom_action_mapping_and_event(
+            'bundled__entry_summary_v1',
+            'Entry Summary',
+            'req-placeholder-entry-summary-log',
+            'sentient_forms_local_custom_action',
+            'Local OpenRouter action'
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '7' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'req-placeholder-entry-summary-log', $data['entries'][0]['execution_request_id'] );
+    }
+
+    public function test_get_log_entries_uses_catalog_label_for_persisted_bundled_alias(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event(
+            'bundled__entry_summary_v1',
+            'Entry Summary',
+            'req-aliased-entry-summary-log',
+            'bundled__entry_summary_v1',
+            'Mutable Entry Summary Label'
+        );
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->assertTrue( $mappings->delete( $mapping_id ) );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'form_id', '7' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'req-aliased-entry-summary-log', $data['entries'][0]['execution_request_id'] );
+    }
+
     public function test_get_log_entries_prefers_provider_native_event_identity_for_elementor_cps_events(): void
     {
         global $wpdb;
@@ -1498,7 +1598,13 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $captured_requests );
     }
 
-    private function seed_local_custom_action_mapping_and_event(): int
+    private function seed_local_custom_action_mapping_and_event(
+        string $action_code = 'contact_spam_triage',
+        string $action_label = 'Contact Spam Triage',
+        string $execution_request_id = 'req-local-log-1',
+        ?string $event_action_code = null,
+        ?string $event_action_label = null
+    ): int
     {
         global $wpdb;
 
@@ -1508,8 +1614,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $action_id = $actions->create(
             [
-                'code'            => 'contact_spam_triage',
-                'display_name'    => 'Contact Spam Triage',
+                'code'            => $action_code,
+                'display_name'    => $action_label,
                 'definition_json' => [
                     'prompt' => 'Classify the entry.',
                 ],
@@ -1538,8 +1644,10 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $event_id = $events->record(
             [
-                'execution_request_id' => 'req-local-log-1',
+                'execution_request_id' => $execution_request_id,
                 'mapping_id'           => $mapping_id,
+                'action_code'          => $event_action_code,
+                'action_label'         => $event_action_label,
                 'form_source'          => 'gravity_forms',
                 'form_id'              => '7',
                 'entry_id'             => '77',

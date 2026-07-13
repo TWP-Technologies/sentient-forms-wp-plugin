@@ -122,6 +122,7 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
         $action_code                = $this->resolve_action_code( $action, $definition );
+        $action_label               = $this->resolve_action_label( $action, $action_code );
         $context_match              = $this->assert_mapping_matches_context( $mapping, $action_code, $context );
         if ( is_wp_error( $context_match ) )
         {
@@ -140,7 +141,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $submission_uuid      = $this->resolve_submission_uuid( $context );
         if ( $this->should_skip_suggested_reply_for_reject_grade( $mapping, $entry, $context, $action_code ) )
         {
-            return $this->record_suggested_reply_skip( $execution_request_id, $submission_uuid, $mapping, $form, $entry, $action_code );
+            return $this->record_suggested_reply_skip( $execution_request_id, $submission_uuid, $mapping, $form, $entry, $action_code, $action_label );
         }
 
         $structured_output_contract = $this->resolve_structured_output_contract( $action, $definition );
@@ -322,6 +323,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
+                'action_code'          => $action_code,
+                'action_label'         => $action_label,
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
@@ -397,6 +400,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
+                    'action_code'          => $action_code,
+                    'action_label'         => $action_label,
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
@@ -427,6 +432,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
+                    'action_code'          => $action_code,
+                    'action_label'         => $action_label,
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
@@ -495,6 +502,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
+                'action_code'          => $action_code,
+                'action_label'         => $action_label,
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
@@ -551,6 +560,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return null;
         }
+
+        $action_label = $this->resolve_action_label( $action, $action_code );
 
         if ( $this->managed_privacy_route_required( $model_selection, $context ) )
         {
@@ -629,6 +640,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
+                    'action_code'          => $action_code,
+                    'action_label'         => $action_label,
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
@@ -659,6 +672,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
+                    'action_code'          => $action_code,
+                    'action_label'         => $action_label,
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
@@ -729,6 +744,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
+                'action_code'          => $action_code,
+                'action_label'         => $action_label,
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
@@ -1113,7 +1130,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         return is_array( $result ) && 'Reject' === (string) ( $result['grade'] ?? '' );
     }
 
-    private function record_suggested_reply_skip( string $execution_request_id, ?string $submission_uuid, array $mapping, array $form, array $entry, string $action_code ): array
+    private function record_suggested_reply_skip( string $execution_request_id, ?string $submission_uuid, array $mapping, array $form, array $entry, string $action_code, string $action_label ): array
     {
         $result = [
             'structured' => [
@@ -1138,6 +1155,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) ( $mapping['id'] ?? 0 ),
+                'action_code'          => $action_code,
+                'action_label'         => $action_label,
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
@@ -1682,6 +1701,44 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return '';
+    }
+
+    /**
+     * Resolve the durable public label from the code-owned Action Catalog when
+     * the stored custom Action is only linkage for a bundled definition.
+     *
+     * @param array<string, mixed> $action
+     */
+    private function resolve_action_label( array $action, string $action_code ): string
+    {
+        if ( Sentient_Forms_Bundled_Action_Templates::has( $action_code ) )
+        {
+            $definition = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+            if ( is_array( $definition ) && is_scalar( $definition['display_name'] ?? null ) )
+            {
+                $label = trim( sanitize_text_field( (string) $definition['display_name'] ) );
+                if ( '' !== $label )
+                {
+                    return $label;
+                }
+            }
+        }
+
+        foreach ( [ $action['display_name'] ?? null, $action['name'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $label = trim( sanitize_text_field( (string) $candidate ) );
+            if ( '' !== $label )
+            {
+                return $label;
+            }
+        }
+
+        return ucwords( str_replace( '_', ' ', $action_code ) );
     }
 
     /**
