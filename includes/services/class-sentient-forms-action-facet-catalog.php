@@ -12,6 +12,9 @@ if ( ! defined( 'ABSPATH' ) )
 
 final class Sentient_Forms_Action_Facet_Catalog
 {
+    private const MAX_UNTRUSTED_CONTEXT_CHARACTERS = 16384;
+    private const MAX_UTF8_BYTES_PER_CHARACTER = 4;
+
     /**
      * @param array<string, array<string, mixed>>|null $definitions Optional isolated catalog for tests or composition roots.
      */
@@ -126,6 +129,11 @@ final class Sentient_Forms_Action_Facet_Catalog
     /**
      * Render the canonical prompt for a registered Action facet.
      *
+     * The facet-specific caller owns normalization and classification of values
+     * declared as trusted. This catalog enforces the facet's trusted allowlist,
+     * bounds every declared untrusted scalar before sanitization, and owns the
+     * encoded trust-boundary envelopes.
+     *
      * @param array<string, mixed> $context
      */
     public function render_prompt( string $code, array $context ): string | WP_Error
@@ -142,6 +150,8 @@ final class Sentient_Forms_Action_Facet_Catalog
             || ! is_string( $prompt_contract['task'] )
             || '' === trim( $prompt_contract['task'] )
             || ! is_array( $prompt_contract['rules'] ?? null )
+            || ! is_array( $prompt_contract['trusted_context'] ?? null )
+            || ! is_array( $prompt_contract['untrusted_context'] ?? null )
         )
         {
             return $this->execution_contract_error( $code, 'prompt' );
@@ -157,25 +167,52 @@ final class Sentient_Forms_Action_Facet_Catalog
             $rules[] = $rule;
         }
 
+        $provided_trusted = $context['trusted_context'] ?? null;
+        $provided_untrusted = $context['untrusted_context'] ?? null;
+        if ( ! is_array( $provided_trusted ) || ! is_array( $provided_untrusted ) )
+        {
+            return $this->execution_contract_error( $code, 'prompt.context' );
+        }
+
         $trusted = [
-            'task'         => $prompt_contract['task'],
-            'label'        => 'spam' === ( $context['label'] ?? null ) ? 'Spam' : 'Legitimate',
-            'form_source'  => sanitize_key( (string) ( $context['form_source'] ?? '' ) ),
-            'form_id'      => sanitize_text_field( (string) ( $context['form_id'] ?? '' ) ),
-            'target_scope' => sanitize_key( (string) ( $context['target_scope'] ?? '' ) ),
-            'rules'        => $rules,
-            'existing_guidance' => [
-                'legitimate' => $this->trusted_examples_for_prompt(
-                    $context['existing_guidance']['spam_positive_examples'] ?? []
-                ),
-                'spam'       => $this->trusted_examples_for_prompt(
-                    $context['existing_guidance']['spam_negative_examples'] ?? []
-                ),
-            ],
+            'task'  => $prompt_contract['task'],
+            'rules' => $rules,
         ];
-        $untrusted = [
-            'selected_entry_excerpt' => (string) ( $context['text'] ?? '' ),
-        ];
+        foreach ( $prompt_contract['trusted_context'] as $field )
+        {
+            if ( ! is_string( $field ) || '' === trim( $field ) || ! array_key_exists( $field, $provided_trusted ) )
+            {
+                return $this->execution_contract_error( $code, 'prompt.trusted_context' );
+            }
+
+            $trusted[ $field ] = $provided_trusted[ $field ];
+        }
+
+        $untrusted = [];
+        foreach ( $prompt_contract['untrusted_context'] as $field => $field_contract )
+        {
+            if (
+                ! is_string( $field )
+                || '' === trim( $field )
+                || ! is_array( $field_contract )
+                || ! is_int( $field_contract['max_length'] ?? null )
+                || $field_contract['max_length'] < 1
+                || $field_contract['max_length'] > self::MAX_UNTRUSTED_CONTEXT_CHARACTERS
+                || ! array_key_exists( $field, $provided_untrusted )
+                || ! is_scalar( $provided_untrusted[ $field ] )
+            )
+            {
+                return $this->execution_contract_error( $code, 'prompt.untrusted_context' );
+            }
+
+            $raw_byte_limit = $field_contract['max_length'] * self::MAX_UTF8_BYTES_PER_CHARACTER;
+            $raw_value = substr( (string) $provided_untrusted[ $field ], 0, $raw_byte_limit );
+            $untrusted[ $field ] = mb_substr(
+                sanitize_textarea_field( $raw_value ),
+                0,
+                $field_contract['max_length']
+            );
+        }
 
         $trusted_json   = wp_json_encode( $trusted, JSON_PRETTY_PRINT );
         $untrusted_json = wp_json_encode( $untrusted, JSON_PRETTY_PRINT );
@@ -187,9 +224,9 @@ final class Sentient_Forms_Action_Facet_Catalog
         return "<TRUSTED_CONTEXT encoding=\"json\">\n"
             . $trusted_json
             . "\n</TRUSTED_CONTEXT>\n\n"
-            . "<UNTRUSTED_SELECTED_ENTRY encoding=\"json\">\n"
+            . "<UNTRUSTED_CONTEXT encoding=\"json\">\n"
             . $untrusted_json
-            . "\n</UNTRUSTED_SELECTED_ENTRY>\n";
+            . "\n</UNTRUSTED_CONTEXT>\n";
     }
 
     /**
@@ -240,57 +277,20 @@ final class Sentient_Forms_Action_Facet_Catalog
                             'Return JSON only with this exact shape: {"rationale":"..."}',
                             'Keep the rationale business-specific, short, and suitable for future spam detection evidence.',
                         ],
+                        'trusted_context' => [
+                            'label',
+                            'form_source',
+                            'form_id',
+                            'target_scope',
+                            'existing_guidance',
+                        ],
+                        'untrusted_context' => [
+                            'selected_entry_excerpt' => [ 'max_length' => 800 ],
+                        ],
                     ],
                 ],
             ],
         ];
-    }
-
-    /**
-     * @param mixed $examples
-     * @return array<int, array{text:string,rationale:string}>
-     */
-    private function trusted_examples_for_prompt( mixed $examples ): array
-    {
-        if ( ! is_array( $examples ) )
-        {
-            return [];
-        }
-
-        $trusted = [];
-        foreach ( $examples as $example )
-        {
-            if ( ! is_array( $example ) )
-            {
-                continue;
-            }
-
-            $text = mb_substr(
-                trim( sanitize_textarea_field( (string) ( $example['text'] ?? '' ) ) ),
-                0,
-                800
-            );
-            $rationale = mb_substr(
-                trim( sanitize_textarea_field( (string) ( $example['rationale'] ?? '' ) ) ),
-                0,
-                800
-            );
-            if ( '' === $text || '' === $rationale )
-            {
-                continue;
-            }
-
-            $trusted[] = [
-                'text'      => $text,
-                'rationale' => $rationale,
-            ];
-            if ( count( $trusted ) >= 10 )
-            {
-                break;
-            }
-        }
-
-        return $trusted;
     }
 
     private function execution_contract_error( string $code, string $field ): WP_Error

@@ -24,13 +24,17 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
 
     private Sentient_Forms_Action_Facet_Catalog $facet_catalog;
 
+    /** @var \Closure(string):?array<string,mixed> */
+    private \Closure $action_definition_loader;
+
     public function __construct(
         private ?Sentient_Forms_Managed_Service_Client $managed_service = null,
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_OpenRouter_Direct_Client $openrouter = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection = null,
         ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null,
-        ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
+        ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null,
+        ?callable $action_definition_loader = null
     )
     {
         $this->managed_service = $this->managed_service ?? new Sentient_Forms_Managed_Service_Client( null, 30 );
@@ -42,6 +46,9 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             : new Sentient_Forms_Action_Facet_Catalog();
         $this->policy_resolver         = $policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver( $this->facet_catalog );
         $this->provider_route_decision = $provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
+        $this->action_definition_loader = null !== $action_definition_loader
+            ? \Closure::fromCallable( $action_definition_loader )
+            : static fn ( string $code ): ?array => Sentient_Forms_Bundled_Action_Templates::get( $code );
     }
 
     /**
@@ -90,7 +97,10 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             return $managed_context;
         }
 
-        $prompt = $this->facet_catalog->render_prompt( self::ACTION_FACET_CODE, $context );
+        $prompt = $this->facet_catalog->render_prompt(
+            self::ACTION_FACET_CODE,
+            $this->prompt_context( $context )
+        );
         if ( is_wp_error( $prompt ) )
         {
             return $prompt;
@@ -149,9 +159,21 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
      */
     private function resolve_effective_action_policy(): array | WP_Error
     {
-        $definition = Sentient_Forms_Bundled_Action_Templates::get( self::ACTION_TEMPLATE_CODE );
+        $definition = ( $this->action_definition_loader )( self::ACTION_TEMPLATE_CODE );
+        if ( ! is_array( $definition ) )
+        {
+            return new WP_Error(
+                'sentient_forms_spam_rationale_action_template_missing',
+                __( 'The bundled Spam Detection Action template is unavailable.', 'sentient-forms' ),
+                [
+                    'status'      => 500,
+                    'action_code' => self::ACTION_TEMPLATE_CODE,
+                ]
+            );
+        }
+
         return $this->policy_resolver->resolve_action_definition(
-            is_array( $definition ) ? $definition : [],
+            $definition,
             [ self::ACTION_FACET_CODE ]
         );
     }
@@ -264,6 +286,74 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             'entry'             => is_array( $context['entry'] ?? null ) ? $context['entry'] : [],
             'existing_guidance' => is_array( $context['existing_guidance'] ?? null ) ? $context['existing_guidance'] : [],
         ];
+    }
+
+    /**
+     * Build the Spam Guidance facet's declared trusted and untrusted prompt context.
+     *
+     * @param array<string,mixed> $context
+     * @return array{trusted_context:array<string,mixed>,untrusted_context:array<string,string>}
+     */
+    private function prompt_context( array $context ): array
+    {
+        return [
+            'trusted_context' => [
+                'label'             => 'spam' === $context['label'] ? 'Spam' : 'Legitimate',
+                'form_source'       => $context['form_source'],
+                'form_id'           => $context['form_id'],
+                'target_scope'      => $context['target_scope'],
+                'existing_guidance' => [
+                    'legitimate' => $this->trusted_examples_for_prompt(
+                        $context['existing_guidance']['spam_positive_examples'] ?? []
+                    ),
+                    'spam'       => $this->trusted_examples_for_prompt(
+                        $context['existing_guidance']['spam_negative_examples'] ?? []
+                    ),
+                ],
+            ],
+            'untrusted_context' => [
+                'selected_entry_excerpt' => $context['text'],
+            ],
+        ];
+    }
+
+    /**
+     * @param mixed $examples
+     * @return array<int, array{text:string,rationale:string}>
+     */
+    private function trusted_examples_for_prompt( mixed $examples ): array
+    {
+        if ( ! is_array( $examples ) )
+        {
+            return [];
+        }
+
+        $trusted = [];
+        foreach ( $examples as $example )
+        {
+            if ( ! is_array( $example ) )
+            {
+                continue;
+            }
+
+            $text = $this->sanitize_text( $example['text'] ?? null );
+            $rationale = $this->sanitize_text( $example['rationale'] ?? null );
+            if ( '' === $text || '' === $rationale )
+            {
+                continue;
+            }
+
+            $trusted[] = [
+                'text'      => $text,
+                'rationale' => $rationale,
+            ];
+            if ( count( $trusted ) >= 10 )
+            {
+                break;
+            }
+        }
+
+        return $trusted;
     }
 
     /**
