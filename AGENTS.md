@@ -37,7 +37,7 @@ The adapter pattern is part of the plugin architecture, not a convenience layer.
 
 - The bundled Action Catalog is the executable authority for Action prompts, output contracts, canonical lifecycles, source-neutral effects, and allowed facets. CPS does not own WordPress Action definitions.
 - An Action facet is a reusable capability around an Action that may have stricter subscription, managed-execution, lifecycle, Form Source capability, managed-infrastructure capability, or metering requirements.
-- Resolve the base Action policy and all enabled facet policies before selecting a provider. The strictest access, execution, lifecycle, capability, and metering requirements win.
+- Every provider-routing path that has adopted the Action policy/facet model must resolve the base policy and all enabled facet policies before selecting a provider; the strictest access, execution, lifecycle, capability, and metering requirements win. Policy/facet definitions and routing primitives may land before integration into legacy form-triggered execution, but staged publication must not be described as runtime enforcement for those paths.
 - Keep entitlement separate from provider routing. An active-subscription feature may still use Direct OpenRouter, while a managed-only feature requires CPS and managed credits.
 - Do not create separate Direct and CPS implementations for every Action, and do not multiply Action codes for every facet permutation.
 - Treat legacy `master`/CPS-template branches as migration residue. Do not add new callers or compatibility filters; remove them through the coordinated legacy-cleanup stack after current stored mappings are normalized.
