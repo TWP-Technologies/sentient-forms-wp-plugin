@@ -70,7 +70,7 @@ if ( $_form_adapter_registry )
             <p><?php _e(
                 'Configure AI actions for your forms. Enable actions for each form and customize their settings.',
                 'sentient-forms',
-            ); ?></p>
+               ); ?></p>
         </div>
 
         <div class="sentient-forms-forms-table-wrapper">
@@ -87,13 +87,13 @@ if ( $_form_adapter_registry )
                     <?php foreach ( $_forms_list as $form ): ?>
                     <tr>
                         <td class="sentient-forms-form-title-column">
-                            <strong><?= esc_html( $form[ 'title' ] ); ?></strong>
+                            <strong><?php echo esc_html( $form[ 'title' ] ); ?></strong>
                             <div class="row-actions">
                                         <span class="edit">
                                             <a href="#"
                                                class="sentient-forms-configure-form"
-                                               data-form-id="<?= esc_attr( $form[ 'id' ] ); ?>"
-                                               data-adapter="<?= esc_attr( $form[ 'adapter' ] ); ?>">
+                                               data-form-id="<?php echo esc_attr( $form[ 'id' ] ); ?>"
+                                               data-adapter="<?php echo esc_attr( $form[ 'adapter' ] ); ?>">
                                                 <?php _e( 'Configure', 'sentient-forms' ); ?>
                                             </a>
                                         </span>
@@ -109,7 +109,7 @@ if ( $_form_adapter_registry )
                                             <?php _e( 'Enabled', 'sentient-forms' ); ?>
                                         </span> <?php else: ?> <span class="sentient-forms-status sentient-forms-status-disabled">
                                             <span class="dashicons dashicons-no-alt"></span>
-                                            <?php _e( 'Disabled', 'sentient-forms' ); ?>
+                                                    <?php _e( 'Disabled', 'sentient-forms' ); ?>
                                         </span> <?php endif; ?>
                         </td>
                         <td class="sentient-forms-form-actions-column">
@@ -177,7 +177,7 @@ if ( $_form_adapter_registry )
                             <p><?php _e(
                                 'No actions are currently available. This might be a configuration issue with the plugin.',
                                 'sentient-forms',
-                            ); ?></p>
+                               ); ?></p>
                             <?php else: ?>
                             <div class="sentient-forms-actions-tabs">
                                 <div class="sentient-forms-actions-tabs-nav">
@@ -187,7 +187,7 @@ if ( $_form_adapter_registry )
                                             data-action-id="<?php echo esc_attr( $action->get_id() ); ?>">
                                         <span class="dashicons <?php echo esc_attr( $action->get_icon() ); ?>"></span> <?php echo esc_html(
                                         $action->get_name(),
-                                    ); ?>
+                                                               ); ?>
                                     </button>
                                     <?php endforeach; ?>
                                 </div>
@@ -229,19 +229,19 @@ if ( $_form_adapter_registry )
 
                                             // Display remaining settings fields
                                             foreach ( $settings_fields as $field_key => $field_args ):
-                                            // Skip the main 'enabled' field for the action if it's already handled above
-                                            // or if it's a common field that shouldn't be duplicated here.
+                                                // Skip the main 'enabled' field for the action if it's already handled above
+                                                // or if it's a common field that shouldn't be duplicated here.
                                                 // The legacy settings array may not contain an explicit enabled flag.
-                                            // So, this check might not be necessary unless 'enabled' is also part of $settings_fields.
+                                                // So, this check might not be necessary unless 'enabled' is also part of $settings_fields.
 
-                                            $field_input_id = "sentient-forms-action-" . esc_attr( $action->get_id() ) . "-" . esc_attr( $field_key );
-                                            $field_input_name = "settings[actions][" .
+                                                $field_input_id = "sentient-forms-action-" . esc_attr( $action->get_id() ) . "-" . esc_attr( $field_key );
+                                                $field_input_name = "settings[actions][" .
                                                                 esc_attr( $action->get_id() ) .
                                                                 "][" .
                                                                 esc_attr( $field_key ) .
                                                                 "]";
-                                            $default_value = $field_args[ 'default' ] ?? '';
-                                            ?>
+                                                $default_value = $field_args[ 'default' ] ?? '';
+                                                ?>
                                             <tr>
                                                 <th scope="row">
                                                     <label for="<?php echo esc_attr( $field_input_id ); ?>">
@@ -256,13 +256,13 @@ if ( $_form_adapter_registry )
                                                            value="<?php echo esc_attr( $default_value ); ?>"
                                                            class="<?php echo ( $field_args[ 'type' ] === 'number' ) ? 'small-text'
                                                                : 'regular-text'; ?>"
-                                                           <?php if ( isset( $field_args[ 'min' ] ) ): ?>min="<?= esc_attr(
+                                                           <?php if ( isset( $field_args[ 'min' ] ) ): ?>min="<?php echo esc_attr(
                                                                $field_args[ 'min' ],
                                                            ); ?>"<?php endif; ?>
-                                                           <?php if ( isset( $field_args[ 'max' ] ) ): ?>max="<?= esc_attr(
+                                                           <?php if ( isset( $field_args[ 'max' ] ) ): ?>max="<?php echo esc_attr(
                                                                $field_args[ 'max' ],
                                                            ); ?>"<?php endif; ?>
-                                                           <?php if ( isset( $field_args[ 'step' ] ) ): ?>step="<?= esc_attr(
+                                                           <?php if ( isset( $field_args[ 'step' ] ) ): ?>step="<?php echo esc_attr(
                                                                $field_args[ 'step' ],
                                                            ); ?>"<?php endif; ?>>
                                                     <?php elseif ( $field_args[ 'type' ] === 'checkbox' ): ?>
@@ -271,15 +271,15 @@ if ( $_form_adapter_registry )
                                                                id="<?php echo esc_attr( $field_input_id ); ?>"
                                                                name="<?php echo esc_attr( $field_input_name ); ?>"
                                                                value="1"<?php checked(
-                                                            rest_sanitize_boolean( $default_value ),
-                                                        ); // Default for checkbox should be boolean ?>>
+                                                                rest_sanitize_boolean( $default_value ),
+                                                                        ); // Default for checkbox should be boolean ?>>
                                                         <?php echo isset( $field_args[ 'description_inline' ] ) ? ' ' . esc_html(
                                                                 $field_args[ 'description_inline' ],
                                                             ) : ''; ?>
                                                     </label>
                                                     <?php elseif ( $field_args[ 'type' ] === 'select' ||
                                                                    $field_args[ 'type' ] === 'llm_model_select' ): ?>
-                                                    <select id="<?= esc_attr( $field_input_id ); ?>" name="<?= esc_attr( $field_input_name ); ?>">
+                                                    <select id="<?php echo esc_attr( $field_input_id ); ?>" name="<?php echo esc_attr( $field_input_name ); ?>">
                                                         <?php
                                                         $options_to_display = $field_args[ 'options' ] ?? [];
                                                         if ( $field_args[ 'type' ] === 'llm_model_select' )
@@ -329,29 +329,29 @@ if ( $_form_adapter_registry )
                                                         }
                                                         else
                                                         { // Regular select
-                                                        foreach ( $options_to_display as $option_value => $option_label ): ?>
-                                                        <option value="<?= esc_attr( $option_value ); ?>"<?php selected(
+                                                            foreach ( $options_to_display as $option_value => $option_label ): ?>
+                                                        <option value="<?php echo esc_attr( $option_value ); ?>"<?php selected(
                                                             $default_value,
                                                             $option_value,
-                                                        ); ?>>
-                                                            <?= esc_html( $option_label ); ?>
+                                                                       ); ?>>
+                                                                <?php echo esc_html( $option_label ); ?>
                                                         </option>
-                                                        <?php endforeach;
+                                                            <?php endforeach;
                                                         } ?>
                                                     </select>
-                                                    <?php elseif ( $field_args[ 'type' ] === 'textarea' ): ?> <textarea id="<?= esc_attr(
+                                                    <?php elseif ( $field_args[ 'type' ] === 'textarea' ): ?> <textarea id="<?php echo esc_attr(
                                                     $field_input_id,
-                                                ); ?>" name="<?= esc_attr( $field_input_name ); ?>" class="large-text" rows="10"><?= esc_textarea(
+                                                    ); ?>" name="<?php echo esc_attr( $field_input_name ); ?>" class="large-text" rows="10"><?php echo esc_textarea(
                                                     $default_value,
-                                                ); ?>
+                                                    ); ?>
                                                                 </textarea> <?php endif; ?>
 
                                                     <?php if ( isset( $field_args[ 'description' ] ) && $field_args[ 'type' ] !== 'checkbox' ): ?>
-                                                    <p class="description"><?= wp_kses_post( $field_args[ 'description' ] ); ?></p>
+                                                    <p class="description"><?php echo wp_kses_post( $field_args[ 'description' ] ); ?></p>
                                                     <?php elseif ( isset( $field_args[ 'description' ] ) &&
                                                                    $field_args[ 'type' ] === 'checkbox' &&
                                                                    empty( $field_args[ 'description_inline' ] ) ): ?>
-                                                    <p class="description"><?= wp_kses_post( $field_args[ 'description' ] ); ?></p>
+                                                    <p class="description"><?php echo wp_kses_post( $field_args[ 'description' ] ); ?></p>
                                                     <?php endif; ?>
                                                 </td>
                                             </tr>
@@ -363,31 +363,31 @@ if ( $_form_adapter_registry )
                                                     <label><?php _e(
                                                         'When to Run',
                                                         'sentient-forms',
-                                                    ); // No 'for' needed if multiple checkboxes ?></label>
+                                                           ); // No 'for' needed if multiple checkboxes ?></label>
                                                 </th>
                                                 <td>
                                                     <?php
                                                     $hooks = $action->get_hooks();
                                                     foreach ( $hooks as $hook_id => $hook_label ):
-                                                    $hook_input_id = "sentient-forms-action-" .
+                                                        $hook_input_id = "sentient-forms-action-" .
                                                                      esc_attr( $action->get_id() ) .
                                                                      "-hook-" .
                                                                      esc_attr( $hook_id );
-                                                    ?>
+                                                        ?>
                                                     <label for="<?php echo esc_attr( $hook_input_id ); ?>">
                                                         <input type="checkbox"
                                                                id="<?php echo esc_attr( $hook_input_id ); ?>"
                                                                name="settings[actions][<?php echo esc_attr(
                                                                    $action->get_id(),
-                                                               ); ?>][hooks][]"
+                                                                                       ); ?>][hooks][]"
                                                                value="<?php echo esc_attr( $hook_id ); ?>">
                                                         <?php echo esc_html( $hook_label ); ?>
                                                     </label>
                                                     <br> <?php endforeach; ?>
-                                                    <p class="description"><?= esc_html__(
+                                                    <p class="description"><?php echo esc_html__(
                                                         'Select the events that should trigger this action for the form.',
                                                         'sentient-forms',
-                                                    ); ?></p>
+                                                                           ); ?></p>
                                                 </td>
                                             </tr>
                                             <?php endif; ?>
@@ -405,9 +405,9 @@ if ( $_form_adapter_registry )
                             </button>
                             <button type="button"
                                     class="button button-secondary sentient-forms-modal-close-button"> <?php // Changed class to avoid conflict ?><?php _e(
-                                'Cancel',
-                                'sentient-forms',
-                            ); ?>
+                                    'Cancel',
+                                    'sentient-forms',
+                                                                                                       ); ?>
                             </button>
                             <span id="sentient-forms-form-settings-result"
                                   class="sentient-forms-ajax-result"></span> <?php // Added class for styling ?>

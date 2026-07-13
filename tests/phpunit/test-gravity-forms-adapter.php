@@ -1332,12 +1332,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                             [ 'id' => '1.6' ],
                         ],
                     ],
-                (object) [
+                    (object) [
                     'id' => 4,
                     'label' => 'Details',
                     'type' => 'textarea',
                     'pageNumber' => 2,
-                ],
+                    ],
             ],
         ];
         $settings = [
@@ -1393,7 +1393,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 $this->assertSame( 3500, $runtime['mappings'][0]['pre_submit_timeout_ms'] ?? null );
                 $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
             $this->assertSame( [ '1.3', '1.6' ], $runtime['field_manifest'][0]['input_ids'] ?? [] );
-        }
+    }
 
     public function test_get_form_settings_prefers_top_level_mapping_over_stale_actions_wrapper(): void
     {
@@ -1636,6 +1636,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 2, $storage_field->id ?? null );
         $this->assertSame( 'hidden', $storage_field->type ?? null );
         $this->assertSame( 'Sentient Forms Realtime Q&A', $storage_field->label ?? null );
+        // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Gravity Forms owns this public object property.
         $this->assertSame( 'sentient_forms_realtime_qna', $storage_field->inputName ?? null );
     }
 

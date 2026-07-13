@@ -37,7 +37,8 @@ if ( ! class_exists( 'GFAPI' ) )
         public static int $get_entry_calls = 0;
         public static int $get_form_calls = 0;
 
-        public static function get_entry( $entry_id ) {
+        public static function get_entry( $entry_id )
+        {
             ++self::$get_entry_calls;
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) )
@@ -48,17 +49,20 @@ if ( ! class_exists( 'GFAPI' ) )
             return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
         }
 
-        public static function get_form( $form_id ) {
+        public static function get_form( $form_id )
+        {
             ++self::$get_form_calls;
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }
 
-        public static function get_forms(): array {
+        public static function get_forms(): array
+        {
             return array_values( self::$forms );
         }
 
-        public static function update_form( $form, $form_id = null ) {
+        public static function update_form( $form, $form_id = null )
+        {
             $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
                 ? (int) $form['id']
                 : (int) $form_id;
@@ -78,7 +82,8 @@ if ( ! class_exists( 'GFAPI' ) )
             return true;
         }
 
-        public static function update_entry( $entry ) {
+        public static function update_entry( $entry )
+        {
             if ( ! is_array( $entry ) || empty( $entry['id'] ) )
             {
                 return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
@@ -97,15 +102,18 @@ if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
         /** @var array<int,array<string,mixed>> */
         private static array $meta = [];
 
-        public static function reset(): void {
+        public static function reset(): void
+        {
             self::$meta = [];
         }
 
-        public static function set_meta( int $entry_id, string $meta_key, mixed $value ): void {
+        public static function set_meta( int $entry_id, string $meta_key, mixed $value ): void
+        {
             self::update_meta( $entry_id, $meta_key, $value );
         }
 
-        public static function update_meta( int $entry_id, string $meta_key, mixed $value ): void {
+        public static function update_meta( int $entry_id, string $meta_key, mixed $value ): void
+        {
             if ( ! isset( self::$meta[ $entry_id ] ) )
             {
                 self::$meta[ $entry_id ] = [];
@@ -114,7 +122,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
             self::$meta[ $entry_id ][ $meta_key ] = $value;
         }
 
-        public static function get_meta( int $entry_id, string $meta_key ): mixed {
+        public static function get_meta( int $entry_id, string $meta_key ): mixed
+        {
             return self::$meta[ $entry_id ][ $meta_key ] ?? null;
         }
     }
@@ -122,14 +131,16 @@ if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
 
 if ( ! function_exists( 'gform_get_meta' ) )
 {
-    function gform_get_meta( $entry_id, $meta_key ) {
+    function gform_get_meta( $entry_id, $meta_key )
+    {
         return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
     }
 }
 
 if ( ! function_exists( 'gform_update_meta' ) )
 {
-    function gform_update_meta( $entry_id, $meta_key, $value ) {
+    function gform_update_meta( $entry_id, $meta_key, $value )
+    {
         Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
         return true;
     }

@@ -612,7 +612,8 @@ SVG;
     /**
      * Render the Actions tab.
      */
-    public function render_actions_tab(): void {
+    public function render_actions_tab(): void
+    {
         $this->render_app_container( 'actions' );
     }
 
@@ -669,7 +670,7 @@ Promise.all([
                     $this->spa_bootstrap_script
                 )
             );
-            }
+        }
 
         echo '</div></div>';
     }

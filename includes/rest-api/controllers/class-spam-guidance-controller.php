@@ -31,7 +31,8 @@ class Sentient_Forms_Spam_Guidance_Controller extends Sentient_Forms_Abstract_Ba
         ?Sentient_Forms_Form_Entry_Search_Service $entry_search = null,
         ?Sentient_Forms_Form_Mappings_Repository $mappings = null,
         ?Sentient_Forms_Spam_Guidance_Rationale_Service $rationale_service = null
-    ) {
+    )
+    {
         parent::__construct();
         $this->entry_search      = $entry_search ?? new Sentient_Forms_Form_Entry_Search_Service();
         $this->mappings          = $mappings;

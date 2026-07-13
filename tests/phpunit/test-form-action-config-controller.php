@@ -15,7 +15,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
     private array $dynamic_option_keys = [];
     private string $action_defaults_option_key = 'sentient_forms_action_defaults_spam_detection_v1';
 
-    protected function setUp(): void {
+    protected function setUp(): void
+    {
         parent::setUp();
         $this->controller = new Sentient_Forms_Form_Action_Config_Controller();
 
@@ -25,7 +26,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->dynamic_option_keys = [];
     }
 
-    protected function tearDown(): void {
+    protected function tearDown(): void
+    {
         delete_option( $this->option_key );
         delete_option( $this->elementor_opaque_option_key );
         foreach ( $this->dynamic_option_keys as $option_key ) {
@@ -37,14 +39,16 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         parent::tearDown();
     }
 
-    private function guidance_example( string $text, string $rationale = 'Business-specific rationale' ): array {
+    private function guidance_example( string $text, string $rationale = 'Business-specific rationale' ): array
+    {
         return [
             'text'      => $text,
             'rationale' => $rationale,
         ];
     }
 
-    public function test_get_form_configs_returns_empty_array_when_no_config(): void {
+    public function test_get_form_configs_returns_empty_array_when_no_config(): void
+    {
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/forms/gravity_forms/999/action-config' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -57,7 +61,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertEmpty( $data['configs'] );
     }
 
-    public function test_update_action_config_stores_spam_examples(): void {
+    public function test_update_action_config_stores_spam_examples(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -86,7 +91,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         );
     }
 
-    public function test_update_action_config_rejects_legacy_string_spam_examples(): void {
+    public function test_update_action_config_rejects_legacy_string_spam_examples(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -103,7 +109,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( [], $stored );
     }
 
-    public function test_get_action_config_drops_malformed_saved_spam_examples(): void {
+    public function test_get_action_config_drops_malformed_saved_spam_examples(): void
+    {
         update_option(
             $this->option_key,
             [
@@ -126,7 +133,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( [], $data['config']['spam_negative_examples'] ?? null );
     }
 
-    public function test_get_action_config_route_preserves_elementor_opaque_form_id(): void {
+    public function test_get_action_config_route_preserves_elementor_opaque_form_id(): void
+    {
         update_option(
             $this->elementor_opaque_option_key,
             [
@@ -155,7 +163,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         );
     }
 
-    public function test_elementor_provider_native_form_config_keys_do_not_collide(): void {
+    public function test_elementor_provider_native_form_config_keys_do_not_collide(): void
+    {
         $form_configs = [
             '123:abc' => 'Summarize colon-delimited Elementor submissions.',
             '123_abc' => 'Summarize underscore-delimited Elementor submissions.',
@@ -195,7 +204,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         }
     }
 
-    public function test_update_action_config_rejects_missing_spam_example_rationale(): void {
+    public function test_update_action_config_rejects_missing_spam_example_rationale(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -209,7 +219,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'spam_negative_examples', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_action_config_rejects_string_spam_policy_booleans(): void {
+    public function test_update_action_config_rejects_string_spam_policy_booleans(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -223,7 +234,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'suppress_webhooks_on_spam', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_action_config_rejects_over_limit_action_customization(): void {
+    public function test_update_action_config_rejects_over_limit_action_customization(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -237,7 +249,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'action_customization', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_action_defaults_rejects_too_many_spam_examples(): void {
+    public function test_update_action_defaults_rejects_too_many_spam_examples(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
         $request->set_param( 'action_id', 'spam_detection_v1' );
         $request->set_param(
@@ -255,7 +268,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'spam_positive_examples', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_action_config_stores_structured_model_selection(): void {
+    public function test_update_action_config_stores_structured_model_selection(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/summary_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -288,7 +302,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'model_override', $stored['summary_v1'] );
     }
 
-    public function test_update_action_config_preserves_managed_zdr_model_selection_requirement(): void {
+    public function test_update_action_config_preserves_managed_zdr_model_selection_requirement(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/summary_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -311,7 +326,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertTrue( $stored['summary_v1']['model_selection']['require_zdr'] ?? false );
     }
 
-    public function test_update_action_config_stores_spam_policy_booleans(): void {
+    public function test_update_action_config_stores_spam_policy_booleans(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
         $request->set_param( 'form_source', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
@@ -332,7 +348,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertTrue( $stored['spam_detection_v1']['skip_downstream_on_spam'] ?? false );
     }
 
-    public function test_update_action_config_merges_with_existing_actions(): void {
+    public function test_update_action_config_merges_with_existing_actions(): void
+    {
         // Pre-populate with existing config.
         update_option( $this->option_key, [
             'spam_detection_v1' => [
@@ -370,7 +387,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'value', $stored['summary_v1']['some_setting'] );
     }
 
-    public function test_get_action_config_returns_action_specific_config(): void {
+    public function test_get_action_config_returns_action_specific_config(): void
+    {
         $config = [
             'spam_detection_v1' => [
                 'spam_positive_examples' => [ $this->guidance_example( 'Example 1' ), $this->guidance_example( 'Example 2' ) ],
@@ -394,7 +412,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         );
     }
 
-    public function test_get_action_config_normalizes_legacy_model_override_to_model_selection(): void {
+    public function test_get_action_config_normalizes_legacy_model_override_to_model_selection(): void
+    {
         update_option(
             $this->option_key,
             [
@@ -416,7 +435,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertTrue( $data['config']['model_selection']['is_preset'] );
     }
 
-    public function test_get_action_config_restores_canonical_spam_note_settings(): void {
+    public function test_get_action_config_restores_canonical_spam_note_settings(): void
+    {
         update_option(
             $this->option_key,
                 [
@@ -439,7 +459,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'simple', $data['config']['spam_indicators_display'] ?? null );
     }
 
-    public function test_update_action_defaults_stores_spam_policy_booleans(): void {
+    public function test_update_action_defaults_stores_spam_policy_booleans(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
         $request->set_param( 'action_id', 'spam_detection_v1' );
         $request->set_param( 'suppress_notifications_on_spam', true );
@@ -458,7 +479,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertFalse( $stored['skip_downstream_on_spam'] ?? true );
     }
 
-    public function test_update_action_defaults_stores_spam_note_controls(): void {
+    public function test_update_action_defaults_stores_spam_note_controls(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
         $request->set_param( 'action_id', 'spam_detection_v1' );
         $request->set_param( 'spam_result_display_mode', 'all_results' );
@@ -474,7 +496,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'detailed', $stored['spam_indicators_display'] ?? null );
     }
 
-    public function test_get_action_defaults_restores_canonical_spam_note_settings(): void {
+    public function test_get_action_defaults_restores_canonical_spam_note_settings(): void
+    {
         update_option(
             $this->action_defaults_option_key,
                 [
@@ -493,7 +516,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         $this->assertSame( 'detailed', $data['config']['spam_indicators_display'] ?? null );
     }
 
-    public function test_get_action_defaults_batch_returns_requested_defaults(): void {
+    public function test_get_action_defaults_batch_returns_requested_defaults(): void
+    {
         update_option(
             $this->action_defaults_option_key,
             [
@@ -531,7 +555,8 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
     }
 
-    public function test_delete_action_config_removes_only_target_action(): void {
+    public function test_delete_action_config_removes_only_target_action(): void
+    {
         update_option( $this->option_key, [
             'spam_detection_v1' => [
                 'spam_positive_examples' => [ $this->guidance_example( 'Keep me deleted' ) ],

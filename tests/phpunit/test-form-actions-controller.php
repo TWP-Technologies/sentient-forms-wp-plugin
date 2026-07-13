@@ -7,7 +7,8 @@ if ( ! class_exists( 'GFAPI' ) ) {
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
 
-        public static function get_entry( $entry_id ) {
+        public static function get_entry( $entry_id )
+        {
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) ) {
                 return self::$entries[ $entry_id ];
@@ -16,16 +17,19 @@ if ( ! class_exists( 'GFAPI' ) ) {
             return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
         }
 
-        public static function get_form( $form_id ) {
+        public static function get_form( $form_id )
+        {
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }
 
-        public static function get_forms(): array {
+        public static function get_forms(): array
+        {
             return array_values( self::$forms );
         }
 
-        public static function update_form( $form, $form_id = null ) {
+        public static function update_form( $form, $form_id = null )
+        {
             $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
                 ? (int) $form['id']
                 : (int) $form_id;
@@ -54,35 +58,41 @@ if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) ) {
         /** @var array<int,array<string,mixed>> */
         private static array $meta = [];
 
-        public static function reset(): void {
+        public static function reset(): void
+        {
             self::$meta = [];
         }
 
-        public static function set_meta( int $entry_id, string $key, mixed $value ): void {
+        public static function set_meta( int $entry_id, string $key, mixed $value ): void
+        {
             if ( ! isset( self::$meta[ $entry_id ] ) ) {
                 self::$meta[ $entry_id ] = [];
             }
             self::$meta[ $entry_id ][ $key ] = $value;
         }
 
-        public static function get_meta( int $entry_id, string $key ): mixed {
+        public static function get_meta( int $entry_id, string $key ): mixed
+        {
             return self::$meta[ $entry_id ][ $key ] ?? null;
         }
 
-        public static function update_meta( int $entry_id, string $key, mixed $value ): void {
+        public static function update_meta( int $entry_id, string $key, mixed $value ): void
+        {
             self::set_meta( $entry_id, $key, $value );
         }
     }
 }
 
 if ( ! function_exists( 'gform_get_meta' ) ) {
-    function gform_get_meta( $entry_id, $meta_key ) {
+    function gform_get_meta( $entry_id, $meta_key )
+    {
         return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
     }
 }
 
 if ( ! function_exists( 'gform_update_meta' ) ) {
-    function gform_update_meta( $entry_id, $meta_key, $value ) {
+    function gform_update_meta( $entry_id, $meta_key, $value )
+    {
         Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
     }
 }
@@ -94,19 +104,23 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
         /** @var array<int,string> */
         public array $field_calls = [];
 
-        public function get_id(): string {
+        public function get_id(): string
+        {
             return 'opaque_forms';
         }
 
-        public function get_name(): string {
+        public function get_name(): string
+        {
             return 'Opaque Forms';
         }
 
-        public function is_active(): bool {
+        public function is_active(): bool
+        {
             return true;
         }
 
-        public function get_forms(): array {
+        public function get_forms(): array
+        {
             return [
                 [ 'id' => '42:form-alpha_2026', 'name' => 'Alpha 2026' ],
                 [ 'id' => '42_form-alpha_2026', 'name' => 'Underscore Alpha 2026' ],
@@ -114,7 +128,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
             ];
         }
 
-        public function get_form_fields( $form_id ): array {
+        public function get_form_fields( $form_id ): array
+        {
             $form_id             = (string) $form_id;
             $this->field_calls[] = $form_id;
 
@@ -134,35 +149,43 @@ if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
             ];
         }
 
-        public function get_entry_data( $entry_id, $form_id = null ) {
+        public function get_entry_data( $entry_id, $form_id = null )
+        {
             return null;
         }
 
-        public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool {
+        public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool
+        {
             return false;
         }
 
-        public function mark_entry_as_spam( mixed $entry_id ): bool {
+        public function mark_entry_as_spam( mixed $entry_id ): bool
+        {
             return false;
         }
 
-        public function reject_submission( mixed $entry_id, string $message ): bool {
+        public function reject_submission( mixed $entry_id, string $message ): bool
+        {
             return false;
         }
 
-        public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool {
+        public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool
+        {
             return false;
         }
 
-        public function get_action_hook_for_event( string $event_name ): ?string {
+        public function get_action_hook_for_event( string $event_name ): ?string
+        {
             return null;
         }
 
-        public function get_form_object( int $form_id ): object | array | null {
+        public function get_form_object( int $form_id ): object | array | null
+        {
             return null;
         }
 
-        public function form_exists( mixed $form_id ): bool {
+        public function form_exists( mixed $form_id ): bool
+        {
             $form_id                   = (string) $form_id;
             $this->form_exists_calls[] = $form_id;
 
@@ -177,7 +200,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     /** @var string[] */
     private array $dynamic_action_option_keys = [];
 
-    protected function setUp(): void {
+    protected function setUp(): void
+    {
         parent::setUp();
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_workspace_tables();
@@ -198,7 +222,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         }
     }
 
-    protected function tearDown(): void {
+    protected function tearDown(): void
+    {
         remove_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
         remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
         remove_all_filters( 'sentient_forms_contact_form_7_forms' );
@@ -2426,7 +2451,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 5, $data['metering_summary']['credits_debited'] ?? null );
     }
 
-    public function test_validate_trigger_hooks_accepts_allowed_values(): void {
+    public function test_validate_trigger_hooks_accepts_allowed_values(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
             [ 'gform_validation', 'gform_after_submission', 'real_time' ],
@@ -2437,7 +2463,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $result );
     }
 
-    public function test_validate_trigger_hooks_accepts_canonical_lifecycle_ids_and_legacy_aliases(): void {
+    public function test_validate_trigger_hooks_accepts_canonical_lifecycle_ids_and_legacy_aliases(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
             [ 'validation', 'gform_after_submission', 'real_time' ],
@@ -2448,7 +2475,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $result );
     }
 
-    public function test_validate_trigger_hooks_rejects_unknown_hook(): void {
+    public function test_validate_trigger_hooks_rejects_unknown_hook(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
             [ 'gform_bogus_hook' ],
@@ -2460,7 +2488,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'rest_invalid_hook', $result->get_error_code() );
     }
 
-    public function test_add_form_action_sanitizes_trigger_hooks(): void {
+    public function test_add_form_action_sanitizes_trigger_hooks(): void
+    {
         delete_option( 'sentient_forms_actions_gravity_forms_1' );
         $this->create_ready_managed_credential();
 
@@ -2485,7 +2514,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'validation', $stored['hook'] ?? null );
     }
 
-    public function test_add_form_action_rejects_malformed_spam_guidance_settings(): void {
+    public function test_add_form_action_rejects_malformed_spam_guidance_settings(): void
+    {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 1 );
@@ -2510,7 +2540,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'spam_negative_examples', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_form_action_item_rejects_string_spam_policy_setting(): void {
+    public function test_update_form_action_item_rejects_string_spam_policy_setting(): void
+    {
         $record = $this->create_local_first_mapping_fixture( '1' );
 
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
@@ -2531,7 +2562,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'suppress_webhooks_on_spam', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_form_action_item_rejects_string_spam_confidence_threshold(): void {
+    public function test_update_form_action_item_rejects_string_spam_confidence_threshold(): void
+    {
         $record = $this->create_local_first_mapping_fixture( '1' );
 
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
@@ -2552,7 +2584,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'spam_confidence_threshold', $response->get_error_data()['field'] ?? null );
     }
 
-    public function test_update_form_action_item_rejects_invalid_action_customization(): void {
+    public function test_update_form_action_item_rejects_invalid_action_customization(): void
+    {
         $record = $this->create_local_first_mapping_fixture( '1' );
 
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );

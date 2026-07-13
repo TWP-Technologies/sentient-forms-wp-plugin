@@ -33,7 +33,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     public function __construct(
         ?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null,
         ?Sentient_Forms_Local_Action_Execution_Service $local_execution = null
-    ) {
+    )
+    {
         parent::__construct();
         global $wpdb;
 
@@ -53,7 +54,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         }
     }
 
-    public function register_routes(): void {
+    public function register_routes(): void
+    {
         register_rest_route(
             $this->namespace,
             '/' . $this->rest_base . '/runtime-config',
@@ -146,11 +148,13 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         );
     }
 
-    public function sanitize_form_id_param( mixed $value ): string {
+    public function sanitize_form_id_param( mixed $value ): string
+    {
         return $this->normalize_provider_form_id( $value );
     }
 
-    public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): bool | WP_Error {
+    public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): bool | WP_Error
+    {
         $form_id = $this->normalize_provider_form_id( $value );
         if ( '' === $form_id || strlen( $form_id ) > 100 || ! preg_match( '/^' . self::FORM_ID_PATTERN . '$/', $form_id ) ) {
             return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a valid provider-native identifier.', 'sentient-forms' ), [ 'status' => 400 ] );
@@ -163,7 +167,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return true;
     }
 
-    private function normalize_provider_form_id( mixed $value ): string {
+    private function normalize_provider_form_id( mixed $value ): string
+    {
         if ( ! is_scalar( $value ) ) {
             return '';
         }
@@ -171,11 +176,13 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
     }
 
-    private function is_positive_integer_form_id( string $form_id ): bool {
+    private function is_positive_integer_form_id( string $form_id ): bool
+    {
         return ctype_digit( $form_id ) && absint( $form_id ) > 0;
     }
 
-    public function get_runtime_config( WP_REST_Request $request ): WP_REST_Response | WP_Error {
+    public function get_runtime_config( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
         $form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         $form_id = $this->normalize_provider_form_id( $request->get_param( 'form_id' ) );
 
@@ -238,7 +245,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         WP_HTTP_Response $response,
         WP_REST_Server $server,
         WP_REST_Request $request
-    ): WP_HTTP_Response {
+    ): WP_HTTP_Response
+    {
         unset( $server );
 
         if ( $this->is_runtime_config_request( $request ) ) {
@@ -248,7 +256,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return $response;
     }
 
-    private function is_runtime_config_request( WP_REST_Request $request ): bool {
+    private function is_runtime_config_request( WP_REST_Request $request ): bool
+    {
         $route = $request->get_route();
         return 1 === preg_match(
             '#^/' . preg_quote( $this->namespace, '#' ) . '/[a-z0-9_]+/forms/' . self::FORM_ID_PATTERN . '/actions/runtime-config$#',
@@ -256,13 +265,15 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         );
     }
 
-    private function add_runtime_config_no_store_headers( WP_HTTP_Response $response ): void {
+    private function add_runtime_config_no_store_headers( WP_HTTP_Response $response ): void
+    {
         $response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
         $response->header( 'Pragma', 'no-cache' );
         $response->header( 'Expires', 'Wed, 11 Jan 1984 05:00:00 GMT' );
     }
 
-    private function has_valid_runtime_config_token( WP_REST_Request $request, string $form_source_slug, int $form_id ): bool {
+    private function has_valid_runtime_config_token( WP_REST_Request $request, string $form_source_slug, int $form_id ): bool
+    {
         $token = $request->get_header( self::RUNTIME_CONFIG_TOKEN_HEADER );
         if ( ! is_scalar( $token ) || '' === trim( (string) $token ) ) {
             $token = $request->get_param( 'runtime_config_token' );
@@ -278,7 +289,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * Public permission callback guarded by a form-scoped nonce.
      */
-    public function permission_callback_public_nonce( WP_REST_Request $request ): bool {
+    public function permission_callback_public_nonce( WP_REST_Request $request ): bool
+    {
         $form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         if ( '' !== $form_source_slug && 'gravity_forms' !== $form_source_slug ) {
             return true;
@@ -302,7 +314,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return (bool) wp_verify_nonce( $nonce, $expected_action );
     }
 
-    public function suggest( WP_REST_Request $request ): WP_REST_Response | WP_Error {
+    public function suggest( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
         $form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         $form_id = absint( $request->get_param( 'form_id' ) );
         $mapping_id = sanitize_text_field( (string) $request->get_param( 'mapping_id' ) );
@@ -418,7 +431,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         array $known_values,
         array $context,
         array $suggestion_context
-    ): array | WP_Error | null {
+    ): array | WP_Error | null
+    {
         $local_mapping_id = $this->resolve_local_mapping_id( $mapping );
         if ( $local_mapping_id <= 0 ) {
             return null;
@@ -468,7 +482,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @param array<string,mixed> $mapping
      */
-    private function resolve_local_mapping_id( array $mapping ): int {
+    private function resolve_local_mapping_id( array $mapping ): int
+    {
         if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ) {
             $settings = $mapping['settings'];
             if ( isset( $settings['local_form_mapping_id'] ) && is_numeric( $settings['local_form_mapping_id'] ) ) {
@@ -499,7 +514,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,string>
      */
-    private function known_values_for_realtime_execution( array $suggestion_context ): array {
+    private function known_values_for_realtime_execution( array $suggestion_context ): array
+    {
         $known_values = is_array( $suggestion_context['all_known_field_values'] ?? null )
             ? $suggestion_context['all_known_field_values']
             : [];
@@ -521,7 +537,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return $filtered;
     }
 
-    private function status_for_local_execution_error( WP_Error $error ): int {
+    private function status_for_local_execution_error( WP_Error $error ): int
+    {
         $data = $error->get_error_data();
         if ( is_array( $data ) && isset( $data['status'] ) && is_numeric( $data['status'] ) ) {
             return (int) $data['status'];
@@ -542,7 +559,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         };
     }
 
-    private function sanitize_public_local_execution_error( WP_Error $error, int $status ): WP_Error {
+    private function sanitize_public_local_execution_error( WP_Error $error, int $status ): WP_Error
+    {
         $data = is_array( $error->get_error_data() ) ? $error->get_error_data() : [];
         $data['status'] = $status;
 
@@ -558,7 +576,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return $error;
     }
 
-    private function is_structured_output_execution_error( WP_Error $error ): bool {
+    private function is_structured_output_execution_error( WP_Error $error ): bool
+    {
         return in_array(
             $error->get_error_code(),
             [
@@ -577,7 +596,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,mixed>
      */
-    private function format_local_suggestion_response( array $result, array $suggestion_context ): array {
+    private function format_local_suggestion_response( array $result, array $suggestion_context ): array
+    {
         $structured = $this->extract_local_suggestion_payload( $result );
 
         return [
@@ -602,7 +622,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,mixed>
      */
-    private function extract_local_suggestion_payload( array $result ): array {
+    private function extract_local_suggestion_payload( array $result ): array
+    {
         $candidates = [];
         if ( isset( $result['result'] ) && is_array( $result['result'] ) ) {
             $candidates[] = $result['result'];
@@ -633,7 +654,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<int,array<string,mixed>>
      */
-    private function normalize_local_suggestions( mixed $raw, array $suggestion_context ): array {
+    private function normalize_local_suggestions( mixed $raw, array $suggestion_context ): array
+    {
         if ( ! is_array( $raw ) ) {
             return [];
         }
@@ -710,7 +732,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function normalize_local_virtual_questions( mixed $raw ): array {
+    private function normalize_local_virtual_questions( mixed $raw ): array
+    {
         if ( ! is_array( $raw ) ) {
             return [];
         }
@@ -764,7 +787,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @return array<int,array<string,mixed>>
      */
-    private function normalize_local_conditional_decisions( mixed $raw ): array {
+    private function normalize_local_conditional_decisions( mixed $raw ): array
+    {
         if ( ! is_array( $raw ) ) {
             return [];
         }
@@ -800,7 +824,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @return true|WP_Error
      */
-    private function enforce_rate_limit( int $form_id, string $bucket = 'suggest' ) {
+    private function enforce_rate_limit( int $form_id, string $bucket = 'suggest' )
+    {
         $is_runtime_config = 'runtime_config' === $bucket;
         $default_limit = $is_runtime_config
             ? self::DEFAULT_RUNTIME_CONFIG_RATE_LIMIT_PER_MINUTE
@@ -845,7 +870,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return true;
     }
 
-    private function get_rate_limit_client_identifier( int $form_id ): string {
+    private function get_rate_limit_client_identifier( int $form_id ): string
+    {
         $remote_addr = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : 'unknown';
         $identifier = apply_filters( 'sentient_forms_realtime_suggest_client_identifier', $remote_addr, $form_id );
 
@@ -857,7 +883,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @return true|WP_Error
      */
-    private function validate_payload_size( WP_REST_Request $request ) {
+    private function validate_payload_size( WP_REST_Request $request )
+    {
         $limit = (int) apply_filters( 'sentient_forms_realtime_suggest_max_payload_bytes', self::DEFAULT_MAX_PAYLOAD_BYTES, $request );
         if ( $limit < 1024 ) {
             $limit = self::DEFAULT_MAX_PAYLOAD_BYTES;
@@ -895,7 +922,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,string>
      */
-    private function sanitize_known_field_values( $raw ): array {
+    private function sanitize_known_field_values( $raw ): array
+    {
         if ( ! is_array( $raw ) ) {
             return [];
         }
@@ -936,7 +964,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,mixed>|null
      */
-    private function find_realtime_mapping( array $form_settings, string $mapping_id ): ?array {
+    private function find_realtime_mapping( array $form_settings, string $mapping_id ): ?array
+    {
         $actions = isset( $form_settings['actions'] ) && is_array( $form_settings['actions'] )
             ? $form_settings['actions']
             : [];
@@ -980,7 +1009,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return null;
     }
 
-    private function normalize_hidden_field_exposure_mode( array $realtime_settings ): string {
+    private function normalize_hidden_field_exposure_mode( array $realtime_settings ): string
+    {
         $mode = isset( $realtime_settings['hidden_field_exposure_mode'] ) && is_scalar( $realtime_settings['hidden_field_exposure_mode'] )
             ? sanitize_key( (string) $realtime_settings['hidden_field_exposure_mode'] )
             : 'label_hidden';
@@ -988,7 +1018,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return in_array( $mode, self::HIDDEN_FIELD_EXPOSURE_MODES, true ) ? $mode : 'label_hidden';
     }
 
-    private function root_field_id( string $field_id ): string {
+    private function root_field_id( string $field_id ): string
+    {
         $dot_position = strpos( $field_id, '.' );
         return false === $dot_position ? $field_id : substr( $field_id, 0, $dot_position );
     }
@@ -996,12 +1027,14 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @param array<int,string> $visible_field_ids
      */
-    private function is_visible_value_field( string $field_id, array $visible_field_ids ): bool {
+    private function is_visible_value_field( string $field_id, array $visible_field_ids ): bool
+    {
         $visible_lookup = array_fill_keys( $visible_field_ids, true );
         return isset( $visible_lookup[ $field_id ] ) || isset( $visible_lookup[ $this->root_field_id( $field_id ) ] );
     }
 
-    private function is_realtime_storage_field( string $field_id, array $realtime_settings ): bool {
+    private function is_realtime_storage_field( string $field_id, array $realtime_settings ): bool
+    {
         $target_field_id = isset( $realtime_settings['storage_target_field_id'] ) && is_scalar( $realtime_settings['storage_target_field_id'] )
             ? sanitize_text_field( (string) $realtime_settings['storage_target_field_id'] )
             : '';
@@ -1012,7 +1045,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return $field_id === $target_field_id || $this->root_field_id( $field_id ) === $target_field_id;
     }
 
-    private function is_client_visible_form_value_field( string $field_id, array $form, array $realtime_settings ): bool {
+    private function is_client_visible_form_value_field( string $field_id, array $form, array $realtime_settings ): bool
+    {
         if ( '' === $field_id || $this->is_realtime_storage_field( $field_id, $realtime_settings ) ) {
             return false;
         }
@@ -1028,7 +1062,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
     /**
      * @return array{field_id:string,label:string,type:string,visibility:string,page_index:int}|null
      */
-    private function form_field_meta_for_value_id( array $form, string $field_id ): ?array {
+    private function form_field_meta_for_value_id( array $form, string $field_id ): ?array
+    {
         $root_field_id = $this->root_field_id( $field_id );
         $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
 
@@ -1070,7 +1105,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         return null;
     }
 
-    private function sanitize_realtime_context_value( mixed $value ): mixed {
+    private function sanitize_realtime_context_value( mixed $value ): mixed
+    {
         if ( is_array( $value ) ) {
             $items = [];
             foreach ( $value as $item ) {
@@ -1090,7 +1126,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<string,string>
      */
-    private function filter_known_values_for_realtime_policy( array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array {
+    private function filter_known_values_for_realtime_policy( array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array
+    {
         $include_hidden_values = in_array( $hidden_field_exposure_mode, [ 'label_hidden_value', 'label_value' ], true );
         $filtered = [];
 
@@ -1119,7 +1156,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
      *
      * @return array<int,array<string,mixed>>
      */
-    private function build_supplemental_field_context( mixed $raw_context, array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array {
+    private function build_supplemental_field_context( mixed $raw_context, array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array
+    {
         if ( 'omit_hidden' === $hidden_field_exposure_mode ) {
             return [];
         }
@@ -1198,7 +1236,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
         array $mapping,
         array $known_values,
         array $form
-    ): array {
+    ): array
+    {
         $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
             ? $mapping['settings']
             : [];
@@ -1220,24 +1259,24 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
             }
         }
             $visible_field_ids = array_values( array_unique( $visible_field_ids ) );
-            if ( empty( $visible_field_ids ) ) {
-                $visible_field_ids = array_values(
-                    array_filter(
-                        array_map(
-                            function ( $field_id ) use ( $form, $realtime_settings ): string {
-                                $normalized = sanitize_text_field( (string) $field_id );
-                                if (
-                                    '' === $normalized
-                                    || $this->is_realtime_storage_field( $normalized, $realtime_settings )
-                                    || ! $this->is_client_visible_form_value_field( $normalized, $form, $realtime_settings )
-                                ) {
-                                    return '';
-                                }
-                                return $normalized;
-                            },
-                            array_keys( $known_values )
-                        ),
-                    static fn( string $field_id ): bool => '' !== $field_id
+        if ( empty( $visible_field_ids ) ) {
+            $visible_field_ids = array_values(
+                array_filter(
+                    array_map(
+                        function ( $field_id ) use ( $form, $realtime_settings ): string {
+                            $normalized = sanitize_text_field( (string) $field_id );
+                            if (
+                                '' === $normalized
+                                || $this->is_realtime_storage_field( $normalized, $realtime_settings )
+                                || ! $this->is_client_visible_form_value_field( $normalized, $form, $realtime_settings )
+                            ) {
+                                return '';
+                            }
+                            return $normalized;
+                        },
+                        array_keys( $known_values )
+                    ),
+                static fn( string $field_id ): bool => '' !== $field_id
                 )
             );
         }
@@ -1294,9 +1333,9 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
                 $future_field_manifest[] = $manifest_entry;
             }
         }
-            if ( empty( $future_field_manifest ) ) {
-                $future_field_manifest = $this->build_future_field_manifest( $form, $current_page_index );
-            }
+        if ( empty( $future_field_manifest ) ) {
+            $future_field_manifest = $this->build_future_field_manifest( $form, $current_page_index );
+        }
                 $request_reason = isset( $request['request_reason'] ) && is_scalar( $request['request_reason'] )
                     ? sanitize_key( (string) $request['request_reason'] )
                     : 'manual_refresh';
@@ -1333,66 +1372,68 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
                     'supplemental_field_context' => $supplemental_field_context,
                     'panel_state'           => $panel_state,
                 ];
-        }
+    }
 
         /**
          * @param mixed $raw
          *
          * @return array<string,mixed>
          */
-        private function sanitize_panel_state( mixed $raw ): array {
-            if ( ! is_array( $raw ) ) {
-                return [
-                    'suggestions'       => [],
-                    'virtual_questions' => [],
-                ];
-            }
-
-            $suggestions = [];
-            foreach ( is_array( $raw['suggestions'] ?? null ) ? $raw['suggestions'] : [] as $item ) {
-                if ( ! is_array( $item ) ) {
-                    continue;
-                }
-                $suggestions[] = [
-                    'suggestion_id' => isset( $item['suggestion_id'] ) && is_scalar( $item['suggestion_id'] ) ? sanitize_text_field( (string) $item['suggestion_id'] ) : '',
-                    'field_id'      => isset( $item['field_id'] ) && is_scalar( $item['field_id'] ) ? sanitize_text_field( (string) $item['field_id'] ) : '',
-                    'message'       => isset( $item['message'] ) && is_scalar( $item['message'] ) ? sanitize_textarea_field( (string) $item['message'] ) : '',
-                    'severity'      => isset( $item['severity'] ) && is_scalar( $item['severity'] ) ? sanitize_key( (string) $item['severity'] ) : 'info',
-                    'completed'     => rest_sanitize_boolean( $item['completed'] ?? false ),
-                ];
-                if ( count( $suggestions ) >= 20 ) {
-                    break;
-                }
-            }
-
-            $questions = [];
-            foreach ( is_array( $raw['virtual_questions'] ?? null ) ? $raw['virtual_questions'] : [] as $item ) {
-                if ( ! is_array( $item ) ) {
-                    continue;
-                }
-                $questions[] = [
-                    'question_id'     => isset( $item['question_id'] ) && is_scalar( $item['question_id'] ) ? sanitize_text_field( (string) $item['question_id'] ) : '',
-                    'question'        => isset( $item['question'] ) && is_scalar( $item['question'] ) ? sanitize_text_field( (string) $item['question'] ) : '',
-                    'answer'          => isset( $item['answer'] ) && is_scalar( $item['answer'] ) ? sanitize_textarea_field( (string) $item['answer'] ) : '',
-                    'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] ) ? sanitize_text_field( (string) $item['target_field_id'] ) : '',
-                    'completed'       => rest_sanitize_boolean( $item['completed'] ?? false ),
-                ];
-                if ( count( $questions ) >= 20 ) {
-                    break;
-                }
-            }
-
+    private function sanitize_panel_state( mixed $raw ): array
+    {
+        if ( ! is_array( $raw ) ) {
             return [
-                'suggestions'       => $suggestions,
-                'virtual_questions' => $questions,
+                'suggestions'       => [],
+                'virtual_questions' => [],
             ];
         }
+
+        $suggestions = [];
+        foreach ( is_array( $raw['suggestions'] ?? null ) ? $raw['suggestions'] : [] as $item ) {
+            if ( ! is_array( $item ) ) {
+                continue;
+            }
+            $suggestions[] = [
+                'suggestion_id' => isset( $item['suggestion_id'] ) && is_scalar( $item['suggestion_id'] ) ? sanitize_text_field( (string) $item['suggestion_id'] ) : '',
+                'field_id'      => isset( $item['field_id'] ) && is_scalar( $item['field_id'] ) ? sanitize_text_field( (string) $item['field_id'] ) : '',
+                'message'       => isset( $item['message'] ) && is_scalar( $item['message'] ) ? sanitize_textarea_field( (string) $item['message'] ) : '',
+                'severity'      => isset( $item['severity'] ) && is_scalar( $item['severity'] ) ? sanitize_key( (string) $item['severity'] ) : 'info',
+                'completed'     => rest_sanitize_boolean( $item['completed'] ?? false ),
+            ];
+            if ( count( $suggestions ) >= 20 ) {
+                break;
+            }
+        }
+
+        $questions = [];
+        foreach ( is_array( $raw['virtual_questions'] ?? null ) ? $raw['virtual_questions'] : [] as $item ) {
+            if ( ! is_array( $item ) ) {
+                continue;
+            }
+            $questions[] = [
+                'question_id'     => isset( $item['question_id'] ) && is_scalar( $item['question_id'] ) ? sanitize_text_field( (string) $item['question_id'] ) : '',
+                'question'        => isset( $item['question'] ) && is_scalar( $item['question'] ) ? sanitize_text_field( (string) $item['question'] ) : '',
+                'answer'          => isset( $item['answer'] ) && is_scalar( $item['answer'] ) ? sanitize_textarea_field( (string) $item['answer'] ) : '',
+                'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] ) ? sanitize_text_field( (string) $item['target_field_id'] ) : '',
+                'completed'       => rest_sanitize_boolean( $item['completed'] ?? false ),
+            ];
+            if ( count( $questions ) >= 20 ) {
+                break;
+            }
+        }
+
+        return [
+            'suggestions'       => $suggestions,
+            'virtual_questions' => $questions,
+        ];
+    }
 
         /**
      * @param array<string,mixed> $form
      * @return array<int,array<string,mixed>>
      */
-    private function build_future_field_manifest( array $form, int $current_page_index ): array {
+    private function build_future_field_manifest( array $form, int $current_page_index ): array
+    {
         $manifest = [];
         $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
 
@@ -1405,6 +1446,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
             if ( '' === $field_id || '' === $field_type || 'page' === $field_type ) {
                 continue;
             }
+            // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Gravity Forms owns this public object property.
             $page_index = isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1;
             if ( $page_index <= $current_page_index ) {
                 continue;
