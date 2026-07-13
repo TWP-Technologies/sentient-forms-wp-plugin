@@ -28,6 +28,22 @@ describe('runtime config boundary', () => {
 		);
 	});
 
+	it('accepts the tier summary object emitted by the WordPress runtime bootstrap', () => {
+		const tier = {
+			code: 'starter',
+			display_name: 'Starter',
+			monthly_credit_quota: 1000,
+			site_limit: 1
+		};
+
+		expect(
+			runtimeConfigSchema.parse({
+				...validConfig,
+				license: { ...validConfig.license, tier }
+			}).license?.tier
+		).toEqual(tier);
+	});
+
 	it('retires remote telemetry delivery state from the runtime bootstrap boundary', () => {
 		const retired = runtimeConfigSchema.safeParse({
 			...validConfig,

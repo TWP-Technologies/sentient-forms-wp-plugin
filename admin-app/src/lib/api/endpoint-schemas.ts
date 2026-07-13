@@ -624,7 +624,7 @@ const tierSummarySchema = z.object({
 	site_limit: z.number().int().optional(),
 	monthly_credit_quota: z.number().optional()
 });
-const tierValueSchema = z.union([z.string(), tierSummarySchema]);
+export const tierValueSchema = z.union([z.string(), tierSummarySchema]);
 const licenseInfoSchema = z.object({
 	license_key_masked: z.string(),
 	status: z.string(),

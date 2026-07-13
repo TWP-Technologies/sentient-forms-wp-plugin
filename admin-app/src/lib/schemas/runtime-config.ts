@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { formSourceDescriptorBoundarySchema } from '$lib/api/endpoint-schemas';
+import {
+	formSourceDescriptorBoundarySchema,
+	tierValueSchema
+} from '$lib/api/endpoint-schemas';
 
 const absoluteOrRootRelativeUrlSchema = z
 	.string()
@@ -51,7 +54,7 @@ export const runtimeConfigSchema = z.object({
 			status: z.string().optional(),
 			licenseKeyMasked: z.string().optional(),
 			proxyKeyPresent: z.boolean().optional(),
-			tier: nullableStringSchema.optional(),
+			tier: tierValueSchema.nullable().optional(),
 			expiresAt: nullableStringSchema.optional(),
 			lastSynced: nullableStringSchema.optional(),
 			licenseId: nullableStringSchema.optional(),
