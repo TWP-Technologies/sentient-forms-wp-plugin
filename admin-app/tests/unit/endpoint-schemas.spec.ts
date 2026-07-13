@@ -25,6 +25,23 @@ const completeSettingsResponse = {
 };
 
 describe('admin endpoint schema registry', () => {
+	it('preserves mapping-specific model selection in form action updates', () => {
+		const modelSelection = {
+			primary: 'sf_default',
+			is_preset: true,
+			provider: 'openrouter' as const,
+			credential_id: 42
+		};
+
+		const parsed = endpointRegistry['forms.actions.update'].request.parse({
+			settings: {
+				model_selection: modelSelection
+			}
+		});
+
+		expect(parsed.settings?.model_selection).toEqual(modelSelection);
+	});
+
 	it('parses safe Spam Guidance facet provider observations', () => {
 		const schema = endpointRegistry['spamGuidance.examples.append'].response;
 		const parsed = schema.parse({

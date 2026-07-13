@@ -1575,6 +1575,7 @@ const formActionSettingsBoundarySchema = phpMap(
 		spam_positive_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
 		spam_negative_examples: z.array(spamGuidanceExampleBoundarySchema).optional(),
 		action_customization: z.string().optional(),
+		model_selection: modelSelectionBoundarySchema.optional(),
 		conditions: conditionsBoundarySchema.optional(),
 		prompt_overrides: jsonRecordValueSchema.optional(),
 		post_execution_actions: z.array(postExecutionActionBoundarySchema).optional(),
