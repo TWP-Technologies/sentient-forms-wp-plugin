@@ -214,6 +214,21 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
         $this->assertSame( 'output_schema.properties.rationale', $contract->get_error_data()['field'] ?? null );
     }
 
+    public function test_catalog_fails_closed_when_rationale_is_not_required(): void
+    {
+        $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
+        $this->assertIsArray( $definition );
+        $definition['execution_contract']['output_schema']['required'] = [];
+        $catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [ 'spam_guidance_rationale_generation' => $definition ]
+        );
+
+        $contract = $catalog->execution_contract( 'spam_guidance_rationale_generation' );
+        $this->assertWPError( $contract );
+        $this->assertSame( 'sentient_forms_action_facet_execution_contract_invalid', $contract->get_error_code() );
+        $this->assertSame( 'output_schema.required', $contract->get_error_data()['field'] ?? null );
+    }
+
     public function test_effective_policy_composes_base_and_enabled_facet_with_strictest_requirements(): void
     {
         $catalog = new Sentient_Forms_Action_Facet_Catalog(
@@ -221,10 +236,19 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
                 'test_managed_validation' => [
                     'code'                              => 'test_managed_validation',
                     'feature_access'                    => 'active_subscription',
-                    'execution_requirement'             => 'managed_only',
-                    'required_form_source_capabilities' => [ 'field_errors', 'accepted_submission' ],
-                    'required_managed_capabilities'     => [ 'tool_budget', 'base_limit' ],
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [ 'field_errors' ],
+                    'required_managed_capabilities'     => [ 'tool_budget' ],
                     'lifecycle_restrictions'            => [ 'validation', 'real_time' ],
+                    'metering_class'                    => 'standard',
+                ],
+                'test_managed_capacity' => [
+                    'code'                              => 'test_managed_capacity',
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'managed_only',
+                    'required_form_source_capabilities' => [ 'accepted_submission' ],
+                    'required_managed_capabilities'     => [ 'base_limit' ],
+                    'lifecycle_restrictions'            => [ 'validation', 'after_submission' ],
                     'metering_class'                    => 'secondary_preflight',
                 ],
             ]
@@ -240,7 +264,7 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
                 'eligible_lifecycles'                => [ 'validation', 'after_submission' ],
                 'metering_class'                    => 'standard',
             ],
-            [ 'test_managed_validation' ]
+            [ 'test_managed_validation', 'test_managed_capacity' ]
         );
 
         $this->assertSame(

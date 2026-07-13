@@ -102,6 +102,12 @@ final class Sentient_Forms_Action_Facet_Catalog
             );
         }
 
+        $required_fields = $contract['output_schema']['required'] ?? null;
+        if ( ! is_array( $required_fields ) || ! in_array( 'rationale', $required_fields, true ) )
+        {
+            return $this->execution_contract_error( $code, 'output_schema.required' );
+        }
+
         $rationale_schema = $contract['output_schema']['properties']['rationale'] ?? null;
         if (
             'object' !== ( $contract['output_schema']['type'] ?? null )
