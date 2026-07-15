@@ -117,20 +117,20 @@ class Sentient_Forms_Async_Request_Store
             return [ 'state' => 'digest_conflict', 'record' => null ];
         }
 
-        $inserted  = $this->wpdb->query(
-            $this->wpdb->prepare(
-                'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
-                $this->table(),
-                $request_hash,
-                $action_id,
-                $adapter,
-                $record_type,
-                'running',
-                $now,
-                $now,
-                $digest
-            )
+        $insert_query = $this->wpdb->prepare(
+            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+            $this->table(),
+            $request_hash,
+            $action_id,
+            $adapter,
+            $record_type,
+            'running',
+            $now,
+            $now,
+            $digest
         );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+        $inserted = $this->wpdb->query( $insert_query );
         if ( 1 === $inserted )
         {
             return [
@@ -156,16 +156,16 @@ class Sentient_Forms_Async_Request_Store
         $status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
         if ( $retry_failed_safely && in_array( $status, [ 'failed', 'error' ], true ) )
         {
-            $claimed = $this->wpdb->query(
-                $this->wpdb->prepare(
-                    "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
-                    $this->table(),
-                    $now,
-                    $request_hash,
-                    $record_type,
-                    $digest
-                )
+            $claim_query = $this->wpdb->prepare(
+                "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
+                $this->table(),
+                $now,
+                $request_hash,
+                $record_type,
+                $digest
             );
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+            $claimed = $this->wpdb->query( $claim_query );
             if ( 1 === $claimed )
             {
                 return [

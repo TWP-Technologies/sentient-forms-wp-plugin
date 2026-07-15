@@ -213,7 +213,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'id'          => (string) $form_id,
             'title'       => isset( $form['title'] ) && is_scalar( $form['title'] )
                 ? sanitize_text_field( (string) $form['title'] )
-                : sprintf( __( 'Gravity Form %d', 'sentient-forms' ), $form_id ),
+                : sprintf(
+                    /* translators: %d: Gravity Forms form ID. */
+                    __( 'Gravity Form %d', 'sentient-forms' ),
+                    $form_id
+                ),
             'form_source' => $this->get_id(),
             'fields'      => $fields,
         ];
