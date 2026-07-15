@@ -265,7 +265,7 @@ if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient
 				[
 					'id'                   => 'cps-elementor-summary',
 					'site_id'              => 'site-provider-native-test',
-					'form_source'          => 'elementor_forms',
+					'form_source'          => 'elementor_pro_forms',
 					'form_id'              => $this->form_id,
 					'action_template_code' => 'entry_summary_v1',
 					'display_name'         => 'Entry Summary',
@@ -384,7 +384,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_actions_gravity_forms_1' );
         delete_option( 'sentient_forms_actions_gravity_forms_2' );
         $this->dynamic_action_option_keys = [];
-        $elementor_adapter = Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->get_adapter_by_id( 'elementor_forms' );
+        $elementor_adapter = Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->get_adapter_by_id( 'elementor_pro_forms' );
         if ( $elementor_adapter && method_exists( $elementor_adapter, 'reset_discovery_cache' ) )
         {
             $elementor_adapter->reset_discovery_cache();
@@ -716,7 +716,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
         add_filter( 'sentient_forms_elementor_posts_with_data', static fn(): array => [ $page_id ] );
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_forms/forms/' . $page_id . ':missing-widget/ledger-settings' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/elementor_pro_forms/forms/' . $page_id . ':missing-widget/ledger-settings' ) );
         $request->set_param( 'enabled', true );
 
         $response = $this->dispatch_form_actions_request( $request );
@@ -734,7 +734,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' ) );
         $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'validation' ] );
@@ -745,7 +745,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 400, $response->get_status() );
         $this->assertSame( 'rest_unsupported_form_source_lifecycle', $data['code'] ?? null );
         $this->assertStringContainsString( 'validation', $data['message'] ?? '' );
-        $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_forms_' . $page_id . '_formabc', [] ) );
+        $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_pro_forms_' . $page_id . '_formabc', [] ) );
     }
 
     public function test_elementor_actions_strip_native_result_writing_effects(): void
@@ -758,7 +758,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' ) );
         $request->set_param( 'central_action_id', 'entry_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
@@ -768,7 +768,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         global $wpdb;
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-        $stored   = $mappings->list_for_form( 'elementor_forms', $form_id );
+        $stored   = $mappings->list_for_form( 'elementor_pro_forms', $form_id );
 
         $this->assertSame( 201, $response->get_status() );
         $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
@@ -795,12 +795,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $sync    = new Sentient_Forms_Test_Mappings_Sync_Records_Local_Change();
         $this->set_mappings_sync( $sync );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' );
         $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
         $request->set_param( 'action_name_label', 'Remote Summary' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
 
         $response = $this->controller->add_form_action( $request );
@@ -809,7 +809,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 201, $response->get_status() );
         $this->assertSame( 'cps_remote_summary_v1', $data['central_action_id'] ?? null );
         $this->assertSame( 1, $sync->sync_calls );
-        $this->assertSame( 'elementor_forms', $sync->synced_form_source );
+        $this->assertSame( 'elementor_pro_forms', $sync->synced_form_source );
         $this->assertSame( $form_id, $sync->synced_form_id );
         $this->assertSame( $data['local_mapping_id'] ?? null, $sync->synced_actions[0]['local_mapping_id'] ?? null );
     }
@@ -824,7 +824,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' ) );
         $request->set_param( 'central_action_id', 'spam_detection_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
@@ -845,7 +845,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         global $wpdb;
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-        $stored   = $mappings->list_for_form( 'elementor_forms', $form_id );
+        $stored   = $mappings->list_for_form( 'elementor_pro_forms', $form_id );
 
         $this->assertSame( 201, $response->get_status() );
         $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
@@ -866,7 +866,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/123:formabc/actions' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/123:formabc/actions' ) );
         $request->set_param( 'central_action_id', 'remote_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
@@ -877,7 +877,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 400, $response->get_status() );
         $this->assertSame( 'rest_form_source_unavailable', $data['code'] ?? null );
         $this->assertStringContainsString( 'Elementor Pro Forms', $data['message'] ?? '' );
-        $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_forms_123_formabc', [] ) );
+        $this->assertSame( [], get_option( 'sentient_forms_actions_elementor_pro_forms_123_formabc', [] ) );
     }
 
     public function test_form_action_routes_preserve_opaque_form_ids_for_non_gravity_sources(): void
@@ -1411,14 +1411,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         global $wpdb;
         $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_pro_forms', $form_id, true, 1 ) );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertIsInt(
             $ledger->create(
                 [
                     'submission_uuid'        => $submission_uuid,
-                    'form_source'            => 'elementor_forms',
+                    'form_source'            => 'elementor_pro_forms',
                     'form_id'                => $form_id,
                     'native_entry_id'        => null,
                     'logical_fields_json'    => [
@@ -1440,7 +1440,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'execution_request_id' => 'req-elementor-ledger-run',
                 'mapping_id'           => 987,
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'submission_uuid'      => $submission_uuid,
                 'provider'             => 'openrouter',
@@ -1456,7 +1456,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $events->record(
             [
                 'execution_request_id' => 'req-other-ledger-run',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'submission_uuid'      => '77777777-8888-4999-aaaa-bbbbbbbbbbbb',
                 'provider'             => 'openrouter',
@@ -1465,7 +1465,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -1492,14 +1492,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         global $wpdb;
         $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_pro_forms', $form_id, true, 1 ) );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertIsInt(
             $ledger->create(
                 [
                     'submission_uuid'        => $submission_uuid,
-                    'form_source'            => 'elementor_forms',
+                    'form_source'            => 'elementor_pro_forms',
                     'form_id'                => $form_id,
                     'native_entry_id'        => null,
                     'logical_fields_json'    => [
@@ -1523,7 +1523,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 [
                     'execution_request_id' => sprintf( 'req-ledger-many-%02d', $i ),
                     'mapping_id'           => 900 + $i,
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => $form_id,
                     'submission_uuid'      => $submission_uuid,
                     'provider'             => 'openrouter',
@@ -1533,7 +1533,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             );
         }
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -1589,14 +1589,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         global $wpdb;
         $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_pro_forms', $form_id, true, 1 ) );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertIsInt(
             $ledger->create(
                 [
                     'submission_uuid'        => $submission_uuid,
-                    'form_source'            => 'elementor_forms',
+                    'form_source'            => 'elementor_pro_forms',
                     'form_id'                => $form_id,
                     'native_entry_id'        => null,
                     'logical_fields_json'    => [
@@ -1617,7 +1617,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'sentient_forms_action_log',
             [
                 [
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => $form_id,
                     'submission_uuid'      => $submission_uuid,
                     'execution_request_id' => 'req-elementor-central-run',
@@ -1635,7 +1635,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                     ],
                 ],
                 [
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => $form_id,
                     'submission_uuid'      => '77777777-8888-4999-aaaa-bbbbbbbbbbbb',
                     'execution_request_id' => 'req-other-elementor-central-run',
@@ -1649,7 +1649,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             false
         );
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -1713,7 +1713,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             $ledger->create(
                 [
                     'submission_uuid'        => $submission_uuid,
-                    'form_source'            => 'elementor_forms',
+                    'form_source'            => 'elementor_pro_forms',
                     'form_id'                => $form_id,
                     'native_entry_id'        => null,
                     'logical_fields_json'    => [
@@ -1730,14 +1730,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             )
         );
 
-        $list_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $list_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions' ) );
         $list_response = $this->dispatch_form_actions_request( $list_request );
         $list_data     = $list_response->get_data();
 
         $this->assertSame( 403, $list_response->get_status() );
         $this->assertSame( 'sentient_forms_submission_ledger_disabled', $list_data['code'] ?? null );
 
-        $detail_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions/' . $submission_uuid ) );
+        $detail_request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions/' . $submission_uuid ) );
         $detail_response = $this->dispatch_form_actions_request( $detail_request );
         $detail_data     = $detail_response->get_data();
 
@@ -1788,14 +1788,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $submission_uuid = '77777777-8888-4999-aaaa-bbbbbbbbbbbb';
 
         $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $GLOBALS['wpdb'] );
-        $this->assertIsArray( $settings->set_enabled( 'elementor_forms', $form_id, true, 1 ) );
+        $this->assertIsArray( $settings->set_enabled( 'elementor_pro_forms', $form_id, true, 1 ) );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
         $this->assertIsInt(
             $ledger->create(
                 [
                     'submission_uuid'        => $submission_uuid,
-                    'form_source'            => 'elementor_forms',
+                    'form_source'            => 'elementor_pro_forms',
                     'form_id'                => $form_id,
                     'native_entry_id'        => 'elementor-submission-123',
                     'native_entry_url'       => 'https://example.test/wp-admin/admin.php?page=e-form-submissions&submission=123',
@@ -1813,7 +1813,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             )
         );
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/submissions' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/submissions' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -1990,7 +1990,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $events->record(
             [
                 'execution_request_id' => 'req-elementor-opaque-status',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'entry_id'             => '123',
                 'submission_uuid'      => '77777777-7777-4777-8777-777777777777',
@@ -2005,7 +2005,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions/status' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions/status' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -2069,7 +2069,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'sentient_forms_action_log',
             [
                 [
-                    'form_source'    => 'elementor_forms',
+                    'form_source'    => 'elementor_pro_forms',
                     'form_id'        => $other_form_id,
                     'entry_id'       => '123',
                     'action_code'    => 'entry_summary_v1',
@@ -2078,7 +2078,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                     'created_at'     => '2026-06-25T10:01:00+00:00',
                 ],
                 [
-                    'form_source'    => 'elementor_forms',
+                    'form_source'    => 'elementor_pro_forms',
                     'form_id'        => $form_id,
                     'entry_id'       => '456',
                     'action_code'    => 'entry_summary_v1',
@@ -2090,7 +2090,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             false
         );
 
-        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions/status' ) );
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions/status' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -4746,8 +4746,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
         $this->set_mappings_sync( $sync );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/request-trace' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/request-trace' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
         $request->set_param( 'hook_scope', 'after_submission' );
         $request->set_param( 'entry_values', [ 'email' => 'prospect@example.test' ] );
@@ -4907,7 +4907,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -4943,7 +4943,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
         $this->assertIsInt( $mapping_id );
 
-        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' ) );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . $form_id . '/actions' ) );
         $response = $this->dispatch_form_actions_request( $request );
         $data     = $response->get_data();
 
@@ -5085,7 +5085,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'cps_map_form_2', $data['forms'][1]['actions'][0]['local_mapping_id'] ?? null );
     }
 
-    public function test_elementor_forms_overview_includes_descriptor_and_provider_native_form_id(): void
+    public function test_elementor_pro_forms_overview_includes_descriptor_and_provider_native_form_id(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
@@ -5094,14 +5094,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $page_id = $this->create_elementor_form_page_for_controller();
         $form_id = $page_id . ':formabc';
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/overview' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
 
         $response = $this->controller->get_forms_overview( $request );
         $data     = $response->get_data();
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 'elementor_forms', $data['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $data['form_source'] ?? null );
         $this->assertSame( $form_id, $data['forms'][0]['id'] ?? null );
         $this->assertSame( 'Known Elementor Form', $data['forms'][0]['title'] ?? null );
         $this->assertSame( 'available', $data['form_source_descriptor']['availability'] ?? null );
@@ -5127,8 +5127,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
         $this->set_mappings_sync( $sync );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
 
         $response = $this->controller->get_form_actions_bootstrap( $request );
@@ -5143,7 +5143,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'cps', $data['actions'][0]['source'] ?? null );
     }
 
-    public function test_elementor_forms_overview_merges_cps_mappings_for_provider_native_form_id(): void
+    public function test_elementor_pro_forms_overview_merges_cps_mappings_for_provider_native_form_id(): void
     {
         if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
             $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
@@ -5158,8 +5158,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
         $this->set_mappings_sync( $sync );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/overview' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
 
         $response = $this->controller->get_forms_overview( $request );
         $data     = $response->get_data();
@@ -5187,8 +5187,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
         $this->set_mappings_sync( $sync );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/workflow-plan' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions/workflow-plan' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
         $request->set_param( 'hook_scope', 'after_submission' );
 

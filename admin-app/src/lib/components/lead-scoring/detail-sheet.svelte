@@ -32,7 +32,7 @@
 		generatingReply = false
 	}: Props = $props();
 
-	let isElementorEntry = $derived(entry?.form_source === 'elementor_forms');
+	let isElementorEntry = $derived(entry?.form_source === 'elementor_pro_forms');
 
 	function closeFromBackdrop(event: MouseEvent) {
 		if (event.target === event.currentTarget) onClose();
@@ -208,7 +208,7 @@
 					</div>
 					{#if isElementorEntry}
 						<p class="sf:mt-4 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-3 sf:text-sm sf:leading-6 sf:text-amber-900">
-							Manual reply generation for Elementor Forms requires proven native Form Submissions support.
+							Manual reply generation for Elementor Pro Forms requires proven native Form Submissions support.
 						</p>
 					{/if}
 					<p class="sf:mt-5 sf:text-base sf:leading-7 sf:text-slate-800">

@@ -9,7 +9,8 @@ if ( ! class_exists( 'Sentient_Forms_Test_Form_Source_Adapter' ) )
             private string $name,
             private bool $active,
             private array $descriptor
-        ) {
+        )
+        {
         }
 
         public function get_id(): string
@@ -93,6 +94,106 @@ if ( ! class_exists( 'Sentient_Forms_Test_Form_Source_Adapter' ) )
 
 class AdapterRegistryTest extends WP_UnitTestCase
 {
+    public function test_legacy_adapter_contract_extends_minimal_form_source_discovery_contract(): void
+    {
+        $this->assertTrue( interface_exists( 'Sentient_Forms_Form_Source_Discovery_Adapter_Interface' ) );
+        $this->assertTrue(
+            is_subclass_of(
+                Sentient_Forms_Adapter_Interface::class,
+                Sentient_Forms_Form_Source_Discovery_Adapter_Interface::class
+            )
+        );
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        foreach ( $registry->get_all_adapters() as $adapter )
+        {
+            $this->assertInstanceOf( Sentient_Forms_Form_Source_Discovery_Adapter_Interface::class, $adapter );
+        }
+    }
+
+    public function test_registry_accepts_a_discovery_only_adapter_without_false_native_capabilities(): void
+    {
+        $adapter = new class implements Sentient_Forms_Form_Source_Discovery_Adapter_Interface {
+            public function get_id(): string
+            {
+                return 'discovery_only';
+            }
+
+            public function get_name(): string
+            {
+                return 'Discovery Only';
+            }
+
+            public function is_active(): bool
+            {
+                return true;
+            }
+
+            public function get_forms(): array
+            {
+                return [];
+            }
+
+            public function get_form_fields( $form_id ): array
+            {
+                return [];
+            }
+        };
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+
+        $registry->register_adapter( $adapter );
+
+        $this->assertSame( $adapter, $registry->get_adapter_by_id( 'discovery_only' ) );
+        $descriptor = $registry->get_capability_descriptor( 'discovery_only' );
+        $this->assertIsArray( $descriptor );
+        $this->assertFalse( $descriptor['native_entry']['read'] );
+        $this->assertFalse( $descriptor['native_entry']['write'] );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+    }
+
+    public function test_registry_is_authoritative_for_registered_form_source_membership(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'fake_source',
+                'Fake Source',
+                true,
+                []
+            )
+        );
+
+        $this->assertSame( array_keys( $registry->get_all_adapters() ), $registry->get_registered_source_ids() );
+        $this->assertTrue( $registry->has_registered_source( 'fake_source' ) );
+
+        $registry->unregister_adapter( 'gravity_forms' );
+
+        $this->assertFalse( $registry->has_registered_source( 'gravity_forms' ) );
+        $this->assertNotContains( 'gravity_forms', $registry->get_registered_source_ids() );
+    }
+
+    public function test_form_sources_delegates_listing_and_membership_to_registry(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'fake_source',
+                'Fake Source',
+                true,
+                []
+            )
+        );
+        $registry->unregister_adapter( 'gravity_forms' );
+
+        $this->assertSame(
+            $registry->get_registered_source_ids(),
+            Sentient_Forms_Form_Sources::get_supported_sources( $registry )
+        );
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'fake_source', $registry ) );
+        $this->assertFalse( Sentient_Forms_Form_Sources::is_supported_source( 'gravity_forms', $registry ) );
+    }
+
     public function test_registered_adapters_are_async_capable(): void
     {
         $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
@@ -281,14 +382,14 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $capability['write'] );
     }
 
-    public function test_elementor_forms_absent_descriptor_is_visible_and_unavailable(): void
+    public function test_elementor_pro_forms_absent_descriptor_is_visible_and_unavailable(): void
     {
         $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
-        $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+        $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
 
         $this->assertIsArray( $descriptor );
-        $this->assertSame( 'elementor_forms', $descriptor['slug'] );
-        $this->assertSame( 'Elementor Forms', $descriptor['label'] );
+        $this->assertSame( 'elementor_pro_forms', $descriptor['slug'] );
+        $this->assertSame( 'Elementor Pro Forms', $descriptor['label'] );
         $this->assertFalse( $descriptor['is_active'] );
         $this->assertSame( 'not_installed', $descriptor['availability'] );
         $this->assertFalse( $descriptor['forms_discovery']['supported'] );
@@ -296,7 +397,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['requirements']['requires_pro'] );
     }
 
-    public function test_elementor_forms_pro_descriptor_exposes_after_submission_hook(): void
+    public function test_elementor_pro_forms_pro_descriptor_exposes_after_submission_hook(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
@@ -304,7 +405,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         try
         {
             $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
-            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
 
             $this->assertIsArray( $descriptor );
             $this->assertTrue( $descriptor['is_active'] );
@@ -333,8 +434,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
         try
         {
             $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
-            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
-            $adapter    = $registry->get_adapter_by_id( 'elementor_forms' );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
+            $adapter    = $registry->get_adapter_by_id( 'elementor_pro_forms' );
 
             $this->assertIsArray( $descriptor );
             $this->assertInstanceOf( Sentient_Forms_Adapter_Interface::class, $adapter );
@@ -363,7 +464,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         try
         {
             $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
-            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
 
             $this->assertIsArray( $descriptor );
             $this->assertSame( 'available', $descriptor['availability'] );
@@ -403,7 +504,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         try
         {
             $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
-            $descriptor = $registry->get_capability_descriptor( 'elementor_forms' );
+            $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
 
             $this->assertIsArray( $descriptor );
             $this->assertTrue( $descriptor['requirements']['is_form_submissions_api_available'] );
@@ -555,8 +656,9 @@ class AdapterRegistryTest extends WP_UnitTestCase
         }
     }
 
-    public function test_elementor_forms_is_supported_form_source_slug(): void
+    public function test_elementor_pro_forms_is_supported_form_source_slug(): void
     {
-        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'elementor_forms' ) );
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'elementor_pro_forms' ) );
+        $this->assertFalse( Sentient_Forms_Form_Sources::is_supported_source( 'elementor_forms' ) );
     }
 }

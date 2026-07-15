@@ -841,7 +841,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $created         = $ledger->create(
             [
                 'submission_uuid'     => $submission_uuid,
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'logical_fields_json' => [
                     'full_name'       => 'Ada Elementor',
@@ -851,7 +851,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         );
         $this->assertIsInt( $created );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/search' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/entries/search' );
         $request->set_param( 'q', 'search needle' );
         $response = rest_get_server()->dispatch( $request );
         $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
@@ -859,7 +859,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertIsArray( $data );
 
-        $this->assertSame( 'elementor_forms', $data['form_source'] );
+        $this->assertSame( 'elementor_pro_forms', $data['form_source'] );
         $this->assertSame( $form_id, $data['form_id'] );
         $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
     }
@@ -1325,7 +1325,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
         $grade_id = $results->upsert_from_execution(
             [
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '91:formabc',
                 'form_title'           => 'Elementor lead form',
                 'entry_id'             => 'sf-ledger-1',
@@ -1349,14 +1349,14 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
 
         $corrected = $this->dispatch_json(
             'POST',
-            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/sf-ledger-1/correction',
+            '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/entries/sf-ledger-1/correction',
             [
                 'grade'         => 'B',
                 'justification' => 'Human review found a likely fit.',
             ]
         );
 
-        $this->assertSame( 'elementor_forms', $corrected['entry']['form_source'] );
+        $this->assertSame( 'elementor_pro_forms', $corrected['entry']['form_source'] );
         $this->assertSame( '91:formabc', $corrected['entry']['form_id'] );
         $this->assertSame( 'sf-ledger-1', $corrected['entry']['entry_id'] );
         $this->assertSame( 'B', $corrected['entry']['grade'] );
@@ -1382,7 +1382,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         ];
 
         update_option(
-            'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ),
+            'sentient_forms_form_config_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ),
             [
                 'spam_detection_v1' => [
                     'spam_positive_examples' => $positive,
@@ -1393,8 +1393,8 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         );
 
         $controller = new Sentient_Forms_Lead_Value_Controller();
-        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile' );
-        $request->set_param( 'form_source', 'elementor_forms' );
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/profile' );
+        $request->set_param( 'form_source', 'elementor_pro_forms' );
         $request->set_param( 'form_id', '91:formabc' );
         $request->set_param( 'lead_profile_consent', true );
         $request->set_param(
@@ -1426,7 +1426,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
 
         $form_id = '91:formabc';
         update_option(
-            'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ),
+            'sentient_forms_form_config_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id ),
             [
                 'spam_detection_v1' => [
                     'spam_positive_examples' => [
@@ -1446,7 +1446,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
 
         $created = $this->dispatch_json(
             'POST',
-            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile',
+            '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/profile',
             [
                 'lead_profile_consent' => true,
                 'good_lead_criteria'   => [
@@ -1461,15 +1461,15 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( $form_id, $created['profile']['form_id'] ?? null );
         $this->assertSame( 3, $created['readiness']['spam_guidance']['sources']['form_config']['positive_count'] ?? null );
 
-        $profile = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile' );
+        $profile = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/profile' );
         $this->assertSame( $form_id, $profile['profile']['form_id'] ?? null );
 
-        $dashboard = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/dashboard' );
+        $dashboard = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/dashboard' );
         $this->assertSame( $form_id, $dashboard['form_id'] ?? null );
 
         $run = $this->dispatch_json(
             'POST',
-            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/historical-runs',
+            '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/historical-runs',
             [
                 'action_code' => 'lead_grading_v1',
                 'dry_run'     => true,
@@ -1480,7 +1480,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
 
         $imported = $this->dispatch_json(
             'POST',
-            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/profile/import',
+            '/sentient-forms/v1/lead-value/forms/elementor_pro_forms/91%3Aformabc/profile/import',
             [
                 'source_profile_id' => $created['profile']['id'],
                 'include_examples'  => true,
@@ -1671,7 +1671,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $wpdb->query(
             $wpdb->prepare(
                 "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
-                $wpdb->esc_like( 'sentient_forms_form_config_elementor_forms_' ) . '%'
+                $wpdb->esc_like( 'sentient_forms_form_config_elementor_pro_forms_' ) . '%'
             )
         );
     }

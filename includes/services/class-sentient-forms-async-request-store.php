@@ -43,7 +43,22 @@ class Sentient_Forms_Async_Request_Store
         return $row ?: null;
     }
 
-    public function record( string $request_hash, array $context ): void
+    private function get_by_request_hash( string $request_hash ): ?array
+    {
+        $wpdb = $this->wpdb;
+        $row  = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE request_hash = %s',
+                $this->table(),
+                $request_hash
+            ),
+            ARRAY_A
+        );
+
+        return $row ?: null;
+    }
+
+    public function record( string $request_hash, array $context ): bool | WP_Error
     {
         $now         = current_time( 'mysql' );
         $action_id   = $context['action_id'] ?? '';
@@ -56,41 +71,209 @@ class Sentient_Forms_Async_Request_Store
         $existing = $this->get( $request_hash, $record_type );
         if ( $existing )
         {
+            $stored_digest = isset( $existing['payload_digest'] ) && is_scalar( $existing['payload_digest'] )
+                ? sanitize_text_field( (string) $existing['payload_digest'] )
+                : '';
+            if ( '' !== $stored_digest && is_scalar( $digest ) && '' !== (string) $digest && ! hash_equals( $stored_digest, (string) $digest ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_digest_conflict',
+                    __( 'This execution identity is already associated with a different payload.', 'sentient-forms' )
+                );
+            }
+
+            $existing_status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
+            $active_statuses = [ 'queued', 'running', 'success', 'succeeded', 'telemetry_queued' ];
+            if ( ! $this->is_expired( $existing ) && in_array( $existing_status, $active_statuses, true ) )
+            {
+                return false;
+            }
+
             $first_seen = $this->is_expired( $existing ) ? $now : ( $existing['first_seen_at'] ?? $now );
-            $this->wpdb->update(
+            $cutoff     = wp_date( 'Y-m-d H:i:s', time() - $this->ttl(), wp_timezone() );
+            $digest     = is_scalar( $digest ) && '' !== (string) $digest ? (string) $digest : $stored_digest;
+            $update_query = $this->wpdb->prepare(
+                "UPDATE %i SET action_id = %s, adapter = %s, status = %s, first_seen_at = %s, last_seen_at = %s, last_error = NULL, payload_digest = %s, telemetry_payload = %s WHERE request_hash = %s AND record_type = %s AND (status IN ('failed', 'error', 'retry_pending', 'dependency_wait') OR last_seen_at < %s)",
                 $this->table(),
-                [
-                    'action_id'     => $action_id,
-                    'adapter'       => $adapter,
-                    'status'        => $status,
-                    'first_seen_at' => $first_seen,
-                    'last_seen_at'  => $now,
-                    'last_error'    => null,
-                    'payload_digest'=> $digest,
-                    'telemetry_payload' => $telemetry_payload,
-                ],
-                [ 'request_hash' => $request_hash ],
-                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
-                [ '%s' ]
+                $action_id,
+                $adapter,
+                $status,
+                $first_seen,
+                $now,
+                $digest,
+                $telemetry_payload,
+                $request_hash,
+                $record_type,
+                $cutoff
             );
-            return;
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+            $updated = $this->wpdb->query( $update_query );
+            if ( false === $updated )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_persistence_failed',
+                    __( 'The async execution identity could not be persisted.', 'sentient-forms' )
+                );
+            }
+
+            return 1 === $updated;
         }
 
-        $this->wpdb->insert(
+        $insert_query = $this->wpdb->prepare(
+            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest, telemetry_payload) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
             $this->table(),
-            [
-                'request_hash' => $request_hash,
-                'action_id'    => $action_id,
-                'adapter'      => $adapter,
-                'record_type'  => $record_type,
-                'status'       => $status,
-                'first_seen_at'=> $now,
-                'last_seen_at' => $now,
-                'payload_digest' => $digest,
-                'telemetry_payload' => $telemetry_payload,
-            ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            $request_hash,
+            $action_id,
+            $adapter,
+            $record_type,
+            $status,
+            $now,
+            $now,
+            $digest,
+            $telemetry_payload
         );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+        $inserted = $this->wpdb->query( $insert_query );
+        if ( 1 === $inserted )
+        {
+            return true;
+        }
+
+        $owner = $this->get_by_request_hash( $request_hash );
+        if ( is_array( $owner ) && $record_type !== sanitize_key( (string) ( $owner['record_type'] ?? '' ) ) )
+        {
+            return new WP_Error(
+                'sentient_forms_async_request_record_type_conflict',
+                __( 'This execution identity is already owned by a different lifecycle.', 'sentient-forms' )
+            );
+        }
+        if ( is_array( $owner ) )
+        {
+            $owner_digest = isset( $owner['payload_digest'] ) && is_scalar( $owner['payload_digest'] )
+                ? sanitize_text_field( (string) $owner['payload_digest'] )
+                : '';
+            if ( '' !== $owner_digest && is_scalar( $digest ) && '' !== (string) $digest && ! hash_equals( $owner_digest, (string) $digest ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_digest_conflict',
+                    __( 'This execution identity is already associated with a different payload.', 'sentient-forms' )
+                );
+            }
+
+            return false;
+        }
+
+        return new WP_Error(
+            'sentient_forms_async_request_persistence_failed',
+            __( 'The async execution identity could not be persisted.', 'sentient-forms' )
+        );
+    }
+
+    /**
+     * Atomically claim one durable execution identity.
+     *
+     * Failed work remains terminal unless the caller explicitly declares that
+     * replay is safe for the operation being claimed.
+     *
+     * @return array{state: string, record: array<string, mixed>|null}
+     */
+    public function claim_execution(
+        string $request_hash,
+        array $context,
+        bool $retry_failed_safely = false,
+        string $record_type = 'accepted_sync'
+    ): array
+    {
+        $now       = current_time( 'mysql' );
+        $action_id = sanitize_text_field( (string) ( $context['action_id'] ?? '' ) );
+        $adapter   = isset( $context['adapter'] ) ? sanitize_key( (string) $context['adapter'] ) : null;
+        $digest    = isset( $context['payload_digest'] ) ? sanitize_text_field( (string) $context['payload_digest'] ) : null;
+        if ( null === $digest || '' === $digest )
+        {
+            return [ 'state' => 'digest_conflict', 'record' => null ];
+        }
+
+        $insert_query = $this->wpdb->prepare(
+            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+            $this->table(),
+            $request_hash,
+            $action_id,
+            $adapter,
+            $record_type,
+            'running',
+            $now,
+            $now,
+            $digest
+        );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+        $inserted = $this->wpdb->query( $insert_query );
+        if ( 1 === $inserted )
+        {
+            return [
+                'state'  => 'claimed',
+                'record' => $this->get( $request_hash, $record_type ),
+            ];
+        }
+
+        $existing = $this->get( $request_hash, $record_type );
+        if ( ! is_array( $existing ) )
+        {
+            $owner = $this->get_by_request_hash( $request_hash );
+            if ( is_array( $owner ) && $record_type !== sanitize_key( (string) ( $owner['record_type'] ?? '' ) ) )
+            {
+                return [ 'state' => 'record_type_conflict', 'record' => $owner ];
+            }
+
+            return [ 'state' => 'conflict', 'record' => null ];
+        }
+
+        $stored_digest = isset( $existing['payload_digest'] ) && is_scalar( $existing['payload_digest'] )
+            ? sanitize_text_field( (string) $existing['payload_digest'] )
+            : '';
+        if ( '' === $stored_digest || ! hash_equals( $stored_digest, $digest ) )
+        {
+            return [ 'state' => 'digest_conflict', 'record' => $existing ];
+        }
+
+        $status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
+        if ( $retry_failed_safely && in_array( $status, [ 'failed', 'error' ], true ) )
+        {
+            $claim_query = $this->wpdb->prepare(
+                "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
+                $this->table(),
+                $now,
+                $request_hash,
+                $record_type,
+                $digest
+            );
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+            $claimed = $this->wpdb->query( $claim_query );
+            if ( 1 === $claimed )
+            {
+                return [
+                    'state'  => 'claimed',
+                    'record' => $this->get( $request_hash, $record_type ),
+                ];
+            }
+
+            $existing = $this->get( $request_hash, $record_type );
+            $status   = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
+        }
+
+        if ( in_array( $status, [ 'success', 'succeeded' ], true ) )
+        {
+            $state = 'success';
+        }
+        elseif ( in_array( $status, [ 'failed', 'error' ], true ) )
+        {
+            $state = 'failed';
+        }
+        else
+        {
+            $state = 'active';
+        }
+
+        return [ 'state' => $state, 'record' => $existing ];
     }
 
     public function mark_status( string $request_hash, string $status, ?string $error = null, string $record_type = 'job' ): void
@@ -130,15 +313,26 @@ class Sentient_Forms_Async_Request_Store
 
     private function is_expired( array $record ): bool
     {
-        $ttl = $this->ttl();
-        $cutoff = time() - $ttl;
-        $last_seen = strtotime( $record['last_seen_at'] ?? 'now' );
-        return $last_seen < $cutoff;
+        $last_seen = DateTimeImmutable::createFromFormat(
+            '!Y-m-d H:i:s',
+            (string) ( $record['last_seen_at'] ?? '' ),
+            wp_timezone()
+        );
+        $parse_errors = DateTimeImmutable::getLastErrors();
+        if (
+            false === $last_seen
+            || ( is_array( $parse_errors ) && ( 0 < $parse_errors['warning_count'] || 0 < $parse_errors['error_count'] ) )
+        )
+        {
+            return false;
+        }
+
+        return $last_seen->getTimestamp() < time() - $this->ttl();
     }
 
     public function purge_older_than( int $timestamp ): int
     {
-        $mysql = gmdate( 'Y-m-d H:i:s', $timestamp );
+        $mysql = wp_date( 'Y-m-d H:i:s', $timestamp, wp_timezone() );
         $wpdb  = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(

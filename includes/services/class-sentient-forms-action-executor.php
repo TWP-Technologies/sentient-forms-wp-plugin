@@ -994,6 +994,13 @@ class Sentient_Forms_Action_Executor {
 	}
 
 	private static function derive_submission_token( array $form, array $entry ): string {
+		if ( isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) ) {
+			$submission_uuid = strtolower( sanitize_text_field( (string) $entry['submission_uuid'] ) );
+			if ( wp_is_uuid( $submission_uuid ) ) {
+				return 'submission:' . $submission_uuid;
+			}
+		}
+
 		if ( isset( $entry['id'] ) && $entry['id'] ) {
 			return 'entry:' . (string) $entry['id'];
 		}
@@ -1041,11 +1048,20 @@ class Sentient_Forms_Action_Executor {
 			$components[] = (string) $form['id'];
 		}
 
-		if ( ! empty( $entry ) ) {
+		if ( ! self::submission_token_has_stable_uuid( $submission_token ) && ! empty( $entry ) ) {
 			$components[] = hash( 'sha256', wp_json_encode( $entry ) );
 		}
 
 		return substr( hash( 'sha256', implode( '|', $components ) ), 0, 32 );
+	}
+
+	private static function submission_token_has_stable_uuid( string $submission_token ): bool {
+		$prefix = 'submission:';
+		if ( ! str_starts_with( $submission_token, $prefix ) ) {
+			return false;
+		}
+
+		return wp_is_uuid( substr( $submission_token, strlen( $prefix ) ) );
 	}
 
 	private function get_cached_execution_result( string $execution_request_id, int $entry_id, array $context ) {

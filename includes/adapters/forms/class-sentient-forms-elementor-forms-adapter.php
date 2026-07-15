@@ -1,6 +1,6 @@
 <?php
 /**
- * Elementor Forms adapter.
+ * Elementor Pro Forms adapter.
  *
  * @package Sentient_Forms
  */
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party Elementor Pro Forms Form Source adapter.
  */
-class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
+class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
 {
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
@@ -21,7 +21,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private Sentient_Forms_Plugin $plugin;
 
-    private ?Sentient_Forms_Submission_Ledger_Capture_Service $submission_ledger_capture_service = null;
+    private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null;
 
     /**
      * @var array<int, array<string, mixed>>|null
@@ -35,12 +35,12 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     public function get_id(): string
     {
-        return 'elementor_forms';
+        return Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS;
     }
 
     public function get_name(): string
     {
-        return __( 'Elementor Forms', 'sentient-forms' );
+        return __( 'Elementor Pro Forms', 'sentient-forms' );
     }
 
     public function is_active(): bool
@@ -60,13 +60,13 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         if ( ! $has_elementor )
         {
             $availability = 'not_installed';
-            $message      = __( 'Install and activate Elementor Pro to configure Sentient Forms for Elementor Forms.', 'sentient-forms' );
+            $message      = __( 'Install and activate Elementor Pro to configure Sentient Forms for Elementor Pro Forms.', 'sentient-forms' );
             $reason       = __( 'Elementor is not active on this site.', 'sentient-forms' );
         }
         elseif ( ! $has_pro_forms )
         {
             $availability = 'requires_pro';
-            $message      = __( 'Elementor Forms support requires Elementor Pro Forms APIs.', 'sentient-forms' );
+            $message      = __( 'Elementor Pro Forms support requires Elementor Pro Forms APIs.', 'sentient-forms' );
             $reason       = __( 'Elementor is active, but Elementor Pro Forms APIs are unavailable.', 'sentient-forms' );
         }
         else
@@ -109,7 +109,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                     'native_hook'        => null,
                     'execution_mode'     => 'blocking',
                     'requires_ledger'    => false,
-                    'unsupported_reason' => __( 'Elementor Forms validation blocking is not supported in this release.', 'sentient-forms' ),
+                    'unsupported_reason' => __( 'Elementor Pro Forms validation blocking is not supported in this release.', 'sentient-forms' ),
                 ],
                 Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => [
                     'supported'          => $has_pro_forms,
@@ -125,7 +125,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                     'native_hook'        => null,
                     'execution_mode'     => 'real_time',
                     'requires_ledger'    => false,
-                    'unsupported_reason' => __( 'Realtime Elementor Forms support is not available in this release.', 'sentient-forms' ),
+                    'unsupported_reason' => __( 'Realtime Elementor Pro Forms support is not available in this release.', 'sentient-forms' ),
                 ],
             ],
             'native_entry'         => [
@@ -145,7 +145,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 'required_for_parity' => true,
                 'enabled'             => false,
                 'settings_source'     => 'sentient_submission_ledger_settings',
-                'unavailable_reason'  => __( 'Enable the Sentient Forms Submission Ledger before reviewing Elementor Forms submissions in Sentient Forms.', 'sentient-forms' ),
+                'unavailable_reason'  => __( 'Enable the Sentient Forms Submission Ledger before reviewing Elementor Pro Forms submissions in Sentient Forms.', 'sentient-forms' ),
             ],
             'requirements'         => [
                 'plugin'                     => 'elementor/elementor.php',
@@ -171,6 +171,46 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         }
 
         add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_new_record' ], 10, 2 );
+    }
+
+    public function get_accepted_submission_native_hook(): string
+    {
+        return self::NATIVE_AFTER_SUBMISSION_HOOK;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_accepted_submission( mixed $native_submission ): array | WP_Error
+    {
+        if ( ! is_array( $native_submission ) || ! array_key_exists( 'record', $native_submission ) )
+        {
+            return new WP_Error( 'sentient_forms_elementor_invalid_accepted_submission', __( 'Elementor accepted submission payload is invalid.', 'sentient-forms' ) );
+        }
+
+        $record  = $native_submission['record'];
+        $handler = $native_submission['handler'] ?? null;
+        $form_id = $this->resolve_form_id_from_record( $record, $handler );
+        if ( '' === $form_id )
+        {
+            $this->emit_form_resolution_failure( $record );
+
+            return new WP_Error( 'sentient_forms_elementor_form_resolution_failed', __( 'Elementor accepted submission could not be matched to a form.', 'sentient-forms' ) );
+        }
+
+        $normalized = [
+            'form_id'        => $form_id,
+            'form'           => $this->form_snapshot( $form_id ),
+            'logical_fields' => $this->logical_fields_from_record( $record, $form_id ),
+            'files'          => $this->file_references_from_record( $record, $form_id ),
+        ];
+        $provider_metadata = $this->provider_metadata_from_record( $record, $form_id );
+        if ( null !== $provider_metadata )
+        {
+            $normalized['provider_metadata'] = $provider_metadata;
+        }
+
+        return $normalized;
     }
 
     public function get_forms(): array
@@ -397,52 +437,13 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     public function handle_new_record( mixed $record, mixed $handler = null ): ?string
     {
-        if ( ! $this->is_active() )
-        {
-            return null;
-        }
-
-        $form_id = $this->resolve_form_id_from_record( $record, $handler );
-        if ( '' === $form_id )
-        {
-            $this->emit_form_resolution_failure( $record );
-
-            return null;
-        }
-
-        $capture_service = $this->get_submission_ledger_capture_service();
-        if ( null === $capture_service )
-        {
-            return null;
-        }
-
-        $captured = $capture_service->capture(
+        return $this->get_workflow_runner()->run_accepted_submission(
+            $this,
             [
-                'form_source'       => $this->get_id(),
-                'form_id'           => $form_id,
-                'logical_fields'    => $this->logical_fields_from_record( $record, $form_id ),
-                'files'             => $this->file_references_from_record( $record, $form_id ),
-                'provider_metadata' => $this->provider_metadata_from_record( $record, $form_id ),
+                'record'  => $record,
+                'handler' => $handler,
             ]
         );
-
-        if ( is_wp_error( $captured ) )
-        {
-            return null;
-        }
-
-        $submission_uuid = isset( $captured['submission_uuid'] ) && is_scalar( $captured['submission_uuid'] )
-            ? sanitize_text_field( (string) $captured['submission_uuid'] )
-            : '';
-
-        if ( '' === $submission_uuid )
-        {
-            return null;
-        }
-
-        $this->schedule_after_submission_actions( $form_id, $submission_uuid, $captured );
-
-        return $submission_uuid;
     }
 
     public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool
@@ -492,13 +493,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
      */
     public function get_form_settings( mixed $form_id ): array
     {
-        $settings = $this->get_form_actions_option( $form_id );
-        if ( ! is_array( $settings ) )
-        {
-            return [];
-        }
-
-        return $this->merge_local_first_form_mappings( $this->normalize_action_wrapper( $settings ), $form_id );
+        return $this->get_workflow_runner()->get_form_settings( $this->get_id(), $form_id );
     }
 
     public function update_form_settings( mixed $form_id, array $settings ): bool
@@ -884,785 +879,9 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return in_array( $status, [ 'all', 'active', 'spam' ], true ) ? $status : 'active';
     }
 
-    /**
-     * @param array<string, mixed> $captured
-     */
-    private function schedule_after_submission_actions( string $form_id, string $submission_uuid, array $captured ): void
-    {
-        $settings = $this->get_form_settings( $form_id );
-        if ( [] === $settings )
-        {
-            return;
-        }
-
-        if ( ! empty( $this->get_execution_disable_flags( $settings )['effective_disabled'] ) )
-        {
-            return;
-        }
-
-        $plan  = $this->plugin->get_mapping_dependency_planner()->build_execution_plan(
-            $settings,
-            Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION
-        );
-        $form  = $this->form_snapshot( $form_id );
-        $entry = $this->ledger_entry_snapshot( $captured, $submission_uuid );
-        $mapping_outcomes      = [];
-        $execution_request_ids = [];
-
-        foreach ( $plan['order'] as $mapping_id )
-        {
-            $node = $plan['nodes'][ $mapping_id ] ?? null;
-            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
-            {
-                continue;
-            }
-
-            if (
-                empty( $node['enabled'] )
-                || empty( $node['hook_enabled'] )
-                || $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION )
-            )
-            {
-                continue;
-            }
-
-            $action_settings = $this->filter_option_backed_runtime_settings_for_native_capabilities( $node['mapping'] );
-            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
-
-            $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
-                ? sanitize_key( (string) $action_settings['central_action_id'] )
-                : '';
-            if ( '' === $central_action_id )
-            {
-                continue;
-            }
-
-            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
-                $central_action_id,
-                $form,
-                $entry,
-                [
-                    'hook'      => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                    'action_id' => (string) $mapping_id,
-                ],
-            );
-        }
-
-        foreach ( $plan['order'] as $mapping_id )
-        {
-            $node = $plan['nodes'][ $mapping_id ] ?? null;
-            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
-            {
-                continue;
-            }
-
-            if (
-                empty( $node['enabled'] )
-                || empty( $node['hook_enabled'] )
-                || $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION )
-            )
-            {
-                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
-                continue;
-            }
-
-            $action_settings = $this->filter_option_backed_runtime_settings_for_native_capabilities( $node['mapping'] );
-            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
-
-            $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
-                ? sanitize_key( (string) $action_settings['central_action_id'] )
-                : '';
-            if ( '' === $central_action_id )
-            {
-                $mapping_outcomes[ (string) $mapping_id ] = 'failed';
-                continue;
-            }
-
-            $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
-            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes );
-            if ( null !== $blocked_by_dependency )
-            {
-                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
-                continue;
-            }
-
-            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
-            {
-                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
-                continue;
-            }
-
-            $dependency_initial_outcomes      = [];
-            $dependency_execution_request_ids = [];
-            foreach ( $dependency_ids as $dependency_id )
-            {
-                if ( ! is_scalar( $dependency_id ) )
-                {
-                    continue;
-                }
-
-                $dependency_id = sanitize_text_field( (string) $dependency_id );
-                if ( '' === $dependency_id )
-                {
-                    continue;
-                }
-
-                if ( isset( $mapping_outcomes[ $dependency_id ] ) )
-                {
-                    $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
-                }
-
-                if ( isset( $execution_request_ids[ $dependency_id ] ) )
-                {
-                    $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
-                }
-            }
-
-            $dependency_context = [
-                'execution_request_id'             => $execution_request_ids[ (string) $mapping_id ] ?? null,
-                'dependency_mapping_ids'           => $dependency_ids,
-                'dependency_execution_request_ids' => $dependency_execution_request_ids,
-                'dependency_initial_outcomes'      => $dependency_initial_outcomes,
-                'dependency_wait_started_at'       => time(),
-                'dependency_wait_max_seconds'      => max(
-                    30,
-                    (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
-                ),
-                'dependency_wait_poll_seconds'     => 10,
-            ];
-
-            if ( $this->is_local_first_mapping( $action_settings ) )
-            {
-                $scheduled = $this->schedule_local_first_after_submission_mapping(
-                    $form,
-                    $entry,
-                    (string) $mapping_id,
-                    $action_settings,
-                    $submission_uuid,
-                    $dependency_context
-                );
-                $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
-                continue;
-            }
-
-            $scheduled = $this->plugin->process_action_async(
-                $central_action_id,
-                [
-                    'hook'        => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                    'form_source' => $this->get_id(),
-                    'form'        => $form,
-                    'entry'       => $entry,
-                ],
-                $action_settings,
-                [
-                    'hook'              => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                    'form_source'       => $this->get_id(),
-                    'action_id'         => (string) $mapping_id,
-                    'mapping_id'        => (string) $mapping_id,
-                    'local_mapping_id'  => (string) $mapping_id,
-                    'form_id'           => $form_id,
-                    'entry_id'          => null,
-                    'submission_uuid'   => $submission_uuid,
-                    'central_action_id' => $central_action_id,
-                    'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
-                ] + $dependency_context
-            );
-            $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
-        }
-    }
-
     private function get_form_actions_option_key( mixed $form_id ): string
     {
         return self::FORM_ACTIONS_OPTION_BASE . $this->get_id() . '_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $form_id );
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function get_form_actions_option( mixed $form_id ): array
-    {
-        $settings = get_option( $this->get_form_actions_option_key( $form_id ), null );
-        if ( null === $settings )
-        {
-            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $this->get_id(), $form_id ) as $suffix )
-            {
-                $settings = get_option( self::FORM_ACTIONS_OPTION_BASE . $this->get_id() . '_' . $suffix, null );
-                if ( null !== $settings )
-                {
-                    break;
-                }
-            }
-        }
-
-        return is_array( $settings ) ? $settings : [];
-    }
-
-    /**
-     * @param array<string, mixed> $settings
-     *
-     * @return array<string, mixed>
-     */
-    private function normalize_action_wrapper( array $settings ): array
-    {
-        $actions = isset( $settings['actions'] ) && is_array( $settings['actions'] )
-            ? $settings['actions']
-            : [];
-
-        foreach ( $settings as $mapping_key => $mapping )
-        {
-            if ( in_array( (string) $mapping_key, [ 'actions', 'enabled', 'sf_disabled' ], true ) )
-            {
-                continue;
-            }
-
-            if ( ! is_array( $mapping ) || empty( $mapping['central_action_id'] ) )
-            {
-                continue;
-            }
-
-            $mapping_id = isset( $mapping['local_mapping_id'] ) && is_scalar( $mapping['local_mapping_id'] )
-                ? sanitize_text_field( (string) $mapping['local_mapping_id'] )
-                : sanitize_text_field( (string) $mapping_key );
-            if ( '' === $mapping_id )
-            {
-                continue;
-            }
-
-            $actions[ $mapping_id ] = $mapping;
-        }
-
-        foreach ( $actions as $mapping_id => $mapping )
-        {
-            if ( is_array( $mapping ) )
-            {
-                $settings[ (string) $mapping_id ] = $mapping;
-            }
-        }
-
-        return $settings;
-    }
-
-    /**
-     * Merge local-first custom-table mappings into the runtime shape consumed by the dependency planner.
-     *
-     * @param array<string, mixed> $settings Current form settings.
-     * @param mixed                $form_id  Elementor Forms opaque form ID.
-     *
-     * @return array<string, mixed>
-     */
-    private function merge_local_first_form_mappings( array $settings, mixed $form_id ): array
-    {
-        if ( ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
-        {
-            return $settings;
-        }
-
-        $form_id_string = is_scalar( $form_id ) ? sanitize_text_field( (string) $form_id ) : '';
-        if ( '' === $form_id_string )
-        {
-            return $settings;
-        }
-
-        global $wpdb;
-        $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-        $rows       = $repository->list_for_form( $this->get_id(), $form_id_string );
-        if ( empty( $rows ) )
-        {
-            return $settings;
-        }
-
-        if ( ! isset( $settings['actions'] ) || ! is_array( $settings['actions'] ) )
-        {
-            $settings['actions'] = [];
-        }
-
-        foreach ( $rows as $row )
-        {
-            $runtime_mapping = $this->normalize_local_first_form_mapping( $row );
-            if ( null === $runtime_mapping )
-            {
-                continue;
-            }
-
-            $mapping_id = (string) $runtime_mapping['local_mapping_id'];
-            $settings[ $mapping_id ]            = $runtime_mapping;
-            $settings['actions'][ $mapping_id ] = $runtime_mapping;
-        }
-
-        return $settings;
-    }
-
-    /**
-     * Convert a local custom-table mapping row into the after-submission runtime mapping shape.
-     *
-     * @param array<string, mixed> $row Local mapping row.
-     *
-     * @return array<string, mixed>|null Runtime mapping or null when unsupported.
-     */
-    private function normalize_local_first_form_mapping( array $row ): ?array
-    {
-        $id = absint( $row['id'] ?? 0 );
-        if ( $id <= 0 )
-        {
-            return null;
-        }
-
-        $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $row['hook'] ?? '' );
-        if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION !== $lifecycle_id )
-        {
-            return null;
-        }
-
-        if ( 'custom_action' !== sanitize_key( (string) ( $row['action_kind'] ?? '' ) ) )
-        {
-            return null;
-        }
-
-        $custom_action = $this->get_local_first_custom_action( absint( $row['action_id'] ?? 0 ) );
-        $identity      = $this->resolve_local_first_action_identity( $custom_action );
-
-        $settings = is_array( $row['settings_json'] ?? null )
-            ? $row['settings_json']
-            : [];
-
-        $settings['local_form_mapping_id'] = $id;
-        $settings['execution_mode']        = Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION;
-        $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null )
-            ? $row['input_bindings_json']
-            : [];
-        if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
-        {
-            $settings['trigger_sources'] = [
-                Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => [ 'type' => 'hook_root' ],
-            ];
-        }
-
-        if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
-        {
-            $settings['conditions'] = $row['conditions_json'];
-        }
-
-        if ( isset( $row['effect_mapping_json'] ) && is_array( $row['effect_mapping_json'] ) )
-        {
-            $settings['effect_mapping_json'] = $row['effect_mapping_json'];
-        }
-
-        $settings = $this->filter_runtime_settings_for_native_capabilities( $settings );
-
-        $settings['linked_action_status'] = $identity['linked_action_status'];
-        $settings['repair_state']         = $identity['repair_state'];
-
-        return [
-            'local_mapping_id'           => 'local_first_' . $id,
-            'local_form_mapping_id'      => $id,
-            'central_action_id'          => $identity['action_code'],
-            'action_type_indicator'      => 'local_first',
-            'action_kind'                => 'custom_action',
-            'action_name_label'          => $identity['action_label'],
-            'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
-            'trigger_hooks'              => [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ],
-            'execution_mode'             => Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
-            'execution_priority'         => $id,
-            'mark_as_spam'               => false,
-            'linked_action_status'       => $identity['linked_action_status'],
-            'repair_state'               => $identity['repair_state'],
-            'settings'                   => $settings,
-        ];
-    }
-
-    /**
-     * Remove native side-effect settings Elementor cannot currently execute.
-     *
-     * @param array<string, mixed> $settings Runtime mapping settings.
-     *
-     * @return array<string, mixed>
-     */
-    private function filter_option_backed_runtime_settings_for_native_capabilities( array $action_settings ): array
-    {
-        if ( isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] ) )
-        {
-            $action_settings['settings'] = $this->filter_runtime_settings_for_native_capabilities( $action_settings['settings'] );
-        }
-
-        return $action_settings;
-    }
-
-    private function filter_runtime_settings_for_native_capabilities( array $settings ): array
-    {
-        $descriptor        = $this->get_capability_descriptor();
-        $native_enrichment = isset( $descriptor['native_enrichment'] ) && is_array( $descriptor['native_enrichment'] )
-            ? $descriptor['native_enrichment']
-            : [];
-
-        if ( isset( $settings['effect_mapping_json'] ) && is_array( $settings['effect_mapping_json'] ) )
-        {
-            $settings['effect_mapping_json'] = $this->filter_effect_mapping_for_native_capabilities(
-                $settings['effect_mapping_json'],
-                $descriptor
-            );
-        }
-
-        if ( empty( $native_enrichment['notification_controls'] ) )
-        {
-            unset( $settings['suppress_notifications_on_spam'] );
-        }
-
-        if ( empty( $native_enrichment['webhook_controls'] ) )
-        {
-            unset( $settings['suppress_webhooks_on_spam'] );
-        }
-
-        if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
-        {
-            unset(
-                $settings['spam_confidence_threshold'],
-                $settings['spam_result_display_mode'],
-                $settings['spam_indicators_display']
-            );
-        }
-
-        return $settings;
-    }
-
-    /**
-     * @param array<string, mixed> $effect_mapping
-     * @param array<string, mixed> $descriptor
-     *
-     * @return array<string, mixed>
-     */
-    private function filter_effect_mapping_for_native_capabilities( array $effect_mapping, array $descriptor ): array
-    {
-        if ( [] === $effect_mapping )
-        {
-            return [];
-        }
-
-        $native_entry = isset( $descriptor['native_entry'] ) && is_array( $descriptor['native_entry'] )
-            ? $descriptor['native_entry']
-            : [];
-        if ( empty( $native_entry['write'] ) )
-        {
-            unset(
-                $effect_mapping['store_result'],
-                $effect_mapping['store_result_meta'],
-                $effect_mapping['meta']
-            );
-        }
-
-        $native_enrichment = isset( $descriptor['native_enrichment'] ) && is_array( $descriptor['native_enrichment'] )
-            ? $descriptor['native_enrichment']
-            : [];
-        if ( empty( $native_enrichment['notes'] ) )
-        {
-            unset( $effect_mapping['entry_note'] );
-
-            if ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
-            {
-                unset( $effect_mapping['spam']['note'] );
-            }
-        }
-
-        if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
-        {
-            $skip_downstream_on_spam = null;
-            if (
-                isset( $effect_mapping['spam'] )
-                && is_array( $effect_mapping['spam'] )
-                && array_key_exists( 'skip_downstream_on_spam', $effect_mapping['spam'] )
-            )
-            {
-                $skip_downstream_on_spam = rest_sanitize_boolean( $effect_mapping['spam']['skip_downstream_on_spam'] );
-            }
-
-            unset(
-                $effect_mapping['spam'],
-                $effect_mapping['mark_as_spam']
-            );
-
-            if ( null !== $skip_downstream_on_spam )
-            {
-                $effect_mapping['spam'] = [
-                    'skip_downstream_on_spam' => $skip_downstream_on_spam,
-                ];
-            }
-        }
-        elseif ( isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] ) )
-        {
-            if ( empty( $native_enrichment['notification_controls'] ) )
-            {
-                unset( $effect_mapping['spam']['suppress_notifications_on_spam'] );
-            }
-
-            if ( empty( $native_enrichment['webhook_controls'] ) )
-            {
-                unset( $effect_mapping['spam']['suppress_webhooks_on_spam'] );
-            }
-        }
-
-        if ( empty( $native_enrichment['notification_controls'] ) )
-        {
-            unset( $effect_mapping['suppress_notifications_on_spam'] );
-        }
-
-        if ( empty( $native_enrichment['webhook_controls'] ) )
-        {
-            unset( $effect_mapping['suppress_webhooks_on_spam'] );
-        }
-
-        return $effect_mapping;
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function get_local_first_custom_action( int $action_id ): ?array
-    {
-        $action_id = absint( $action_id );
-        if ( $action_id <= 0 || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
-        {
-            return null;
-        }
-
-        global $wpdb;
-        $repository = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        return $repository->get( $action_id );
-    }
-
-    /**
-     * @param array<string, mixed>|null $custom_action Local custom action row.
-     *
-     * @return array{action_code: string, action_label: string, linked_action_status: string, repair_state: string}
-     */
-    private function resolve_local_first_action_identity( ?array $custom_action ): array
-    {
-        $linked_action_status = 'missing';
-        $repair_state         = 'needs_repair';
-        $action_code          = 'sentient_forms_local_custom_action';
-        $action_label         = __( 'Local OpenRouter action', 'sentient-forms' );
-
-        if ( is_array( $custom_action ) )
-        {
-            $linked_action_status = isset( $custom_action['status'] ) && is_scalar( $custom_action['status'] )
-                ? sanitize_key( (string) $custom_action['status'] )
-                : 'unknown';
-            $repair_state         = 'active' === $linked_action_status ? 'ok' : 'needs_repair';
-            $action_code          = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
-                ? sanitize_key( (string) $custom_action['code'] )
-                : $action_code;
-            $action_label         = isset( $custom_action['display_name'] ) && is_scalar( $custom_action['display_name'] )
-                ? sanitize_text_field( (string) $custom_action['display_name'] )
-                : $action_label;
-        }
-
-        $template = $this->get_local_first_template_for_custom_action( $custom_action );
-        if ( is_array( $template ) )
-        {
-            $template_code = isset( $template['code'] ) && is_scalar( $template['code'] )
-                ? sanitize_key( (string) $template['code'] )
-                : '';
-            if ( '' !== $template_code && Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
-            {
-                $action_code  = $template_code;
-                $action_label = isset( $template['display_name'] ) && is_scalar( $template['display_name'] )
-                    ? sanitize_text_field( (string) $template['display_name'] )
-                    : $action_label;
-            }
-        }
-        elseif ( is_array( $custom_action ) )
-        {
-            $custom_code   = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
-                ? sanitize_key( (string) $custom_action['code'] )
-                : '';
-            $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $custom_code );
-            $definition    = '' !== $template_code ? Sentient_Forms_Bundled_Action_Templates::get( $template_code ) : null;
-            if ( is_array( $definition ) )
-            {
-                $action_code  = $template_code;
-                $action_label = sanitize_text_field( (string) ( $definition['display_name'] ?? $action_label ) );
-            }
-        }
-
-        return [
-            'action_code'          => $action_code,
-            'action_label'         => $action_label,
-            'linked_action_status' => $linked_action_status,
-            'repair_state'         => $repair_state,
-        ];
-    }
-
-    /**
-     * @param array<string, mixed>|null $custom_action Local custom action row.
-     *
-     * @return array<string, mixed>|null
-     */
-    private function get_local_first_template_for_custom_action( ?array $custom_action ): ?array
-    {
-        if ( ! is_array( $custom_action ) || ! class_exists( 'Sentient_Forms_Action_Templates_Repository' ) )
-        {
-            return null;
-        }
-
-        $template_id = absint( $custom_action['template_id'] ?? 0 );
-        if ( $template_id <= 0 )
-        {
-            return null;
-        }
-
-        global $wpdb;
-        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
-        return $repository->get( $template_id );
-    }
-
-    /**
-     * Determine whether a runtime mapping is backed by local WordPress tables.
-     *
-     * @param array<string, mixed> $mapping Mapping settings.
-     */
-    private function is_local_first_mapping( array $mapping ): bool
-    {
-        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
-            ? sanitize_key( (string) $mapping['action_type_indicator'] )
-            : '';
-
-        return 'local_first' === $indicator
-            && isset( $mapping['local_form_mapping_id'] )
-            && absint( $mapping['local_form_mapping_id'] ) > 0;
-    }
-
-    /**
-     * Queue a local-first after-submission mapping through the plugin async handler.
-     *
-     * @param array<string, mixed> $form            Elementor Forms form snapshot.
-     * @param array<string, mixed> $entry           Sentient Forms ledger entry snapshot.
-     * @param string               $mapping_id      Runtime planner mapping ID.
-     * @param array<string, mixed> $action_settings Mapping settings.
-     * @param string               $submission_uuid Sentient Forms submission ledger UUID.
-     */
-    private function schedule_local_first_after_submission_mapping(
-        array $form,
-        array $entry,
-        string $mapping_id,
-        array $action_settings,
-        string $submission_uuid,
-        array $async_context = []
-    ): bool
-    {
-        $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
-        if ( $local_mapping_id <= 0 )
-        {
-            return false;
-        }
-
-        return $this->plugin->get_async_handler()->schedule_local_mapping(
-            $local_mapping_id,
-            $form,
-            $entry,
-            [
-                'hook'                  => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                'form_source'           => $this->get_id(),
-                'mapping_id'            => $mapping_id,
-                'local_mapping_id'      => $mapping_id,
-                'local_form_mapping_id' => $local_mapping_id,
-                'form_id'               => $form['id'] ?? null,
-                'entry_id'              => null,
-                'submission_uuid'       => $submission_uuid,
-                'action_name_label'     => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
-                'central_action_id'     => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
-                'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-            ] + $async_context
-        );
-    }
-
-    /**
-     * Resolve whether a mapping should be blocked by prerequisite outcomes.
-     *
-     * @param array<int, mixed>    $dependency_ids   Dependency mapping IDs.
-     * @param array<string,string> $mapping_outcomes Known outcomes keyed by mapping ID.
-     */
-    private function resolve_dependency_blocking_mapping( array $dependency_ids, array $mapping_outcomes ): ?string
-    {
-        foreach ( $dependency_ids as $dependency_id )
-        {
-            if ( ! is_scalar( $dependency_id ) )
-            {
-                continue;
-            }
-
-            $dependency_id = sanitize_text_field( (string) $dependency_id );
-            if ( '' === $dependency_id )
-            {
-                continue;
-            }
-
-            $outcome = $mapping_outcomes[ $dependency_id ] ?? null;
-            if ( null === $outcome || 'failed' === $outcome || 'skipped' === $outcome )
-            {
-                return $dependency_id;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param array<string, mixed> $form_settings
-     *
-     * @return array{sf_disabled: bool, global_disabled: bool, provider_disabled: bool, effective_disabled: bool}
-     */
-    private function get_execution_disable_flags( array $form_settings ): array
-    {
-        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
-        if ( ! is_array( $plugin_settings ) )
-        {
-            $plugin_settings = [];
-        }
-
-        $provider_map = $plugin_settings['execution_provider_disabled'] ?? [];
-        if ( ! is_array( $provider_map ) )
-        {
-            $provider_map = [];
-        }
-
-        $provider_key      = sanitize_key( $this->get_id() );
-        $sf_disabled       = ! empty( $form_settings['sf_disabled'] );
-        $global_disabled   = ! empty( $plugin_settings['execution_global_disabled'] );
-        $provider_disabled = ! empty( $provider_map[ $provider_key ] );
-
-        return [
-            'sf_disabled'       => $sf_disabled,
-            'global_disabled'   => $global_disabled,
-            'provider_disabled' => $provider_disabled,
-            'effective_disabled' => $sf_disabled || $global_disabled || $provider_disabled,
-        ];
-    }
-
-    /**
-     * @param array<string, mixed> $node
-     */
-    private function is_plan_node_trigger_unbound( array $node, string $hook ): bool
-    {
-        $lifecycle_hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
-        $hook_keys      = array_values( array_unique( array_filter( [ sanitize_key( $hook ), $lifecycle_hook ] ) ) );
-
-        $trigger_sources = is_array( $node['trigger_sources'] ?? null )
-            ? $node['trigger_sources']
-            : [];
-
-        foreach ( $hook_keys as $hook_key )
-        {
-            $source = is_array( $trigger_sources[ $hook_key ] ?? null )
-                ? $trigger_sources[ $hook_key ]
-                : null;
-
-            if ( 'unbound' === sanitize_key( (string) ( $source['type'] ?? '' ) ) )
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -1675,40 +894,13 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return [
             'id'          => $form_id,
             'title'       => is_array( $form ) ? $this->form_title( $form ) : sprintf(
-                /* translators: %s: Elementor Forms form ID. */
+                /* translators: %s: Elementor Pro Forms form ID. */
                 __( 'Elementor form %s', 'sentient-forms' ),
                 $form_id
             ),
             'form_source' => $this->get_id(),
             'fields'      => $this->get_form_fields( $form_id ),
         ];
-    }
-
-    /**
-     * @param array<string, mixed> $captured
-     *
-     * @return array<string, mixed>
-     */
-    private function ledger_entry_snapshot( array $captured, string $submission_uuid ): array
-    {
-        $entry = [];
-
-        if ( isset( $captured['logical_fields_json'] ) && is_array( $captured['logical_fields_json'] ) )
-        {
-            $entry = array_merge( $entry, $captured['logical_fields_json'] );
-        }
-
-        if ( isset( $captured['file_refs_json'] ) && is_array( $captured['file_refs_json'] ) )
-        {
-            $entry['file_refs'] = $captured['file_refs_json'];
-        }
-
-        $entry['id']              = null;
-        $entry['submission_uuid'] = $submission_uuid;
-        $entry['form_source']     = $this->get_id();
-        $entry['form_id']         = sanitize_text_field( (string) ( $captured['form_id'] ?? '' ) );
-
-        return $entry;
     }
 
     private function normalize_submission_uuid( mixed $submission_uuid ): ?string
@@ -1727,20 +919,14 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return $submission_uuid;
     }
 
-    private function get_submission_ledger_capture_service(): ?Sentient_Forms_Submission_Ledger_Capture_Service
+    private function get_workflow_runner(): Sentient_Forms_Form_Source_Workflow_Runner
     {
-        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Capture_Service' ) )
+        if ( null === $this->workflow_runner )
         {
-            return null;
+            $this->workflow_runner = new Sentient_Forms_Form_Source_Workflow_Runner( $this->plugin );
         }
 
-        if ( null === $this->submission_ledger_capture_service )
-        {
-            global $wpdb;
-            $this->submission_ledger_capture_service = new Sentient_Forms_Submission_Ledger_Capture_Service( $wpdb );
-        }
-
-        return $this->submission_ledger_capture_service;
+        return $this->workflow_runner;
     }
 
     /**
@@ -2344,8 +1530,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         return [
             'label'                   => $label,
             'adminLabel'              => sprintf(
-                /* translators: %s: Elementor Forms field id. */
-                __( 'Elementor Forms: %s', 'sentient-forms' ),
+                /* translators: %s: Elementor Pro Forms field id. */
+                __( 'Elementor Pro Forms: %s', 'sentient-forms' ),
                 $field_id
             ),
             'type'                    => $field_type,
@@ -3053,8 +2239,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             'label'                   => $label,
             'type'                    => $field_type,
             'adminLabel'              => sprintf(
-                /* translators: %s: Elementor Forms field id. */
-                __( 'Elementor Forms: %s', 'sentient-forms' ),
+                /* translators: %s: Elementor Pro Forms field id. */
+                __( 'Elementor Pro Forms: %s', 'sentient-forms' ),
                 $field_id
             ),
             'visibility'              => $is_hidden ? 'hidden' : 'visible',

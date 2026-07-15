@@ -663,7 +663,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
                 'mapping_key'          => 'map_summary',
                 'action_code'          => 'entry_summary_v1',
                 'action_label'         => 'Entry Summary',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '4:formabc',
                 'entry_id'             => null,
                 'submission_uuid'      => '44444444-5555-4666-8777-888888888888',
@@ -727,7 +727,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             [
                 'execution_request_id' => 'req-elementor-grouped-log-1',
                 'submission_uuid'      => '66666666-7777-4888-9999-aaaaaaaaaaaa',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '123:formabc',
                 'entry_id'             => null,
                 'provider'             => 'openrouter',
@@ -751,10 +751,10 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $this->assertSame( 1, $data['total'] );
         $this->assertSame( 'req-elementor-grouped-log-1', $data['entries'][0]['execution_request_id'] );
-        $this->assertSame( 'elementor_forms', $data['entries'][0]['form_source'] );
+        $this->assertSame( 'elementor_pro_forms', $data['entries'][0]['form_source'] );
         $this->assertSame( '123:formabc', $data['entries'][0]['form_id'] );
         $this->assertSame( '66666666-7777-4888-9999-aaaaaaaaaaaa', $data['entries'][0]['submission_uuid'] );
-        $this->assertSame( 'Elementor Forms', $data['entries'][0]['form_context']['provider_label'] );
+        $this->assertSame( 'Elementor Pro Forms', $data['entries'][0]['form_context']['provider_label'] );
         $this->assertSame( '123:formabc', $data['entries'][0]['form_context']['form_id'] );
         $this->assertSame( 'Form 123:formabc', $data['entries'][0]['form_context']['form_name'] );
         $this->assertFalse( $data['entries'][0]['form_context']['entry_preview_available'] );
@@ -774,7 +774,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             [
                 'execution_request_id' => 'req-elementor-stale-native-entry-log',
                 'submission_uuid'      => '77777777-7777-4777-8777-777777777777',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '123:formabc',
                 'entry_id'             => '123',
                 'provider'             => 'openrouter',
@@ -797,7 +797,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $this->assertSame( 200, $response->get_status() );
         $this->assertSame( 1, $data['total'] );
-        $this->assertSame( 'elementor_forms', $data['entries'][0]['form_source'] );
+        $this->assertSame( 'elementor_pro_forms', $data['entries'][0]['form_source'] );
         $this->assertNull( $data['entries'][0]['entry_id'] );
         $this->assertNull( $data['entries'][0]['form_context']['entry_id'] );
         $this->assertFalse( $data['entries'][0]['form_context']['entry_preview_available'] );
@@ -811,7 +811,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/log' );
-        $request->set_param( 'form_source', 'elementor_forms' );
+        $request->set_param( 'form_source', 'elementor_pro_forms' );
         $request->set_param( 'form_id', '123:formabc' );
         $request->set_param( 'entry_id', 123 );
         $request->set_param( 'action_code', 'entry_summary_v1' );
@@ -822,7 +822,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $data     = $response->get_data();
 
         $this->assertSame( 201, $response->get_status() );
-        $this->assertSame( 'elementor_forms', $data['form_source'] );
+        $this->assertSame( 'elementor_pro_forms', $data['form_source'] );
         $this->assertSame( '123:formabc', $data['form_id'] );
         $this->assertNull( $data['entry_id'] );
     }

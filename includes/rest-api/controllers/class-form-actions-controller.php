@@ -1479,12 +1479,12 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     private function elementor_forms_source_unavailable_error( string $form_source_slug ): ?WP_Error
     {
-        if ( Sentient_Forms_Form_Sources::ELEMENTOR_FORMS !== sanitize_key( $form_source_slug ) )
+        if ( Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS !== sanitize_key( $form_source_slug ) )
         {
             return null;
         }
 
-        $descriptor = $this->get_form_source_descriptor( Sentient_Forms_Form_Sources::ELEMENTOR_FORMS );
+        $descriptor = $this->get_form_source_descriptor( Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS );
         if ( ! is_array( $descriptor ) )
         {
             return null;
@@ -1504,7 +1504,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             : '';
         if ( '' === $message )
         {
-            $message = __( 'Elementor Forms support is unavailable until Elementor Pro Forms APIs are available.', 'sentient-forms' );
+            $message = __( 'Elementor Pro Forms support is unavailable until Elementor Pro Forms APIs are available.', 'sentient-forms' );
         }
 
         return $this->prepare_error_response(
@@ -3285,7 +3285,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
 		$registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
 		$adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
-		if ( ! $adapter )
+		if ( ! $adapter || ! method_exists( $adapter, 'get_entry_data' ) )
 		{
 			return [
 				$this->prepare_error_response( 'rest_form_source_unavailable', __( 'Form source adapter is not available for trace input import.', 'sentient-forms' ), 400 ),

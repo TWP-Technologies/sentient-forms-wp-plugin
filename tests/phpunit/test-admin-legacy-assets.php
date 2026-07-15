@@ -191,7 +191,7 @@ class Tests_Admin_Legacy_Assets extends WP_UnitTestCase
         $elementor = null;
         foreach ( $payload['formSources'] ?? [] as $source )
         {
-            if ( 'elementor_forms' === ( $source['slug'] ?? '' ) )
+            if ( 'elementor_pro_forms' === ( $source['slug'] ?? '' ) )
             {
                 $elementor = $source;
                 break;
@@ -199,7 +199,7 @@ class Tests_Admin_Legacy_Assets extends WP_UnitTestCase
         }
 
         $this->assertIsArray( $elementor );
-        $this->assertSame( 'Elementor Forms', $elementor['label'] );
+        $this->assertSame( 'Elementor Pro Forms', $elementor['label'] );
         $this->assertFalse( $elementor['isActive'] );
         $this->assertSame( 'requires_pro', $elementor['availability'] ?? null );
         $this->assertStringContainsString( 'Elementor Pro Forms', $elementor['availabilityMessage'] ?? '' );

@@ -295,6 +295,9 @@ abstract class Sentient_Forms_Abstract_Action implements Sentient_Forms_Action_I
             'validation_result' => $validation_result,
             'hook'              => $hook,
             'form_source'       => $data[ 'form_source' ] ?? 'gravity_forms',
+            'execution_context' => isset( $data['execution_context'] ) && is_array( $data['execution_context'] )
+                ? $data['execution_context']
+                : [],
         ];
     }
 

@@ -977,7 +977,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
     {
         return match ( $this->normalize_form_source( $form_source ) ) {
             'gravity_forms'   => __( 'Gravity Forms', 'sentient-forms' ),
-            'elementor_forms' => __( 'Elementor Forms', 'sentient-forms' ),
+            'elementor_pro_forms' => __( 'Elementor Pro Forms', 'sentient-forms' ),
             'unknown'         => __( 'Unknown provider', 'sentient-forms' ),
             default           => ucwords( str_replace( [ '_', '-' ], ' ', sanitize_key( $form_source ) ) ),
         };

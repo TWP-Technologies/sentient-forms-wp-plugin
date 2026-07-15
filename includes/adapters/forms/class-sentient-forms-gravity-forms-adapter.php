@@ -15,8 +15,9 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Gravity_Forms_Adapter
  * Adapter for Gravity Forms integration
  */
-class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface
+class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
 {
+    private const NATIVE_AFTER_SUBMISSION_HOOK = 'gform_after_submission';
     private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
     private const REALTIME_DEFAULT_DEBOUNCE_MS = 900;
     private const REALTIME_DEFAULT_COOLDOWN_MS = 8000;
@@ -65,15 +66,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private Sentient_Forms_Plugin $plugin;
 
+    private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner;
+
+    private ?Sentient_Forms_Action_Runtime_Settings_Resolver $runtime_settings_resolver = null;
+
     /**
      * Local-first execution service, lazily initialized for direct provider runs.
      */
     private ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service = null;
-
-    /**
-     * Submission ledger capture service, lazily initialized for opted-in forms.
-     */
-    private ?Sentient_Forms_Submission_Ledger_Capture_Service $submission_ledger_capture_service = null;
 
     /**
      * Cache async spam notification mapping checks per form/entry.
@@ -104,13 +104,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private array $validation_execution_request_ids_by_form = [];
 
     /**
+     * Shared-runner outcomes created at Gravity's pre-delivery saved-entry seam.
+     *
+     * @var array<string, Sentient_Forms_Accepted_Submission_Run_Result>
+     */
+    private array $accepted_submission_outcomes = [];
+
+    /**
      * Constructor
      *
      * @param Sentient_Forms_Plugin $plugin Plugin instance.
      */
-    public function __construct( Sentient_Forms_Plugin $plugin )
+    public function __construct(
+        Sentient_Forms_Plugin $plugin,
+        ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null
+    )
     {
-        $this->plugin = $plugin;
+        $this->plugin          = $plugin;
+        $this->workflow_runner = $workflow_runner;
     }
 
     /**
@@ -131,6 +142,85 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_name(): string
     {
         return __( 'Gravity Forms', 'sentient-forms' );
+    }
+
+    public function get_accepted_submission_native_hook(): string
+    {
+        return self::NATIVE_AFTER_SUBMISSION_HOOK;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_accepted_submission( mixed $native_submission ): array | WP_Error
+    {
+        if ( ! is_array( $native_submission ) )
+        {
+            return new WP_Error( 'sentient_forms_gravity_forms_invalid_accepted_submission', __( 'Gravity Forms accepted submission payload is invalid.', 'sentient-forms' ) );
+        }
+
+        $entry   = $native_submission['entry'] ?? null;
+        $form    = $native_submission['form'] ?? null;
+        $form_id = is_array( $form ) ? absint( $form['id'] ?? 0 ) : 0;
+        $entry_id = is_array( $entry ) ? absint( $entry['id'] ?? 0 ) : 0;
+        if ( ! is_array( $entry ) || ! is_array( $form ) || $form_id <= 0 || $entry_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_gravity_forms_invalid_accepted_submission', __( 'Gravity Forms accepted submission is missing its form or entry identity.', 'sentient-forms' ) );
+        }
+
+        return [
+            'form_id'             => (string) $form_id,
+            'form'                => $this->gravity_form_snapshot( $form, $form_id ),
+            'logical_fields'      => $this->build_submission_ledger_logical_fields( $entry, $form ),
+            'files'               => $this->build_submission_ledger_file_references( $entry, $form ),
+            'native_entry_id'     => (string) $entry_id,
+            'native_entry_url'    => $this->build_submission_ledger_entry_url( $form_id, $entry_id ),
+            'source_submitted_at' => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] )
+                ? sanitize_text_field( (string) $entry['date_created'] )
+                : null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $form
+     *
+     * @return array<string, mixed>
+     */
+    private function gravity_form_snapshot( array $form, int $form_id ): array
+    {
+        $fields = [];
+        foreach ( is_array( $form['fields'] ?? null ) ? $form['fields'] : [] as $field )
+        {
+            $field_id = $this->extract_gravity_field_property( $field, 'id' );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $field_type  = sanitize_key( strtolower( $this->extract_gravity_field_property( $field, 'type' ) ) );
+            $admin_label = $this->extract_gravity_field_property( $field, 'adminLabel' );
+            $label       = '' !== $admin_label ? $admin_label : $this->extract_gravity_field_property( $field, 'label' );
+            $fields[]    = [
+                'id'               => $field_id,
+                'label'            => $label,
+                'admin_label'      => $admin_label,
+                'type'             => '' !== $field_type ? $field_type : 'unknown',
+                'storage_eligible' => 'fileupload' !== $field_type,
+            ];
+        }
+
+        return [
+            'id'          => (string) $form_id,
+            'title'       => isset( $form['title'] ) && is_scalar( $form['title'] )
+                ? sanitize_text_field( (string) $form['title'] )
+                : sprintf(
+                    /* translators: %d: Gravity Forms form ID. */
+                    __( 'Gravity Form %d', 'sentient-forms' ),
+                    $form_id
+                ),
+            'form_source' => $this->get_id(),
+            'fields'      => $fields,
+        ];
     }
 
     /**
@@ -235,7 +325,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         // Register hooks for all forms
         add_filter( 'gform_validation', [ $this, 'handle_validation' ], 10, 1 );
-        add_filter( 'gform_entry_post_save', [ $this, 'handle_after_submission_entry_post_save' ], 10, 2 );
+        add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_accepted_submission' ], 10, 2 );
+        add_filter( 'gform_entry_post_save', [ $this, 'handle_validation_entry_post_save' ], 10, 2 );
 
         // FR-003: Notification interception hook - suppress notifications for blocking spam entries only
         add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
@@ -262,6 +353,141 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
     }
 
+    public function handle_accepted_submission( array $entry, array $form ): ?string
+    {
+        $cache_key = $this->accepted_submission_cache_key( $entry, $form );
+        $outcome   = $this->accepted_submission_outcomes[ $cache_key ] ?? null;
+        if ( ! $outcome instanceof Sentient_Forms_Accepted_Submission_Run_Result )
+        {
+            $outcome = $this->run_accepted_submission_workflow( $entry, $form );
+            $this->accepted_submission_outcomes[ $cache_key ] = $outcome;
+            $this->apply_synchronous_accepted_submission_results( $entry, $form, $outcome );
+        }
+
+        $submission_uuid = $outcome->get_submission_uuid();
+        $this->backfill_validation_action_log_entry_ids( $entry, $form, $submission_uuid );
+        $this->reconcile_deferred_notifications_after_submission( $entry, $form, $outcome );
+        $this->reconcile_deferred_webhooks_after_submission( $entry, $form, $outcome );
+
+        return $submission_uuid;
+    }
+
+    private function apply_synchronous_accepted_submission_results(
+        array $entry,
+        array $form,
+        Sentient_Forms_Accepted_Submission_Run_Result $outcome
+    ): void
+    {
+        $entry_id = absint( $entry['id'] ?? 0 );
+        foreach ( $outcome->get_mapping_outcomes() as $mapping_id => $mapping_outcome )
+        {
+            if ( 'succeeded' !== $mapping_outcome )
+            {
+                continue;
+            }
+
+            $mapping = $outcome->get_resolved_mapping( (string) $mapping_id );
+            $result  = $outcome->get_execution_result( (string) $mapping_id );
+            if ( ! is_array( $mapping ) || ! is_array( $result ) )
+            {
+                continue;
+            }
+
+            $this->record_blocking_spam_notification_state( $entry_id, $mapping, $result );
+            if ( 'local_first' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) ) )
+            {
+                continue;
+            }
+
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+            $context = [
+                'hook'                      => self::NATIVE_AFTER_SUBMISSION_HOOK,
+                'form_source'               => $this->get_id(),
+                'action_id'                 => (string) $mapping_id,
+                'mapping_id'                => (string) $mapping_id,
+                'local_mapping_id'          => (string) $mapping_id,
+                'form_id'                   => $form['id'] ?? null,
+                'entry_id'                  => $entry['id'] ?? null,
+                'submission_uuid'           => $outcome->get_submission_uuid(),
+                'central_action_id'         => $mapping['central_action_id'] ?? null,
+                'mark_as_spam'              => ! empty( $mapping['mark_as_spam'] ) || ! empty( $settings['mark_as_spam'] ),
+                'spam_confidence_threshold' => $settings['spam_confidence_threshold'] ?? $mapping['spam_confidence_threshold'] ?? 0.80,
+                'spam_indicators_display'   => $settings['spam_indicators_display'] ?? $mapping['spam_indicators_display'] ?? 'simple',
+                'spam_result_display_mode'  => $settings['spam_result_display_mode'] ?? $mapping['spam_result_display_mode'] ?? 'all_results',
+                'settings'                  => $settings,
+            ];
+            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
+
+            $this->run_post_execution_actions(
+                $entry_id,
+                $context,
+                $result
+            );
+        }
+    }
+
+    /**
+     * Apply validation-time native effects and run accepted-submission work as
+     * soon as Gravity saves the entry. Gravity evaluates delivery filters before
+     * gform_after_submission, so the exact accepted hook reuses this outcome.
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $form
+     *
+     * @return array<string, mixed>
+     */
+    public function handle_validation_entry_post_save( array $entry, array $form ): array
+    {
+        $form_id = absint( $form['id'] ?? 0 );
+        $execution_request_ids = $form_id > 0
+            ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
+            : [];
+
+        $this->apply_validation_local_execution_results_to_entry( $execution_request_ids, $entry, $form );
+
+        $cache_key = $this->accepted_submission_cache_key( $entry, $form );
+        if ( ! isset( $this->accepted_submission_outcomes[ $cache_key ] ) )
+        {
+            $outcome = $this->run_accepted_submission_workflow( $entry, $form );
+            $this->accepted_submission_outcomes[ $cache_key ] = $outcome;
+            $this->backfill_validation_action_log_entry_ids( $entry, $form, $outcome->get_submission_uuid() );
+            $this->apply_synchronous_accepted_submission_results( $entry, $form, $outcome );
+        }
+
+        return $entry;
+    }
+
+    private function run_accepted_submission_workflow(
+        array $entry,
+        array $form
+    ): Sentient_Forms_Accepted_Submission_Run_Result
+    {
+        return $this->get_workflow_runner()->run_accepted_submission_with_outcome(
+            $this,
+            [
+                'entry' => $entry,
+                'form'  => $form,
+            ]
+        );
+    }
+
+    private function accepted_submission_cache_key( array $entry, array $form ): string
+    {
+        return absint( $form['id'] ?? ( $entry['form_id'] ?? 0 ) ) . ':' . absint( $entry['id'] ?? 0 );
+    }
+
+    private function get_workflow_runner(): Sentient_Forms_Form_Source_Workflow_Runner
+    {
+        if ( null === $this->workflow_runner )
+        {
+            $this->workflow_runner = new Sentient_Forms_Form_Source_Workflow_Runner( $this->plugin );
+        }
+
+        return $this->workflow_runner;
+    }
+
     private function gravity_forms_webhooks_feed_controls_available(): bool
     {
         $addon_available = class_exists( 'GF_Webhooks' )
@@ -271,104 +497,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $addon_available
             && class_exists( 'GFAPI' )
             && is_callable( [ 'GFAPI', 'maybe_process_feeds' ] );
-    }
-
-    /**
-     * Execute logical after-submission mappings after the entry is saved, before Gravity Forms dispatches notifications.
-     *
-     * Gravity Forms sends form-submission notifications before the later gform_after_submission action,
-     * so blocking/background execution must be resolved at entry-post-save time instead of the literal
-     * after-submission hook.
-     *
-     * @param array $entry The saved entry.
-     * @param array $form  The form configuration.
-     *
-     * @return array The original entry for Gravity Forms' filter contract.
-     */
-    public function handle_after_submission_entry_post_save( array $entry, array $form ): array
-    {
-        $form_id                          = absint( $form['id'] ?? 0 );
-        $validation_execution_request_ids = $form_id > 0
-            ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
-            : [];
-
-        $submission_uuid = $this->capture_submission_ledger_for_entry( $entry, $form );
-
-        $this->backfill_validation_action_log_entry_ids( $entry, $form, $submission_uuid );
-        $this->apply_validation_local_execution_results_to_entry( $validation_execution_request_ids, $entry, $form );
-        $this->handle_after_submission( $entry, $form, $submission_uuid );
-
-        return $entry;
-    }
-
-    private function capture_submission_ledger_for_entry( array $entry, array $form ): ?string
-    {
-        $entry_id = absint( $entry['id'] ?? 0 );
-        $form_id  = absint( $form['id'] ?? ( $entry['form_id'] ?? 0 ) );
-        if ( $entry_id <= 0 || $form_id <= 0 )
-        {
-            return null;
-        }
-
-        $capture_service = $this->get_submission_ledger_capture_service();
-        if ( null === $capture_service )
-        {
-            return null;
-        }
-
-        $captured = $capture_service->capture(
-            [
-                'form_source'         => $this->get_id(),
-                'form_id'             => (string) $form_id,
-                'native_entry_id'     => (string) $entry_id,
-                'native_entry_url'    => $this->build_submission_ledger_entry_url( $form_id, $entry_id ),
-                'source_submitted_at' => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] )
-                    ? sanitize_text_field( (string) $entry['date_created'] )
-                    : null,
-                'logical_fields'      => $this->build_submission_ledger_logical_fields( $entry, $form ),
-                'files'               => $this->build_submission_ledger_file_references( $entry, $form ),
-            ]
-        );
-
-        if ( is_wp_error( $captured ) )
-        {
-            if ( 'sentient_forms_submission_ledger_disabled' !== $captured->get_error_code() )
-            {
-                sentient_forms_debug_log(
-                    'Sentient Forms submission ledger capture failed.',
-                    [
-                        'form_id'       => $form_id,
-                        'entry_id'      => $entry_id,
-                        'error_code'    => $captured->get_error_code(),
-                        'error_message' => $captured->get_error_message(),
-                    ]
-                );
-            }
-
-            return null;
-        }
-
-        $submission_uuid = isset( $captured['submission_uuid'] ) && is_scalar( $captured['submission_uuid'] )
-            ? sanitize_text_field( (string) $captured['submission_uuid'] )
-            : '';
-
-        return '' !== $submission_uuid ? $submission_uuid : null;
-    }
-
-    private function get_submission_ledger_capture_service(): ?Sentient_Forms_Submission_Ledger_Capture_Service
-    {
-        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Capture_Service' ) )
-        {
-            return null;
-        }
-
-        if ( null === $this->submission_ledger_capture_service )
-        {
-            global $wpdb;
-            $this->submission_ledger_capture_service = new Sentient_Forms_Submission_Ledger_Capture_Service( $wpdb );
-        }
-
-        return $this->submission_ledger_capture_service;
     }
 
     private function build_submission_ledger_entry_url( int $form_id, int $entry_id ): string
@@ -607,16 +735,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 static fn ( string $item ): bool => '' !== $item
             )
         );
-    }
-
-    /**
-     * @return array{submission_uuid?: string}
-     */
-    private function submission_uuid_context( ?string $submission_uuid ): array
-    {
-        $submission_uuid = null !== $submission_uuid ? sanitize_text_field( $submission_uuid ) : '';
-
-        return '' !== $submission_uuid ? [ 'submission_uuid' => $submission_uuid ] : [];
     }
 
     private function backfill_validation_action_log_entry_ids( array $entry, array $form, ?string $submission_uuid = null ): void
@@ -1111,469 +1229,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $validation_result;
-    }
-
-    /**
-     * Handle form submission
-     *
-     * @param array $entry The entry that was created.
-     * @param array $form  The form object.
-     *
-     * @return void
-     */
-    public function handle_after_submission( array $entry, array $form, ?string $submission_uuid = null ): void
-    {
-        $form_id = $form[ 'id' ];
-        $logger  = $this->plugin->get_logger();
-        $correlation_id = $logger->correlation_id( $entry['id'] ?? null );
-        $submission_context = $this->submission_uuid_context( $submission_uuid );
-
-        // Get form settings - these are stored directly under local_mapping_id keys
-        $settings = $this->get_form_settings( $form_id );
-
-        $disable_flags = $this->get_execution_disable_flags( $settings );
-
-        // CB-FORMS-001 / CB-FORMS-002: Skip all actions when effective execution disable is enabled.
-        if ( ! empty( $disable_flags['effective_disabled'] ) )
-        {
-            $logger->info(
-                'form execution disabled, skipping all after-submission actions',
-                [
-                    'form_id'           => $form_id,
-                    'sf_disabled'       => ! empty( $disable_flags['sf_disabled'] ),
-                    'global_disabled'   => ! empty( $disable_flags['global_disabled'] ),
-                    'provider_disabled' => ! empty( $disable_flags['provider_disabled'] ),
-                ]
-            );
-            return;
-        }
-
-        $planner             = $this->plugin->get_mapping_dependency_planner();
-        $plan                = $planner->build_execution_plan( $settings, 'gform_after_submission' );
-        $mapping_outcomes    = [];
-        $mapping_classifications = [];
-        $execution_request_ids = [];
-
-        if ( ! empty( $plan['cycle_ids'] ) )
-        {
-            $logger->error(
-                'after-submission dependency cycle detected; skipping blocked mappings',
-                [
-                    'hook'       => 'gform_after_submission',
-                    'form_id'    => $form_id,
-                    'entry_id'   => $entry['id'] ?? null,
-                    'cycle_ids'  => $plan['cycle_ids'],
-                ]
-            );
-            foreach ( $plan['cycle_ids'] as $cycle_id )
-            {
-                $mapping_outcomes[ $cycle_id ] = 'skipped';
-            }
-        }
-
-        foreach ( $plan['order'] as $mapping_id )
-        {
-            $node = $plan['nodes'][ $mapping_id ] ?? null;
-            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
-            {
-                continue;
-            }
-
-            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
-            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
-            {
-                continue;
-            }
-
-            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
-            {
-                continue;
-            }
-
-            $central_action_id = (string) ( $action_settings['central_action_id'] ?? '' );
-            if ( '' === $central_action_id )
-            {
-                continue;
-            }
-
-            $execution_request_ids[ $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
-                $central_action_id,
-                $form,
-                $entry,
-                [
-                    'hook'      => 'gform_after_submission',
-                    'action_id' => $mapping_id,
-                ],
-            );
-        }
-
-        foreach ( $plan['order'] as $mapping_id )
-        {
-            $node = $plan['nodes'][ $mapping_id ] ?? null;
-            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
-            {
-                continue;
-            }
-
-            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
-            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
-            $should_async = $this->is_mapping_async( $action_settings );
-
-            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                continue;
-            }
-
-            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'after-submission skipped due to unbound trigger source',
-                    [
-                        'hook'           => 'gform_after_submission',
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'entry_id'       => $entry['id'] ?? null,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping(
-                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
-                $mapping_outcomes,
-                $should_async,
-            );
-            if ( null !== $blocked_by_dependency )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'after-submission skipped due to dependency outcome',
-                    [
-                        'hook'                   => 'gform_after_submission',
-                        'mapping_id'             => $mapping_id,
-                        'blocked_by_dependency'  => $blocked_by_dependency,
-                        'dependency_outcome'     => $mapping_outcomes[ $blocked_by_dependency ] ?? null,
-                        'form_id'                => $form_id,
-                        'entry_id'               => $entry['id'] ?? null,
-                        'correlation_id'         => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'after-submission skipped by mapping conditions',
-                    [
-                        'hook'           => 'gform_after_submission',
-                        'action_id'      => $action_settings['central_action_id'] ?? '',
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'entry_id'       => $entry['id'] ?? null,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-                continue;
-            }
-
-            $upstream_spam_skip = $this->resolve_upstream_spam_skip_classification(
-                $action_settings,
-                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
-                $mapping_classifications,
-                $plan['nodes'],
-                $form_id,
-            );
-            if ( null !== $upstream_spam_skip )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'skipped';
-                $logger->info(
-                    'after-submission skipped because upstream spam check classified submission as spam',
-                    [
-                        'hook'           => 'gform_after_submission',
-                        'action_id'      => $action_settings['central_action_id'] ?? '',
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'entry_id'       => $entry['id'] ?? null,
-                        'correlation_id' => $correlation_id,
-                        'classification' => $upstream_spam_skip,
-                    ]
-                );
-                continue;
-            }
-
-            $action_id = (string) ( $action_settings['central_action_id'] ?? '' );
-            if ( '' === $action_id )
-            {
-                $mapping_outcomes[ $mapping_id ] = 'failed';
-                continue;
-            }
-
-            $action = $this->plugin->get_action( $action_id );
-
-            $data = [
-                'form'  => $form,
-                'entry' => $entry,
-            ];
-
-            $dependency_ids                   = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
-            $dependency_initial_outcomes      = [];
-            $dependency_execution_request_ids = [];
-
-            foreach ( $dependency_ids as $dependency_id )
-            {
-                if ( isset( $mapping_outcomes[ $dependency_id ] ) )
-                {
-                    $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
-                }
-
-                if ( isset( $execution_request_ids[ $dependency_id ] ) )
-                {
-                    $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
-                }
-            }
-
-            if ( $this->is_local_first_mapping( $action_settings ) )
-            {
-                if ( $should_async )
-                {
-                    $logger->info(
-                        'local-first async action enqueued',
-                        [
-                            'hook'           => 'gform_after_submission',
-                            'mapping_id'     => $mapping_id,
-                            'form_id'        => $form_id,
-                            'entry_id'       => $entry['id'] ?? null,
-                            'correlation_id' => $correlation_id,
-                        ]
-                    );
-
-                    $scheduled = $this->schedule_local_first_after_submission_mapping(
-                        $form,
-                        $entry,
-                        $mapping_id,
-                        $action_settings,
-                        $execution_request_ids[ $mapping_id ] ?? null,
-                        array_merge(
-                            $submission_context,
-                            [
-                                'dependency_mapping_ids'           => $dependency_ids,
-                                'dependency_execution_request_ids' => $dependency_execution_request_ids,
-                                'dependency_initial_outcomes'      => $dependency_initial_outcomes,
-                                'dependency_wait_started_at'       => time(),
-                                'dependency_wait_max_seconds'      => max(
-                                    30,
-                                    (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
-                                ),
-                                'dependency_wait_poll_seconds'     => 10,
-                            ]
-                        )
-                    );
-
-                    $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
-
-                    if ( ! $scheduled )
-                    {
-                        $logger->error(
-                            'local-first async action scheduling failed',
-                            [
-                                'hook'           => 'gform_after_submission',
-                                'mapping_id'     => $mapping_id,
-                                'form_id'        => $form_id,
-                                'entry_id'       => $entry['id'] ?? null,
-                                'correlation_id' => $correlation_id,
-                            ]
-                        );
-                    }
-
-                    continue;
-                }
-
-                $result = $this->execute_local_first_after_submission_mapping(
-                    $form,
-                    $entry,
-                    $mapping_id,
-                    $action_settings,
-                    $execution_request_ids[ $mapping_id ] ?? null,
-                    $submission_uuid
-                );
-
-                $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
-
-                if ( is_wp_error( $result ) )
-                {
-                    $this->record_local_action_failure( $entry, $action_settings, $result );
-                    $logger->error(
-                        'local-first after-submission action failed',
-                        [
-                            'hook'           => 'gform_after_submission',
-                            'mapping_id'     => $mapping_id,
-                            'form_id'        => $form_id,
-                            'entry_id'       => $entry['id'] ?? null,
-                            'correlation_id' => $correlation_id,
-                            'error_code'     => $result->get_error_code(),
-                        ]
-                    );
-                }
-                elseif ( is_array( $result ) )
-                {
-                    $this->record_blocking_spam_notification_state( absint( $entry['id'] ?? 0 ), $action_settings, $result );
-                    $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
-                }
-
-                continue;
-            }
-
-            if ( $should_async )
-            {
-                $logger->info(
-                    'async action enqueued',
-                    [
-                        'hook'           => 'gform_after_submission',
-                        'action_id'      => $action_id,
-                        'mapping_id'     => $mapping_id,
-                        'form_id'        => $form_id,
-                        'entry_id'       => $entry['id'] ?? null,
-                        'correlation_id' => $correlation_id,
-                    ]
-                );
-
-                $scheduled = $this->plugin->process_action_async(
-                    $action_id,
-                    $data,
-                    $action_settings,
-                    array_merge(
-                        [
-                        'hook'                           => 'gform_after_submission',
-                        'form_source'                    => $this->get_id(),
-                        'action_id'                      => $mapping_id,
-                        'mapping_id'                     => $mapping_id,
-                        'local_mapping_id'               => $mapping_id,
-                        'form_id'                        => $form_id,
-                        'entry_id'                       => $entry['id'] ?? null,
-                        'execution_request_id'           => $execution_request_ids[ $mapping_id ] ?? null,
-                        'action_name_label'              => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
-                        'mark_as_spam'                   => ! empty( $action_settings['mark_as_spam'] ),
-                        'spam_confidence_threshold'      => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
-                        'spam_indicators_display'        => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
-                        'spam_result_display_mode'       => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'all_results',
-                        'central_action_id'              => $action_settings['central_action_id'] ?? null,
-                        'dependency_mapping_ids'         => $dependency_ids,
-                        'dependency_execution_request_ids' => $dependency_execution_request_ids,
-                        'dependency_initial_outcomes'    => $dependency_initial_outcomes,
-                        'dependency_wait_started_at'     => time(),
-                        'dependency_wait_max_seconds'    => max(
-                            30,
-                            (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
-                        ),
-                        'dependency_wait_poll_seconds'   => 10,
-                        ],
-                        $submission_context
-                    ),
-                );
-
-                $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
-
-                if ( $scheduled )
-                {
-                    $this->log_action_execution(
-                        array_merge(
-                            [
-                            'hook'                 => 'gform_after_submission',
-                            'form_source'          => $this->get_id(),
-                            'action_id'            => $mapping_id,
-                            'mapping_id'           => $mapping_id,
-                            'local_mapping_id'     => $mapping_id,
-                            'form_id'              => $form_id,
-                            'entry_id'             => $entry['id'] ?? null,
-                            'execution_request_id' => $execution_request_ids[ $mapping_id ] ?? null,
-                            'action_name_label'    => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
-                            'central_action_id'    => $action_settings['central_action_id'] ?? null,
-                            'settings'             => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                                ? $action_settings['settings']
-                                : [],
-                            ],
-                            $submission_context
-                        ),
-                        [],
-                        'pending'
-                    );
-                }
-
-                continue;
-            }
-
-            if ( ! $action )
-            {
-                if ( $this->is_cps_managed_mapping( $action_settings ) )
-                {
-                    $ran_via_cps_executor = true;
-                    $result = $this->execute_blocking_after_submission_cps_action( $form, $entry, $mapping_id, $action_settings, $submission_uuid );
-                }
-                else
-                {
-                    $mapping_outcomes[ $mapping_id ] = 'failed';
-                    continue;
-                }
-            }
-            else
-            {
-                $ran_via_cps_executor = false;
-                $entry_id        = $entry['id'] ?? 0;
-                $runtime_form_id = $form['id'] ?? 0;
-                $result          = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
-            }
-
-            $entry_id = $entry['id'] ?? 0;
-            $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
-
-            $context = array_merge(
-                [
-                'hook'              => 'gform_after_submission',
-                'form_source'       => $this->get_id(),
-                'action_id'         => $mapping_id,
-                'mapping_id'        => $mapping_id,
-                'local_mapping_id'  => $mapping_id,
-                'form_id'           => $form_id,
-                'entry_id'          => $entry['id'] ?? null,
-                'action_name_label' => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
-                'central_action_id' => $action_settings['central_action_id'] ?? null,
-                'mark_as_spam'      => ! empty( $action_settings['mark_as_spam'] ),
-                'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
-                'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
-                'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'all_results',
-                'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-                ],
-                $submission_context
-            );
-
-            if ( is_array( $result ) )
-            {
-                if ( $ran_via_cps_executor && $entry_id > 0 )
-                {
-                    $this->maybe_mark_entry_as_spam_from_result( absint( $entry_id ), $context, $result );
-                }
-
-                $this->record_blocking_spam_notification_state( absint( $entry_id ), $action_settings, $result );
-            }
-
-            if ( is_wp_error( $result ) )
-            {
-                $this->log_action_execution( $context, [], 'error', $result );
-            }
-            elseif ( is_array( $result ) )
-            {
-                $this->log_action_execution( $context, $result, 'success' );
-                $this->run_post_execution_actions( absint( $entry_id ), $context, $result );
-                $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
-            }
-        }
     }
 
     /**
@@ -2292,60 +1947,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
-     * Execute a local-first mapping through the local provider engine.
-     *
-     * @param array<string, mixed> $form                 Gravity Forms form payload.
-     * @param array<string, mixed> $entry                Gravity Forms entry payload.
-     * @param string               $mapping_id           Runtime planner mapping id.
-     * @param array<string, mixed> $action_settings      Mapping settings.
-     * @param string|null          $execution_request_id Optional precomputed request id.
-     * @param string|null          $submission_uuid      Optional submission ledger UUID.
-     *
-     * @return array<string, mixed>|WP_Error
-     */
-    private function execute_local_first_after_submission_mapping(
-        array $form,
-        array $entry,
-        string $mapping_id,
-        array $action_settings,
-        ?string $execution_request_id = null,
-        ?string $submission_uuid = null
-    ): array | WP_Error
-    {
-        $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
-        if ( $local_mapping_id <= 0 )
-        {
-            return new WP_Error(
-                'sentient_forms_missing_local_mapping_id',
-                __( 'Local form mapping id is missing.', 'sentient-forms' )
-            );
-        }
-
-        $context = array_merge(
-            [
-                'hook'                    => 'gform_after_submission',
-                'form_source'             => $this->get_id(),
-                'mapping_id'              => $mapping_id,
-                'local_mapping_id'        => $mapping_id,
-                'local_form_mapping_id'   => $local_mapping_id,
-                'form_id'                 => $form['id'] ?? null,
-                'entry_id'                => $entry['id'] ?? null,
-                'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
-                'central_action_id'       => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
-                'mark_as_spam'            => ! empty( $action_settings['mark_as_spam'] ),
-                'spam_confidence_threshold' => $this->get_local_spam_confidence_threshold( $action_settings ),
-                'settings'                => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-                'execution_request_id'    => $execution_request_id,
-            ],
-            $this->submission_uuid_context( $submission_uuid )
-        );
-
-        return $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
-    }
-
-    /**
      * Execute a local-first validation mapping through the local provider engine.
      *
      * @param array<string, mixed> $form            Gravity Forms form payload.
@@ -2399,86 +2000,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $result;
     }
 
-    /**
-     * Queue a local-first mapping through the plugin-owned async handler.
-     *
-     * @param array<string, mixed> $form                 Gravity Forms form payload.
-     * @param array<string, mixed> $entry                Gravity Forms entry payload.
-     * @param string               $mapping_id           Runtime planner mapping id.
-     * @param array<string, mixed> $action_settings      Mapping settings.
-     * @param string|null          $execution_request_id Optional precomputed request id.
-     * @param array<string, mixed> $async_context        Dependency/runtime context.
-     *
-     * @return bool Whether the mapping was queued.
-     */
-    private function schedule_local_first_after_submission_mapping(
-        array $form,
-        array $entry,
-        string $mapping_id,
-        array $action_settings,
-        ?string $execution_request_id = null,
-        array $async_context = []
-    ): bool
-    {
-        $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
-        if ( $local_mapping_id <= 0 )
-        {
-            return false;
-        }
-
-        $context = array_merge(
-            [
-                'hook'                    => 'gform_after_submission',
-                'form_source'             => $this->get_id(),
-                'mapping_id'              => $mapping_id,
-                'local_mapping_id'        => $mapping_id,
-                'local_form_mapping_id'   => $local_mapping_id,
-                'form_id'                 => $form['id'] ?? null,
-                'entry_id'                => $entry['id'] ?? null,
-                'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
-                'central_action_id'       => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
-                'mark_as_spam'            => ! empty( $action_settings['mark_as_spam'] ),
-                'spam_confidence_threshold' => $this->get_local_spam_confidence_threshold( $action_settings ),
-                'settings'                => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-                'execution_request_id'    => $execution_request_id,
-            ],
-            $async_context,
-        );
-
-        return $this->plugin->get_async_handler()->schedule_local_mapping(
-            $local_mapping_id,
-            $form,
-            $entry,
-            $context
-        );
-    }
-
-    /**
-     * Resolve local spam confidence threshold from effect mapping or runtime settings.
-     *
-     * @param array<string, mixed> $mapping Runtime mapping.
-     *
-     * @return float
-     */
-    private function get_local_spam_confidence_threshold( array $mapping ): float
-    {
-        $effects = $this->get_local_effect_mapping( $mapping );
-        if ( isset( $effects['spam'] ) && is_array( $effects['spam'] ) && is_numeric( $effects['spam']['min_confidence'] ?? null ) )
-        {
-            return (float) $effects['spam']['min_confidence'];
-        }
-
-        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
-        if ( is_numeric( $settings['spam_confidence_threshold'] ?? null ) )
-        {
-            return (float) $settings['spam_confidence_threshold'];
-        }
-
-        return 0.80;
-    }
-
     private function get_local_execution_service(): Sentient_Forms_Local_Action_Execution_Service
     {
         if ( null === $this->local_execution_service )
@@ -2487,78 +2008,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $this->local_execution_service;
-    }
-
-    /**
-     * Determine whether a mapping can execute directly through the CPS action executor.
-     *
-     * @param array<string, mixed> $mapping Mapping settings.
-     *
-     * @return bool
-     */
-    private function is_cps_managed_mapping( array $mapping ): bool
-    {
-        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
-            ? sanitize_key( (string) $mapping['action_type_indicator'] )
-            : '';
-
-        return in_array( $indicator, [ 'master', 'custom' ], true );
-    }
-
-    /**
-     * Execute a Blocking after-submission CPS-managed mapping immediately instead of queueing it.
-     *
-     * @param array<string, mixed> $form            Form payload.
-     * @param array<string, mixed> $entry           Entry payload.
-     * @param string               $mapping_id      Local mapping id.
-     * @param array<string, mixed> $action_settings Mapping settings.
-     * @param string|null          $submission_uuid Optional submission ledger UUID.
-     *
-     * @return array|WP_Error
-     */
-    private function execute_blocking_after_submission_cps_action( array $form, array $entry, string $mapping_id, array $action_settings, ?string $submission_uuid = null )
-    {
-        $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
-            ? (string) $action_settings['central_action_id']
-            : '';
-
-        if ( '' === $central_action_id )
-        {
-            return new WP_Error(
-                'sentient_forms_missing_central_action',
-                __( 'Sentient Forms could not run this action because the central action id is missing.', 'sentient-forms' )
-            );
-        }
-
-        $local_mapping_id = isset( $action_settings['local_mapping_id'] ) && is_scalar( $action_settings['local_mapping_id'] ) && '' !== $action_settings['local_mapping_id']
-            ? (string) $action_settings['local_mapping_id']
-            : $mapping_id;
-
-        $context = array_merge(
-            [
-                'hook'                  => 'gform_after_submission',
-                'form_source'           => $this->get_id(),
-                'action_id'             => $mapping_id,
-                'mapping_id'            => $mapping_id,
-                'local_mapping_id'      => $local_mapping_id,
-                'form_id'               => $form['id'] ?? null,
-                'entry_id'              => $entry['id'] ?? null,
-                'action_name_label'     => $action_settings['action_name_label'] ?? $central_action_id,
-                'action_type_indicator' => $action_settings['action_type_indicator'] ?? null,
-                'central_action_id'     => $central_action_id,
-                'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-            ],
-            $this->submission_uuid_context( $submission_uuid )
-        );
-
-        return $this->plugin->get_action_executor()->execute(
-            $central_action_id,
-            $form,
-            $entry,
-            $context,
-        );
     }
 
     /**
@@ -2872,70 +2321,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $validation;
-    }
-
-    /**
-     * Map CPS/WP errors to user-friendly messages for admin status.
-     */
-    private function map_error_to_message( WP_Error $error ): string
-    {
-        if ( 'insufficient_credits' === $error->get_error_code() )
-        {
-            $error_data = $error->get_error_data();
-            $payload    = is_array( $error_data ) && isset( $error_data['payload'] ) && is_array( $error_data['payload'] )
-                ? $error_data['payload']
-                : array();
-            $meta       = isset( $payload['error']['meta'] ) && is_array( $payload['error']['meta'] )
-                ? $payload['error']['meta']
-                : array();
-
-            if ( isset( $meta['current_balance'] ) && is_numeric( $meta['current_balance'] ) && (int) $meta['current_balance'] < 0 )
-            {
-                return sprintf(
-                    /* translators: %d is the negative credit balance. */
-                    __( 'Sentient Forms could not run: this license now has a negative balance of %d credits. Add credits before retrying.', 'sentient-forms' ),
-                    (int) $meta['current_balance']
-                );
-            }
-
-            if (
-                isset( $meta['current_balance'], $meta['required_credits'] ) &&
-                is_numeric( $meta['current_balance'] ) &&
-                is_numeric( $meta['required_credits'] )
-            )
-            {
-                return sprintf(
-                    /* translators: 1: required credits, 2: current credits remaining. */
-                    __( 'Sentient Forms could not run: this action needs %1$d credits, but only %2$d remain for this license.', 'sentient-forms' ),
-                    (int) $meta['required_credits'],
-                    (int) $meta['current_balance']
-                );
-            }
-        }
-
-        return match ( $error->get_error_code() ) {
-            'insufficient_credits' => __( 'Sentient Forms could not run: insufficient credits remain for this license.', 'sentient-forms' ),
-            'duplicate_execution'  => __( 'Sentient Forms already processed this submission. Refresh the status to view the existing result.', 'sentient-forms' ),
-            'timeout'              => __( 'Sentient Forms timed out while contacting CPS. The submission was not processed.', 'sentient-forms' ),
-            default                => $error->get_error_message(),
-        };
-    }
-
-    /**
-     * Persist form-level error status for admins to review.
-     */
-    private function record_entry_error( int $entry_id, WP_Error $error, int $form_id ): void
-    {
-        $option_key = sprintf( 'sentient_forms_form_status_gravity_forms_%s', $form_id );
-        $status     = [
-            'status'          => 'error',
-            'last_error_code' => $error->get_error_code(),
-            'message'         => $this->map_error_to_message( $error ),
-            'entry_id'        => $entry_id,
-            'updated_at'      => time(),
-        ];
-
-        update_option( $option_key, $status, false );
     }
 
     private function inject_validation_message( array $validation_result, string $message, array $action_settings ): array
@@ -4408,12 +3793,18 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_form_settings( mixed $form_id ): array
     {
         $option_name = $this->get_form_option_name( $form_id );
-        $settings    = get_option( $option_name, [] );
+        $missing     = new stdClass();
+        $settings    = get_option( $option_name, $missing );
 
-        if ( empty( $settings ) )
+        if ( $missing === $settings )
         {
             // Fallback to legacy option naming for backwards compatibility.
-            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, [] );
+            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, $missing );
+        }
+
+        if ( ! is_array( $settings ) )
+        {
+            $settings = [];
         }
 
         // Get global settings as defaults
@@ -4514,36 +3905,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return $mapping;
         }
 
-        $resolved        = $mapping;
-        $action_defaults = $this->get_action_defaults_config( $action_id );
-        $form_config     = $this->get_form_action_config( $this->get_id(), $form_id, $action_id );
-        $mapping_settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
-
-        foreach ( [ 'model_selection', 'include_site_context', 'action_customization' ] as $field )
-        {
-            $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
-        }
-
-        if ( $this->is_spam_action_id( $action_id ) )
-        {
-            foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
-            {
-                $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
-            }
-
-            foreach ( [ 'spam_result_display_mode', 'spam_indicators_display' ] as $field )
-            {
-                $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
-            }
-
-            foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
-            {
-                $mapping_settings = $this->merge_inherited_boolean_field( $mapping_settings, $field, $form_config, $action_defaults );
-            }
-        }
+        $resolved         = $this->get_runtime_settings_resolver()->resolve_mapping( $mapping, $this->get_id(), $form_id );
+        $mapping_settings = isset( $resolved['settings'] ) && is_array( $resolved['settings'] ) ? $resolved['settings'] : [];
 
         if ( self::REALTIME_ACTION_ID === $action_id )
         {
+            $action_defaults = $this->get_action_defaults_config( $action_id );
+            $form_config     = $this->get_form_action_config( $this->get_id(), $form_id, $action_id );
             $mapping_settings = $this->merge_realtime_settings(
                 $mapping_settings,
                 $form_config,
@@ -4554,6 +3922,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $resolved['settings'] = $mapping_settings;
 
         return $resolved;
+    }
+
+    private function get_runtime_settings_resolver(): Sentient_Forms_Action_Runtime_Settings_Resolver
+    {
+        if ( null === $this->runtime_settings_resolver )
+        {
+            $this->runtime_settings_resolver = new Sentient_Forms_Action_Runtime_Settings_Resolver();
+        }
+
+        return $this->runtime_settings_resolver;
     }
 
     /**
@@ -8272,19 +7650,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
-     * Determine whether this submission should defer notifications for async spam detection.
-     *
-     * @param array $form  The form object.
-     * @param array $entry The entry object.
-     *
-     * @return bool
-     */
-    private function should_defer_notifications_for_async_spam_submission( array $form, array $entry ): bool
-    {
-        return ! empty( $this->get_deferred_notification_mapping_ids_for_async_spam_submission( $form, $entry ) );
-    }
-
-    /**
      * Resolve async spam mapping IDs that should hold form-submission notifications.
      *
      * @param array $form  The form object.
@@ -8333,7 +7698,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $mapping = $node['mapping'];
+            $mapping = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
             $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
 
             if ( ! $this->should_defer_notifications_for_mapping( $mapping, $this->is_mapping_async( $mapping ) ) )
@@ -8403,7 +7768,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $mapping = $node['mapping'];
+            $mapping = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
             $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
 
             if ( ! $this->should_defer_webhooks_for_mapping( $mapping, $this->is_mapping_async( $mapping ) ) )
@@ -8443,32 +7808,23 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
     }
 
-    /**
-     * Reconcile deferred notification state after after-submission mappings are queued.
-     *
-     * @param array $entry               The entry object.
-     * @param array $form                The form object.
-     * @param array $queued_mapping_ids  Mapping IDs that were actually queued.
-     *
-     * @return void
-     */
-    private function reconcile_deferred_notifications_after_submission( array $entry, array $form, array $queued_mapping_ids ): void
+    private function reconcile_deferred_notifications_after_submission(
+        array $entry,
+        array $form,
+        Sentient_Forms_Accepted_Submission_Run_Result $outcome
+    ): void
     {
-        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
-        if ( $entry_id <= 0 )
+        $entry_id = absint( $entry['id'] ?? 0 );
+        if ( $entry_id <= 0 || [] === $this->get_deferred_notification_ids( $entry_id ) )
         {
             return;
         }
 
-        $notification_ids = $this->get_deferred_notification_ids( $entry_id );
-        if ( empty( $notification_ids ) )
-        {
-            return;
-        }
-
-        $queued_mapping_ids = $this->normalize_deferred_notification_ids( $queued_mapping_ids );
-
-        if ( empty( $queued_mapping_ids ) )
+        $queued_mapping_ids = $this->queued_native_effect_mapping_ids( $outcome, 'notifications' );
+        $queued_mapping_ids = array_values(
+            array_intersect( $this->get_deferred_notification_mapping_ids( $entry_id ), $queued_mapping_ids )
+        );
+        if ( [] === $queued_mapping_ids )
         {
             $this->replay_deferred_notifications( $entry_id, absint( $form['id'] ?? 0 ) );
             return;
@@ -8476,6 +7832,64 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, $queued_mapping_ids );
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    private function reconcile_deferred_webhooks_after_submission(
+        array $entry,
+        array $form,
+        Sentient_Forms_Accepted_Submission_Run_Result $outcome
+    ): void
+    {
+        $entry_id = absint( $entry['id'] ?? 0 );
+        if ( $entry_id <= 0 || [] === $this->get_deferred_webhook_feed_ids( $entry_id ) )
+        {
+            return;
+        }
+
+        $queued_mapping_ids = $this->queued_native_effect_mapping_ids( $outcome, 'webhooks' );
+        $queued_mapping_ids = array_values(
+            array_intersect( $this->get_deferred_webhook_mapping_ids( $entry_id ), $queued_mapping_ids )
+        );
+        if ( [] === $queued_mapping_ids )
+        {
+            $this->replay_deferred_webhooks( $entry_id, absint( $form['id'] ?? 0 ) );
+            return;
+        }
+
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY, $queued_mapping_ids );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    /**
+     * Use the same resolved mapping settings that were routed by the shared
+     * runner when identifying queued native-effect work.
+     *
+     * @return array<int, string>
+     */
+    private function queued_native_effect_mapping_ids(
+        Sentient_Forms_Accepted_Submission_Run_Result $outcome,
+        string $effect
+    ): array
+    {
+        $mapping_ids = [];
+        foreach ( $outcome->get_queued_mapping_ids() as $mapping_id )
+        {
+            $mapping = $outcome->get_resolved_mapping( $mapping_id );
+            if ( ! is_array( $mapping ) )
+            {
+                continue;
+            }
+
+            $matches = 'webhooks' === $effect
+                ? $this->should_defer_webhooks_for_mapping( $mapping, true )
+                : $this->should_defer_notifications_for_mapping( $mapping, true );
+            if ( $matches )
+            {
+                $mapping_ids[] = $mapping_id;
+            }
+        }
+
+        return $this->normalize_deferred_notification_ids( $mapping_ids );
     }
 
     /**
@@ -8699,7 +8113,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $form = $this->get_form_object( $form_id );
         $entry = $this->get_entry_record( $entry_id );
-        if ( ! is_array( $form ) || ! is_array( $entry ) || ! $this->gravity_forms_webhooks_feed_controls_available() )
+        if ( ! is_array( $form ) || ! is_array( $entry ) || ! $this->dispatch_deferred_webhooks( $entry, $form, $feed_ids ) )
         {
             sentient_forms_debug_log(
                 'Sentient Forms could not replay deferred Gravity Forms Webhooks.',
@@ -8709,6 +8123,23 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 ]
             );
             return;
+        }
+
+        $this->clear_deferred_webhook_state( $entry_id );
+    }
+
+    /**
+     * Dispatch deferred Webhooks through Gravity Forms using replay-only feed IDs.
+     *
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $form
+     * @param array<int, string>   $feed_ids
+     */
+    protected function dispatch_deferred_webhooks( array $entry, array $form, array $feed_ids ): bool
+    {
+        if ( ! $this->gravity_forms_webhooks_feed_controls_available() )
+        {
+            return false;
         }
 
         $previous_allowed_feed_ids = $this->webhook_replay_allowed_feed_ids;
@@ -8721,7 +8152,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $this->webhook_replay_allowed_feed_ids = $previous_allowed_feed_ids;
         }
 
-        $this->clear_deferred_webhook_state( $entry_id );
+        return true;
     }
 
     /**

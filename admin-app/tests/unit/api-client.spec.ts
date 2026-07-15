@@ -1239,7 +1239,7 @@ describe('SentientFormsApiClient', () => {
 			jsonResponse({
 				success: true,
 				data: {
-					form_source: 'elementor_forms',
+					form_source: 'elementor_pro_forms',
 					form_id: '123:formabc',
 					availability: {
 						source: 'ledger',
@@ -1254,12 +1254,12 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 
-		const result = await client.searchSpamGuidanceEntries('elementor_forms', '123:formabc', {
+		const result = await client.searchSpamGuidanceEntries('elementor_pro_forms', '123:formabc', {
 			showNotifications: false
 		});
 
 		expect(mockFetch).toHaveBeenCalledWith(
-			`${baseUrl}spam-guidance/forms/elementor_forms/123%3Aformabc/entries/search`,
+			`${baseUrl}spam-guidance/forms/elementor_pro_forms/123%3Aformabc/entries/search`,
 			expect.objectContaining({ credentials: 'same-origin' })
 		);
 		expect(result.form_id).toBe('123:formabc');

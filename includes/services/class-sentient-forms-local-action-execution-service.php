@@ -423,7 +423,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $effects = [
                 'applied' => [],
-                'skipped' => [
+                'skipped' => [],
+                'failed'  => [
                     [
                         'effect' => 'result_application',
                         'reason' => $effects->get_error_code(),
@@ -432,7 +433,14 @@ class Sentient_Forms_Local_Action_Execution_Service
             ];
         }
 
+        $preflight_effect_outcomes = isset( $context['native_effect_outcomes'] ) && is_array( $context['native_effect_outcomes'] )
+            ? $context['native_effect_outcomes']
+            : [];
         $result['effects'] = $effects;
+        $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::merge(
+            Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $effects ),
+            $preflight_effect_outcomes
+        );
         $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, $provider );
         $this->events->record(
             [
@@ -649,7 +657,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $effects = [
                 'applied' => [],
-                'skipped' => [
+                'skipped' => [],
+                'failed'  => [
                     [
                         'effect' => 'result_application',
                         'reason' => $effects->get_error_code(),
@@ -658,7 +667,14 @@ class Sentient_Forms_Local_Action_Execution_Service
             ];
         }
 
+        $preflight_effect_outcomes = isset( $context['native_effect_outcomes'] ) && is_array( $context['native_effect_outcomes'] )
+            ? $context['native_effect_outcomes']
+            : [];
         $result['effects'] = $effects;
+        $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::merge(
+            Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $effects ),
+            $preflight_effect_outcomes
+        );
         $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, 'openrouter' );
         $this->events->record(
             [
@@ -1066,6 +1082,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 ],
             ],
         ];
+        $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $result['effects'] );
         $payload_digest = hash( 'sha256', (string) wp_json_encode( [ 'status' => 'skipped', 'action_code' => $action_code, 'entry_id' => $entry['id'] ?? null ] ) );
 
         $this->events->record(

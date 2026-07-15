@@ -118,6 +118,33 @@ final class Sentient_Forms_Provider_Form_Id_Keys
         );
     }
 
+    /**
+     * Return exact legacy option names that may still contain Action mappings.
+     *
+     * @return string[]
+     */
+    public static function legacy_action_option_names( string $form_source, mixed $form_id ): array
+    {
+        $form_source = sanitize_key( $form_source );
+        $form_id     = self::normalize( $form_id );
+        if ( '' === $form_source || '' === $form_id )
+        {
+            return [];
+        }
+
+        $option_names = array_map(
+            static fn ( string $suffix ): string => 'sentient_forms_actions_' . $form_source . '_' . $suffix,
+            self::legacy_option_suffixes( $form_source, $form_id )
+        );
+
+        if ( 'gravity_forms' === $form_source && ctype_digit( $form_id ) && absint( $form_id ) > 0 )
+        {
+            $option_names[] = 'sentient_forms_gravity_forms_' . absint( $form_id );
+        }
+
+        return array_values( array_unique( $option_names ) );
+    }
+
     private static function decode_legacy_option_suffix( string $form_source, string $suffix ): string
     {
         if (
@@ -157,7 +184,7 @@ final class Sentient_Forms_Provider_Form_Id_Keys
     private static function elementor_forms_slug(): string
     {
         return class_exists( 'Sentient_Forms_Form_Sources' )
-            ? Sentient_Forms_Form_Sources::ELEMENTOR_FORMS
-            : 'elementor_forms';
+            ? Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS
+            : 'elementor_pro_forms';
     }
 }

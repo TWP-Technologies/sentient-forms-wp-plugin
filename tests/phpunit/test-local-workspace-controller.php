@@ -208,10 +208,10 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
 
         $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
-        $elementor      = $support_bundle['form_sources']['elementor_forms'] ?? null;
+        $elementor      = $support_bundle['form_sources']['elementor_pro_forms'] ?? null;
 
         $this->assertIsArray( $elementor );
-        $this->assertSame( 'Elementor Forms', $elementor['label'] );
+        $this->assertSame( 'Elementor Pro Forms', $elementor['label'] );
         $this->assertFalse( $elementor['is_active'] );
         $this->assertSame( 'requires_pro', $elementor['availability'] );
         $this->assertStringContainsString( 'Elementor Pro Forms', $elementor['availability_message'] );
@@ -229,7 +229,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
 
         $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
-        $elementor      = $support_bundle['form_sources']['elementor_forms'] ?? null;
+        $elementor      = $support_bundle['form_sources']['elementor_pro_forms'] ?? null;
 
         $this->assertIsArray( $elementor );
         $this->assertTrue( $elementor['is_active'] );
@@ -262,7 +262,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $created = $ledger->create(
             [
                 'submission_uuid'        => '55555555-5555-4555-8555-555555555555',
-                'form_source'            => 'elementor_forms',
+                'form_source'            => 'elementor_pro_forms',
                 'form_id'                => '91:formabc',
                 'native_entry_id'        => 'elementor-submission-123',
                 'native_entry_url'       => 'https://example.test/wp-admin/admin.php?page=e-form-submissions&submission=123',
@@ -270,7 +270,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
                     'email' => 'elementor-diagnostic@example.test',
                 ],
                 'provider_metadata_json' => [
-                    'source' => 'elementor_forms',
+                    'source' => 'elementor_pro_forms',
                 ],
             ]
         );
@@ -279,7 +279,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
         $recent         = $support_bundle['submission_ledger']['recent'][0] ?? [];
 
-        $this->assertSame( 'elementor_forms', $recent['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $recent['form_source'] ?? null );
         $this->assertSame( '91:formabc', $recent['form_id'] ?? null );
         $this->assertNull( $recent['native_entry_id'] ?? null );
         $this->assertStringNotContainsString( 'elementor-submission-123', wp_json_encode( $support_bundle ) );
@@ -298,7 +298,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
             '/sentient-forms/v1/local/execution-events',
             [
                 'execution_request_id' => 'request-elementor-native-entry-suppression',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '91:formabc',
                 'entry_id'             => 'elementor-submission-123',
                 'submission_uuid'      => '66666666-6666-4666-8666-666666666666',
@@ -312,7 +312,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertNull( $event['entry_id'] );
 
         $events = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/execution-events?limit=10' );
-        $this->assertSame( 'elementor_forms', $events[0]['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $events[0]['form_source'] ?? null );
         $this->assertSame( '91:formabc', $events[0]['form_id'] ?? null );
         $this->assertArrayHasKey( 'entry_id', $events[0] );
         $this->assertNull( $events[0]['entry_id'] );
@@ -321,7 +321,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
         $recent         = $support_bundle['execution_summary']['recent'][0] ?? [];
 
-        $this->assertSame( 'elementor_forms', $recent['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $recent['form_source'] ?? null );
         $this->assertSame( '91:formabc', $recent['form_id'] ?? null );
         $this->assertArrayHasKey( 'entry_id', $recent );
         $this->assertNull( $recent['entry_id'] );
@@ -1126,7 +1126,20 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         }
 
         delete_option( 'sentient_forms_action_log' );
-        delete_option( 'sentient_forms_actions_gravity_forms_42' );
+        $action_option_names = $wpdb->get_col(
+            $wpdb->prepare(
+                'SELECT option_name FROM %i WHERE option_name LIKE %s',
+                $wpdb->options,
+                $wpdb->esc_like( 'sentient_forms_actions_' ) . '%'
+            )
+        );
+        foreach ( is_array( $action_option_names ) ? $action_option_names : [] as $action_option_name )
+        {
+            if ( is_string( $action_option_name ) )
+            {
+                delete_option( $action_option_name );
+            }
+        }
         delete_option( 'sentient_forms_action_defaults_spam_detection_v1' );
         delete_option( 'sentient_forms_proxy_api_key' );
         delete_option( '_transient_sentient_forms_cps_version' );

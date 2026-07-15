@@ -56,14 +56,62 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
             ? $this->sanitize_file_references( $payload['files'] )
             : null;
 
-        $submission_uuid = $this->normalize_submission_uuid( $payload['submission_uuid'] ?? null ) ?? wp_generate_uuid4();
+        $supplied_submission_uuid = $this->normalize_submission_uuid( $payload['submission_uuid'] ?? null );
+        $submission_uuid          = $supplied_submission_uuid ?? wp_generate_uuid4();
+        $native_entry_id          = isset( $payload['native_entry_id'] ) && is_scalar( $payload['native_entry_id'] )
+            ? sanitize_text_field( (string) $payload['native_entry_id'] )
+            : '';
+        if ( null !== $supplied_submission_uuid )
+        {
+            $existing = $this->ledger->get_by_submission_uuid( $supplied_submission_uuid );
+            if ( is_array( $existing ) )
+            {
+                return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+            }
+        }
+
+        if ( '' !== $native_entry_id )
+        {
+            $native_correlation_hash = Sentient_Forms_Submission_Ledger_Repository::native_correlation_hash( $form_source, $form_id, $native_entry_id );
+            if ( null === $native_correlation_hash )
+            {
+                return new WP_Error( 'sentient_forms_invalid_native_correlation', __( 'Submission ledger correlation identity could not be created.', 'sentient-forms' ) );
+            }
+
+            $existing = $this->ledger->get_by_native_correlation_hash( $native_correlation_hash );
+            if ( is_array( $existing ) )
+            {
+                return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+            }
+
+            $legacy = $this->ledger->get_earliest_by_native_entry_id( $form_source, $form_id, $native_entry_id );
+            if ( is_array( $legacy ) )
+            {
+                $assigned = $this->ledger->assign_native_correlation_hash( (int) ( $legacy['id'] ?? 0 ), $native_correlation_hash );
+                $winner   = $this->ledger->get_by_native_correlation_hash( $native_correlation_hash );
+                if ( is_array( $winner ) )
+                {
+                    return $this->resolve_idempotent_replay( $winner, $form_source, $form_id, $payload );
+                }
+                if ( is_wp_error( $assigned ) )
+                {
+                    return $assigned;
+                }
+
+                return new WP_Error( 'sentient_forms_native_correlation_missing', __( 'Submission ledger correlation identity could not be read after repair.', 'sentient-forms' ) );
+            }
+        }
+        else
+        {
+            $native_correlation_hash = null;
+        }
 
         $created = $this->ledger->create(
             [
                 'submission_uuid'        => $submission_uuid,
                 'form_source'            => $form_source,
                 'form_id'                => $form_id,
-                'native_entry_id'        => isset( $payload['native_entry_id'] ) ? sanitize_text_field( (string) $payload['native_entry_id'] ) : null,
+                'native_entry_id'        => '' !== $native_entry_id ? $native_entry_id : null,
                 'native_entry_url'       => isset( $payload['native_entry_url'] ) ? esc_url_raw( (string) $payload['native_entry_url'] ) : null,
                 'source_submitted_at'    => isset( $payload['source_submitted_at'] ) ? sanitize_text_field( (string) $payload['source_submitted_at'] ) : null,
                 'logical_fields_json'    => $logical_fields,
@@ -79,6 +127,24 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
 
         if ( is_wp_error( $created ) )
         {
+            if ( null !== $supplied_submission_uuid )
+            {
+                $existing = $this->ledger->get_by_submission_uuid( $supplied_submission_uuid );
+                if ( is_array( $existing ) )
+                {
+                    return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+                }
+            }
+
+            if ( null !== $native_correlation_hash )
+            {
+                $existing = $this->ledger->get_by_native_correlation_hash( $native_correlation_hash );
+                if ( is_array( $existing ) )
+                {
+                    return $this->resolve_idempotent_replay( $existing, $form_source, $form_id, $payload );
+                }
+            }
+
             return $created;
         }
 
@@ -89,6 +155,45 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
         }
 
         return $stored;
+    }
+
+    /**
+     * Return a previously captured record only when its stable identity agrees
+     * with the replaying request. UUID reuse across scopes or native entries is
+     * an explicit conflict rather than a masked database duplicate.
+     *
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function resolve_idempotent_replay(
+        array $existing,
+        string $form_source,
+        string $form_id,
+        array $payload
+    ): array | WP_Error
+    {
+        $existing_form_source = sanitize_key( (string) ( $existing['form_source'] ?? '' ) );
+        $existing_form_id     = sanitize_text_field( (string) ( $existing['form_id'] ?? '' ) );
+        $existing_entry_id    = isset( $existing['native_entry_id'] ) && is_scalar( $existing['native_entry_id'] )
+            ? sanitize_text_field( (string) $existing['native_entry_id'] )
+            : '';
+        $requested_entry_id   = isset( $payload['native_entry_id'] ) && is_scalar( $payload['native_entry_id'] )
+            ? sanitize_text_field( (string) $payload['native_entry_id'] )
+            : '';
+        $scope_matches        = $existing_form_source === $form_source && $existing_form_id === $form_id;
+        $entry_matches        = $existing_entry_id === $requested_entry_id;
+
+        if ( ! $scope_matches || ! $entry_matches )
+        {
+            return new WP_Error(
+                'sentient_forms_submission_ledger_replay_conflict',
+                __( 'Submission ledger correlation conflicts with an existing submission.', 'sentient-forms' )
+            );
+        }
+
+        return $existing;
     }
 
     private function normalize_submission_uuid( mixed $submission_uuid ): ?string

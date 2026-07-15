@@ -248,7 +248,7 @@
 
 	function providerLabel(formSource: string): string {
 		if (formSource === 'gravity_forms' || formSource === 'gravity-forms') return 'Gravity Forms';
-		if (formSource === 'elementor_forms') return 'Elementor Forms';
+		if (formSource === 'elementor_pro_forms') return 'Elementor Pro Forms';
 		if (!formSource) return 'Unknown provider';
 		return formSource.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 	}

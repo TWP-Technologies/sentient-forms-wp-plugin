@@ -79,7 +79,7 @@ export function gradeWidth(
 export function setupPath(
 	entry: Pick<LeadScoringEntry | LeadScoringFormSummary, 'form_source' | 'form_id'>
 ): string {
-	if (entry.form_source === 'elementor_forms') {
+	if (entry.form_source === 'elementor_pro_forms') {
 		return `/actions/${entry.form_source}/${entry.form_id}`;
 	}
 
@@ -89,7 +89,7 @@ export function setupPath(
 export function setupJumpPath(
 	entry: Pick<LeadScoringEntry | LeadScoringFormSummary, 'form_source' | 'form_id'>
 ): string {
-	if (entry.form_source === 'elementor_forms') {
+	if (entry.form_source === 'elementor_pro_forms') {
 		return setupPath(entry);
 	}
 

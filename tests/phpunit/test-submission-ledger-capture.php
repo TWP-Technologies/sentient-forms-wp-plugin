@@ -115,6 +115,147 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->assertNotNull( $ledger->get_by_submission_uuid( (string) $result['submission_uuid'] ) );
     }
 
+    public function test_capture_rejects_reused_submission_uuid_for_a_different_native_submission(): void
+    {
+        $settings        = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service         = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $submission_uuid = wp_generate_uuid4();
+
+        $settings->set_enabled( 'gravity_forms', '404', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $first = $service->capture(
+            [
+                'submission_uuid' => $submission_uuid,
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '404',
+                'native_entry_id' => '504',
+                'logical_fields'  => [
+                    'email' => 'first@example.test',
+                ],
+            ]
+        );
+        $replay = $service->capture(
+            [
+                'submission_uuid' => $submission_uuid,
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '404',
+                'native_entry_id' => '505',
+                'logical_fields'  => [
+                    'email' => 'second@example.test',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $first );
+        $this->assertWPError( $replay );
+        $this->assertSame( 'sentient_forms_submission_ledger_replay_conflict', $replay->get_error_code() );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( '504', $stored['native_entry_id'] ?? null );
+        $this->assertSame( 'first@example.test', $stored['logical_fields_json']['email'] ?? null );
+        $this->assertCount( 1, $ledger->list_for_form( 'gravity_forms', '404' ) );
+    }
+
+    public function test_capture_reuses_legacy_uuid_for_an_existing_native_submission(): void
+    {
+        $settings           = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service            = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+        $ledger             = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $legacy_uuid        = wp_generate_uuid4();
+        $deterministic_uuid = wp_generate_uuid4();
+
+        $settings->set_enabled( 'gravity_forms', '405', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $now     = current_time( 'mysql', true );
+        $created = $this->wpdb->insert(
+            $this->wpdb->prefix . 'sentient_submission_ledger',
+            [
+                'submission_uuid'        => $legacy_uuid,
+                'form_source'            => 'gravity_forms',
+                'form_id'                => '405',
+                'native_entry_id'        => 'legacy-native-505',
+                'captured_at'            => $now,
+                'logical_fields_json'    => '{"email":"legacy@example.test"}',
+                'created_at'             => $now,
+                'updated_at'             => $now,
+            ]
+        );
+        $this->assertSame( 1, $created );
+
+        $replay = $service->capture(
+            [
+                'submission_uuid' => $deterministic_uuid,
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '405',
+                'native_entry_id' => 'legacy-native-505',
+                'logical_fields'  => [ 'email' => 'replayed@example.test' ],
+            ]
+        );
+
+        $this->assertIsArray( $replay );
+        $this->assertSame( $legacy_uuid, $replay['submission_uuid'] ?? null );
+        $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', (string) ( $replay['native_correlation_hash'] ?? '' ) );
+        $this->assertNull( $ledger->get_by_submission_uuid( $deterministic_uuid ) );
+        $this->assertCount( 1, $ledger->list_for_form( 'gravity_forms', '405' ) );
+    }
+
+    public function test_capture_recovers_the_native_correlation_winner_after_a_concurrent_insert(): void
+    {
+        $settings    = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $winner_uuid = wp_generate_uuid4();
+        $winner      = [
+            'submission_uuid' => $winner_uuid,
+            'form_source'     => 'gravity_forms',
+            'form_id'         => '406',
+            'native_entry_id' => 'concurrent-native-506',
+        ];
+        $ledger      = new class( $this->wpdb, $winner ) extends Sentient_Forms_Submission_Ledger_Repository
+        {
+            private bool $insert_attempted = false;
+
+            public function __construct( wpdb $wpdb, private array $winner )
+            {
+                parent::__construct( $wpdb );
+            }
+
+            public function get_by_submission_uuid( string $submission_uuid ): ?array
+            {
+                return null;
+            }
+
+            public function get_by_native_entry_id( string $form_source, string $form_id, string $native_entry_id ): ?array
+            {
+                return null;
+            }
+
+            public function get_by_native_correlation_hash( string $native_correlation_hash ): ?array
+            {
+                return $this->insert_attempted ? $this->winner : null;
+            }
+
+            public function create( array $data ): int | WP_Error
+            {
+                $this->insert_attempted = true;
+                return new WP_Error( 'sentient_forms_db_insert_failed', 'Concurrent insert lost the uniqueness race.' );
+            }
+        };
+
+        $settings->set_enabled( 'gravity_forms', '406', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $service = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb, $settings, $ledger );
+        $result  = $service->capture(
+            [
+                'submission_uuid' => wp_generate_uuid4(),
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '406',
+                'native_entry_id' => 'concurrent-native-506',
+                'logical_fields'  => [ 'email' => 'winner@example.test' ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( $winner_uuid, $result['submission_uuid'] ?? null );
+    }
+
     public function test_capture_preserves_json_serializable_structured_logical_values(): void
     {
         $settings        = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );

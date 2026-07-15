@@ -15,56 +15,8 @@ if ( !defined( 'ABSPATH' ) )
  * Interface Sentient_Forms_Adapter_Interface
  * Defines the contract for all form provider adapters.
  */
-interface Sentient_Forms_Adapter_Interface
+interface Sentient_Forms_Adapter_Interface extends Sentient_Forms_Form_Source_Discovery_Adapter_Interface
 {
-
-    /**
-     * Get the unique identifier for the adapter.
-     * This ID is used internally to reference the adapter.
-     * Example: 'gravity_forms', 'wpforms'.
-     *
-     * @return string Unique adapter ID.
-     */
-    public function get_id(): string;
-
-    /**
-     * Get the human-readable name of the form provider.
-     * This name is used in the admin UI.
-     * Example: "Gravity Forms", "WPForms".
-     *
-     * @return string Human-readable adapter name.
-     */
-    public function get_name(): string;
-
-    /**
-     * Check if the corresponding form plugin is active.
-     * This method is crucial for determining if the adapter can be used.
-     *
-     * @return bool True if the form plugin is active, false otherwise.
-     */
-    public function is_active(): bool;
-
-    /**
-     * Retrieve a list of forms available from the provider.
-     * Each form in the returned array should be an associative array
-     * containing at least 'id' and 'name' keys.
-     * Example: [ ['id' => 1, 'name' => 'Contact Us Form'], ['id' => 2, 'name' => 'Quote Request'] ]
-     *
-     * @return array List of forms.
-     */
-    public function get_forms(): array;
-
-    /**
-     * Retrieve fields for a specific form.
-     * This is useful for populating merge tag pickers or understanding form structure.
-     * Each field should be an associative array with keys like 'id', 'label', 'type', 'merge_tag'.
-     *
-     * @param mixed $form_id The ID of the form.
-     *
-     * @return array List of form fields.
-     */
-    public function get_form_fields( $form_id ): array;
-
     /**
      * Retrieve data for a specific form entry.
      * The structure of the returned data will depend on the form provider.

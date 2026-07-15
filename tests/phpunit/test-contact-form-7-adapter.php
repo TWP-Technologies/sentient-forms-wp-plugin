@@ -1,18 +1,169 @@
 <?php
 
+if ( ! class_exists( 'Sentient_Forms_Test_Accepted_Submission_Adapter' ) )
+{
+    class Sentient_Forms_Test_Accepted_Submission_Adapter implements Sentient_Forms_Accepted_Submission_Adapter_Interface
+    {
+        public function get_id(): string
+        {
+            return 'fixture_forms';
+        }
+
+        public function get_name(): string
+        {
+            return 'Fixture Forms';
+        }
+
+        public function is_active(): bool
+        {
+            return true;
+        }
+
+        public function get_forms(): array
+        {
+            return [];
+        }
+
+        public function get_form_fields( $form_id ): array
+        {
+            return [];
+        }
+
+        public function get_accepted_submission_native_hook(): string
+        {
+            return 'fixture_forms_submission_accepted';
+        }
+
+        public function normalize_accepted_submission( mixed $native_submission ): array | WP_Error
+        {
+            return [
+                'form_id'        => '99',
+                'form'           => [
+                    'id'          => '99',
+                    'title'       => 'Fixture Form',
+                    'form_source' => 'fixture_forms',
+                    'fields'      => [],
+                ],
+                'logical_fields' => [ 'message' => 'Accepted fixture submission' ],
+                'files'          => [],
+                'native_entry_id' => 'fixture-entry-99',
+                'native_entry_url' => 'https://example.test/fixture-forms/entries/fixture-entry-99',
+                'source_submitted_at' => '2026-07-10 09:45:00',
+                'provider_metadata' => [ 'form_name' => 'Fixture Form' ],
+            ];
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Context_Tracking_Action' ) )
+{
+    final class Sentient_Forms_Test_Context_Tracking_Action implements Sentient_Forms_Action_Interface
+    {
+        /** @var callable */
+        private $on_execute;
+
+        public function __construct( private string $id, callable $on_execute )
+        {
+            $this->on_execute = $on_execute;
+        }
+
+        public function get_id(): string
+        {
+            return $this->id;
+        }
+
+        public function get_name(): string
+        {
+            return 'Context tracking Action';
+        }
+
+        public function get_description(): string
+        {
+            return 'Captures the public Action execution payload.';
+        }
+
+        public function get_icon(): string
+        {
+            return 'dashicons-admin-tools';
+        }
+
+        public function get_settings(): array
+        {
+            return [];
+        }
+
+        public function get_hooks(): array
+        {
+            return [ 'fixture_forms_submission_accepted' ];
+        }
+
+        public function get_compatibility(): array
+        {
+            return [ 'fixture_forms' ];
+        }
+
+        public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+        {
+            return call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
+        }
+
+        public function estimate_cost( array $data, array $settings ): int
+        {
+            return 0;
+        }
+
+        public function get_settings_fields(): array
+        {
+            return [];
+        }
+
+        public function validate_settings( array $settings ): array
+        {
+            return $settings;
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Context_Action_Executor' ) )
+{
+    final class Sentient_Forms_Test_Context_Action_Executor extends Sentient_Forms_Action_Executor
+    {
+        /** @var array<int, array<string, mixed>> */
+        public array $calls = [];
+
+        public function __construct( Sentient_Forms_Plugin $plugin )
+        {
+            parent::__construct( $plugin, null );
+        }
+
+        public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
+        {
+            $this->calls[] = compact( 'central_action_id', 'form', 'entry', 'context' );
+
+            return [
+                'result_data' => [ 'summary' => 'Concrete Action completed.' ],
+            ];
+        }
+    }
+}
+
 class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 {
     protected function tearDown(): void
     {
+        $this->set_action_executor( null );
         remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
         remove_all_filters( 'sentient_forms_contact_form_7_forms' );
         remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
         remove_all_filters( 'sentient_forms_contact_form_7_current_submission' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
-        foreach ( [ '44', '47', '48' ] as $form_id )
+        remove_all_actions( 'wpcf7_before_send_mail' );
+        remove_all_actions( 'wpcf7_mail_sent' );
+        foreach ( [ '44', '47', '48', '49' ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
         }
+        delete_option( 'sentient_forms_actions_fixture_forms_99' );
 
         global $wpdb;
         foreach ( [
@@ -27,6 +178,917 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         }
 
         parent::tearDown();
+    }
+
+    private function set_action_executor( ?Sentient_Forms_Action_Executor $executor ): void
+    {
+        $reflection = new ReflectionClass( Sentient_Forms_Plugin::instance() );
+        $property   = $reflection->getProperty( 'action_executor' );
+        $property->setValue( Sentient_Forms_Plugin::instance(), $executor );
+    }
+
+    public function test_contact_form_7_exposes_only_mail_sent_as_accepted_submission_hook(): void
+    {
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_current_submission',
+            static fn() => new class {
+                public function get_posted_data(): array
+                {
+                    return [
+                        'your-name' => 'Accepted User',
+                        '_wpcf7'    => '49',
+                    ];
+                }
+            }
+        );
+
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+
+        $this->assertInstanceOf( Sentient_Forms_Accepted_Submission_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpcf7_mail_sent', $adapter->get_accepted_submission_native_hook() );
+
+        $normalized = $adapter->normalize_accepted_submission( $this->cf7_form( 49, 'Accepted CF7 Submission' ) );
+        $this->assertIsArray( $normalized );
+        $this->assertSame( '49', $normalized['form_id'] ?? null );
+        $this->assertSame( 'Accepted User', $normalized['logical_fields']['your-name'] ?? null );
+
+        $adapter->init();
+
+        $this->assertSame( 10, has_action( 'wpcf7_mail_sent', [ $adapter, 'handle_mail_sent' ] ) );
+        $this->assertFalse( has_action( 'wpcf7_before_send_mail', [ $adapter, 'handle_mail_sent' ] ) );
+    }
+
+    public function test_accepted_submission_runner_schedules_source_neutral_mapping(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'fixture_mapping' => [
+                    'local_mapping_id'           => 'fixture_mapping',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Evaluate fixture submission',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+            ],
+            false
+        );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $runner->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [ 'native' => 'payload' ] );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( 'fixture_forms', $scheduled_jobs[0]['args']['context']['form_source'] ?? null );
+        $this->assertSame( 'fixture_forms_submission_accepted', $scheduled_jobs[0]['args']['context']['hook'] ?? null );
+        $this->assertSame( $submission_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
+        $this->assertSame( 'fixture-entry-99', $scheduled_jobs[0]['args']['context']['entry_id'] ?? null );
+        $this->assertSame( 'Accepted fixture submission', $scheduled_jobs[0]['args']['data']['entry']['message'] ?? null );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( 'fixture-entry-99', $stored['native_entry_id'] ?? null );
+        $this->assertSame( 'https://example.test/fixture-forms/entries/fixture-entry-99', $stored['native_entry_url'] ?? null );
+        $this->assertSame( '2026-07-10 09:45:00', $stored['source_submitted_at'] ?? null );
+        $this->assertSame( 'Fixture Form', $stored['provider_metadata_json']['form_name'] ?? null );
+    }
+
+    public function test_accepted_runner_records_unsupported_native_effect_outcomes_before_filtering(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_unsupported_effects';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): array => [ 'classification' => 'ham' ]
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'unsupported_effects' => [
+                    'local_mapping_id'           => 'unsupported_effects',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Unsupported fixture effects',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'               => false,
+                        'effect_mapping_json' => [
+                            'store_result'                   => true,
+                            'entry_note'                     => [ 'template' => 'Result: {{classification}}' ],
+                            'mark_as_spam'                   => true,
+                            'suppress_notifications_on_spam' => true,
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'unsupported-effects' ]
+            );
+
+        $outcomes = $result->get_native_effect_outcomes( 'unsupported_effects' );
+        $this->assertSame(
+            [ 'entry_note', 'mark_as_spam', 'store_result', 'suppress_notifications' ],
+            array_column( $outcomes, 'effect' )
+        );
+        $this->assertSame( [ 'unsupported' ], array_values( array_unique( array_column( $outcomes, 'status' ) ) ) );
+        $reasons = array_values( array_unique( array_column( $outcomes, 'reason' ) ) );
+        sort( $reasons );
+        $this->assertSame(
+            [ 'native_entry_write_unavailable', 'native_notes_unavailable', 'native_spam_unavailable', 'notification_controls_unavailable' ],
+            $reasons
+        );
+
+        $logs = get_option( 'sentient_forms_action_log', [] );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( $outcomes, $logs[0]['details']['native_effect_outcomes'] ?? null );
+
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->get_by_request_id( (string) ( $logs[0]['execution_request_id'] ?? '' ) );
+        $this->assertIsArray( $event );
+        $this->assertSame( $outcomes, $event['result_json']['native_effect_outcomes'] ?? null );
+    }
+
+    public function test_synchronous_non_gravity_action_receives_distinct_mapping_execution_context(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $calls     = [];
+        $action_id = 'fixture_context_action';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function ( array $form_data, array $settings ) use ( &$calls ): array {
+                    $calls[] = [
+                        'hook'              => $form_data['hook'] ?? null,
+                        'form_source'       => $form_data['form_source'] ?? null,
+                        'execution_context' => $form_data['execution_context'] ?? null,
+                        'marker'            => $settings['settings']['marker'] ?? null,
+                    ];
+
+                    return [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'fixture_first'  => [
+                    'local_mapping_id'           => 'fixture_first',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Fixture first',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false, 'marker' => 'first' ],
+                ],
+                'fixture_second' => [
+                    'local_mapping_id'           => 'fixture_second',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Fixture second',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false, 'marker' => 'second' ],
+                ],
+            ],
+            false
+        );
+
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $runner->run_accepted_submission(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'payload' ]
+        );
+
+        $this->assertCount( 2, $calls );
+        $this->assertSame( [ 'first', 'second' ], array_column( $calls, 'marker' ) );
+        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $calls, 'hook' ) );
+        $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $calls, 'form_source' ) );
+        $this->assertSame( [ 'fixture_first', 'fixture_second' ], array_column( array_column( $calls, 'execution_context' ), 'mapping_id' ) );
+        $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( array_column( $calls, 'execution_context' ), 'submission_uuid' ) );
+        $request_ids = array_column( array_column( $calls, 'execution_context' ), 'execution_request_id' );
+        $this->assertCount( 2, array_unique( $request_ids ) );
+        $this->assertNotEmpty( $request_ids[0] );
+        $this->assertNotEmpty( $request_ids[1] );
+    }
+
+    public function test_concrete_synchronous_action_forwards_distinct_mapping_context_to_executor(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $executor = new Sentient_Forms_Test_Context_Action_Executor( Sentient_Forms_Plugin::instance() );
+        $this->set_action_executor( $executor );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'concrete_first'  => [
+                    'local_mapping_id'           => 'concrete_first',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Concrete first',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false, 'marker' => 'first' ],
+                ],
+                'concrete_second' => [
+                    'local_mapping_id'           => 'concrete_second',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Concrete second',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false, 'marker' => 'second' ],
+                ],
+            ],
+            false
+        );
+
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $runner->run_accepted_submission(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'payload' ]
+        );
+        $contexts = array_column( $executor->calls, 'context' );
+
+        $this->assertCount( 2, $contexts );
+        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $contexts, 'hook' ) );
+        $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $contexts, 'form_source' ) );
+        $this->assertSame( [ 'concrete_first', 'concrete_second' ], array_column( $contexts, 'mapping_id' ) );
+        $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $contexts, 'submission_uuid' ) );
+        $this->assertSame( [ 'first', 'second' ], array_column( array_column( $contexts, 'settings' ), 'marker' ) );
+        $request_ids = array_column( $contexts, 'execution_request_id' );
+        $this->assertCount( 2, array_unique( $request_ids ) );
+        $this->assertNotEmpty( $request_ids[0] );
+        $this->assertNotEmpty( $request_ids[1] );
+    }
+
+    public function test_synchronous_accepted_execution_replays_active_and_success_without_repeating_effects(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $calls     = 0;
+        $reentered = false;
+        $action_id = 'fixture_durable_success';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function () use ( &$calls, &$reentered ): array {
+                    ++$calls;
+                    if ( ! $reentered )
+                    {
+                        $reentered = true;
+                        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+                            ->run_accepted_submission(
+                                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                                [ 'native' => 'active-replay' ]
+                            );
+                    }
+
+                    return [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'durable_success' => [
+                    'local_mapping_id'           => 'durable_success',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Durable success',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'first' ]
+            );
+        $replay_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'success-replay' ]
+            );
+
+        $this->assertSame( $first_uuid, $replay_uuid );
+        $this->assertSame( 1, $calls );
+        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
+    }
+
+    public function test_synchronous_success_replay_preserves_stored_effect_outcomes_over_current_preflight(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $action_id = 'fixture_stable_effect_replay';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): array => [ 'classification' => 'ham' ]
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'stable_effect_replay' => [
+                    'local_mapping_id'           => 'stable_effect_replay',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Stable effect replay',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'               => false,
+                        'effect_mapping_json' => [
+                            'entry_note' => [ 'template' => 'Result: {{classification}}' ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'first' ]
+        );
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->list_for_submission_uuid( $first->get_submission_uuid() );
+        $this->assertCount( 1, $events );
+
+        $wpdb->update(
+            $wpdb->prefix . 'sentient_execution_events',
+            [
+                'result_json' => wp_json_encode(
+                    [
+                        'native_effect_outcomes' => [
+                            [
+                                'effect' => 'entry_note',
+                                'status' => 'applied',
+                                'reason' => 'historical_native_application',
+                            ],
+                        ],
+                    ]
+                ),
+            ],
+            [ 'execution_request_id' => $events[0]['execution_request_id'] ],
+            [ '%s' ],
+            [ '%s' ]
+        );
+
+        $replay = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'replay' ]
+        );
+
+        $this->assertSame( 'replayed_success', $replay->get_mapping_outcomes()['stable_effect_replay'] ?? null );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'entry_note',
+                    'status' => 'applied',
+                    'reason' => 'historical_native_application',
+                ],
+            ],
+            $replay->get_native_effect_outcomes( 'stable_effect_replay' )
+        );
+    }
+
+    public function test_synchronous_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $calls           = 0;
+        $dependent_calls = 0;
+        $action_id       = 'fixture_digest_conflict';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function () use ( &$calls ): array {
+                    ++$calls;
+
+                    return [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                'fixture_digest_conflict_dependent',
+                static function () use ( &$dependent_calls ): array {
+                    ++$dependent_calls;
+
+                    return [ 'summary' => 'Dependent result.' ];
+                }
+            )
+        );
+        $mapping = [
+            'local_mapping_id'           => 'digest_conflict',
+            'central_action_id'          => $action_id,
+            'action_name_label'          => 'Digest conflict fixture',
+            'action_type_indicator'      => 'custom',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'async' => false, 'marker' => 'first' ],
+        ];
+        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'digest_conflict' => $mapping ], false );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $mapping['settings']['marker'] = 'changed';
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'digest_conflict'           => $mapping,
+                'digest_conflict_dependent' => [
+                    'local_mapping_id'           => 'digest_conflict_dependent',
+                    'central_action_id'          => 'fixture_digest_conflict_dependent',
+                    'action_name_label'          => 'Digest conflict dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => false,
+                        'dependency_ids' => [ 'digest_conflict' ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
+        $this->assertSame( 1, $calls );
+        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['digest_conflict'] ?? null );
+        $error = $conflict->get_execution_result( 'digest_conflict' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_execution_digest_conflict', $error->get_error_code() );
+        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['digest_conflict_dependent'] ?? null );
+        $this->assertSame( 0, $dependent_calls );
+    }
+
+    public function test_async_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $mapping = [
+            'local_mapping_id'           => 'async_digest_conflict',
+            'central_action_id'          => 'fixture_async_digest_conflict',
+            'action_name_label'          => 'Async digest conflict fixture',
+            'action_type_indicator'      => 'custom',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'async' => true, 'marker' => 'first' ],
+        ];
+        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'async_digest_conflict' => $mapping ], false );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $mapping['settings']['marker'] = 'changed';
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'async_digest_conflict'           => $mapping,
+                'async_digest_conflict_dependent' => [
+                    'local_mapping_id'           => 'async_digest_conflict_dependent',
+                    'central_action_id'          => 'fixture_async_digest_conflict_dependent',
+                    'action_name_label'          => 'Async digest conflict dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => true,
+                        'dependency_ids' => [ 'async_digest_conflict' ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
+        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['async_digest_conflict'] ?? null );
+        $error = $conflict->get_execution_result( 'async_digest_conflict' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_async_request_digest_conflict', $error->get_error_code() );
+        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['async_digest_conflict_dependent'] ?? null );
+
+        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
+        $this->assertCount( 1, $jobs );
+    }
+
+    public function test_async_dependency_graph_replays_identical_business_payloads(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'async_replay_primary'   => [
+                    'local_mapping_id'           => 'async_replay_primary',
+                    'central_action_id'          => 'fixture_async_replay_primary',
+                    'action_name_label'          => 'Async replay primary fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+                'async_replay_dependent' => [
+                    'local_mapping_id'           => 'async_replay_dependent',
+                    'central_action_id'          => 'fixture_async_replay_dependent',
+                    'action_name_label'          => 'Async replay dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => true,
+                        'dependency_ids' => [ 'async_replay_primary' ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Test_Accepted_Submission_Adapter();
+        $first   = $runner->run_accepted_submission_with_outcome( $adapter, [] );
+        $replay  = $runner->run_accepted_submission_with_outcome( $adapter, [] );
+
+        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_primary'] ?? null );
+        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_dependent'] ?? null );
+        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_primary'] ?? null );
+        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_dependent'] ?? null );
+
+        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
+        $this->assertCount( 2, $jobs );
+    }
+
+    public function test_required_ledger_capture_failure_prevents_accepted_execution(): void
+    {
+        global $wpdb;
+
+        $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
+            public function capture( array $payload ): array | WP_Error
+            {
+                return new WP_Error(
+                    'sentient_forms_db_insert_failed',
+                    'The required Submission Ledger record could not be created.'
+                );
+            }
+        };
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            $capture_service
+        );
+
+        $result = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            []
+        );
+
+        $this->assertNull( $result->get_submission_uuid() );
+        $this->assertSame( [], $result->get_mapping_outcomes() );
+    }
+
+    public function test_synchronous_accepted_failure_is_terminal_without_explicit_safe_retry(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $calls     = 0;
+        $action_id = 'fixture_durable_failure';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function () use ( &$calls ): WP_Error {
+                    ++$calls;
+
+                    return new WP_Error( 'fixture_provider_failed', 'Provider failure details.' );
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'durable_failure' => [
+                    'local_mapping_id'           => 'durable_failure',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Durable failure',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+        $replay_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first_uuid, $replay_uuid );
+        $this->assertSame( 1, $calls );
+        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'failed', $events[0]['status'] ?? null );
+    }
+
+    public function test_synchronous_accepted_exception_is_recorded_as_terminal_failure(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_throwing_action';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function (): never {
+                    throw new RuntimeException( 'Private provider exception details.' );
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'throwing_action' => [
+                    'local_mapping_id'           => 'throwing_action',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Throwing fixture action',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['throwing_action'] ?? null );
+        $error = $outcome->get_execution_result( 'throwing_action' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $error->get_error_code() );
+
+        $logs = get_option( 'sentient_forms_action_log', [] );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $logs[0]['error_code'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', wp_json_encode( $logs ) );
+
+        $execution_request_id = (string) ( $logs[0]['execution_request_id'] ?? '' );
+        $request = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $execution_request_id, 'accepted_sync' );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', (string) ( $request['last_error'] ?? '' ) );
+
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $execution_request_id );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $event['error_code'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', (string) ( $event['error_message'] ?? '' ) );
+    }
+
+    public function test_synchronous_accepted_failure_retries_only_when_explicitly_safe(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $calls     = 0;
+        $action_id = 'fixture_safe_retry';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function () use ( &$calls ): array | WP_Error {
+                    ++$calls;
+
+                    return 1 === $calls
+                        ? new WP_Error( 'fixture_retryable_failure', 'Retryable provider failure.' )
+                        : [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'safe_retry' => [
+                    'local_mapping_id'           => 'safe_retry',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Safe retry',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'                   => false,
+                        'synchronous_retry_safe' => true,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $first_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+        $retry_uuid = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first_uuid, $retry_uuid );
+        $this->assertSame( 2, $calls );
+        $this->assertCount( 2, get_option( 'sentient_forms_action_log', [] ) );
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
+    }
+
+    public function test_synchronous_action_log_never_persists_raw_provider_model_or_submission_content(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_safe_action_log';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): array => [
+                    'classification'    => 'ham',
+                    'content'           => 'RAW_PROVIDER_SECRET_92A',
+                    'llm_output'        => 'RAW_MODEL_OUTPUT_17B',
+                    'model'             => 'private-model-route-44C',
+                    'submitted_content' => 'PRIVATE_SUBMISSION_63D',
+                    'result_data'       => [ 'llm_output' => 'NESTED_RAW_OUTPUT_81E' ],
+                ]
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'safe_log' => [
+                    'local_mapping_id'           => 'safe_log',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Safe log',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+        $logs    = get_option( 'sentient_forms_action_log', [] );
+        $encoded = wp_json_encode( $logs );
+
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'success', $logs[0]['status'] ?? null );
+        $this->assertSame( 'ham', $logs[0]['classification'] ?? null );
+        foreach ( [ 'RAW_PROVIDER_SECRET_92A', 'RAW_MODEL_OUTPUT_17B', 'private-model-route-44C', 'PRIVATE_SUBMISSION_63D', 'NESTED_RAW_OUTPUT_81E' ] as $secret )
+        {
+            $this->assertStringNotContainsString( $secret, (string) $encoded );
+        }
+        $this->assertLessThanOrEqual( 20, str_word_count( (string) ( $logs[0]['result_summary'] ?? '' ) ) );
+    }
+
+    public function test_synchronous_action_log_preserves_safe_error_code_without_raw_error_message(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_safe_error_log';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): WP_Error => new WP_Error(
+                    'provider_HTTP_error!',
+                    'RAW_PROVIDER_ERROR_71D included PRIVATE_SUBMISSION_82F and RAW_MODEL_OUTPUT_93G.'
+                )
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'safe_error_log' => [
+                    'local_mapping_id'           => 'safe_error_log',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Safe error log',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+        $logs    = get_option( 'sentient_forms_action_log', [] );
+        $encoded = wp_json_encode( $logs );
+
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'error', $logs[0]['status'] ?? null );
+        $this->assertSame( 'provider_http_error', $logs[0]['error_code'] ?? null );
+        $this->assertSame( 'Synchronous accepted action failed.', $logs[0]['error_message'] ?? null );
+        foreach ( [ 'RAW_PROVIDER_ERROR_71D', 'PRIVATE_SUBMISSION_82F', 'RAW_MODEL_OUTPUT_93G' ] as $secret )
+        {
+            $this->assertStringNotContainsString( $secret, (string) $encoded );
+        }
+    }
+
+    public function test_form_source_workflow_runner_remains_lifecycle_neutral(): void
+    {
+        $services_dir = dirname( __DIR__, 2 ) . '/includes/services/';
+
+        $this->assertTrue( class_exists( 'Sentient_Forms_Form_Source_Workflow_Runner' ) );
+        $this->assertFalse( class_exists( 'Sentient_Forms_Accepted_Submission_Workflow_Runner' ) );
+        $this->assertFalse( class_exists( 'Sentient_Forms_Validation_Workflow_Runner' ) );
+        $this->assertFileDoesNotExist( $services_dir . 'class-sentient-forms-accepted-submission-workflow-runner.php' );
+        $this->assertFileDoesNotExist( $services_dir . 'class-sentient-forms-validation-workflow-runner.php' );
     }
 
     public function test_active_contact_form_7_forms_are_discoverable(): void
@@ -300,8 +1362,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $scheduled_jobs );
 
         $ledger_settings->set_enabled( 'contact_form_7', '44', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $adapter->init();
 
-        $submission_uuid = $adapter->handle_mail_sent( $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        do_action( 'wpcf7_before_send_mail', $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        $this->assertSame( [], $scheduled_jobs );
+
+        do_action( 'wpcf7_mail_sent', $this->cf7_form( 44, 'CF7 Execution Gate' ) );
+        $submission_uuid = $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null;
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );

@@ -181,6 +181,19 @@ class Sentient_Forms_Test_Spy_Async_Handler extends Sentient_Forms_Async_Handler
     }
 }
 
+final class Sentient_Forms_Test_Lost_Async_Request_Race_Store extends Sentient_Forms_Async_Request_Store
+{
+    public function should_block( string $request_hash, string $record_type = 'job' ): bool
+    {
+        return false;
+    }
+
+    public function record( string $request_hash, array $context ): bool | WP_Error
+    {
+        return false;
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
@@ -402,7 +415,49 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertNotEmpty( $job['args']['context']['job_id'] );
 		$this->assertSame( 3, $job['args']['context']['max_attempts'] );
 		$this->assertSame( 60, $job['args']['context']['backoff_base_delay'] );
-			$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+		$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+    }
+
+    public function test_process_action_normalizes_legacy_elementor_identity_from_queued_payload(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $this->plugin->get_async_handler()->process_action(
+            'entry_summary_v1',
+            [
+                'form_source' => 'elementor_forms',
+                'form'        => [
+                    'id'          => '91:formabc',
+                    'form_source' => 'elementor_forms',
+                ],
+                'entry'       => [
+                    'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+                    'form_source'      => 'elementor_forms',
+                    'adapter_id'       => 'elementor_forms',
+                    'nested'           => [ 'form_source' => 'elementor_forms' ],
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            null,
+            [
+                'form_source' => 'elementor_forms',
+                'adapter_id'  => 'elementor_forms',
+                'form_id'     => '91:formabc',
+                'custom_data' => [ 'form_source' => 'elementor_forms' ],
+            ]
+        );
+
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['adapter_id'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['form']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['adapter_id'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['nested']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['context']['custom_data']['form_source'] ?? null );
     }
 
     public function test_process_action_async_batch_settings_strip_discount_percent_at_runtime(): void
@@ -784,6 +839,106 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
     }
 
+    public function test_process_action_async_ignores_volatile_dependency_state_in_payload_identity(): void
+    {
+        $data = [
+            'form'  => [ 'id' => 56, 'title' => 'Dependency replay' ],
+            'entry' => [ 'id' => 203, 'field_1' => 'Replay the same business payload.' ],
+        ];
+        $settings = [ 'central_action_id' => 'spam_detection_v1' ];
+        $context  = [
+            'hook'                             => 'gform_after_submission',
+            'form_source'                      => 'gravity_forms',
+            'dependency_mapping_ids'           => [ 'map_prerequisite' ],
+            'dependency_execution_request_ids' => [ 'map_prerequisite' => 'prerequisite-request-id' ],
+            'dependency_initial_outcomes'      => [ 'map_prerequisite' => 'queued' ],
+            'dependency_wait_started_at'       => 100,
+            'dependency_wait_max_seconds'      => 600,
+            'dependency_wait_poll_seconds'     => 10,
+        ];
+
+        $first = $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $context['dependency_initial_outcomes']['map_prerequisite'] = 'replayed_active';
+        $context['dependency_wait_started_at'] = 200;
+        $replay = $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $this->assertTrue( $first );
+        $this->assertFalse( $replay );
+        $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
+    }
+
+    public function test_process_action_async_does_not_enqueue_when_sync_execution_owns_the_identity(): void
+    {
+        $execution_request_id = 'accepted-sync-owns-global-identity';
+        $request_store        = $this->plugin->get_async_request_store();
+        $claim                = $request_store->claim_execution(
+            $execution_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-owner' ),
+            ]
+        );
+        $this->assertSame( 'claimed', $claim['state'] );
+
+        $force_request_id = static fn (): string => $execution_request_id;
+        add_filter( 'sentient_forms_execution_request_id', $force_request_id, 10, 5 );
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'entry_evaluation',
+                [
+                    'form'  => [ 'id' => 551, 'title' => 'Global identity conflict' ],
+                    'entry' => [ 'id' => 552, 'field_1' => 'Do not enqueue twice.' ],
+                ],
+                [ 'central_action_id' => 'spam_detection_v1' ],
+                [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_execution_request_id', $force_request_id, 10 );
+        }
+
+        $this->assertWPError( $scheduled );
+        $this->assertSame( 'sentient_forms_async_request_record_type_conflict', $scheduled->get_error_code() );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertNotNull( $request_store->get( $execution_request_id, 'accepted_sync' ) );
+        $this->assertNull( $request_store->get( $execution_request_id, 'job' ) );
+    }
+
+    public function test_process_action_async_does_not_enqueue_after_losing_same_type_insert_race(): void
+    {
+        global $wpdb;
+
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'async_request_store' );
+        $property->setAccessible( true );
+        $original = $property->getValue( $this->plugin );
+        $property->setValue( $this->plugin, new Sentient_Forms_Test_Lost_Async_Request_Race_Store( $wpdb ) );
+
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'entry_evaluation',
+                [
+                    'form'  => [ 'id' => 553, 'title' => 'Concurrent scheduling' ],
+                    'entry' => [ 'id' => 554, 'field_1' => 'Schedule only once.' ],
+                ],
+                [ 'central_action_id' => 'spam_detection_v1' ],
+                [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ]
+            );
+        }
+        finally
+        {
+            $property->setValue( $this->plugin, $original );
+        }
+
+        $this->assertFalse( $scheduled );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+    }
+
     public function test_process_action_async_requires_central_action_id(): void
     {
         $data = [
@@ -888,6 +1043,182 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
         $this->assertSame( 'queued', $row['status'] ?? null );
+    }
+
+    public function test_process_action_executes_when_dependency_initial_outcome_is_replayed_success(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 211, 'title' => 'Replayed dependency success' ],
+                'entry' => [ 'id' => 911, 'field_1' => 'execute now' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            [
+                'hook'                             => 'gform_after_submission',
+                'form_source'                      => 'gravity_forms',
+                'action_id'                        => 'map_dependent',
+                'local_mapping_id'                 => 'map_dependent',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => 'accepted_sync_replayed_success' ],
+                'dependency_initial_outcomes'      => [ 'map_prereq' => 'replayed_success' ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job           = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+        $this->plugin->get_async_handler()->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertSame( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+        $this->assertSame( 'entry_summary_v1', $executor->captured['central_action_id'] ?? null );
+
+        $row = $this->plugin->get_async_request_store()->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'success', $row['status'] ?? null );
+    }
+
+    public function test_process_action_reads_replayed_active_dependency_from_accepted_sync_store(): void
+    {
+        $request_store         = $this->plugin->get_async_request_store();
+        $dependency_request_id = 'accepted_sync_replayed_active';
+        $claim                 = $request_store->claim_execution(
+            $dependency_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-replayed-active' ),
+            ],
+            false,
+            'accepted_sync'
+        );
+        $this->assertSame( 'claimed', $claim['state'] ?? null );
+        $request_store->mark_status( $dependency_request_id, 'success', null, 'accepted_sync' );
+
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 212, 'title' => 'Accepted sync dependency' ],
+                'entry' => [ 'id' => 912, 'field_1' => 'continue after sync completion' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            [
+                'hook'                             => 'gform_after_submission',
+                'form_source'                      => 'gravity_forms',
+                'action_id'                        => 'map_dependent',
+                'local_mapping_id'                 => 'map_dependent',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $dependency_request_id ],
+                'dependency_initial_outcomes'      => [ 'map_prereq' => 'replayed_active' ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job           = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+        $this->plugin->get_async_handler()->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertSame( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+        $this->assertSame( 'entry_summary_v1', $executor->captured['central_action_id'] ?? null );
+    }
+
+    public function test_process_action_promotes_only_allowlisted_nested_adapter_completion_settings(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $completion_context = null;
+        $capture_context    = static function ( array $context ) use ( &$completion_context ): void {
+            $completion_context = $context;
+        };
+        add_action( 'sentient_forms_async_success', $capture_context, 10, 1 );
+
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'spam_detection_v1',
+                [
+                    'hook'  => 'gform_after_submission',
+                    'form'  => [ 'id' => 213, 'title' => 'Adapter completion settings' ],
+                    'entry' => [ 'id' => 913, 'field_1' => 'runtime settings' ],
+                ],
+                [
+                    'central_action_id'     => 'spam_detection_v1',
+                    'action_type_indicator' => 'master',
+                    'mark_as_spam'          => true,
+                    'settings'              => [
+                        'spam_confidence_threshold' => 0.95,
+                        'spam_result_display_mode'  => 'none',
+                        'spam_indicators_display'   => 'detailed',
+                        'central_action_id'          => 'nested_identity_override',
+                        'form_source'               => 'contact_form_7',
+                        'action_id'                 => 'nested_action_override',
+                        'job_id'                    => 'nested_job_override',
+                    ],
+                ],
+                [
+                    'hook'        => 'gform_after_submission',
+                    'form_source' => 'gravity_forms',
+                    'action_id'   => 'map_spam',
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $this->plugin->get_async_handler()->process_action(
+                $job['args']['action_id'],
+                $job['args']['data'],
+                $job['args']['settings'],
+                $job['args']['execution_request_id'],
+                $job['args']['context'],
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_success', $capture_context, 10 );
+        }
+
+        $this->assertIsArray( $completion_context );
+        $this->assertSame( 0.95, $completion_context['spam_confidence_threshold'] ?? null );
+        $this->assertSame( 'none', $completion_context['spam_result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $completion_context['spam_indicators_display'] ?? null );
+        $this->assertSame( 'spam_detection_v1', $completion_context['central_action_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $completion_context['form_source'] ?? null );
+        $this->assertSame( 'map_spam', $completion_context['action_id'] ?? null );
+        $this->assertNotSame( 'nested_job_override', $completion_context['job_id'] ?? null );
     }
 
     public function test_process_action_marks_skipped_when_dependency_failed(): void
@@ -1716,7 +2047,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $submission_uuid = '11111111-1111-4111-8111-222222222222';
 
         update_option(
-            'sentient_forms_actions_elementor_forms_91_formabc',
+            'sentient_forms_actions_elementor_pro_forms_91_formabc',
             [
                 'map_prereq' => [
                     'local_mapping_id'           => 'map_prereq',
@@ -1751,7 +2082,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'spam_detection_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -1768,7 +2099,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                  => 'elementor_pro/forms/new_record',
-                    'form_source'           => 'elementor_forms',
+                    'form_source'           => 'elementor_pro_forms',
                     'form_id'               => $form_id,
                     'entry_id'              => null,
                     'submission_uuid'       => $submission_uuid,
@@ -1802,7 +2133,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'entry_summary_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -1817,7 +2148,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                             => 'elementor_pro/forms/new_record',
-                    'form_source'                      => 'elementor_forms',
+                    'form_source'                      => 'elementor_pro_forms',
                     'form_id'                          => $form_id,
                     'entry_id'                         => null,
                     'submission_uuid'                  => $submission_uuid,
@@ -1853,7 +2184,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
         finally
         {
-            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+            delete_option( 'sentient_forms_actions_elementor_pro_forms_91_formabc' );
         }
     }
 
@@ -1890,7 +2221,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -1926,7 +2257,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'action_code'          => 'spam_detection_v1',
                 'action_label'         => 'Spam Detection',
                 'submission_uuid'      => $submission_uuid,
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'provider'             => 'openrouter',
                 'model'                => 'openrouter/auto',
@@ -1947,7 +2278,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'entry_summary_v1',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -1962,7 +2293,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             ],
             [
                 'hook'                             => 'elementor_pro/forms/new_record',
-                'form_source'                      => 'elementor_forms',
+                'form_source'                      => 'elementor_pro_forms',
                 'form_id'                          => $form_id,
                 'entry_id'                         => null,
                 'submission_uuid'                  => $submission_uuid,
@@ -2010,7 +2341,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'action_id' => 'entry_summary_v1',
-                'adapter'   => 'elementor_forms',
+                'adapter'   => 'elementor_pro_forms',
                 'status'    => 'queued',
             ]
         );
@@ -2019,7 +2350,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'entry_summary_v1',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => '91:formabc', 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -2033,7 +2364,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'hook'                        => 'elementor_pro/forms/new_record',
-                'form_source'                 => 'elementor_forms',
+                'form_source'                 => 'elementor_pro_forms',
                 'form_id'                     => '91:formabc',
                 'entry_id'                    => null,
                 'submission_uuid'             => $submission_uuid,
@@ -2127,7 +2458,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             'remote_elementor_spam',
             [
                 'hook'        => 'elementor_pro/forms/new_record',
-                'form_source' => 'elementor_forms',
+                'form_source' => 'elementor_pro_forms',
                 'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                 'entry'       => [
                     'id'              => null,
@@ -2143,7 +2474,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $request_id,
             [
                 'hook'                  => 'elementor_pro/forms/new_record',
-                'form_source'           => 'elementor_forms',
+                'form_source'           => 'elementor_pro_forms',
                 'form_id'               => $form_id,
                 'entry_id'              => null,
                 'submission_uuid'       => $submission_uuid,
@@ -2163,7 +2494,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'failed', $event['status'] ?? null );
         $this->assertSame( 'elementor_cps_failed', $event['error_code'] ?? null );
         $this->assertSame( 'Elementor CPS execution failed.', $event['error_message'] ?? null );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( $form_id, $event['form_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
     }
@@ -2174,7 +2505,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $submission_uuid = '11111111-1111-4111-8111-111111111111';
 
         update_option(
-            'sentient_forms_actions_elementor_forms_91_formabc',
+            'sentient_forms_actions_elementor_pro_forms_91_formabc',
             [
                 'map_prereq' => [
                     'local_mapping_id'           => 'map_prereq',
@@ -2200,7 +2531,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 [
                     'status'    => 'success',
                     'action_id' => 'spam_detection_v1',
-                    'adapter'   => 'elementor_forms',
+                    'adapter'   => 'elementor_pro_forms',
                 ]
             );
 
@@ -2209,7 +2540,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $events->record(
                 [
                     'execution_request_id' => 'dep_req_elementor_spam',
-                    'form_source'          => 'elementor_forms',
+                    'form_source'          => 'elementor_pro_forms',
                     'form_id'              => $form_id,
                     'entry_id'             => null,
                     'submission_uuid'      => $submission_uuid,
@@ -2227,7 +2558,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'entry_summary_v1',
                 [
                     'hook'        => 'elementor_pro/forms/new_record',
-                    'form_source' => 'elementor_forms',
+                    'form_source' => 'elementor_pro_forms',
                     'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
                     'entry'       => [
                         'id'              => null,
@@ -2242,7 +2573,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 ],
                 [
                     'hook'                             => 'elementor_pro/forms/new_record',
-                    'form_source'                      => 'elementor_forms',
+                    'form_source'                      => 'elementor_pro_forms',
                     'form_id'                          => $form_id,
                     'entry_id'                         => null,
                     'submission_uuid'                  => $submission_uuid,
@@ -2279,7 +2610,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
         finally
         {
-            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+            delete_option( 'sentient_forms_actions_elementor_pro_forms_91_formabc' );
         }
     }
 
@@ -2326,13 +2657,16 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $first = $this->plugin->dispatch_action_evaluation( $job );
         $second = $this->plugin->dispatch_action_evaluation( $job );
+        $third = $this->plugin->dispatch_action_evaluation( $job );
 
         $this->assertTrue( $first );
         $this->assertFalse( $second, 'Second scheduling should be blocked by the evaluation ledger' );
+        $this->assertFalse( $third, 'Later duplicates must not reclaim the canonical evaluation owner' );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertCount( 1, $rows );
-        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'queued', $rows[0]['status'] );
     }
 
     public function test_dispatch_action_evaluation_emits_duplicate_block_event(): void
@@ -3191,7 +3525,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			]
 		);
 		update_option(
-			'sentient_forms_form_config_elementor_forms_91_formabc',
+			'sentient_forms_form_config_elementor_pro_forms_91_formabc',
 			[
 				'entry_summary_v1' => [
 					'action_customization' => 'Elementor form-level summary customization.',
@@ -3210,7 +3544,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'entry' => [ 'id' => 'submission-uuid-123', 'field_1' => 'summarize me' ],
 		];
 		$context = [
-			'form_source' => 'elementor_forms',
+			'form_source' => 'elementor_pro_forms',
 			'form_id'     => '91:formabc',
 			'entry_id'    => 'submission-uuid-123',
 			'job_id'      => wp_generate_uuid4(),
@@ -3240,7 +3574,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		finally
 		{
 			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
-			delete_option( 'sentient_forms_form_config_elementor_forms_91_formabc' );
+			delete_option( 'sentient_forms_form_config_elementor_pro_forms_91_formabc' );
 		}
 	}
 
@@ -3254,8 +3588,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		);
 
 		$config_controller = new Sentient_Forms_Form_Action_Config_Controller();
-		$config_request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_forms/91%3Aformabc/action-config/entry_summary_v1' );
-		$config_request->set_param( 'form_source', 'elementor_forms' );
+		$config_request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_pro_forms/91%3Aformabc/action-config/entry_summary_v1' );
+		$config_request->set_param( 'form_source', 'elementor_pro_forms' );
 		$config_request->set_param( 'form_id', '91:formabc' );
 		$config_request->set_param( 'action_id', 'entry_summary_v1' );
 		$config_request->set_param( 'action_customization', 'Controller-saved Elementor form-level customization.' );
@@ -3274,7 +3608,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'entry' => [ 'id' => 'submission-uuid-456', 'field_1' => 'summarize me' ],
 		];
 		$context = [
-			'form_source' => 'elementor_forms',
+			'form_source' => 'elementor_pro_forms',
 			'form_id'     => '91:formabc',
 			'entry_id'    => 'submission-uuid-456',
 			'job_id'      => wp_generate_uuid4(),
@@ -3304,11 +3638,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		finally
 		{
 			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
-			foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( 'elementor_forms', '91:formabc' ) as $suffix )
+			foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( 'elementor_pro_forms', '91:formabc' ) as $suffix )
 			{
-				delete_option( 'sentient_forms_form_config_elementor_forms_' . $suffix );
+				delete_option( 'sentient_forms_form_config_elementor_pro_forms_' . $suffix );
 			}
-			delete_option( 'sentient_forms_form_config_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ) );
+			delete_option( 'sentient_forms_form_config_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '91:formabc' ) );
 		}
 	}
 
@@ -3609,7 +3943,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->get_async_handler()->complete_remote_cps_async_success(
             'req-elementor-cps-provider-native-identity',
             [
-                'form_source'       => 'elementor_forms',
+                'form_source'       => 'elementor_pro_forms',
                 'form_id'           => '4:formabc',
                 'entry_id'          => null,
                 'submission_uuid'   => $submission_uuid,
@@ -3838,11 +4172,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $this->assertIsString( $encrypted );
 
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
         $captured = $ledger_capture->capture(
             [
                 'submission_uuid'  => $submission_uuid,
-                'form_source'      => 'elementor_forms',
+                'form_source'      => 'elementor_pro_forms',
                 'form_id'          => $form_id,
                 'logical_fields'   => [
                     'full_name' => 'Elementor Lead',
@@ -3887,7 +4221,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -3958,11 +4292,18 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'full_name'       => 'Elementor Lead',
             ],
             [
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => $form_id,
                 'action_id'            => 'local_first_' . $mapping_id,
                 'execution_request_id' => 'elementor-local-async-request-success',
                 'submission_uuid'      => $submission_uuid,
+                'native_effect_outcomes' => [
+                    [
+                        'effect' => 'entry_note',
+                        'status' => 'unsupported',
+                        'reason' => 'native_notes_unavailable',
+                    ],
+                ],
             ]
         );
         $this->assertTrue( $scheduled );
@@ -3978,11 +4319,26 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertIsArray( $event );
         $this->assertSame( 'succeeded', $event['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( $form_id, $event['form_id'] ?? null );
         $this->assertNull( $event['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
         $this->assertSame( 'Elementor local execution completed.', $event['result_json']['structured']['summary'] ?? null );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'all',
+                    'status' => 'skipped',
+                    'reason' => 'no_effect_mapping',
+                ],
+                [
+                    'effect' => 'entry_note',
+                    'status' => 'unsupported',
+                    'reason' => 'native_notes_unavailable',
+                ],
+            ],
+            $event['result_json']['native_effect_outcomes'] ?? null
+        );
 
         $request = $this->plugin->get_async_request_store()->get( 'elementor-local-async-request-success' );
         $this->assertSame( 'success', $request['status'] ?? null );

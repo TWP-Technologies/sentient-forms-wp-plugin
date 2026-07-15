@@ -389,7 +389,7 @@ final class Sentient_Forms_Plugin
         return $this->async_handler;
     }
 
-    public function process_action_async( string $action_id, array $data, array $settings, array $context = [] ): bool
+    public function process_action_async( string $action_id, array $data, array $settings, array $context = [] ): bool | WP_Error
     {
         $central_action_id = $settings['central_action_id'] ?? '';
         if ( empty( $central_action_id ) )
@@ -452,19 +452,28 @@ final class Sentient_Forms_Plugin
         );
 
         $request_store = $this->get_async_request_store();
-        if ( $request_store->should_block( $execution_request_id ) )
+        $recorded = $request_store->record(
+            $execution_request_id,
+            [
+                'action_id'      => $central_action_id ?: $action_id,
+                'adapter'        => $context['form_source'] ?? null,
+                'status'         => 'queued',
+                'payload_digest' => $this->async_job_payload_digest(
+                    (string) $central_action_id,
+                    $data,
+                    $settings,
+                    $context
+                ),
+            ]
+        );
+        if ( is_wp_error( $recorded ) )
+        {
+            return $recorded;
+        }
+        if ( true !== $recorded )
         {
             return false;
         }
-
-        $request_store->record(
-            $execution_request_id,
-            [
-                'action_id' => $central_action_id ?: $action_id,
-                'adapter'   => $context['form_source'] ?? null,
-                'status'    => 'queued',
-            ]
-        );
 
         $batch_settings = isset( $settings['batch_settings'] ) && is_array( $settings['batch_settings'] )
             ? $settings['batch_settings']
@@ -551,6 +560,34 @@ final class Sentient_Forms_Plugin
         }
 
         return $scheduled;
+    }
+
+    /**
+     * Hash immutable execution inputs while excluding transient dependency state.
+     */
+    private function async_job_payload_digest(
+        string $central_action_id,
+        array $data,
+        array $settings,
+        array $context
+    ): string
+    {
+        unset(
+            $context['dependency_initial_outcomes'],
+            $context['dependency_wait_started_at']
+        );
+
+        return hash(
+            'sha256',
+            (string) wp_json_encode(
+                [
+                    'central_action_id' => $central_action_id,
+                    'data'              => $data,
+                    'settings'          => $settings,
+                    'context'           => $context,
+                ]
+            )
+        );
     }
 
     private function normalize_batch_settings_for_runtime( array $settings ): array

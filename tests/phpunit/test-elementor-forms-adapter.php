@@ -25,11 +25,38 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $wpdb->query(
             $wpdb->prepare(
                 "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s",
-                $wpdb->esc_like( 'sentient_forms_actions_elementor_forms_' ) . '%'
+                $wpdb->esc_like( 'sentient_forms_actions_elementor_pro_forms_' ) . '%'
             )
         );
 
         parent::tearDown();
+    }
+
+    public function test_accepted_submission_contract_uses_canonical_identity_and_exact_native_hook(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        $this->assertInstanceOf( Sentient_Forms_Accepted_Submission_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'elementor_pro_forms', $adapter->get_id() );
+        $this->assertSame( 'elementor_pro/forms/new_record', $adapter->get_accepted_submission_native_hook() );
+        $this->assertSame( 10, has_action( 'elementor_pro/forms/new_record', [ $adapter, 'handle_new_record' ] ) );
+
+        global $wp_filter;
+        $accepted_args = null;
+        foreach ( (array) ( $wp_filter['elementor_pro/forms/new_record']->callbacks[10] ?? [] ) as $callback )
+        {
+            if ( [ $adapter, 'handle_new_record' ] === ( $callback['function'] ?? null ) )
+            {
+                $accepted_args = $callback['accepted_args'] ?? null;
+                break;
+            }
+        }
+
+        $this->assertSame( 2, $accepted_args );
     }
 
     public function test_elementor_pro_forms_widgets_are_discoverable_from_elementor_data(): void
@@ -44,8 +71,8 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $forms );
         $this->assertSame( $page_id . ':formabc', $forms[0]['id'] );
         $this->assertSame( 'Quote Request', $forms[0]['title'] );
-        $this->assertSame( 'elementor_forms', $forms[0]['adapter'] );
-        $this->assertSame( 'Elementor Forms', $forms[0]['adapter_name'] );
+        $this->assertSame( 'elementor_pro_forms', $forms[0]['adapter'] );
+        $this->assertSame( 'Elementor Pro Forms', $forms[0]['adapter_name'] );
         $this->assertTrue( $forms[0]['provider_is_active'] );
         $this->assertStringContainsString( 'post=' . $page_id, $forms[0]['provider_edit_url'] );
         $this->assertStringContainsString( 'action=elementor', $forms[0]['provider_edit_url'] );
@@ -195,7 +222,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $ledger  = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
 
         $this->assertNull( $adapter->handle_new_record( $record, null ) );
-        $this->assertSame( [], $ledger->list_for_form( 'elementor_forms', $form_id ) );
+        $this->assertSame( [], $ledger->list_for_form( 'elementor_pro_forms', $form_id ) );
     }
 
     public function test_new_record_stores_logical_fields_and_file_references_when_ledger_is_enabled(): void
@@ -209,7 +236,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
@@ -217,7 +244,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertNotNull( $submission_uuid );
 
         $stored = $ledger->get_by_submission_uuid( $submission_uuid );
-        $this->assertSame( 'elementor_forms', $stored['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $stored['form_source'] ?? null );
         $this->assertSame( $form_id, $stored['form_id'] ?? null );
         $this->assertNull( $stored['native_entry_id'] ?? null );
         $this->assertNull( $stored['native_entry_url'] ?? null );
@@ -235,7 +262,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $entry );
         $this->assertNull( $entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $entry['submission_uuid'] ?? null );
-        $this->assertSame( 'elementor_forms', $entry['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $entry['form_source'] ?? null );
         $this->assertSame( $form_id, $entry['form_id'] ?? null );
         $this->assertSame( 'Ada Lovelace', $entry['full_name'] ?? null );
         $this->assertSame( 'resume', $entry['file_refs'][0]['field_id'] ?? null );
@@ -253,7 +280,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -308,7 +335,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -358,7 +385,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -405,7 +432,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -458,7 +485,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -544,7 +571,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
@@ -584,7 +611,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -622,7 +649,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -681,7 +708,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -729,7 +756,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -798,7 +825,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -864,7 +891,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -939,7 +966,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -1036,7 +1063,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -1116,7 +1143,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -1188,7 +1215,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $fields  = $adapter->get_form_fields( $form_id );
@@ -1250,7 +1277,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -1311,7 +1338,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $second_page_id . ':targetform';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -1360,7 +1387,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $second_page_id . ':targetform';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -1400,7 +1427,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id         = $second_page_id . ':targetform';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $submission_uuid = $adapter->handle_new_record(
@@ -1455,7 +1482,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertNull( $submission_uuid );
         $this->assertCount( 1, $events );
         $this->assertSame( 'ambiguous_or_missing_form_id', $events[0]['reason'] ?? null );
-        $this->assertSame( 'elementor_forms', $events[0]['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $events[0]['form_source'] ?? null );
         $this->assertSame( 'Quote Request', $events[0]['form_name'] ?? null );
         $this->assertSame( '', $events[0]['widget_id'] ?? null );
     }
@@ -1475,7 +1502,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, false );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, false );
 
         $scheduled_jobs = [];
         add_action(
@@ -1509,7 +1536,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertNull( $adapter->handle_new_record( $this->elementor_submission_record(), null ) );
         $this->assertSame( [], $scheduled_jobs );
 
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
 
@@ -1519,7 +1546,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_async', $scheduled_jobs[0]['group'] ?? null );
 
         $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
-        $this->assertSame( 'elementor_forms', $job_context['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $job_context['form_source'] ?? null );
         $this->assertSame( 'elementor_pro/forms/new_record', $job_context['hook'] ?? null );
         $this->assertSame( $form_id, $job_context['form_id'] ?? null );
         $this->assertNull( $job_context['entry_id'] ?? null );
@@ -1528,10 +1555,10 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
 
         $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
-        $this->assertSame( 'elementor_forms', $scheduled_jobs[0]['args']['data']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $scheduled_jobs[0]['args']['data']['form_source'] ?? null );
         $this->assertNull( $job_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
-        $this->assertSame( 'elementor_forms', $job_entry['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $job_entry['form_source'] ?? null );
         $this->assertSame( $form_id, $job_entry['form_id'] ?? null );
         $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
         $this->assertSame( 'resume', $job_entry['file_refs'][0]['field_id'] ?? null );
@@ -1553,7 +1580,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $scheduled_jobs = [];
         add_action(
@@ -1632,7 +1659,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $upstream_record );
         $this->assertSame( 'queued', $upstream_record['status'] ?? null );
         $this->assertSame( 'entry_evaluation', $upstream_record['action_id'] ?? null );
-        $this->assertSame( 'elementor_forms', $upstream_record['adapter'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $upstream_record['adapter'] ?? null );
         $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
         $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
     }
@@ -1646,8 +1673,8 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id = $page_id . ':formabc';
 
         $controller = new Sentient_Forms_Form_Actions_Controller();
-        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions' );
-        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions' );
+        $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
         $request->set_param( 'central_action_id', 'remote_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
@@ -1679,7 +1706,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $scheduled_jobs = [];
         add_action(
@@ -1744,7 +1771,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $scheduled_jobs = [];
         add_action(
@@ -1843,7 +1870,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
@@ -1867,7 +1894,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
@@ -1894,7 +1921,18 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $adapter       = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
         $runtime_key   = 'local_first_' . $mapping_id;
         $form_settings = $adapter->get_form_settings( $form_id );
-        $this->assertArrayHasKey( $runtime_key, $form_settings );
+        $this->assertArrayHasKey(
+            $runtime_key,
+            $form_settings,
+            (string) wp_json_encode(
+                [
+                    'runtime_key' => $runtime_key,
+                    'form_id'     => $form_id,
+                    'rows'        => $mappings->list_for_form( 'elementor_pro_forms', $form_id ),
+                    'settings'    => $form_settings,
+                ]
+            )
+        );
         $this->assertSame( 'elementor_local_summary', $form_settings[ $runtime_key ]['central_action_id'] ?? null );
 
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
@@ -1906,7 +1944,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $payload = $scheduled_jobs[0]['args'][0] ?? [];
         $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
-        $this->assertSame( 'elementor_forms', $payload['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $payload['form_source'] ?? null );
         $this->assertSame( $form_id, $payload['form_id'] ?? null );
         $this->assertNull( $payload['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $payload['submission_uuid'] ?? null );
@@ -1918,7 +1956,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $resolved_entry );
         $this->assertNull( $resolved_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $resolved_entry['submission_uuid'] ?? null );
-        $this->assertSame( 'elementor_forms', $resolved_entry['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $resolved_entry['form_source'] ?? null );
         $this->assertSame( $form_id, $resolved_entry['form_id'] ?? null );
         $this->assertSame( 'Ada Lovelace', $resolved_entry['full_name'] ?? null );
         $this->assertNull( $adapter->get_entry_data( $submission_uuid, '999:missing' ) );
@@ -1927,7 +1965,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $event );
         $this->assertSame( 'queued', $event['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( $form_id, $event['form_id'] ?? null );
         $this->assertNull( $event['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
@@ -1949,7 +1987,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $page_id         = $this->create_elementor_form_page();
         $form_id         = $page_id . ':formabc';
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
         $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
@@ -1972,7 +2010,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $mapping_id = $mappings->create(
             [
-                'form_source'         => 'elementor_forms',
+                'form_source'         => 'elementor_pro_forms',
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',

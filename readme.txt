@@ -8,13 +8,13 @@ Stable tag: 0.10.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-AI actions for Gravity Forms, Contact Form 7, WPForms, and Elementor Forms: lead scoring, spam review, summaries, and logs.
+AI actions for Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms: lead scoring, spam review, summaries, and logs.
 
 == Description ==
 
-Sentient Forms adds AI actions to Gravity Forms, Contact Form 7, WPForms, and Elementor Forms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs.
+Sentient Forms adds AI actions to Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs.
 
-Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Forms run after submission through the Sentient Forms Submission Ledger. Elementor Forms requires Elementor Pro Forms APIs. Those three do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
+Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Sentient Forms Submission Ledger. Elementor Pro Forms requires Elementor Pro Forms APIs. Those three do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
 
 A TWP Technologies, LLC product. Product site: https://sentientforms.com. Public development: https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 
@@ -35,7 +35,7 @@ OpenRouter direct execution:
 * Service: OpenRouter
 * Endpoint: https://openrouter.ai/
 * When used: after an administrator connects OpenRouter and runs direct provider validation, a form action, or AI-generated Site Context. Site Context needs a paid, web-capable OpenRouter model.
-* Data sent: selected submitted fields from mapped Gravity Forms, Contact Form 7, WPForms, or Elementor Forms actions, prompt/action instructions, model identifier, and request metadata. Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Data sent: selected submitted fields from mapped Gravity Forms, Contact Form 7, WPForms, or Elementor Pro Forms actions, prompt/action instructions, model identifier, and request metadata. Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
 * Account required: an OpenRouter account/API key. Site Context requires a paid, non-free, web-capable model.
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
@@ -45,7 +45,7 @@ Sentient Forms Managed Execution:
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/
 * When used: optional managed account, billing, metering, managed model execution, support diagnostics, or administrator-enabled managed features.
-* Data sent: account/site identifiers, billing state, and, for managed AI execution, selected submitted fields from mapped Gravity Forms, Contact Form 7, WPForms, or Elementor Forms actions plus prompt/action instructions. Managed Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Data sent: account/site identifiers, billing state, and, for managed AI execution, selected submitted fields from mapped Gravity Forms, Contact Form 7, WPForms, or Elementor Pro Forms actions plus prompt/action instructions. Managed Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
 * Account required: a Sentient Forms account may be required for managed paid features. Direct OpenRouter does not require Sentient payment.
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
@@ -89,7 +89,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 2. Activate Sentient Forms in WordPress.
 3. Open the Sentient Forms admin screen.
 4. Connect OpenRouter for direct local-first execution, or connect Sentient Forms Managed Execution if you want managed paid usage.
-5. Create or select an action, map it to a supported form, and run a test submission. Gravity Forms supports native workflows; Contact Form 7, WPForms, and Elementor Forms run after submission through the Submission Ledger. Elementor Forms requires Elementor Pro Forms APIs.
+5. Create or select an action, map it to a supported form, and run a test submission. Gravity Forms supports native workflows; Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Submission Ledger. Elementor Pro Forms requires Elementor Pro Forms APIs.
 
 == Frequently Asked Questions ==
 
@@ -115,7 +115,7 @@ The plugin includes WordPress personal data export/erase integration for local e
 
 = Which form builders are supported? =
 
-Gravity Forms, Contact Form 7, WPForms, and Elementor Forms are supported. Gravity Forms supports the full native path, including validation and realtime modes where available. Contact Form 7, WPForms, and Elementor Forms run after submission through the Submission Ledger. Elementor Forms requires Elementor Pro Forms APIs. CF7, WPForms, and Elementor Forms do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
+Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms are supported. Gravity Forms supports the full native path, including validation and realtime modes where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Submission Ledger. Elementor Pro Forms requires Elementor Pro Forms APIs. CF7, WPForms, and Elementor Pro Forms do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
 
 = Where is the source for the compressed admin JavaScript? =
 
@@ -127,7 +127,7 @@ See "Source" above and `assets/dist/SOURCE.md` in the package.
 2. Review saved AI results in Gravity Forms entries and Submission Ledger records.
 3. Tune Lead Scoring with site context and examples.
 4. Track action runs by status, form source, entry, model, and result.
-5. Map AI actions to supported Gravity Forms, Contact Form 7, WPForms, or Elementor Forms forms.
+5. Map AI actions to supported Gravity Forms, Contact Form 7, WPForms, or Elementor Pro Forms forms.
 6. View setup state, providers, form sources, and recent runs.
 
 == Changelog ==

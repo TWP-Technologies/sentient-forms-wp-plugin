@@ -38,12 +38,12 @@ final class Sentient_Forms_Form_Sources
     const CONTACT_FORM_7 = 'contact_form_7';
 
     /**
-     * Slug for Elementor Forms.
+     * Slug for Elementor Pro Forms.
      *
      * @var string
      * @since 0.5.1
      */
-    const ELEMENTOR_FORMS = 'elementor_forms';
+    const ELEMENTOR_PRO_FORMS = 'elementor_pro_forms';
 
     /**
      * Slug for WPForms.
@@ -54,51 +54,42 @@ final class Sentient_Forms_Form_Sources
     const WPFORMS = 'wpforms';
 
     /**
-     * Gets an array of all known and supported form source slugs.
-     * This list should be extensible, ideally allowing form adapters to register
-     * their slugs. For now, it's defined here and made filterable.
+     * Gets canonical identifiers for all registered Form Sources.
      *
-     * @return array<string> An array of supported form source slugs.
+     * @param Sentient_Forms_Form_Adapter_Registry|null $registry Optional scoped registry.
+     *
+     * @return array<string> An array of registered Form Source slugs.
      * @since 0.1.0
      */
-    public static function get_supported_sources()
+    public static function get_supported_sources( ?Sentient_Forms_Form_Adapter_Registry $registry = null ): array
     {
-        $core_sources = [
-            self::GRAVITY_FORMS,
-            self::CONTACT_FORM_7,
-            self::WPFORMS,
-            self::ELEMENTOR_FORMS,
-        ];
+        $registry = self::resolve_registry( $registry );
 
-        /**
-         * Filters the list of supported form source slugs.
-         * Allows other adapters or extensions to register their unique source slugs.
-         * Each slug should be a lowercase string, typically the plugin's slug or a derivative.
-         *
-         * @param array<string> $core_sources Array of core-supported form source slugs.
-         *
-         * @since 0.1.0
-         */
-        return apply_filters( 'sentient_forms_supported_form_sources', $core_sources );
+        return $registry ? $registry->get_registered_source_ids() : [];
     }
 
     /**
      * Checks if a given form source slug is valid and supported.
      *
-     * @param string $source_slug The form source slug to validate.
+     * @param string                                      $source_slug The form source slug to validate.
+     * @param Sentient_Forms_Form_Adapter_Registry|null $registry Optional scoped registry.
      *
      * @return bool True if the source slug is supported, false otherwise.
      * @since 0.1.0
      */
-    public static function is_supported_source( string $source_slug ): bool
+    public static function is_supported_source(
+        string $source_slug,
+        ?Sentient_Forms_Form_Adapter_Registry $registry = null
+    ): bool
     {
         if ( empty( $source_slug ) )
         {
             return false;
         }
-        
-        $supported_sources = self::get_supported_sources();
-        return in_array( strtolower( $source_slug ), $supported_sources, true );
+
+        $registry = self::resolve_registry( $registry );
+
+        return $registry ? $registry->has_registered_source( $source_slug ) : false;
     }
 
     /**
@@ -183,5 +174,30 @@ final class Sentient_Forms_Form_Sources
     public static function rest_sanitize_form_source_slug( string $value, WP_REST_Request $request, string $param ): string
     {
         return sanitize_key( strtolower( $value ) );
+    }
+
+    /**
+     * Resolve the authoritative registry while allowing focused callers to
+     * supply a scoped instance.
+     */
+    private static function resolve_registry(
+        ?Sentient_Forms_Form_Adapter_Registry $registry = null
+    ): ?Sentient_Forms_Form_Adapter_Registry
+    {
+        if ( null !== $registry )
+        {
+            return $registry;
+        }
+
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) )
+        {
+            return null;
+        }
+
+        $plugin = Sentient_Forms_Plugin::instance();
+
+        return method_exists( $plugin, 'get_form_adapter_registry' )
+            ? $plugin->get_form_adapter_registry()
+            : null;
     }
 }

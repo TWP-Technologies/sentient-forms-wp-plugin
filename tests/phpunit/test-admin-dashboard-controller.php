@@ -185,7 +185,7 @@ class Tests_Admin_Dashboard_Controller extends WP_UnitTestCase
         $event_id = $events->record(
             [
                 'execution_request_id' => 'req-dashboard-elementor-entry',
-                'form_source'          => 'elementor_forms',
+                'form_source'          => 'elementor_pro_forms',
                 'form_id'              => '91:formabc',
                 'entry_id'             => 'elementor-submission-123',
                 'provider'             => 'sentient_managed',
@@ -201,7 +201,7 @@ class Tests_Admin_Dashboard_Controller extends WP_UnitTestCase
         $event      = $data['recent_events'][0] ?? [];
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $event['form_source'] ?? null );
         $this->assertSame( '91:formabc', $event['form_id'] ?? null );
         $this->assertArrayHasKey( 'entry_id', $event );
         $this->assertNull( $event['entry_id'] );

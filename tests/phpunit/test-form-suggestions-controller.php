@@ -415,7 +415,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	}
 
 	public function test_runtime_config_route_reports_elementor_provider_native_ids_as_unsupported(): void {
-		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/91:formabc/actions/runtime-config' );
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_pro_forms/forms/91:formabc/actions/runtime-config' );
 
 		$response = rest_do_request( $request );
 
@@ -426,7 +426,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	}
 
 	public function test_suggest_route_reports_elementor_provider_native_ids_as_unsupported(): void {
-		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/91:formabc/actions/suggest' );
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/91:formabc/actions/suggest' );
 		$request->set_param( 'mapping_id', 'map_rt_1' );
 		$request->set_param( 'all_known_field_values', [ 'email' => 'lead@example.test' ] );
 		$request->set_param( 'visible_field_ids', [ 'email' ] );

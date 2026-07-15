@@ -11,6 +11,9 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
+    private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
+    private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
+    private const NATIVE_CORRELATION_BACKFILL_VERSION = 'v1';
 
     public static function activate( bool $network_wide = false ): void
     {
@@ -94,13 +97,13 @@ class Sentient_Forms_Installer
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
         $tables_ready = self::local_first_tables_exist();
+        $needs_db_version_update = $current !== SENTIENT_FORMS_DB_VERSION;
         $should_run_form_source_config_migration = $repair_missing_tables || $current !== SENTIENT_FORMS_DB_VERSION;
 
-        if ( $current !== SENTIENT_FORMS_DB_VERSION || ( $repair_missing_tables && ! $tables_ready ) )
+        if ( $needs_db_version_update || ( $repair_missing_tables && ! $tables_ready ) )
         {
             self::create_async_requests_table();
             self::create_local_first_tables();
-            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
             $tables_ready = self::local_first_tables_exist();
         }
 
@@ -109,13 +112,43 @@ class Sentient_Forms_Installer
             return;
         }
 
-        self::seed_bundled_action_templates();
-        if ( $should_run_form_source_config_migration && class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+        $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
+        if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
         {
-            Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+            delete_option( self::OPTION_NATIVE_CORRELATION_CURSOR );
+        }
+        $native_correlation_backfill_needed = ! $native_correlation_backfill_complete;
+        $native_correlation_schema_ready    = true;
+        if ( $needs_db_version_update || $native_correlation_backfill_needed )
+        {
+            $native_correlation_schema_ready = self::submission_ledger_native_correlation_schema_ready();
+        }
+        if ( $native_correlation_backfill_needed && $native_correlation_schema_ready )
+        {
+            self::backfill_submission_ledger_native_correlations();
+        }
+
+        self::seed_bundled_action_templates();
+        $form_source_config_migration_complete = true;
+        if ( $should_run_form_source_config_migration )
+        {
+            if ( ! class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+            {
+                $form_source_config_migration_complete = false;
+            }
+            else
+            {
+                $migration_summary = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+                $form_source_config_migration_complete = 1 === (int) ( $migration_summary['migration_complete'] ?? 0 );
+            }
         }
         self::repair_local_first_action_integrity();
         Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+
+        if ( $needs_db_version_update && $form_source_config_migration_complete && $native_correlation_schema_ready )
+        {
+            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+        }
     }
 
     private static function create_async_requests_table(): void
@@ -369,6 +402,7 @@ class Sentient_Forms_Installer
                 form_source VARCHAR(100) NOT NULL,
                 form_id VARCHAR(100) NOT NULL,
                 native_entry_id VARCHAR(191) NULL,
+                native_correlation_hash CHAR(64) NULL,
                 native_entry_url TEXT NULL,
                 source_submitted_at DATETIME NULL,
                 captured_at DATETIME NOT NULL,
@@ -381,6 +415,7 @@ class Sentient_Forms_Installer
                 expires_at DATETIME NULL,
                 PRIMARY KEY  (id),
                 UNIQUE KEY submission_unique (submission_uuid),
+                UNIQUE KEY native_correlation_unique (native_correlation_hash),
                 KEY form_captured_idx (form_source, form_id, captured_at, id),
                 KEY form_entry_idx (form_source, form_id, native_entry_id),
                 KEY expires_idx (expires_at)
@@ -541,6 +576,156 @@ class Sentient_Forms_Installer
         {
             dbDelta( $sql );
         }
+    }
+
+    private static function backfill_submission_ledger_native_correlations(): bool
+    {
+        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            return false;
+        }
+        if ( self::native_correlation_backfill_is_complete() )
+        {
+            delete_option( self::OPTION_NATIVE_CORRELATION_CURSOR );
+            return true;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $table_name = $wpdb->prefix . 'sentient_submission_ledger';
+        $last_id    = max( 0, (int) get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, 0 ) );
+        $batch_size = 50;
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The bounded upgrade backfill must read current plugin-owned ledger rows and must not cache migration state.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT id, form_source, form_id, native_entry_id FROM %i WHERE id > %d AND native_entry_id IS NOT NULL AND native_entry_id <> %s AND native_correlation_hash IS NULL ORDER BY id ASC LIMIT %d',
+                $table_name,
+                $last_id,
+                '',
+                $batch_size + 1
+            ),
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) || '' !== $wpdb->last_error )
+        {
+            return false;
+        }
+
+        $has_more = count( $rows ) > $batch_size;
+        foreach ( array_slice( $rows, 0, $batch_size ) as $row )
+        {
+            $last_id         = max( $last_id, (int) ( $row['id'] ?? 0 ) );
+            $form_source     = sanitize_key( (string) ( $row['form_source'] ?? '' ) );
+            $form_id         = sanitize_text_field( (string) ( $row['form_id'] ?? '' ) );
+            $native_entry_id = sanitize_text_field( (string) ( $row['native_entry_id'] ?? '' ) );
+            $hash            = Sentient_Forms_Submission_Ledger_Repository::native_correlation_hash( $form_source, $form_id, $native_entry_id );
+            if ( null === $hash )
+            {
+                return false;
+            }
+
+            $winner = $repository->get_by_native_correlation_hash( $hash );
+            if ( is_array( $winner ) )
+            {
+                if ( ! self::submission_ledger_native_tuple_matches( $winner, $form_source, $form_id, $native_entry_id ) )
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            $assigned = $repository->assign_native_correlation_hash( (int) $row['id'], $hash );
+            if ( is_wp_error( $assigned ) )
+            {
+                $winner = $repository->get_by_native_correlation_hash( $hash );
+                if ( ! is_array( $winner ) || ! self::submission_ledger_native_tuple_matches( $winner, $form_source, $form_id, $native_entry_id ) )
+                {
+                    return false;
+                }
+            }
+        }
+
+        if ( $has_more )
+        {
+            if ( self::native_correlation_backfill_is_complete() )
+            {
+                delete_option( self::OPTION_NATIVE_CORRELATION_CURSOR );
+                return true;
+            }
+
+            $updated = update_option( self::OPTION_NATIVE_CORRELATION_CURSOR, $last_id, false );
+            if ( self::native_correlation_backfill_is_complete() )
+            {
+                delete_option( self::OPTION_NATIVE_CORRELATION_CURSOR );
+                return true;
+            }
+            if ( ! $updated && $last_id !== (int) get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, 0 ) )
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        $updated = update_option(
+            self::OPTION_NATIVE_CORRELATION_BACKFILL_VERSION,
+            self::NATIVE_CORRELATION_BACKFILL_VERSION,
+            false
+        );
+        if ( ! $updated && ! self::native_correlation_backfill_is_complete() )
+        {
+            return false;
+        }
+
+        delete_option( self::OPTION_NATIVE_CORRELATION_CURSOR );
+
+        return false === get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false );
+    }
+
+    private static function native_correlation_backfill_is_complete(): bool
+    {
+        return self::NATIVE_CORRELATION_BACKFILL_VERSION === get_option( self::OPTION_NATIVE_CORRELATION_BACKFILL_VERSION, '' );
+    }
+
+    private static function submission_ledger_native_correlation_schema_ready(): bool
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'sentient_submission_ledger';
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer readiness must inspect the live plugin-owned table schema during activation and upgrade.
+        $column = $wpdb->get_var(
+            $wpdb->prepare(
+                'SHOW COLUMNS FROM %i LIKE %s',
+                $table_name,
+                'native_correlation_hash'
+            )
+        );
+        if ( 'native_correlation_hash' !== $column || '' !== $wpdb->last_error )
+        {
+            return false;
+        }
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer readiness must inspect the live plugin-owned table indexes during activation and upgrade.
+        $index = $wpdb->get_var(
+            $wpdb->prepare(
+                'SHOW INDEX FROM %i WHERE Key_name = %s',
+                $table_name,
+                'native_correlation_unique'
+            )
+        );
+
+        return null !== $index && '' !== (string) $index && '' === $wpdb->last_error;
+    }
+
+    private static function submission_ledger_native_tuple_matches( array $row, string $form_source, string $form_id, string $native_entry_id ): bool
+    {
+        return sanitize_key( (string) ( $row['form_source'] ?? '' ) ) === $form_source
+            && sanitize_text_field( (string) ( $row['form_id'] ?? '' ) ) === $form_id
+            && sanitize_text_field( (string) ( $row['native_entry_id'] ?? '' ) ) === $native_entry_id;
     }
 
     private static function seed_bundled_action_templates(): void
