@@ -257,13 +257,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
 
         $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, null );
-        if ( null === $settings )
+        if ( empty( $settings ) )
         {
-            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $form_source, $form_id ) as $legacy_suffix )
+            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_action_option_names( $form_source, $form_id ) as $legacy_option_name )
             {
-                $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $legacy_suffix, null );
-                if ( null !== $settings )
+                $legacy_settings = get_option( $legacy_option_name, null );
+                if ( ! empty( $legacy_settings ) )
                 {
+                    $settings = $legacy_settings;
                     break;
                 }
             }
@@ -1778,9 +1779,13 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $identity = $this->resolve_local_first_action_identity(
             $this->get_local_first_custom_action( absint( $row['action_id'] ?? 0 ) )
         );
+        $row_execution_mode = sanitize_key( (string) ( $row['execution_mode'] ?? '' ) );
+        $execution_mode     = 'sync' === $row_execution_mode
+            ? Sentient_Forms_Form_Source_Lifecycles::VALIDATION
+            : Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION;
         $settings = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
         $settings['local_form_mapping_id'] = $id;
-        $settings['execution_mode']        = Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION;
+        $settings['execution_mode']        = $execution_mode;
         $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null ) ? $row['input_bindings_json'] : [];
         if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
         {
@@ -1809,7 +1814,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             'action_name_label'          => $identity['action_label'],
             'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
             'trigger_hooks'              => [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ],
-            'execution_mode'             => Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
+            'execution_mode'             => $execution_mode,
             'execution_priority'         => $id,
             'mark_as_spam'               => false,
             'linked_action_status'       => $identity['linked_action_status'],

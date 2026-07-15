@@ -1321,6 +1321,186 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
+    public function test_accepted_submission_preserves_sync_mode_from_local_first_mapping_row(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $form_id        = 787;
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'gf_sync_after_submission_action',
+                'display_name'         => 'GF Sync After Submission Action',
+                'definition_json'      => [ 'prompt_template' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => (string) $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter         = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        $scheduled_jobs  = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $adapter->handle_validation_entry_post_save(
+            [ 'id' => 1709, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Stored sync local first', 'fields' => [] ]
+        );
+
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame( $mapping_id, $local_execution->calls[0]['mapping_id'] ?? null );
+        $this->assertSame( [], $scheduled_jobs );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_accepted_submission_reads_legacy_gravity_form_settings(): void
+    {
+        $form_id          = 786;
+        $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
+        $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $execution_calls  = 0;
+        $action_id        = 'legacy_gravity_accepted_action';
+
+        update_option( $canonical_option, [], false );
+        update_option(
+            $legacy_option,
+            [
+                $action_id => [
+                    'local_mapping_id'           => $action_id,
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static function () use ( &$execution_calls ): array {
+                    ++$execution_calls;
+
+                    return [ 'summary' => 'Legacy Gravity settings executed.' ];
+                }
+            )
+        );
+
+        $this->adapter->handle_accepted_submission(
+            [ 'id' => 1708, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Legacy Gravity settings', 'fields' => [] ]
+        );
+
+        $this->assertSame( 1, $execution_calls );
+
+        delete_option( $legacy_option );
+        delete_option( $canonical_option );
+    }
+
+    public function test_accepted_submission_prefers_canonical_settings_over_legacy_gravity_settings(): void
+    {
+        $form_id          = 785;
+        $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
+        $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $legacy_calls     = 0;
+        $canonical_calls  = 0;
+
+        update_option(
+            $legacy_option,
+            [
+                'legacy_gravity_action' => [
+                    'local_mapping_id'           => 'legacy_gravity_action',
+                    'central_action_id'          => 'legacy_gravity_action',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        update_option(
+            $canonical_option,
+            [
+                'canonical_gravity_action' => [
+                    'local_mapping_id'           => 'canonical_gravity_action',
+                    'central_action_id'          => 'canonical_gravity_action',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                'legacy_gravity_action',
+                static function () use ( &$legacy_calls ): array {
+                    ++$legacy_calls;
+
+                    return [];
+                }
+            )
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                'canonical_gravity_action',
+                static function () use ( &$canonical_calls ): array {
+                    ++$canonical_calls;
+
+                    return [];
+                }
+            )
+        );
+
+        $this->adapter->handle_validation_entry_post_save(
+            [ 'id' => 1707, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Canonical Gravity settings', 'fields' => [] ]
+        );
+
+        $this->assertSame( 1, $canonical_calls );
+        $this->assertSame( 0, $legacy_calls );
+
+        delete_option( $legacy_option );
+        delete_option( $canonical_option );
+    }
+
     public function test_sync_local_first_structured_spam_skips_dependent_mapping(): void
     {
         $form_id         = 789;
