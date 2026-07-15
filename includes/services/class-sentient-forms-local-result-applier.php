@@ -289,7 +289,7 @@ class Sentient_Forms_Local_Result_Applier
                         'reason' => $status,
                     ];
                 }
-                elseif ( str_starts_with( $status, 'skipped' ) )
+                elseif ( str_starts_with( $status, 'skipped' ) || 'missing_entry_id' === $status )
                 {
                     $skipped[] = [
                         'effect' => $effect_name,

@@ -94,13 +94,13 @@ class Sentient_Forms_Installer
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
         $tables_ready = self::local_first_tables_exist();
+        $needs_db_version_update = $current !== SENTIENT_FORMS_DB_VERSION;
         $should_run_form_source_config_migration = $repair_missing_tables || $current !== SENTIENT_FORMS_DB_VERSION;
 
-        if ( $current !== SENTIENT_FORMS_DB_VERSION || ( $repair_missing_tables && ! $tables_ready ) )
+        if ( $needs_db_version_update || ( $repair_missing_tables && ! $tables_ready ) )
         {
             self::create_async_requests_table();
             self::create_local_first_tables();
-            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
             $tables_ready = self::local_first_tables_exist();
         }
 
@@ -110,12 +110,26 @@ class Sentient_Forms_Installer
         }
 
         self::seed_bundled_action_templates();
-        if ( $should_run_form_source_config_migration && class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+        $form_source_config_migration_complete = true;
+        if ( $should_run_form_source_config_migration )
         {
-            Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+            if ( ! class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+            {
+                $form_source_config_migration_complete = false;
+            }
+            else
+            {
+                $migration_summary = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+                $form_source_config_migration_complete = 0 === (int) ( $migration_summary['form_source_option_failures'] ?? 0 );
+            }
         }
         self::repair_local_first_action_integrity();
         Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+
+        if ( $needs_db_version_update && $form_source_config_migration_complete )
+        {
+            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+        }
     }
 
     private static function create_async_requests_table(): void

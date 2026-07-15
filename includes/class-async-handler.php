@@ -24,6 +24,7 @@ class Sentient_Forms_Async_Handler
 	private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
 	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
 	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
+	private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
 
 	/**
 	 * Plugin instance
@@ -568,6 +569,7 @@ class Sentient_Forms_Async_Handler
 
 	private function normalize_context( array $context, string $action_id = '' ): array
 	{
+		$context        = $this->normalize_queued_form_source_identities( $context );
 		$config         = $this->get_retry_config();
 		$attempt        = isset( $context['attempt'] ) ? max( 1, (int) $context['attempt'] ) : 1;
 		$max_attempts   = isset( $context['max_attempts'] ) ? max( 1, (int) $context['max_attempts'] ) : $config['max_attempts'];
@@ -1180,6 +1182,8 @@ class Sentient_Forms_Async_Handler
         {
             $payload = $payload[0];
         }
+
+        $payload = $this->normalize_queued_form_source_identities( $payload );
 
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
         $context = $this->normalize_context( $context, 'sentient_forms_local_mapping' );
@@ -2373,6 +2377,7 @@ class Sentient_Forms_Async_Handler
      */
     public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
+		$data    = $this->normalize_queued_form_source_identities( $data );
 		$context = $this->normalize_context( $context, $action_id );
 
         $job = [
@@ -2520,6 +2525,36 @@ class Sentient_Forms_Async_Handler
         {
             $this->sweep_stale_async_rows();
         }
+    }
+
+    /**
+     * Tolerate the retired Elementor identifier only for durable, plugin-owned
+     * jobs that were serialized before the canonical source migration.
+     *
+     * @param array<array-key, mixed> $payload
+     *
+     * @return array<array-key, mixed>
+     */
+    private function normalize_queued_form_source_identities( array $payload ): array
+    {
+        foreach ( $payload as $key => $value )
+        {
+            if ( is_string( $key )
+                && in_array( $key, [ 'form_source', 'adapter_id' ], true )
+                && is_scalar( $value )
+                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $value ) )
+            {
+                $payload[ $key ] = Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS;
+                continue;
+            }
+
+            if ( is_array( $value ) )
+            {
+                $payload[ $key ] = $this->normalize_queued_form_source_identities( $value );
+            }
+        }
+
+        return $payload;
     }
 
     /**

@@ -314,9 +314,52 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
             (string) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE adapter = %s', $wpdb->prefix . 'sentient_async_requests', 'elementor_pro_forms' ) )
         );
         $this->assertSame( 1, $first['form_source_row_collisions'] ?? null );
-        $this->assertGreaterThanOrEqual( 8, $first['form_source_rows_updated'] ?? 0 );
+        $this->assertSame( 7, $first['form_source_rows_updated'] ?? null );
         $this->assertSame( 0, $second['form_source_rows_updated'] ?? null );
         $this->assertSame( 0, $second['form_source_row_collisions'] ?? null );
+    }
+
+    public function test_installer_retries_elementor_option_rename_after_transient_write_failure(): void
+    {
+        global $wpdb;
+
+        $legacy_key        = 'sentient_forms_actions_elementor_forms_304_formabc';
+        $canonical_key     = 'sentient_forms_actions_elementor_pro_forms_304_formabc';
+        $this->option_keys = array_merge( $this->option_keys, [ $legacy_key, $canonical_key ] );
+        $old_db_version    = '2026.06.28.execution_event_identity';
+
+        update_option( 'sentient_forms_db_version', $old_db_version, false );
+        update_option( $legacy_key, [ 'source' => 'legacy' ], false );
+
+        $fail_canonical_insert = static function ( string $query ) use ( $canonical_key ): string {
+            if ( str_contains( $query, 'INSERT INTO' ) && str_contains( $query, $canonical_key ) )
+            {
+                return 'SENTIENT FORMS FORCED OPTION WRITE FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_canonical_insert );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_canonical_insert );
+        }
+
+        $this->assertSame( $old_db_version, get_option( 'sentient_forms_db_version' ) );
+        $this->assertSame( [ 'source' => 'legacy' ], get_option( $legacy_key ) );
+        $this->assertFalse( get_option( $canonical_key, false ) );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $this->assertFalse( get_option( $legacy_key, false ) );
+        $this->assertSame( [ 'source' => 'legacy' ], get_option( $canonical_key ) );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
     }
 
     public function test_installer_upgrade_runs_elementor_identifier_migration_once(): void
@@ -333,6 +376,40 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         $this->assertFalse( get_option( $legacy_key, false ) );
         $this->assertSame( [ 'source' => 'legacy' ], get_option( $canonical_key ) );
         $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_elementor_async_metadata_migrates_queued_identity_fields_only(): void
+    {
+        $option_key          = 'sentient_forms_async_jobs';
+        $this->option_keys[] = $option_key;
+
+        update_option(
+            $option_key,
+            [
+                'legacy-job' => [
+                    'context' => [
+                        'form_source' => 'elementor_forms',
+                        'adapter_id'  => 'elementor_forms',
+                    ],
+                    'payload' => [
+                        'form_source' => 'elementor_forms',
+                        'context'     => [ 'form_source' => 'elementor_forms' ],
+                        'message'     => 'elementor_forms is not an identity here',
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+        $stored  = get_option( $option_key, [] );
+
+        $this->assertSame( 1, $summary['async_metadata_jobs_updated'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $stored['legacy-job']['context']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $stored['legacy-job']['context']['adapter_id'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $stored['legacy-job']['payload']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $stored['legacy-job']['payload']['context']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms is not an identity here', $stored['legacy-job']['payload']['message'] ?? null );
     }
 
     private function insert_legacy_elementor_rows( string $form_id, string $now ): void

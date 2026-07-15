@@ -4403,7 +4403,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
-    public function test_handle_after_submission_skips_dependent_mapping_when_upstream_spam_mapping_skips_downstream(): void
+    public function test_handle_after_submission_defaults_to_skip_dependent_mapping_after_upstream_spam(): void
     {
         $form_id            = 982;
         $option_key         = 'sentient_forms_actions_gravity_forms_' . $form_id;
@@ -4432,8 +4432,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     'mark_as_spam'               => true,
                     'trigger_hooks'              => [ 'gform_after_submission' ],
                     'settings'                   => [
-                        'execution_mode'          => 'validation',
-                        'skip_downstream_on_spam' => true,
+                        'execution_mode' => 'validation',
                     ],
                 ],
                 'map_dependent' => [
@@ -4467,6 +4466,79 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->adapter->handle_accepted_submission(
             [ 'id' => 313, 'status' => 'active' ],
+            [ 'id' => $form_id ]
+        );
+
+        $this->assertSame( 0, $execution_calls );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_honors_dependent_skip_on_upstream_spam_opt_in(): void
+    {
+        $form_id            = 983;
+        $option_key         = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $tracking_action_id = 'test_dependent_spam_skip_action';
+        $execution_calls    = 0;
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $tracking_action_id,
+                static function () use ( &$execution_calls ): void {
+                    $execution_calls++;
+                }
+            )
+        );
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'action_name_label'          => 'Spam Detection',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'execution_mode'          => 'validation',
+                        'skip_downstream_on_spam' => false,
+                    ],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => $tracking_action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids'      => [ 'map_spam' ],
+                        'execution_mode'      => 'validation',
+                        'skip_on_upstream_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->set_action_executor(
+            new Sentient_Forms_Test_Validation_Action_Executor(
+                Sentient_Forms_Plugin::instance(),
+                static function (): array {
+                    return [
+                        'result_data' => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.98,
+                            'justification'  => 'Dependent opt-in should stop downstream work.',
+                        ],
+                    ];
+                }
+            )
+        );
+
+        $this->adapter->handle_accepted_submission(
+            [ 'id' => 314, 'status' => 'active' ],
             [ 'id' => $form_id ]
         );
 

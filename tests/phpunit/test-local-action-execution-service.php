@@ -3219,6 +3219,44 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
     }
 
+    public function test_gravity_post_execution_entry_note_without_entry_id_is_skipped_not_failed(): void
+    {
+        $effects = ( new Sentient_Forms_Local_Result_Applier() )->apply(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '42',
+                'effect_mapping_json' => [
+                    'post_execution_actions' => [
+                        [
+                            'type'    => 'entry_note',
+                            'message' => 'Result: {{structured.summary}}',
+                        ],
+                    ],
+                ],
+            ],
+            [ 'id' => '42', 'title' => 'Gravity validation form' ],
+            [ 'id' => null ],
+            [
+                'execution_request_id' => 'gravity-missing-entry-post-note',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'structured' => [ 'summary' => 'Validation-time result.' ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $effects['failed'] );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'post_execution:entry_note',
+                    'reason' => 'missing_entry_id',
+                ],
+            ],
+            $effects['skipped']
+        );
+    }
+
     public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

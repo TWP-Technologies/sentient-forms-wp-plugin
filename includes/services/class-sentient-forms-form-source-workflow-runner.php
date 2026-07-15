@@ -401,7 +401,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            if ( $this->should_skip_for_upstream_spam( $dependency_ids, $resolved_mappings, $execution_results ) )
+            if ( $this->should_skip_for_upstream_spam( $dependency_ids, $resolved_mappings, $execution_results, $action_settings ) )
             {
                 $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
                 continue;
@@ -689,7 +689,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         ];
         $events->record( $event_base );
 
-        $result = $execute();
+        try
+        {
+            $result = $execute();
+        }
+        catch ( Throwable )
+        {
+            $result = new WP_Error(
+                'sentient_forms_synchronous_execution_exception',
+                __( 'Synchronous accepted action failed.', 'sentient-forms' )
+            );
+        }
+
         if ( is_wp_error( $result ) )
         {
             $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
@@ -1398,13 +1409,21 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * @param array<int, mixed>                       $dependency_ids
      * @param array<string, array<string, mixed>>     $resolved_mappings
      * @param array<string, mixed>                    $execution_results
+     * @param array<string, mixed>                    $dependent_mapping
      */
     private function should_skip_for_upstream_spam(
         array $dependency_ids,
         array $resolved_mappings,
-        array $execution_results
+        array $execution_results,
+        array $dependent_mapping
     ): bool
     {
+        $dependent_settings = isset( $dependent_mapping['settings'] ) && is_array( $dependent_mapping['settings'] )
+            ? $dependent_mapping['settings']
+            : [];
+        $dependent_opted_in = array_key_exists( 'skip_on_upstream_spam', $dependent_settings )
+            && rest_sanitize_boolean( $dependent_settings['skip_on_upstream_spam'] );
+
         foreach ( $dependency_ids as $dependency_id )
         {
             if ( ! is_scalar( $dependency_id ) )
@@ -1420,19 +1439,35 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
-            if ( empty( $settings['skip_downstream_on_spam'] ) )
+            if ( ! in_array( $this->extract_spam_classification( $result ), [ 'spam', 'likely_spam' ], true ) )
             {
                 continue;
             }
 
-            if ( in_array( $this->extract_spam_classification( $result ), [ 'spam', 'likely_spam' ], true ) )
+            if ( $dependent_opted_in )
+            {
+                return true;
+            }
+
+            if ( ! $this->is_spam_action_id( $this->central_action_id( $mapping ) ) )
+            {
+                continue;
+            }
+
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+            if ( ! array_key_exists( 'skip_downstream_on_spam', $settings )
+                || rest_sanitize_boolean( $settings['skip_downstream_on_spam'] ) )
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function is_spam_action_id( string $action_id ): bool
+    {
+        return in_array( sanitize_key( $action_id ), [ 'spam_detection_v1', 'spam_analysis' ], true );
     }
 
     /**

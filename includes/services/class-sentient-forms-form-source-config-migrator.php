@@ -19,6 +19,8 @@ final class Sentient_Forms_Form_Source_Config_Migrator
 
     private const ELEMENTOR_FORM_SOURCE = 'elementor_pro_forms';
 
+    private const ASYNC_METADATA_OPTION = 'sentient_forms_async_jobs';
+
     /**
      * Option namespaces whose keys contain the Form Source identifier.
      *
@@ -61,11 +63,13 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             'form_source_option_failures'    => 0,
             'form_source_rows_updated'       => 0,
             'form_source_row_collisions'     => 0,
+            'async_metadata_jobs_updated'    => 0,
         ];
 
         self::migrate_option_backed_configuration( $summary );
         self::migrate_local_first_mapping_rows( $summary );
         self::migrate_elementor_option_keys( $summary );
+        self::migrate_elementor_async_metadata( $summary );
         self::migrate_elementor_storage_rows( $summary );
 
         return $summary;
@@ -429,6 +433,64 @@ final class Sentient_Forms_Form_Source_Config_Migrator
     }
 
     /**
+     * Rewrite durable job metadata without treating arbitrary string values as
+     * Form Source identities. Action Scheduler payloads are tolerated at their
+     * internal dequeue boundary because its serialized argument store is not a
+     * plugin-owned migration surface.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_async_metadata( array &$summary ): void
+    {
+        $stored = get_option( self::ASYNC_METADATA_OPTION, null );
+        if ( ! is_array( $stored ) )
+        {
+            return;
+        }
+
+        $migrated = self::migrate_elementor_identity_fields( $stored );
+        if ( $migrated === $stored )
+        {
+            return;
+        }
+
+        if ( update_option( self::ASYNC_METADATA_OPTION, $migrated, false ) )
+        {
+            $summary['async_metadata_jobs_updated']++;
+            return;
+        }
+
+        $summary['form_source_option_failures']++;
+    }
+
+    /**
+     * @param array<array-key, mixed> $payload
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function migrate_elementor_identity_fields( array $payload ): array
+    {
+        foreach ( $payload as $key => $value )
+        {
+            if ( is_string( $key )
+                && in_array( $key, [ 'form_source', 'adapter_id' ], true )
+                && is_scalar( $value )
+                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $value ) )
+            {
+                $payload[ $key ] = self::ELEMENTOR_FORM_SOURCE;
+                continue;
+            }
+
+            if ( is_array( $value ) )
+            {
+                $payload[ $key ] = self::migrate_elementor_identity_fields( $value );
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
      * Resolve the source/form unique key in ledger settings deterministically.
      * Existing canonical rows are authoritative and remain byte-for-byte intact.
      *
@@ -483,7 +545,6 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                 $deleted = $wpdb->delete( $table, [ 'id' => $legacy_id ], [ '%d' ] );
                 if ( false !== $deleted )
                 {
-                    $summary['form_source_rows_updated'] += (int) $deleted;
                     $summary['form_source_row_collisions']++;
                 }
                 continue;

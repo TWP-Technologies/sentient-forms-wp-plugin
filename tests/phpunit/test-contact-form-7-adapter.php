@@ -702,6 +702,62 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'failed', $events[0]['status'] ?? null );
     }
 
+    public function test_synchronous_accepted_exception_is_recorded_as_terminal_failure(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_throwing_action';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function (): never {
+                    throw new RuntimeException( 'Private provider exception details.' );
+                }
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'throwing_action' => [
+                    'local_mapping_id'           => 'throwing_action',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Throwing fixture action',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['throwing_action'] ?? null );
+        $error = $outcome->get_execution_result( 'throwing_action' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $error->get_error_code() );
+
+        $logs = get_option( 'sentient_forms_action_log', [] );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $logs[0]['error_code'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', wp_json_encode( $logs ) );
+
+        $execution_request_id = (string) ( $logs[0]['execution_request_id'] ?? '' );
+        $request = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $execution_request_id, 'accepted_sync' );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', (string) ( $request['last_error'] ?? '' ) );
+
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $execution_request_id );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_synchronous_execution_exception', $event['error_code'] ?? null );
+        $this->assertStringNotContainsString( 'Private provider', (string) ( $event['error_message'] ?? '' ) );
+    }
+
     public function test_synchronous_accepted_failure_retries_only_when_explicitly_safe(): void
     {
         global $wpdb;

@@ -402,7 +402,42 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertNotEmpty( $job['args']['context']['job_id'] );
 		$this->assertSame( 3, $job['args']['context']['max_attempts'] );
 		$this->assertSame( 60, $job['args']['context']['backoff_base_delay'] );
-			$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+		$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+    }
+
+    public function test_process_action_normalizes_legacy_elementor_identity_from_queued_payload(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $this->plugin->get_async_handler()->process_action(
+            'entry_summary_v1',
+            [
+                'form_source' => 'elementor_forms',
+                'form'        => [
+                    'id'          => '91:formabc',
+                    'form_source' => 'elementor_forms',
+                ],
+                'entry'       => [
+                    'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+                    'form_source'      => 'elementor_forms',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            null,
+            [
+                'form_source' => 'elementor_forms',
+                'adapter_id'  => 'elementor_forms',
+                'form_id'     => '91:formabc',
+            ]
+        );
+
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['adapter_id'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $executor->captured['form']['form_source'] ?? null );
     }
 
     public function test_process_action_async_batch_settings_strip_discount_percent_at_runtime(): void
