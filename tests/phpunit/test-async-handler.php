@@ -932,6 +932,182 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'queued', $row['status'] ?? null );
     }
 
+    public function test_process_action_executes_when_dependency_initial_outcome_is_replayed_success(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 211, 'title' => 'Replayed dependency success' ],
+                'entry' => [ 'id' => 911, 'field_1' => 'execute now' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            [
+                'hook'                             => 'gform_after_submission',
+                'form_source'                      => 'gravity_forms',
+                'action_id'                        => 'map_dependent',
+                'local_mapping_id'                 => 'map_dependent',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => 'accepted_sync_replayed_success' ],
+                'dependency_initial_outcomes'      => [ 'map_prereq' => 'replayed_success' ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job           = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+        $this->plugin->get_async_handler()->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertSame( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+        $this->assertSame( 'entry_summary_v1', $executor->captured['central_action_id'] ?? null );
+
+        $row = $this->plugin->get_async_request_store()->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'success', $row['status'] ?? null );
+    }
+
+    public function test_process_action_reads_replayed_active_dependency_from_accepted_sync_store(): void
+    {
+        $request_store         = $this->plugin->get_async_request_store();
+        $dependency_request_id = 'accepted_sync_replayed_active';
+        $claim                 = $request_store->claim_execution(
+            $dependency_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-replayed-active' ),
+            ],
+            false,
+            'accepted_sync'
+        );
+        $this->assertSame( 'claimed', $claim['state'] ?? null );
+        $request_store->mark_status( $dependency_request_id, 'success', null, 'accepted_sync' );
+
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 212, 'title' => 'Accepted sync dependency' ],
+                'entry' => [ 'id' => 912, 'field_1' => 'continue after sync completion' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+            ],
+            [
+                'hook'                             => 'gform_after_submission',
+                'form_source'                      => 'gravity_forms',
+                'action_id'                        => 'map_dependent',
+                'local_mapping_id'                 => 'map_dependent',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $dependency_request_id ],
+                'dependency_initial_outcomes'      => [ 'map_prereq' => 'replayed_active' ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job           = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+        $this->plugin->get_async_handler()->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertSame( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+        $this->assertSame( 'entry_summary_v1', $executor->captured['central_action_id'] ?? null );
+    }
+
+    public function test_process_action_promotes_only_allowlisted_nested_adapter_completion_settings(): void
+    {
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $completion_context = null;
+        $capture_context    = static function ( array $context ) use ( &$completion_context ): void {
+            $completion_context = $context;
+        };
+        add_action( 'sentient_forms_async_success', $capture_context, 10, 1 );
+
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'spam_detection_v1',
+                [
+                    'hook'  => 'gform_after_submission',
+                    'form'  => [ 'id' => 213, 'title' => 'Adapter completion settings' ],
+                    'entry' => [ 'id' => 913, 'field_1' => 'runtime settings' ],
+                ],
+                [
+                    'central_action_id'     => 'spam_detection_v1',
+                    'action_type_indicator' => 'master',
+                    'mark_as_spam'          => true,
+                    'settings'              => [
+                        'spam_confidence_threshold' => 0.95,
+                        'spam_result_display_mode'  => 'none',
+                        'spam_indicators_display'   => 'detailed',
+                        'central_action_id'          => 'nested_identity_override',
+                        'form_source'               => 'contact_form_7',
+                        'action_id'                 => 'nested_action_override',
+                        'job_id'                    => 'nested_job_override',
+                    ],
+                ],
+                [
+                    'hook'        => 'gform_after_submission',
+                    'form_source' => 'gravity_forms',
+                    'action_id'   => 'map_spam',
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $this->plugin->get_async_handler()->process_action(
+                $job['args']['action_id'],
+                $job['args']['data'],
+                $job['args']['settings'],
+                $job['args']['execution_request_id'],
+                $job['args']['context'],
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_success', $capture_context, 10 );
+        }
+
+        $this->assertIsArray( $completion_context );
+        $this->assertSame( 0.95, $completion_context['spam_confidence_threshold'] ?? null );
+        $this->assertSame( 'none', $completion_context['spam_result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $completion_context['spam_indicators_display'] ?? null );
+        $this->assertSame( 'spam_detection_v1', $completion_context['central_action_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $completion_context['form_source'] ?? null );
+        $this->assertSame( 'map_spam', $completion_context['action_id'] ?? null );
+        $this->assertNotSame( 'nested_job_override', $completion_context['job_id'] ?? null );
+    }
+
     public function test_process_action_marks_skipped_when_dependency_failed(): void
     {
         $request_store = $this->plugin->get_async_request_store();

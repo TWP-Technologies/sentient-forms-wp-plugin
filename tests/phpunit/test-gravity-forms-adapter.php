@@ -358,6 +358,15 @@ final class Sentient_Forms_Test_Spy_Local_Action_Execution_Service extends Senti
     /** @var array<int, array<string, mixed>> */
     public array $calls = [];
 
+    /** @var array<string, mixed> */
+    public array $result = [ 'result_data' => [ 'summary' => 'Inline local result' ] ];
+
+    public bool $record_rich_event = false;
+
+    public ?WP_Error $error = null;
+
+    public ?string $recorded_status = null;
+
     public function __construct()
     {
     }
@@ -366,7 +375,34 @@ final class Sentient_Forms_Test_Spy_Local_Action_Execution_Service extends Senti
     {
         $this->calls[] = compact( 'mapping_id', 'form', 'entry', 'context' );
 
-        return [ 'result_data' => [ 'summary' => 'Inline local result' ] ];
+        if ( $this->record_rich_event )
+        {
+            global $wpdb;
+
+            ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+                [
+                    'execution_request_id' => $context['execution_request_id'] ?? '',
+                    'mapping_key'          => $context['mapping_id'] ?? null,
+                    'action_code'          => 'local_custom_action',
+                    'form_source'          => $context['form_source'] ?? null,
+                    'form_id'              => $context['form_id'] ?? null,
+                    'entry_id'             => $context['entry_id'] ?? null,
+                    'submission_uuid'      => $context['submission_uuid'] ?? null,
+                    'provider'             => 'sentient_managed',
+                    'model'                => 'provider/model-rich-event',
+                    'status'               => $this->recorded_status
+                        ?? ( $this->error instanceof WP_Error ? 'failed' : 'succeeded' ),
+                    'token_usage_json'     => [ 'input_tokens' => 11, 'output_tokens' => 7 ],
+                    'cost_json'            => [ 'debited_credits' => 4 ],
+                    'result_json'          => [ 'executor_owned' => true ],
+                    'payload_digest'       => 'provider-payload-digest',
+                    'error_code'           => $this->error instanceof WP_Error ? $this->error->get_error_code() : null,
+                    'error_message'        => $this->error instanceof WP_Error ? 'Executor-owned safe error.' : null,
+                ]
+            );
+        }
+
+        return $this->error ?? $this->result;
     }
 }
 
@@ -1108,6 +1144,17 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
 
         $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $local_execution->result = [
+            'result_data'            => [ 'summary' => 'Inline local result' ],
+            'native_effect_outcomes' => [
+                [
+                    'effect' => 'store_result',
+                    'status' => 'applied',
+                    'reason' => 'executor_native_effect',
+                ],
+            ],
+        ];
+        $local_execution->record_rich_event = true;
         $runner          = new Sentient_Forms_Form_Source_Workflow_Runner(
             Sentient_Forms_Plugin::instance(),
             null,
@@ -1135,6 +1182,440 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 91, $local_execution->calls[0]['mapping_id'] ?? null );
         $this->assertSame( $submission_uuid, $local_execution->calls[0]['context']['submission_uuid'] ?? null );
         $this->assertSame( [], $scheduled_jobs );
+
+        global $wpdb;
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
+            (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' )
+        );
+        $this->assertSame( 'sentient_managed', $event['provider'] ?? null );
+        $this->assertSame( 'provider/model-rich-event', $event['model'] ?? null );
+        $this->assertSame( 11, $event['token_usage_json']['input_tokens'] ?? null );
+        $this->assertSame( 7, $event['token_usage_json']['output_tokens'] ?? null );
+        $this->assertSame( 4, $event['cost_json']['debited_credits'] ?? null );
+        $this->assertSame( 'provider-payload-digest', $event['payload_digest'] ?? null );
+        $this->assertTrue( $event['result_json']['executor_owned'] ?? false );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'store_result',
+                    'status' => 'applied',
+                    'reason' => 'executor_native_effect',
+                ],
+            ],
+            $event['result_json']['native_effect_outcomes'] ?? null
+        );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1710, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Sync local first', 'fields' => [] ]
+        );
+        $replayed = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
+            (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' )
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame( $event, $replayed );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_structured_spam_skips_dependent_mapping(): void
+    {
+        $form_id         = 789;
+        $option_key      = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $dependent_calls = 0;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                'local_structured_spam_dependent',
+                static function () use ( &$dependent_calls ): array {
+                    ++$dependent_calls;
+
+                    return [ 'summary' => 'Dependent should not run.' ];
+                }
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'local_first_92' => [
+                    'local_mapping_id'           => 'local_first_92',
+                    'local_form_mapping_id'      => 92,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'                   => false,
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+                'local_structured_spam_dependent' => [
+                    'local_mapping_id'           => 'local_structured_spam_dependent',
+                    'central_action_id'          => 'local_structured_spam_dependent',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => false,
+                        'dependency_ids' => [ 'local_first_92' ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $local_execution->result = [
+            'result' => [
+                'structured' => [ 'classification' => 'spam' ],
+            ],
+        ];
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1711, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Structured local spam', 'fields' => [] ]
+        );
+
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame( 0, $dependent_calls );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_failure_preserves_executor_terminal_evidence(): void
+    {
+        $form_id    = 790;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        update_option(
+            $option_key,
+            [
+                'local_first_failure' => [
+                    'local_mapping_id'           => 'local_first_failure',
+                    'local_form_mapping_id'      => 93,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution                    = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $local_execution->record_rich_event = true;
+        $local_execution->error             = new WP_Error( 'provider_failure', 'Private provider detail.' );
+        $runner                             = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter                            = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1712, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Failed local execution', 'fields' => [] ]
+        );
+
+        global $wpdb;
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
+            (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' )
+        );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_managed', $event['provider'] ?? null );
+        $this->assertSame( 'provider/model-rich-event', $event['model'] ?? null );
+        $this->assertSame( 11, $event['token_usage_json']['input_tokens'] ?? null );
+        $this->assertSame( 7, $event['token_usage_json']['output_tokens'] ?? null );
+        $this->assertSame( 4, $event['cost_json']['debited_credits'] ?? null );
+        $this->assertSame( 'provider-payload-digest', $event['payload_digest'] ?? null );
+        $this->assertSame( 'provider_failure', $event['error_code'] ?? null );
+        $this->assertSame( 'Executor-owned safe error.', $event['error_message'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_fails_closed_on_executor_terminal_status_mismatch(): void
+    {
+        $form_id    = 791;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        update_option(
+            $option_key,
+            [
+                'local_first_mismatch' => [
+                    'local_mapping_id'           => 'local_first_mismatch',
+                    'local_form_mapping_id'      => 94,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution                        = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $local_execution->record_rich_event     = true;
+        $local_execution->recorded_status       = 'failed';
+        $runner                                 = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter                                = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Mismatched local execution', 'fields' => [] ]
+        );
+
+        global $wpdb;
+        $request_id = (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' );
+        $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_executor_terminal_status_mismatch', $event['error_code'] ?? null );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_fails_closed_when_terminal_enrichment_cannot_be_persisted(): void
+    {
+        global $wpdb;
+
+        $form_id    = 792;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        update_option(
+            $option_key,
+            [
+                'local_first_enrichment_failure' => [
+                    'local_mapping_id'           => 'local_first_enrichment_failure',
+                    'local_form_mapping_id'      => 95,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution                    = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $local_execution->record_rich_event = true;
+        $local_execution->result            = [
+            'native_effect_outcomes' => [
+                [
+                    'effect' => 'store_result',
+                    'status' => 'applied',
+                    'reason' => 'executor_native_effect',
+                ],
+            ],
+        ];
+        $runner                             = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter                            = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $event_updates = 0;
+        $fail_enrichment_update = static function ( string $query ) use ( &$event_updates ): string
+        {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE' ) && str_contains( $query, 'sentient_execution_events' ) )
+            {
+                ++$event_updates;
+                if ( 2 === $event_updates )
+                {
+                    return 'SENTIENT FORMS FORCED EXECUTION EVENT UPDATE FAILURE';
+                }
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_enrichment_update );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            $adapter->handle_accepted_submission(
+                [ 'id' => 1714, 'form_id' => $form_id, 'status' => 'active' ],
+                [ 'id' => $form_id, 'title' => 'Enrichment write failure', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_enrichment_update );
+        }
+
+        $request_id = (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' );
+        $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
+        $this->assertSame( 3, $event_updates );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_executor_terminal_enrichment_failed', $event['error_code'] ?? null );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'sentient_managed', $event['provider'] ?? null );
+        $this->assertSame( 'provider-payload-digest', $event['payload_digest'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_does_not_execute_when_running_event_cannot_be_persisted(): void
+    {
+        global $wpdb;
+
+        sentient_forms_tests_reset_async_state();
+        $form_id    = 793;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        update_option(
+            $option_key,
+            [
+                'local_first_initial_event_failure' => [
+                    'local_mapping_id'           => 'local_first_initial_event_failure',
+                    'local_form_mapping_id'      => 96,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter         = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $event_inserts = 0;
+        $fail_running_event = static function ( string $query ) use ( &$event_inserts ): string
+        {
+            if ( str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, 'sentient_execution_events' ) )
+            {
+                ++$event_inserts;
+                return 'SENTIENT FORMS FORCED EXECUTION EVENT INSERT FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_running_event );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            $adapter->handle_accepted_submission(
+                [ 'id' => 1715, 'form_id' => $form_id, 'status' => 'active' ],
+                [ 'id' => $form_id, 'title' => 'Initial event failure', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_running_event );
+        }
+
+        $requests = Sentient_Forms_Plugin::instance()->get_async_request_store()->list(
+            [ 'record_type' => 'accepted_sync', 'limit' => 5 ]
+        );
+        $this->assertSame( 1, $event_inserts );
+        $this->assertCount( 0, $local_execution->calls );
+        $this->assertCount( 1, $requests );
+        $this->assertSame( 'failed', $requests[0]['status'] ?? null );
+        $this->assertNull(
+            ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
+                (string) ( $requests[0]['request_hash'] ?? '' )
+            )
+        );
+
+        delete_option( $option_key );
+    }
+
+    public function test_sync_local_first_fails_closed_when_fallback_terminal_event_cannot_be_persisted(): void
+    {
+        global $wpdb;
+
+        sentient_forms_tests_reset_async_state();
+        $form_id    = 794;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        update_option(
+            $option_key,
+            [
+                'local_first_fallback_event_failure' => [
+                    'local_mapping_id'           => 'local_first_fallback_event_failure',
+                    'local_form_mapping_id'      => 97,
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'local_first',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
+        $runner          = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter         = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $event_updates = 0;
+        $fail_terminal_update = static function ( string $query ) use ( &$event_updates ): string
+        {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE' ) && str_contains( $query, 'sentient_execution_events' ) )
+            {
+                ++$event_updates;
+                if ( 1 === $event_updates )
+                {
+                    return 'SENTIENT FORMS FORCED FALLBACK EVENT UPDATE FAILURE';
+                }
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_terminal_update );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            $adapter->handle_accepted_submission(
+                [ 'id' => 1716, 'form_id' => $form_id, 'status' => 'active' ],
+                [ 'id' => $form_id, 'title' => 'Fallback event failure', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_terminal_update );
+        }
+
+        $requests = Sentient_Forms_Plugin::instance()->get_async_request_store()->list(
+            [ 'record_type' => 'accepted_sync', 'limit' => 5 ]
+        );
+        $request_id = (string) ( $requests[0]['request_hash'] ?? '' );
+        $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $this->assertSame( 2, $event_updates );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame( 'failed', $requests[0]['status'] ?? null );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_runner_terminal_persistence_failed', $event['error_code'] ?? null );
 
         delete_option( $option_key );
     }

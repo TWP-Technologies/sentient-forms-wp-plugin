@@ -687,7 +687,33 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             'status'               => 'running',
             'payload_digest'       => $digest,
         ];
-        $events->record( $event_base );
+        $running_event = $events->record( $event_base );
+        if ( is_wp_error( $running_event ) )
+        {
+            $safe_error = __( 'Synchronous accepted action could not be initialized.', 'sentient-forms' );
+            $result     = new WP_Error(
+                'sentient_forms_execution_event_initialization_failed',
+                $safe_error
+            );
+            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
+            $this->log_synchronous_accepted_failure(
+                $form_source,
+                $form_id,
+                $entry_id,
+                $mapping_id,
+                $mapping,
+                $submission_uuid,
+                $execution_request_id,
+                $result,
+                $native_effect_outcomes
+            );
+
+            return [
+                'outcome'                => 'failed',
+                'result'                 => $result,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
 
         try
         {
@@ -704,14 +730,28 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( is_wp_error( $result ) )
         {
             $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
-            $events->record(
-                array_merge( $event_base, [
-                    'status'        => 'failed',
-                    'error_code'    => $result->get_error_code(),
-                    'error_message' => $safe_error,
-                    'result_json'   => [ 'native_effect_outcomes' => $native_effect_outcomes ],
-                ] )
+            $terminal_event = $this->preserve_executor_terminal_event(
+                $events,
+                $execution_request_id,
+                $native_effect_outcomes,
+                'failed'
             );
+            if ( false === $terminal_event )
+            {
+                $terminal_event = $this->record_runner_terminal_event(
+                    $events,
+                    array_merge( $event_base, [
+                        'status'        => 'failed',
+                        'error_code'    => $result->get_error_code(),
+                        'error_message' => $safe_error,
+                        'result_json'   => [ 'native_effect_outcomes' => $native_effect_outcomes ],
+                    ] )
+                );
+            }
+            if ( is_wp_error( $terminal_event ) )
+            {
+                $result = $terminal_event;
+            }
             $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
             $this->log_synchronous_accepted_failure(
                 $form_source,
@@ -745,12 +785,44 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         {
             $stored_result['native_effect_outcomes'] = $native_effect_outcomes;
         }
-        $events->record(
-            array_merge( $event_base, [
-                'status'      => 'succeeded',
-                'result_json' => $stored_result,
-            ] )
+        $terminal_event = $this->preserve_executor_terminal_event(
+            $events,
+            $execution_request_id,
+            $native_effect_outcomes,
+            'succeeded'
         );
+        if ( false === $terminal_event )
+        {
+            $terminal_event = $this->record_runner_terminal_event(
+                $events,
+                array_merge( $event_base, [
+                    'status'      => 'succeeded',
+                    'result_json' => $stored_result,
+                ] )
+            );
+        }
+        if ( is_wp_error( $terminal_event ) )
+        {
+            $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
+            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
+            $this->log_synchronous_accepted_failure(
+                $form_source,
+                $form_id,
+                $entry_id,
+                $mapping_id,
+                $mapping,
+                $submission_uuid,
+                $execution_request_id,
+                $terminal_event,
+                $native_effect_outcomes
+            );
+
+            return [
+                'outcome'                => 'failed',
+                'result'                 => $terminal_event,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
         $request_store->mark_status( $execution_request_id, 'success', null, 'accepted_sync' );
         $this->log_synchronous_accepted_success(
             $form_source,
@@ -786,6 +858,127 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
 
         return [] !== $stored ? $stored : $fallback;
+    }
+
+    /**
+     * Preserve a terminal event written by the concrete executor. Executor
+     * records own provider, model, usage, cost, and provider-payload evidence;
+     * the workflow runner only supplements native-effect outcomes.
+     *
+     * @param array<int, array{effect: string, status: string, reason: string}> $native_effect_outcomes
+     * @param 'succeeded'|'failed' $expected_status
+     *
+     * @return bool|WP_Error False when no executor terminal event exists.
+     */
+    private function preserve_executor_terminal_event(
+        Sentient_Forms_Execution_Events_Repository $events,
+        string $execution_request_id,
+        array $native_effect_outcomes,
+        string $expected_status
+    ): bool | WP_Error
+    {
+        $event = $events->get_by_request_id( $execution_request_id );
+        if ( ! is_array( $event ) )
+        {
+            return false;
+        }
+
+        $status = sanitize_key( (string) ( $event['status'] ?? '' ) );
+        if ( ! in_array( $status, [ 'succeeded', 'success', 'failed', 'error' ], true ) )
+        {
+            return false;
+        }
+
+        $result_json = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        if ( [] !== $native_effect_outcomes )
+        {
+            $result_json['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::merge(
+                Sentient_Forms_Native_Effect_Outcomes::from_execution_result( $result_json ),
+                $native_effect_outcomes
+            );
+            $event['result_json'] = $result_json;
+        }
+
+        $actual_succeeded   = in_array( $status, [ 'succeeded', 'success' ], true );
+        $expected_succeeded = 'succeeded' === $expected_status;
+        if ( $actual_succeeded !== $expected_succeeded )
+        {
+            return $this->record_terminal_invariant_failure(
+                $events,
+                $event,
+                'sentient_forms_executor_terminal_status_mismatch'
+            );
+        }
+
+        if ( [] !== $native_effect_outcomes )
+        {
+            $recorded = $events->record( $event );
+            if ( is_wp_error( $recorded ) )
+            {
+                return $this->record_terminal_invariant_failure(
+                    $events,
+                    $event,
+                    'sentient_forms_executor_terminal_enrichment_failed'
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Record a runner-owned terminal event and fail closed when its first
+     * persistence attempt fails after execution has already occurred.
+     *
+     * @param array<string, mixed> $event
+     *
+     * @return true|WP_Error
+     */
+    private function record_runner_terminal_event(
+        Sentient_Forms_Execution_Events_Repository $events,
+        array $event
+    ): true | WP_Error
+    {
+        $recorded = $events->record( $event );
+        if ( ! is_wp_error( $recorded ) )
+        {
+            return true;
+        }
+
+        return $this->record_terminal_invariant_failure(
+            $events,
+            $event,
+            'sentient_forms_runner_terminal_persistence_failed'
+        );
+    }
+
+    /**
+     * Preserve executor evidence while making a terminal invariant failure
+     * explicit and retryable at the orchestration boundary.
+     *
+     * @param array<string, mixed> $event
+     */
+    private function record_terminal_invariant_failure(
+        Sentient_Forms_Execution_Events_Repository $events,
+        array $event,
+        string $error_code
+    ): WP_Error
+    {
+        $safe_error             = __( 'Synchronous accepted action evidence could not be finalized.', 'sentient-forms' );
+        $event['status']        = 'failed';
+        $event['error_code']    = $error_code;
+        $event['error_message'] = $safe_error;
+        $recorded               = $events->record( $event );
+
+        if ( is_wp_error( $recorded ) )
+        {
+            return new WP_Error(
+                'sentient_forms_terminal_invariant_persistence_failed',
+                $safe_error
+            );
+        }
+
+        return new WP_Error( $error_code, $safe_error );
     }
 
     /**
@@ -1477,6 +1670,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
     {
         $candidates = [
             $result['classification'] ?? null,
+            $result['structured']['classification'] ?? null,
+            $result['result']['structured']['classification'] ?? null,
             $result['result_data']['classification'] ?? null,
             $result['result_data']['structured_output']['classification'] ?? null,
             $result['structured_output']['classification'] ?? null,

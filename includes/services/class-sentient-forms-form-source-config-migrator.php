@@ -21,6 +21,10 @@ final class Sentient_Forms_Form_Source_Config_Migrator
 
     private const ASYNC_METADATA_OPTION = 'sentient_forms_async_jobs';
 
+    private const ACTION_LOG_OPTION = 'sentient_forms_action_log';
+
+    private const PLUGIN_SETTINGS_OPTION = 'sentient_forms_plugin_settings';
+
     /**
      * Option namespaces whose keys contain the Form Source identifier.
      *
@@ -74,6 +78,8 @@ final class Sentient_Forms_Form_Source_Config_Migrator
         self::migrate_option_backed_configuration( $summary );
         self::migrate_local_first_mapping_rows( $summary );
         self::migrate_elementor_option_keys( $summary );
+        self::migrate_elementor_action_log( $summary );
+        self::migrate_elementor_provider_disable_setting( $summary );
         self::migrate_elementor_async_metadata( $summary );
         self::migrate_elementor_storage_rows( $summary );
 
@@ -419,6 +425,87 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                 $summary['form_source_option_failures']++;
             }
         }
+    }
+
+    /**
+     * Rewrite only the top-level Form Source identity on legacy action-log rows.
+     * Nested result data and historical text are not identity fields.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_action_log( array &$summary ): void
+    {
+        $stored = get_option( self::ACTION_LOG_OPTION, null );
+        if ( ! is_array( $stored ) )
+        {
+            return;
+        }
+
+        $migrated = $stored;
+        foreach ( $migrated as $index => $entry )
+        {
+            if ( ! is_array( $entry )
+                || ! isset( $entry['form_source'] )
+                || ! is_scalar( $entry['form_source'] )
+                || self::LEGACY_ELEMENTOR_FORM_SOURCE !== sanitize_key( (string) $entry['form_source'] ) )
+            {
+                continue;
+            }
+
+            $migrated[ $index ]['form_source'] = self::ELEMENTOR_FORM_SOURCE;
+        }
+
+        if ( $migrated === $stored )
+        {
+            return;
+        }
+
+        if ( update_option( self::ACTION_LOG_OPTION, $migrated, false )
+            || $migrated === get_option( self::ACTION_LOG_OPTION, null ) )
+        {
+            return;
+        }
+
+        $summary['form_source_option_failures']++;
+    }
+
+    /**
+     * Move the legacy per-provider execution control to the canonical Form
+     * Source key. An existing canonical value is authoritative, including
+     * boolean false.
+     *
+     * @param array<string, int> $summary
+     */
+    private static function migrate_elementor_provider_disable_setting( array &$summary ): void
+    {
+        $settings = get_option( self::PLUGIN_SETTINGS_OPTION, null );
+        if ( ! is_array( $settings )
+            || ! isset( $settings['execution_provider_disabled'] )
+            || ! is_array( $settings['execution_provider_disabled'] ) )
+        {
+            return;
+        }
+
+        $provider_map = $settings['execution_provider_disabled'];
+        if ( ! array_key_exists( self::LEGACY_ELEMENTOR_FORM_SOURCE, $provider_map ) )
+        {
+            return;
+        }
+
+        if ( ! array_key_exists( self::ELEMENTOR_FORM_SOURCE, $provider_map ) )
+        {
+            $provider_map[ self::ELEMENTOR_FORM_SOURCE ] = $provider_map[ self::LEGACY_ELEMENTOR_FORM_SOURCE ];
+        }
+        unset( $provider_map[ self::LEGACY_ELEMENTOR_FORM_SOURCE ] );
+        $settings['execution_provider_disabled'] = $provider_map;
+
+        if ( update_option( self::PLUGIN_SETTINGS_OPTION, $settings, false )
+            || $settings === get_option( self::PLUGIN_SETTINGS_OPTION, null ) )
+        {
+            return;
+        }
+
+        $summary['form_source_option_failures']++;
     }
 
     /**

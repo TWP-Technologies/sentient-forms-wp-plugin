@@ -245,6 +245,190 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         $this->assertSame( 1, $summary['form_source_option_collisions'] ?? null );
     }
 
+    public function test_installer_migrates_elementor_action_log_identity_without_rewriting_nested_content(): void
+    {
+        $option_key          = 'sentient_forms_action_log';
+        $this->option_keys[] = $option_key;
+
+        update_option( 'sentient_forms_db_version', '2026.06.28.execution_event_identity', false );
+        update_option(
+            $option_key,
+            [
+                [
+                    'id'          => 'legacy-elementor-log',
+                    'form_source' => 'elementor_forms',
+                    'details'     => [
+                        'form_source' => 'elementor_forms',
+                        'message'     => 'elementor_forms remains ordinary historical text here',
+                    ],
+                ],
+                'malformed-entry-is-preserved',
+            ],
+            false
+        );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $stored = get_option( $option_key, [] );
+        $this->assertSame( 'elementor_pro_forms', $stored[0]['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $stored[0]['details']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms remains ordinary historical text here', $stored[0]['details']['message'] ?? null );
+        $this->assertSame( 'malformed-entry-is-preserved', $stored[1] ?? null );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_moves_legacy_elementor_provider_disable_setting_to_canonical_key(): void
+    {
+        $option_key          = 'sentient_forms_plugin_settings';
+        $this->option_keys[] = $option_key;
+
+        update_option( 'sentient_forms_db_version', '2026.06.28.execution_event_identity', false );
+        update_option(
+            $option_key,
+            [
+                'execution_provider_disabled' => [
+                    'gravity_forms'  => false,
+                    'elementor_forms' => true,
+                ],
+                'unrelated' => [ 'elementor_forms' => 'ordinary nested value' ],
+            ],
+            false
+        );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $stored       = get_option( $option_key, [] );
+        $provider_map = $stored['execution_provider_disabled'] ?? [];
+        $this->assertTrue( $provider_map['elementor_pro_forms'] ?? false );
+        $this->assertArrayNotHasKey( 'elementor_forms', $provider_map );
+        $this->assertFalse( $provider_map['gravity_forms'] ?? true );
+        $this->assertSame( [ 'elementor_forms' => 'ordinary nested value' ], $stored['unrelated'] ?? null );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_preserves_false_canonical_provider_disable_setting_on_legacy_collision(): void
+    {
+        $option_key          = 'sentient_forms_plugin_settings';
+        $this->option_keys[] = $option_key;
+
+        update_option( 'sentient_forms_db_version', '2026.06.28.execution_event_identity', false );
+        update_option(
+            $option_key,
+            [
+                'execution_provider_disabled' => [
+                    'elementor_forms'     => true,
+                    'elementor_pro_forms' => false,
+                ],
+            ],
+            false
+        );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $stored       = get_option( $option_key, [] );
+        $provider_map = $stored['execution_provider_disabled'] ?? [];
+        $this->assertArrayHasKey( 'elementor_pro_forms', $provider_map );
+        $this->assertFalse( $provider_map['elementor_pro_forms'] );
+        $this->assertArrayNotHasKey( 'elementor_forms', $provider_map );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_retries_elementor_action_log_identity_after_transient_write_failure(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_action_log';
+        $this->option_keys[] = $option_key;
+        $old_db_version      = '2026.06.28.execution_event_identity';
+
+        update_option( 'sentient_forms_db_version', $old_db_version, false );
+        update_option( $option_key, [ [ 'form_source' => 'elementor_forms' ] ], false );
+
+        $forced_writes = 0;
+        $fail_update   = static function ( string $query ) use ( $option_key, &$forced_writes ): string
+        {
+            if ( str_contains( $query, 'UPDATE' ) && str_contains( $query, $option_key ) )
+            {
+                ++$forced_writes;
+                return 'SENTIENT FORMS FORCED ACTION LOG UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_update );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_update );
+        }
+
+        $this->assertSame( 1, $forced_writes );
+        $this->assertSame( $old_db_version, get_option( 'sentient_forms_db_version' ) );
+        $this->assertSame( 'elementor_forms', get_option( $option_key )[0]['form_source'] ?? null );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $this->assertSame( 'elementor_pro_forms', get_option( $option_key )[0]['form_source'] ?? null );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_retries_elementor_provider_disable_setting_after_transient_write_failure(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_plugin_settings';
+        $this->option_keys[] = $option_key;
+        $old_db_version      = '2026.06.28.execution_event_identity';
+
+        update_option( 'sentient_forms_db_version', $old_db_version, false );
+        update_option(
+            $option_key,
+            [ 'execution_provider_disabled' => [ 'elementor_forms' => true ] ],
+            false
+        );
+
+        $forced_writes = 0;
+        $fail_update   = static function ( string $query ) use ( $option_key, &$forced_writes ): string
+        {
+            if ( str_contains( $query, 'UPDATE' ) && str_contains( $query, $option_key ) )
+            {
+                ++$forced_writes;
+                return 'SENTIENT FORMS FORCED PLUGIN SETTINGS UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_update );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_update );
+        }
+
+        $stored = get_option( $option_key, [] );
+        $this->assertSame( 1, $forced_writes );
+        $this->assertSame( $old_db_version, get_option( 'sentient_forms_db_version' ) );
+        $this->assertTrue( $stored['execution_provider_disabled']['elementor_forms'] ?? false );
+        $this->assertArrayNotHasKey( 'elementor_pro_forms', $stored['execution_provider_disabled'] ?? [] );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $stored = get_option( $option_key, [] );
+        $this->assertTrue( $stored['execution_provider_disabled']['elementor_pro_forms'] ?? false );
+        $this->assertArrayNotHasKey( 'elementor_forms', $stored['execution_provider_disabled'] ?? [] );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
     public function test_elementor_form_source_rows_migrate_across_every_owned_table_and_are_idempotent(): void
     {
         global $wpdb;

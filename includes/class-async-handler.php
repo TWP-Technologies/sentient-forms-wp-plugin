@@ -25,6 +25,11 @@ class Sentient_Forms_Async_Handler
 	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
 	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
     private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
+    private const ADAPTER_COMPLETION_SETTING_KEYS = [
+        'spam_confidence_threshold',
+        'spam_result_display_mode',
+        'spam_indicators_display',
+    ];
 
 	/**
 	 * Plugin instance
@@ -186,12 +191,8 @@ class Sentient_Forms_Async_Handler
 	private function handle_success( array $job, array $result ): void
 	{
 		$this->log_success( $job['action_id'], $result );
-		
-		// Merge settings into context so adapter can access them (mark_as_spam, spam_confidence_threshold, etc.)
-		$context_with_settings = array_merge(
-			$job['context'] ?? [],
-			$job['settings'] ?? []
-		);
+
+		$context_with_settings = $this->adapter_completion_context( $job );
 
 		if ( $this->should_record_provider_execution_event( $job ) )
 		{
@@ -213,6 +214,34 @@ class Sentient_Forms_Async_Handler
 			$this->get_request_store()->mark_status( $job['execution_request_id'], 'success' );
 		}
 	}
+
+    /**
+     * Build the adapter-facing completion context while promoting only the
+     * allowlisted nested runtime settings required by Form Source adapters.
+     *
+     * @param array<string, mixed> $job Async job payload.
+     *
+     * @return array<string, mixed>
+     */
+    private function adapter_completion_context( array $job ): array
+    {
+        $context      = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $job_settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $context      = array_merge( $context, $job_settings );
+        $settings     = isset( $job_settings['settings'] ) && is_array( $job_settings['settings'] )
+            ? $job_settings['settings']
+            : [];
+
+        foreach ( self::ADAPTER_COMPLETION_SETTING_KEYS as $key )
+        {
+            if ( array_key_exists( $key, $settings ) )
+            {
+                $context[ $key ] = $settings[ $key ];
+            }
+        }
+
+        return $context;
+    }
 
     private function handle_failure( array $job, WP_Error $error ): void
     {
@@ -2620,7 +2649,7 @@ class Sentient_Forms_Async_Handler
                 ];
             }
 
-            if ( in_array( $initial, [ 'succeeded', 'success' ], true ) )
+            if ( in_array( $initial, [ 'succeeded', 'success', 'replayed_success' ], true ) )
             {
                 continue;
             }
@@ -2645,6 +2674,10 @@ class Sentient_Forms_Async_Handler
             }
 
             $record = $this->get_request_store()->get( $dependency_request_id, 'job' );
+            if ( ! $record && 'replayed_active' === $initial )
+            {
+                $record = $this->get_request_store()->get( $dependency_request_id, 'accepted_sync' );
+            }
             if ( ! $record )
             {
                 $pending_dependencies[] = $dependency_id;
