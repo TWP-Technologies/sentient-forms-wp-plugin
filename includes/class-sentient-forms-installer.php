@@ -120,7 +120,7 @@ class Sentient_Forms_Installer
             else
             {
                 $migration_summary = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
-                $form_source_config_migration_complete = 0 === (int) ( $migration_summary['form_source_option_failures'] ?? 0 );
+                $form_source_config_migration_complete = 1 === (int) ( $migration_summary['migration_complete'] ?? 0 );
             }
         }
         self::repair_local_first_action_integrity();

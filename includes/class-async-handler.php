@@ -24,7 +24,7 @@ class Sentient_Forms_Async_Handler
 	private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
 	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
 	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
-	private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
+    private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
 
 	/**
 	 * Plugin instance
@@ -569,7 +569,7 @@ class Sentient_Forms_Async_Handler
 
 	private function normalize_context( array $context, string $action_id = '' ): array
 	{
-		$context        = $this->normalize_queued_form_source_identities( $context );
+        $context        = $this->normalize_queued_form_source_identities( $context );
 		$config         = $this->get_retry_config();
 		$attempt        = isset( $context['attempt'] ) ? max( 1, (int) $context['attempt'] ) : 1;
 		$max_attempts   = isset( $context['max_attempts'] ) ? max( 1, (int) $context['max_attempts'] ) : $config['max_attempts'];
@@ -2377,8 +2377,8 @@ class Sentient_Forms_Async_Handler
      */
     public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
-		$data    = $this->normalize_queued_form_source_identities( $data );
-		$context = $this->normalize_context( $context, $action_id );
+        $data    = $this->normalize_queued_action_data( $data );
+        $context = $this->normalize_context( $context, $action_id );
 
         $job = [
             'action_id'            => $action_id,
@@ -2537,24 +2537,36 @@ class Sentient_Forms_Async_Handler
      */
     private function normalize_queued_form_source_identities( array $payload ): array
     {
-        foreach ( $payload as $key => $value )
+        foreach ( [ 'form_source', 'adapter_id' ] as $key )
         {
-            if ( is_string( $key )
-                && in_array( $key, [ 'form_source', 'adapter_id' ], true )
-                && is_scalar( $value )
-                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $value ) )
+            if ( isset( $payload[ $key ] )
+                && is_scalar( $payload[ $key ] )
+                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $payload[ $key ] ) )
             {
                 $payload[ $key ] = Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS;
-                continue;
-            }
-
-            if ( is_array( $value ) )
-            {
-                $payload[ $key ] = $this->normalize_queued_form_source_identities( $value );
             }
         }
 
         return $payload;
+    }
+
+    /**
+     * Normalize only the plugin-owned identity fields in a queued action
+     * envelope. Entry data remains customer-controlled content.
+     *
+     * @param array<array-key, mixed> $data
+     *
+     * @return array<array-key, mixed>
+     */
+    private function normalize_queued_action_data( array $data ): array
+    {
+        $data = $this->normalize_queued_form_source_identities( $data );
+        if ( isset( $data['form'] ) && is_array( $data['form'] ) )
+        {
+            $data['form'] = $this->normalize_queued_form_source_identities( $data['form'] );
+        }
+
+        return $data;
     }
 
     /**

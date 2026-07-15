@@ -616,8 +616,9 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        $calls     = 0;
-        $action_id = 'fixture_digest_conflict';
+        $calls           = 0;
+        $dependent_calls = 0;
+        $action_id       = 'fixture_digest_conflict';
         Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
             new Sentient_Forms_Test_Context_Tracking_Action(
                 $action_id,
@@ -625,6 +626,16 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                     ++$calls;
 
                     return [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                'fixture_digest_conflict_dependent',
+                static function () use ( &$dependent_calls ): array {
+                    ++$dependent_calls;
+
+                    return [ 'summary' => 'Dependent result.' ];
                 }
             )
         );
@@ -643,7 +654,25 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
 
         $mapping['settings']['marker'] = 'changed';
-        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'digest_conflict' => $mapping ], false );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'digest_conflict'           => $mapping,
+                'digest_conflict_dependent' => [
+                    'local_mapping_id'           => 'digest_conflict_dependent',
+                    'central_action_id'          => 'fixture_digest_conflict_dependent',
+                    'action_name_label'          => 'Digest conflict dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => false,
+                        'dependency_ids' => [ 'digest_conflict' ],
+                    ],
+                ],
+            ],
+            false
+        );
         $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
 
         $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
@@ -652,6 +681,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $error = $conflict->get_execution_result( 'digest_conflict' );
         $this->assertWPError( $error );
         $this->assertSame( 'sentient_forms_execution_digest_conflict', $error->get_error_code() );
+        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['digest_conflict_dependent'] ?? null );
+        $this->assertSame( 0, $dependent_calls );
     }
 
     public function test_synchronous_accepted_failure_is_terminal_without_explicit_safe_retry(): void

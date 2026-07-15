@@ -1394,8 +1394,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             $dependency_id = sanitize_text_field( (string) $dependency_id );
             $blocking_outcomes = $allow_queued_dependencies
-                ? [ null, 'failed', 'replayed_failed', 'skipped' ]
-                : [ null, 'failed', 'replayed_failed', 'skipped', 'queued', 'replayed_active' ];
+                ? [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict' ]
+                : [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict', 'queued', 'replayed_active' ];
             if ( '' !== $dependency_id && in_array( $mapping_outcomes[ $dependency_id ] ?? null, $blocking_outcomes, true ) )
             {
                 return $dependency_id;

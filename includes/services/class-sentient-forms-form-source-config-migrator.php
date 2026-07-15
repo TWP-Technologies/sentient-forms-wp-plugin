@@ -55,15 +55,20 @@ final class Sentient_Forms_Form_Source_Config_Migrator
         $summary = [
             'options_scanned'      => 0,
             'options_updated'      => 0,
+            'active_config_option_failures' => 0,
             'mapping_rows_scanned' => 0,
             'mapping_rows_updated' => 0,
+            'mapping_row_failures' => 0,
             'form_source_options_scanned'    => 0,
             'form_source_options_renamed'    => 0,
             'form_source_option_collisions'  => 0,
             'form_source_option_failures'    => 0,
             'form_source_rows_updated'       => 0,
             'form_source_row_collisions'     => 0,
+            'form_source_storage_failures'   => 0,
             'async_metadata_jobs_updated'    => 0,
+            'migration_failures'             => 0,
+            'migration_complete'             => 0,
         ];
 
         self::migrate_option_backed_configuration( $summary );
@@ -71,6 +76,12 @@ final class Sentient_Forms_Form_Source_Config_Migrator
         self::migrate_elementor_option_keys( $summary );
         self::migrate_elementor_async_metadata( $summary );
         self::migrate_elementor_storage_rows( $summary );
+
+        $summary['migration_failures'] = (int) $summary['active_config_option_failures']
+            + (int) $summary['mapping_row_failures']
+            + (int) $summary['form_source_option_failures']
+            + (int) $summary['form_source_storage_failures'];
+        $summary['migration_complete'] = 0 === $summary['migration_failures'] ? 1 : 0;
 
         return $summary;
     }
@@ -95,8 +106,9 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                 $like
             )
         );
-        if ( ! is_array( $option_keys ) )
+        if ( '' !== $wpdb->last_error || ! is_array( $option_keys ) )
         {
+            $summary['active_config_option_failures']++;
             return;
         }
 
@@ -120,8 +132,14 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                 continue;
             }
 
-            update_option( $option_key, $migrated, false );
-            $summary['options_updated']++;
+            if ( update_option( $option_key, $migrated, false ) || $migrated === get_option( $option_key, null ) )
+            {
+                $summary['options_updated']++;
+            }
+            else
+            {
+                $summary['active_config_option_failures']++;
+            }
         }
     }
 
@@ -229,6 +247,7 @@ final class Sentient_Forms_Form_Source_Config_Migrator
         $table = $wpdb->prefix . 'sentient_form_mappings';
         if ( ! self::table_exists( $table ) )
         {
+            $summary['mapping_row_failures']++;
             return;
         }
 
@@ -239,8 +258,9 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             ),
             ARRAY_A
         );
-        if ( ! is_array( $rows ) )
+        if ( '' !== $wpdb->last_error || ! is_array( $rows ) )
         {
+            $summary['mapping_row_failures']++;
             return;
         }
 
@@ -282,6 +302,10 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                         $fields['settings_json'] = $encoded;
                         $formats[]               = '%s';
                     }
+                    else
+                    {
+                        $summary['mapping_row_failures']++;
+                    }
                 }
             }
 
@@ -304,6 +328,10 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             if ( false !== $updated )
             {
                 $summary['mapping_rows_updated']++;
+            }
+            else
+            {
+                $summary['mapping_row_failures']++;
             }
         }
     }
@@ -333,8 +361,9 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                     $wpdb->esc_like( $legacy_prefix ) . '%'
                 )
             );
-            if ( ! is_array( $option_keys ) )
+            if ( '' !== $wpdb->last_error || ! is_array( $option_keys ) )
             {
+                $summary['form_source_option_failures']++;
                 continue;
             }
 
@@ -354,19 +383,36 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                         $canonical_key
                     )
                 );
+                if ( '' !== $wpdb->last_error )
+                {
+                    $summary['form_source_option_failures']++;
+                    continue;
+                }
 
                 if ( $canonical_exists )
                 {
-                    delete_option( $legacy_key );
-                    $summary['form_source_option_collisions']++;
+                    if ( delete_option( $legacy_key ) )
+                    {
+                        $summary['form_source_option_collisions']++;
+                    }
+                    else
+                    {
+                        $summary['form_source_option_failures']++;
+                    }
                     continue;
                 }
 
                 $legacy_value = get_option( $legacy_key, null );
                 if ( add_option( $canonical_key, $legacy_value, '', false ) )
                 {
-                    delete_option( $legacy_key );
-                    $summary['form_source_options_renamed']++;
+                    if ( delete_option( $legacy_key ) )
+                    {
+                        $summary['form_source_options_renamed']++;
+                    }
+                    else
+                    {
+                        $summary['form_source_option_failures']++;
+                    }
                     continue;
                 }
 
@@ -397,6 +443,7 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             $table = $wpdb->prefix . $table_suffix;
             if ( ! self::table_exists( $table ) )
             {
+                $summary['form_source_storage_failures']++;
                 continue;
             }
 
@@ -411,6 +458,10 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             if ( false !== $updated )
             {
                 $summary['form_source_rows_updated'] += (int) $updated;
+            }
+            else
+            {
+                $summary['form_source_storage_failures']++;
             }
         }
 
@@ -429,6 +480,14 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             {
                 $summary['form_source_rows_updated'] += (int) $updated;
             }
+            else
+            {
+                $summary['form_source_storage_failures']++;
+            }
+        }
+        else
+        {
+            $summary['form_source_storage_failures']++;
         }
     }
 
@@ -448,13 +507,14 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             return;
         }
 
-        $migrated = self::migrate_elementor_identity_fields( $stored );
+        $migrated = self::migrate_elementor_async_jobs( $stored );
         if ( $migrated === $stored )
         {
             return;
         }
 
-        if ( update_option( self::ASYNC_METADATA_OPTION, $migrated, false ) )
+        if ( update_option( self::ASYNC_METADATA_OPTION, $migrated, false )
+            || $migrated === get_option( self::ASYNC_METADATA_OPTION, null ) )
         {
             $summary['async_metadata_jobs_updated']++;
             return;
@@ -468,22 +528,70 @@ final class Sentient_Forms_Form_Source_Config_Migrator
      *
      * @return array<array-key, mixed>
      */
-    private static function migrate_elementor_identity_fields( array $payload ): array
+    private static function migrate_elementor_async_jobs( array $jobs ): array
     {
-        foreach ( $payload as $key => $value )
+        foreach ( $jobs as $job_id => $job )
         {
-            if ( is_string( $key )
-                && in_array( $key, [ 'form_source', 'adapter_id' ], true )
-                && is_scalar( $value )
-                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $value ) )
+            if ( ! is_array( $job ) )
             {
-                $payload[ $key ] = self::ELEMENTOR_FORM_SOURCE;
                 continue;
             }
 
-            if ( is_array( $value ) )
+            if ( isset( $job['context'] ) && is_array( $job['context'] ) )
             {
-                $payload[ $key ] = self::migrate_elementor_identity_fields( $value );
+                $job['context'] = self::migrate_elementor_identity_fields( $job['context'] );
+            }
+
+            if ( isset( $job['payload'] ) && is_array( $job['payload'] ) )
+            {
+                $job['payload'] = self::migrate_elementor_async_payload( $job['payload'] );
+            }
+
+            $jobs[ $job_id ] = $job;
+        }
+
+        return $jobs;
+    }
+
+    /**
+     * @param array<array-key, mixed> $payload
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function migrate_elementor_async_payload( array $payload ): array
+    {
+        $payload = self::migrate_elementor_identity_fields( $payload );
+        if ( isset( $payload['context'] ) && is_array( $payload['context'] ) )
+        {
+            $payload['context'] = self::migrate_elementor_identity_fields( $payload['context'] );
+        }
+
+        if ( isset( $payload['data'] ) && is_array( $payload['data'] ) )
+        {
+            $payload['data'] = self::migrate_elementor_identity_fields( $payload['data'] );
+            if ( isset( $payload['data']['form'] ) && is_array( $payload['data']['form'] ) )
+            {
+                $payload['data']['form'] = self::migrate_elementor_identity_fields( $payload['data']['form'] );
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @param array<array-key, mixed> $payload
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function migrate_elementor_identity_fields( array $payload ): array
+    {
+        foreach ( [ 'form_source', 'adapter_id' ] as $key )
+        {
+            if ( isset( $payload[ $key ] )
+                && is_scalar( $payload[ $key ] )
+                && self::LEGACY_ELEMENTOR_FORM_SOURCE === sanitize_key( (string) $payload[ $key ] ) )
+            {
+                $payload[ $key ] = self::ELEMENTOR_FORM_SOURCE;
             }
         }
 
@@ -503,6 +611,7 @@ final class Sentient_Forms_Form_Source_Config_Migrator
         $table = $wpdb->prefix . 'sentient_submission_ledger_settings';
         if ( ! self::table_exists( $table ) )
         {
+            $summary['form_source_storage_failures']++;
             return;
         }
 
@@ -514,8 +623,9 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             ),
             ARRAY_A
         );
-        if ( ! is_array( $legacy_rows ) )
+        if ( '' !== $wpdb->last_error || ! is_array( $legacy_rows ) )
         {
+            $summary['form_source_storage_failures']++;
             return;
         }
 
@@ -540,12 +650,21 @@ final class Sentient_Forms_Form_Source_Config_Migrator
                     )
                 )
             );
+            if ( '' !== $wpdb->last_error )
+            {
+                $summary['form_source_storage_failures']++;
+                continue;
+            }
             if ( $canonical_id > 0 )
             {
                 $deleted = $wpdb->delete( $table, [ 'id' => $legacy_id ], [ '%d' ] );
                 if ( false !== $deleted )
                 {
                     $summary['form_source_row_collisions']++;
+                }
+                else
+                {
+                    $summary['form_source_storage_failures']++;
                 }
                 continue;
             }
@@ -560,6 +679,10 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             if ( false !== $updated )
             {
                 $summary['form_source_rows_updated'] += (int) $updated;
+            }
+            else
+            {
+                $summary['form_source_storage_failures']++;
             }
         }
     }

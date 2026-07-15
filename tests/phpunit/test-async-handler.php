@@ -421,6 +421,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'entry'       => [
                     'submission_uuid' => '11111111-1111-4111-8111-111111111111',
                     'form_source'      => 'elementor_forms',
+                    'adapter_id'       => 'elementor_forms',
+                    'nested'           => [ 'form_source' => 'elementor_forms' ],
                 ],
             ],
             [
@@ -432,12 +434,17 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'form_source' => 'elementor_forms',
                 'adapter_id'  => 'elementor_forms',
                 'form_id'     => '91:formabc',
+                'custom_data' => [ 'form_source' => 'elementor_forms' ],
             ]
         );
 
         $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['form_source'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $executor->captured['context']['adapter_id'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $executor->captured['form']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['adapter_id'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['entry']['nested']['form_source'] ?? null );
+        $this->assertSame( 'elementor_forms', $executor->captured['context']['custom_data']['form_source'] ?? null );
     }
 
     public function test_process_action_async_batch_settings_strip_discount_percent_at_runtime(): void
