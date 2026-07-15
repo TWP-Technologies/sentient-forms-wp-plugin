@@ -697,8 +697,38 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             ],
         ];
 
-        $first_uuid  = $this->adapter->handle_accepted_submission( $entry, $form );
-        $second_uuid = $this->adapter->handle_accepted_submission( $entry, $form );
+        $logger = new class( false ) extends Sentient_Forms_Logger {
+            /** @var array<int, string> */
+            public array $debug_messages = [];
+
+            /** @var array<int, string> */
+            public array $error_messages = [];
+
+            public function debug( string $message, array $context = [] ): void
+            {
+                $this->debug_messages[] = $message;
+            }
+
+            public function error( string $message, array $context = [] ): void
+            {
+                $this->error_messages[] = $message;
+            }
+        };
+        $plugin            = Sentient_Forms_Plugin::instance();
+        $plugin_reflection = new ReflectionClass( $plugin );
+        $logger_property   = $plugin_reflection->getProperty( 'logger' );
+        $logger_property->setAccessible( true );
+        $original_logger = $logger_property->getValue( $plugin );
+        $logger_property->setValue( $plugin, $logger );
+        try
+        {
+            $first_uuid  = $this->adapter->handle_accepted_submission( $entry, $form );
+            $second_uuid = $this->adapter->handle_accepted_submission( $entry, $form );
+        }
+        finally
+        {
+            $logger_property->setValue( $plugin, $original_logger );
+        }
 
         $this->assertIsString( $first_uuid );
         $this->assertTrue( wp_is_uuid( $first_uuid ) );
@@ -706,9 +736,115 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $scheduled_jobs );
         $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
         $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['data']['entry']['submission_uuid'] ?? null );
+        $this->assertSame( [], $logger->error_messages );
+        $this->assertSame(
+            [ 'submission ledger capture skipped' ],
+            $logger->debug_messages
+        );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertSame( [], $ledger->list_for_form( 'gravity_forms', (string) $form_id ) );
+    }
+
+    public function test_gravity_forms_accepted_execution_continues_when_optional_ledger_capture_fails(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id = 789;
+        update_option(
+            'sentient_forms_actions_gravity_forms_' . $form_id,
+            [
+                'map_summary' => [
+                    'local_mapping_id'           => 'map_summary',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Summarize native Gravity entry',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+            ],
+            false
+        );
+
+        $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
+            public function capture( array $payload ): array | WP_Error
+            {
+                return new WP_Error(
+                    'sentient_forms_db_insert_failed',
+                    'The optional Submission Ledger record could not be created.'
+                );
+            }
+        };
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            $capture_service
+        );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $entry = [
+            'id'      => 1712,
+            'form_id' => $form_id,
+            '1'       => 'Native entry remains available when optional storage fails.',
+        ];
+        $form = [
+            'id'     => $form_id,
+            'title'  => 'Optional Ledger Failure',
+            'fields' => [],
+        ];
+
+        $first_uuid  = $adapter->handle_accepted_submission( $entry, $form );
+        $second_uuid = $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertIsString( $first_uuid );
+        $this->assertTrue( wp_is_uuid( $first_uuid ) );
+        $this->assertSame( $first_uuid, $second_uuid );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $this->assertSame( [], $ledger->list_for_form( 'gravity_forms', (string) $form_id ) );
+    }
+
+    public function test_gravity_forms_accepted_execution_fails_closed_on_ledger_identity_conflict(): void
+    {
+        global $wpdb;
+
+        $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
+            public function capture( array $payload ): array | WP_Error
+            {
+                return new WP_Error(
+                    'sentient_forms_submission_ledger_replay_conflict',
+                    'The Submission Ledger identity belongs to a different native entry.'
+                );
+            }
+        };
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            $capture_service
+        );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $submission_uuid = $adapter->handle_accepted_submission(
+            [ 'id' => 1714, 'form_id' => 791, 'status' => 'active' ],
+            [ 'id' => 791, 'title' => 'Ledger identity conflict', 'fields' => [] ]
+        );
+
+        $this->assertNull( $submission_uuid );
     }
 
     public function test_accepted_submission_replays_deferred_notification_when_no_spam_mapping_is_queued(): void
@@ -1395,7 +1531,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $execution_calls  = 0;
         $action_id        = 'legacy_gravity_accepted_action';
 
-        update_option( $canonical_option, [], false );
+        delete_option( $canonical_option );
         update_option(
             $legacy_option,
             [
@@ -1427,6 +1563,52 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
 
         $this->assertSame( 1, $execution_calls );
+
+        delete_option( $legacy_option );
+        delete_option( $canonical_option );
+    }
+
+    public function test_accepted_submission_does_not_revive_legacy_action_when_canonical_settings_are_empty(): void
+    {
+        $form_id          = 790;
+        $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
+        $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $execution_calls  = 0;
+        $action_id        = 'stale_legacy_gravity_action';
+
+        update_option( $canonical_option, [], false );
+        update_option(
+            $legacy_option,
+            [
+                $action_id => [
+                    'local_mapping_id'           => $action_id,
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static function () use ( &$execution_calls ): array {
+                    ++$execution_calls;
+
+                    return [ 'summary' => 'Stale legacy action should not execute.' ];
+                }
+            )
+        );
+
+        $this->adapter->handle_accepted_submission(
+            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Canonical tombstone', 'fields' => [] ]
+        );
+
+        $this->assertSame( 0, $execution_calls );
+        $this->assertSame( [], $this->adapter->get_form_settings( $form_id )['actions'] ?? null );
 
         delete_option( $legacy_option );
         delete_option( $canonical_option );

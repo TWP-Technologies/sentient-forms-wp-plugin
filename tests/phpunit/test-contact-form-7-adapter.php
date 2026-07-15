@@ -685,6 +685,144 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 0, $dependent_calls );
     }
 
+    public function test_async_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $mapping = [
+            'local_mapping_id'           => 'async_digest_conflict',
+            'central_action_id'          => 'fixture_async_digest_conflict',
+            'action_name_label'          => 'Async digest conflict fixture',
+            'action_type_indicator'      => 'custom',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'async' => true, 'marker' => 'first' ],
+        ];
+        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'async_digest_conflict' => $mapping ], false );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $mapping['settings']['marker'] = 'changed';
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'async_digest_conflict'           => $mapping,
+                'async_digest_conflict_dependent' => [
+                    'local_mapping_id'           => 'async_digest_conflict_dependent',
+                    'central_action_id'          => 'fixture_async_digest_conflict_dependent',
+                    'action_name_label'          => 'Async digest conflict dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => true,
+                        'dependency_ids' => [ 'async_digest_conflict' ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
+        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['async_digest_conflict'] ?? null );
+        $error = $conflict->get_execution_result( 'async_digest_conflict' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_async_request_digest_conflict', $error->get_error_code() );
+        $this->assertSame( 'skipped', $conflict->get_mapping_outcomes()['async_digest_conflict_dependent'] ?? null );
+
+        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
+        $this->assertCount( 1, $jobs );
+    }
+
+    public function test_async_dependency_graph_replays_identical_business_payloads(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'async_replay_primary'   => [
+                    'local_mapping_id'           => 'async_replay_primary',
+                    'central_action_id'          => 'fixture_async_replay_primary',
+                    'action_name_label'          => 'Async replay primary fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+                'async_replay_dependent' => [
+                    'local_mapping_id'           => 'async_replay_dependent',
+                    'central_action_id'          => 'fixture_async_replay_dependent',
+                    'action_name_label'          => 'Async replay dependent fixture',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => true,
+                        'dependency_ids' => [ 'async_replay_primary' ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Test_Accepted_Submission_Adapter();
+        $first   = $runner->run_accepted_submission_with_outcome( $adapter, [] );
+        $replay  = $runner->run_accepted_submission_with_outcome( $adapter, [] );
+
+        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_primary'] ?? null );
+        $this->assertSame( 'queued', $first->get_mapping_outcomes()['async_replay_dependent'] ?? null );
+        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_primary'] ?? null );
+        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()['async_replay_dependent'] ?? null );
+
+        $jobs = Sentient_Forms_Plugin::instance()->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 10 ] );
+        $this->assertCount( 2, $jobs );
+    }
+
+    public function test_required_ledger_capture_failure_prevents_accepted_execution(): void
+    {
+        global $wpdb;
+
+        $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
+            public function capture( array $payload ): array | WP_Error
+            {
+                return new WP_Error(
+                    'sentient_forms_db_insert_failed',
+                    'The required Submission Ledger record could not be created.'
+                );
+            }
+        };
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            $capture_service
+        );
+
+        $result = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            []
+        );
+
+        $this->assertNull( $result->get_submission_uuid() );
+        $this->assertSame( [], $result->get_mapping_outcomes() );
+    }
+
     public function test_synchronous_accepted_failure_is_terminal_without_explicit_safe_retry(): void
     {
         global $wpdb;

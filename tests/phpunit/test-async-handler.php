@@ -839,6 +839,35 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
     }
 
+    public function test_process_action_async_ignores_volatile_dependency_state_in_payload_identity(): void
+    {
+        $data = [
+            'form'  => [ 'id' => 56, 'title' => 'Dependency replay' ],
+            'entry' => [ 'id' => 203, 'field_1' => 'Replay the same business payload.' ],
+        ];
+        $settings = [ 'central_action_id' => 'spam_detection_v1' ];
+        $context  = [
+            'hook'                             => 'gform_after_submission',
+            'form_source'                      => 'gravity_forms',
+            'dependency_mapping_ids'           => [ 'map_prerequisite' ],
+            'dependency_execution_request_ids' => [ 'map_prerequisite' => 'prerequisite-request-id' ],
+            'dependency_initial_outcomes'      => [ 'map_prerequisite' => 'queued' ],
+            'dependency_wait_started_at'       => 100,
+            'dependency_wait_max_seconds'      => 600,
+            'dependency_wait_poll_seconds'     => 10,
+        ];
+
+        $first = $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $context['dependency_initial_outcomes']['map_prerequisite'] = 'replayed_active';
+        $context['dependency_wait_started_at'] = 200;
+        $replay = $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $this->assertTrue( $first );
+        $this->assertFalse( $replay );
+        $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
+    }
+
     public function test_process_action_async_does_not_enqueue_when_sync_execution_owns_the_identity(): void
     {
         $execution_request_id = 'accepted-sync-owns-global-identity';
@@ -872,7 +901,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
             remove_filter( 'sentient_forms_execution_request_id', $force_request_id, 10 );
         }
 
-        $this->assertFalse( $scheduled );
+        $this->assertWPError( $scheduled );
+        $this->assertSame( 'sentient_forms_async_request_record_type_conflict', $scheduled->get_error_code() );
         $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
         $this->assertNotNull( $request_store->get( $execution_request_id, 'accepted_sync' ) );
         $this->assertNull( $request_store->get( $execution_request_id, 'job' ) );

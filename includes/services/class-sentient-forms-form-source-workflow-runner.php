@@ -115,16 +115,20 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $captured = $capture_service->capture( $capture_payload );
         if ( is_wp_error( $captured ) )
         {
-            if (
-                'sentient_forms_submission_ledger_disabled' !== $captured->get_error_code()
-                || $this->accepted_submission_requires_ledger( $adapter )
-                || null === $correlation_uuid
-            )
+            $fallback_snapshot = $this->optional_ledger_failure_snapshot(
+                $adapter,
+                $normalized,
+                $correlation_uuid,
+                $form_source,
+                $form_id,
+                $captured
+            );
+            if ( null === $fallback_snapshot )
             {
                 return new Sentient_Forms_Accepted_Submission_Run_Result( null );
             }
 
-            $captured = $this->uncaptured_native_submission_snapshot( $normalized, $correlation_uuid );
+            $captured = $fallback_snapshot;
         }
 
         $submission_uuid = isset( $captured['submission_uuid'] ) && is_scalar( $captured['submission_uuid'] )
@@ -219,6 +223,59 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
     }
 
     /**
+     * Continue without optional storage only for known availability failures.
+     * Identity/scope conflicts remain fail-closed even when native entries exist.
+     *
+     * @param array<string, mixed> $normalized
+     *
+     * @return array<string, mixed>|null
+     */
+    private function optional_ledger_failure_snapshot(
+        Sentient_Forms_Accepted_Submission_Adapter_Interface $adapter,
+        array $normalized,
+        ?string $correlation_uuid,
+        string $form_source,
+        string $form_id,
+        WP_Error $error
+    ): ?array
+    {
+        $ledger_required  = $this->accepted_submission_requires_ledger( $adapter );
+        $availability_error = in_array(
+            $error->get_error_code(),
+            [
+                'sentient_forms_submission_ledger_disabled',
+                'sentient_forms_db_insert_failed',
+                'sentient_forms_submission_ledger_capture_missing',
+            ],
+            true
+        );
+        $fallback_allowed = ! $ledger_required && null !== $correlation_uuid && $availability_error;
+
+        $log_context = [
+            'form_source'      => $form_source,
+            'form_id'          => $form_id,
+            'native_entry_id'  => isset( $normalized['native_entry_id'] ) && is_scalar( $normalized['native_entry_id'] )
+                ? sanitize_text_field( (string) $normalized['native_entry_id'] )
+                : null,
+            'error_code'       => $error->get_error_code(),
+            'ledger_required'  => $ledger_required,
+            'fallback_allowed' => $fallback_allowed,
+        ];
+        if ( 'sentient_forms_submission_ledger_disabled' === $error->get_error_code() && ! $ledger_required )
+        {
+            $this->plugin->get_logger()->debug( 'submission ledger capture skipped', $log_context );
+        }
+        else
+        {
+            $this->plugin->get_logger()->error( 'submission ledger capture failed', $log_context );
+        }
+
+        return $fallback_allowed
+            ? $this->uncaptured_native_submission_snapshot( $normalized, $correlation_uuid )
+            : null;
+    }
+
+    /**
      * @param array<string, mixed> $normalized
      *
      * @return array<string, mixed>
@@ -256,13 +313,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return [];
         }
 
-        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, null );
-        if ( empty( $settings ) )
+        $missing  = new stdClass();
+        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, $missing );
+        if ( $missing === $settings )
         {
             foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_action_option_names( $form_source, $form_id ) as $legacy_option_name )
             {
-                $legacy_settings = get_option( $legacy_option_name, null );
-                if ( ! empty( $legacy_settings ) )
+                $legacy_settings = get_option( $legacy_option_name, $missing );
+                if ( $missing !== $legacy_settings )
                 {
                     $settings = $legacy_settings;
                     break;
@@ -553,6 +611,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $execution_request_ids[ (string) $mapping_id ] ?? ''
             );
             $mapping_outcomes[ (string) $mapping_id ] = $schedule_outcome;
+            if ( is_wp_error( $scheduled ) )
+            {
+                $execution_results[ (string) $mapping_id ] = $scheduled;
+            }
             if ( 'queued' === $schedule_outcome )
             {
                 $this->log_queued_accepted_mapping(
@@ -1125,8 +1187,22 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
     }
 
-    private function async_schedule_outcome( bool $scheduled, string $execution_request_id ): string
+    private function async_schedule_outcome( bool | WP_Error $scheduled, string $execution_request_id ): string
     {
+        if ( is_wp_error( $scheduled ) )
+        {
+            return in_array(
+                $scheduled->get_error_code(),
+                [
+                    'sentient_forms_async_request_digest_conflict',
+                    'sentient_forms_async_request_record_type_conflict',
+                ],
+                true
+            )
+                ? 'digest_conflict'
+                : 'failed';
+        }
+
         if ( $scheduled )
         {
             return 'queued';

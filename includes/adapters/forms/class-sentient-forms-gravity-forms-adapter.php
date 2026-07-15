@@ -3793,12 +3793,18 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_form_settings( mixed $form_id ): array
     {
         $option_name = $this->get_form_option_name( $form_id );
-        $settings    = get_option( $option_name, [] );
+        $missing     = new stdClass();
+        $settings    = get_option( $option_name, $missing );
 
-        if ( empty( $settings ) )
+        if ( $missing === $settings )
         {
             // Fallback to legacy option naming for backwards compatibility.
-            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, [] );
+            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, $missing );
+        }
+
+        if ( ! is_array( $settings ) )
+        {
+            $settings = [];
         }
 
         // Get global settings as defaults
