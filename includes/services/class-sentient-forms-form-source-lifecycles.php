@@ -41,6 +41,7 @@ final class Sentient_Forms_Form_Source_Lifecycles
             'gform_after_submission'   => self::AFTER_SUBMISSION,
             'wpcf7_mail_sent'          => self::AFTER_SUBMISSION,
             'wpforms_process_complete' => self::AFTER_SUBMISSION,
+            'elementor_pro_forms_new_record' => self::AFTER_SUBMISSION,
         ];
     }
 

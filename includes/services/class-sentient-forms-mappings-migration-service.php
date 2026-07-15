@@ -1014,7 +1014,8 @@ class Sentient_Forms_Mappings_Migration_Service
                 continue;
             }
 
-            $normalized[] = $hook;
+            $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+            $normalized[] = $lifecycle_id ?? $hook;
         }
 
         return array_values( array_unique( $normalized ) );

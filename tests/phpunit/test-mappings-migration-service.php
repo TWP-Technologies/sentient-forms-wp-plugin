@@ -291,7 +291,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
                     'local_mapping_id'           => 'map_new',
                     'central_action_id'          => 'spam_detection_v1',
                     'action_type_indicator'      => 'master',
-                    'trigger_hooks'              => [ 'elementor_pro_forms_new_record' ],
+                    'trigger_hooks'              => [ 'elementor_pro_forms_new_record', 'vendor_custom_hook' ],
                     'is_action_enabled_for_form' => true,
                     'execution_priority'         => 10,
                     'action_name_label'          => 'Spam Detection',
@@ -344,6 +344,14 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
         $this->assertSame( 1, count( $client->post_calls ) );
         $this->assertSame( 1, count( $client->put_calls ) );
         $this->assertSame( '91:formabc', $client->post_calls[0]['payload']['form_id'] ?? null );
+        $this->assertSame(
+            [ 'after_submission', 'vendor_custom_hook' ],
+            $client->post_calls[0]['payload']['settings']['trigger_hooks'] ?? null
+        );
+        $this->assertSame(
+            [ 'after_submission' ],
+            $client->put_calls[0]['payload']['settings']['trigger_hooks'] ?? null
+        );
     }
 
     public function test_scoped_elementor_migration_reads_legacy_provider_native_option_key(): void
@@ -704,7 +712,7 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
             $client->post_calls[0]['payload']['settings']['local_mapping_id'] ?? ''
         );
         $this->assertSame(
-            [ 'gform_validation', 'gform_after_submission' ],
+            [ 'validation', 'after_submission' ],
             $client->post_calls[0]['payload']['settings']['trigger_hooks'] ?? []
         );
         $this->assertSame(

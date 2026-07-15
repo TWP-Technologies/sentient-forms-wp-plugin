@@ -102,6 +102,17 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         );
         $this->assertCount( 1, $ledger_index );
         $this->assertSame( [ 'submission_uuid' ], array_column( $ledger_index, 'Column_name' ) );
+
+        $ledger_columns = $this->wpdb->get_results( 'DESCRIBE ' . esc_sql( $ledger_table ), ARRAY_A );
+        $this->assertContains( 'native_correlation_hash', array_column( $ledger_columns, 'Field' ) );
+
+        $native_correlation_index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $ledger_table ) . " WHERE Key_name = 'native_correlation_unique'",
+            ARRAY_A
+        );
+        $this->assertCount( 1, $native_correlation_index );
+        $this->assertSame( [ 'native_correlation_hash' ], array_column( $native_correlation_index, 'Column_name' ) );
+        $this->assertSame( '0', (string) ( $native_correlation_index[0]['Non_unique'] ?? '' ) );
     }
 
     public function test_provider_credentials_repository_records_local_openrouter_credentials(): void
@@ -400,6 +411,49 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertWPError( $missing_form_id );
         $this->assertSame( 'sentient_forms_invalid_submission_ledger_scope', $missing_form_id->get_error_code() );
         $this->assertSame( 0, $repository->count_all() );
+    }
+
+    public function test_submission_ledger_repository_enforces_one_correlation_claim_per_native_identity(): void
+    {
+        $repository = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $first_uuid = wp_generate_uuid4();
+
+        $first = $repository->create(
+            [
+                'submission_uuid'     => $first_uuid,
+                'form_source'         => 'gravity_forms',
+                'form_id'             => 'native-correlation-unique',
+                'native_entry_id'     => 'native-entry-1',
+                'logical_fields_json' => [ 'email' => 'first@example.test' ],
+            ]
+        );
+        $suppress_errors = $this->wpdb->suppress_errors( true );
+        try
+        {
+            $duplicate = $repository->create(
+                [
+                    'submission_uuid'     => wp_generate_uuid4(),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'native-correlation-unique',
+                    'native_entry_id'     => 'native-entry-1',
+                    'logical_fields_json' => [ 'email' => 'second@example.test' ],
+                ]
+            );
+        }
+        finally
+        {
+            $this->wpdb->suppress_errors( $suppress_errors );
+        }
+        $hash = Sentient_Forms_Submission_Ledger_Repository::native_correlation_hash(
+            'gravity_forms',
+            'native-correlation-unique',
+            'native-entry-1'
+        );
+
+        $this->assertIsInt( $first );
+        $this->assertWPError( $duplicate );
+        $this->assertSame( 'sentient_forms_db_insert_failed', $duplicate->get_error_code() );
+        $this->assertSame( $first_uuid, $repository->get_by_native_correlation_hash( (string) $hash )['submission_uuid'] ?? null );
     }
 
     public function test_execution_events_repository_records_submission_uuid_without_requiring_it_for_legacy_rows(): void

@@ -126,6 +126,8 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		];
 		$second  = $first;
 		$second['submission_uuid'] = '22222222-2222-4222-8222-222222222222';
+		$mutated = $first;
+		$mutated['message'] = 'snapshot changed after capture';
 
 		$first_request = Sentient_Forms_Action_Executor::generate_execution_request_id(
 			'entry_evaluation_v1',
@@ -141,6 +143,28 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertNotSame(
 			$first_request,
 			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $second, $context )
+		);
+		$this->assertSame(
+			$first_request,
+			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $mutated, $context ),
+			'A stable submission UUID must remain authoritative when mutable entry fields change.'
+		);
+	}
+
+	public function test_execution_request_ids_change_when_native_entry_payload_changes_without_submission_uuid(): void {
+		$form    = [ 'id' => 48, 'title' => 'Accepted submission identity' ];
+		$context = [ 'hook' => 'wpforms_process_complete', 'action_id' => 'map_summary' ];
+		$first   = [
+			'id'      => '781',
+			'message' => 'original snapshot',
+		];
+		$mutated = $first;
+		$mutated['message'] = 'edited snapshot';
+
+		$this->assertNotSame(
+			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $first, $context ),
+			Sentient_Forms_Action_Executor::generate_execution_request_id( 'entry_evaluation_v1', $form, $mutated, $context ),
+			'A native entry identity must not suppress a legitimate rerun after its payload changes.'
 		);
 	}
 

@@ -41,7 +41,14 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id IN (%s, %s, %s)', $wpdb->prefix . 'sentient_form_mappings', '212', '214', '302:formabc' ) );
         $wpdb->delete( $wpdb->prefix . 'sentient_submission_ledger_settings', [ 'form_id' => '302:formabc' ], [ '%s' ] );
         $wpdb->delete( $wpdb->prefix . 'sentient_submission_ledger', [ 'submission_uuid' => '22222222-2222-4222-8222-222222222222' ], [ '%s' ] );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id = %s', $wpdb->prefix . 'sentient_submission_ledger', 'native-correlation-upgrade' ) );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id = %s', $wpdb->prefix . 'sentient_submission_ledger', 'native-correlation-retry' ) );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id = %s', $wpdb->prefix . 'sentient_submission_ledger', 'native-correlation-batched' ) );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id = %s', $wpdb->prefix . 'sentient_submission_ledger', 'native-correlation-overlap' ) );
+        delete_option( 'sentient_forms_native_correlation_cursor' );
+        delete_option( 'sentient_forms_native_correlation_backfill_version' );
         $wpdb->delete( $wpdb->prefix . 'sentient_execution_events', [ 'execution_request_id' => 'elementor-migration-event' ], [ '%s' ] );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE execution_request_id IN (%s, %s)', $wpdb->prefix . 'sentient_execution_events', 'native-correlation-event-one', 'native-correlation-event-two' ) );
         $wpdb->delete( $wpdb->prefix . 'sentient_lead_profiles', [ 'form_id' => '302:formabc' ], [ '%s' ] );
         $wpdb->delete( $wpdb->prefix . 'sentient_historical_analysis_runs', [ 'form_id' => '302:formabc' ], [ '%s' ] );
         $wpdb->delete( $wpdb->prefix . 'sentient_lead_scoring_results', [ 'execution_request_id' => 'elementor-migration-score' ], [ '%s' ] );
@@ -97,6 +104,44 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         );
         $this->assertArrayNotHasKey( 'gform_validation', $stored['map_spam']['settings']['trigger_sources'] ?? [] );
         $this->assertArrayNotHasKey( 'gform_after_submission', $stored['map_spam']['settings']['trigger_sources'] ?? [] );
+    }
+
+    public function test_option_backed_elementor_config_migrates_legacy_new_record_hook(): void
+    {
+        $legacy_key          = 'sentient_forms_actions_elementor_forms_301_legacyhook';
+        $canonical_key       = 'sentient_forms_actions_elementor_pro_forms_301_legacyhook';
+        $this->option_keys[] = $legacy_key;
+        $this->option_keys[] = $canonical_key;
+
+        update_option(
+            $legacy_key,
+            [
+                'map_summary' => [
+                    'local_mapping_id' => 'map_summary',
+                    'central_action_id' => 'entry_summary_v1',
+                    'trigger_hooks'     => [ 'elementor_pro_forms_new_record' ],
+                    'settings'          => [
+                        'trigger_hooks'   => [ 'elementor_pro_forms_new_record' ],
+                        'trigger_sources' => [
+                            'elementor_pro_forms_new_record' => [ 'type' => 'hook_root' ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+        $stored = get_option( $canonical_key, [] );
+
+        $this->assertFalse( get_option( $legacy_key, false ) );
+        $this->assertSame( [ 'after_submission' ], $stored['map_summary']['trigger_hooks'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $stored['map_summary']['settings']['trigger_hooks'] ?? null );
+        $this->assertSame(
+            [ 'type' => 'hook_root' ],
+            $stored['map_summary']['settings']['trigger_sources']['after_submission'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'elementor_pro_forms_new_record', $stored['map_summary']['settings']['trigger_sources'] ?? [] );
     }
 
     public function test_custom_table_active_config_migrates_legacy_gravity_hooks_to_canonical_lifecycle_ids(): void
@@ -544,6 +589,323 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
 
         $this->assertFalse( get_option( $legacy_key, false ) );
         $this->assertSame( [ 'source' => 'legacy' ], get_option( $canonical_key ) );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_backfills_one_canonical_native_correlation_without_rewriting_duplicate_evidence(): void
+    {
+        global $wpdb;
+
+        $ledger_table = $wpdb->prefix . 'sentient_submission_ledger';
+        $events_table = $wpdb->prefix . 'sentient_execution_events';
+        $now          = current_time( 'mysql', true );
+        $first_uuid   = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $second_uuid  = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+        delete_option( 'sentient_forms_native_correlation_cursor' );
+        delete_option( 'sentient_forms_native_correlation_backfill_version' );
+        update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier', false );
+
+        foreach ( [ $first_uuid, $second_uuid ] as $submission_uuid )
+        {
+            $inserted = $wpdb->insert(
+                $ledger_table,
+                [
+                    'submission_uuid'     => $submission_uuid,
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'native-correlation-upgrade',
+                    'native_entry_id'     => 'legacy-duplicate-1',
+                    'captured_at'         => $now,
+                    'logical_fields_json' => '{}',
+                    'created_at'          => $now,
+                    'updated_at'          => $now,
+                ]
+            );
+            $this->assertSame( 1, $inserted );
+        }
+
+        foreach (
+            [
+                'native-correlation-event-one' => $first_uuid,
+                'native-correlation-event-two' => $second_uuid,
+            ] as $execution_request_id => $submission_uuid
+        )
+        {
+            $inserted = $wpdb->insert(
+                $events_table,
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'submission_uuid'      => $submission_uuid,
+                    'provider'             => 'openrouter',
+                    'status'               => 'succeeded',
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ]
+            );
+            $this->assertSame( 1, $inserted );
+        }
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT submission_uuid, native_correlation_hash FROM %i WHERE form_id = %s ORDER BY id ASC',
+                $ledger_table,
+                'native-correlation-upgrade'
+            ),
+            ARRAY_A
+        );
+        $event_uuids = $wpdb->get_col(
+            $wpdb->prepare(
+                'SELECT submission_uuid FROM %i WHERE execution_request_id IN (%s, %s) ORDER BY execution_request_id ASC',
+                $events_table,
+                'native-correlation-event-one',
+                'native-correlation-event-two'
+            )
+        );
+
+        $this->assertCount( 2, $rows, 'Historical duplicate ledger rows must remain intact.' );
+        $this->assertSame( $first_uuid, $rows[0]['submission_uuid'] ?? null );
+        $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', (string) ( $rows[0]['native_correlation_hash'] ?? '' ) );
+        $this->assertSame( $second_uuid, $rows[1]['submission_uuid'] ?? null );
+        $this->assertNull( $rows[1]['native_correlation_hash'] ?? null );
+        $this->assertSame( [ $first_uuid, $second_uuid ], $event_uuids );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_installer_retries_native_correlation_backfill_after_schema_version_advances(): void
+    {
+        global $wpdb;
+
+        $ledger_table   = $wpdb->prefix . 'sentient_submission_ledger';
+        $old_db_version = '2026.07.10.elementor_pro_forms_identifier';
+        $submission_uuid = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $now             = current_time( 'mysql', true );
+
+        delete_option( 'sentient_forms_native_correlation_cursor' );
+        delete_option( 'sentient_forms_native_correlation_backfill_version' );
+        update_option( 'sentient_forms_db_version', $old_db_version, false );
+        $inserted = $wpdb->insert(
+            $ledger_table,
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'gravity_forms',
+                'form_id'             => 'native-correlation-retry',
+                'native_entry_id'     => 'legacy-retry-1',
+                'captured_at'         => $now,
+                'logical_fields_json' => '{}',
+                'created_at'          => $now,
+                'updated_at'          => $now,
+            ]
+        );
+        $this->assertSame( 1, $inserted );
+
+        $fail_backfill = static function ( string $query ) use ( $ledger_table ): string
+        {
+            if ( str_contains( $query, 'UPDATE `' . $ledger_table . '` SET native_correlation_hash' ) )
+            {
+                return 'SENTIENT FORMS FORCED NATIVE CORRELATION FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_backfill );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_backfill );
+        }
+
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertNull(
+            $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT native_correlation_hash FROM %i WHERE submission_uuid = %s',
+                    $ledger_table,
+                    $submission_uuid
+                )
+            )
+        );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertMatchesRegularExpression(
+            '/^[a-f0-9]{64}$/',
+            (string) $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT native_correlation_hash FROM %i WHERE submission_uuid = %s',
+                    $ledger_table,
+                    $submission_uuid
+                )
+            )
+        );
+    }
+
+    public function test_installer_resumes_native_correlation_backfill_from_a_bounded_cursor(): void
+    {
+        global $wpdb;
+
+        $ledger_table   = $wpdb->prefix . 'sentient_submission_ledger';
+        $old_db_version = '2026.07.10.elementor_pro_forms_identifier';
+        $now            = current_time( 'mysql', true );
+
+        update_option( 'sentient_forms_db_version', $old_db_version, false );
+        delete_option( 'sentient_forms_native_correlation_cursor' );
+        delete_option( 'sentient_forms_native_correlation_backfill_version' );
+
+        for ( $index = 1; $index <= 51; ++$index )
+        {
+            $inserted = $wpdb->insert(
+                $ledger_table,
+                [
+                    'submission_uuid'     => sprintf( 'dddddddd-dddd-4ddd-8ddd-%012d', $index ),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'native-correlation-batched',
+                    'native_entry_id'     => 'batched-entry-' . $index,
+                    'captured_at'         => $now,
+                    'logical_fields_json' => '{}',
+                    'created_at'          => $now,
+                    'updated_at'          => $now,
+                ]
+            );
+            $this->assertSame( 1, $inserted );
+        }
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+
+        $first_batch_count = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT COUNT(*) FROM %i WHERE form_id = %s AND native_correlation_hash IS NOT NULL',
+                $ledger_table,
+                'native-correlation-batched'
+            )
+        );
+        $cursor = (int) get_option( 'sentient_forms_native_correlation_cursor', 0 );
+
+        $this->assertSame( 50, $first_batch_count );
+        $this->assertGreaterThan( 0, $cursor );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertFalse( get_option( 'sentient_forms_native_correlation_backfill_version', false ) );
+
+        $repeated_schema_or_config_queries = 0;
+        $track_repeated_migrations = static function ( string $query ) use ( $wpdb, &$repeated_schema_or_config_queries ): string
+        {
+            $is_schema_repeat = str_contains( $query, 'CREATE TABLE' ) && str_contains( $query, 'sentient_' );
+            $is_config_repeat = str_contains( $query, 'SELECT option_name' ) && str_contains( $query, $wpdb->options );
+            if ( $is_schema_repeat || $is_config_repeat )
+            {
+                ++$repeated_schema_or_config_queries;
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $track_repeated_migrations );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            remove_filter( 'query', $track_repeated_migrations );
+        }
+
+        $this->assertSame( 0, $repeated_schema_or_config_queries );
+        $this->assertSame(
+            51,
+            (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT COUNT(*) FROM %i WHERE form_id = %s AND native_correlation_hash IS NOT NULL',
+                    $ledger_table,
+                    'native-correlation-batched'
+                )
+            )
+        );
+        $this->assertFalse( get_option( 'sentient_forms_native_correlation_cursor', false ) );
+        $this->assertSame( 'v1', get_option( 'sentient_forms_native_correlation_backfill_version' ) );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_completed_native_correlation_backfill_removes_a_stale_overlapping_cursor(): void
+    {
+        global $wpdb;
+
+        $ledger_table = $wpdb->prefix . 'sentient_submission_ledger';
+        $now          = current_time( 'mysql', true );
+
+        update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier', false );
+        delete_option( 'sentient_forms_native_correlation_cursor' );
+        delete_option( 'sentient_forms_native_correlation_backfill_version' );
+
+        for ( $index = 1; $index <= 51; ++$index )
+        {
+            $inserted = $wpdb->insert(
+                $ledger_table,
+                [
+                    'submission_uuid'     => sprintf( 'eeeeeeee-eeee-4eee-8eee-%012d', $index ),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'native-correlation-overlap',
+                    'native_entry_id'     => 'overlap-entry-' . $index,
+                    'captured_at'         => $now,
+                    'logical_fields_json' => '{}',
+                    'created_at'          => $now,
+                    'updated_at'          => $now,
+                ]
+            );
+            $this->assertSame( 1, $inserted );
+        }
+
+        $complete_overlapping_request = static function ( mixed $value ) use ( $wpdb, $ledger_table ): mixed
+        {
+            $remaining = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT id, form_source, form_id, native_entry_id FROM %i WHERE form_id = %s AND native_correlation_hash IS NULL ORDER BY id ASC LIMIT 1',
+                    $ledger_table,
+                    'native-correlation-overlap'
+                ),
+                ARRAY_A
+            );
+            if ( is_array( $remaining ) )
+            {
+                $hash = Sentient_Forms_Submission_Ledger_Repository::native_correlation_hash(
+                    (string) $remaining['form_source'],
+                    (string) $remaining['form_id'],
+                    (string) $remaining['native_entry_id']
+                );
+                $repository = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+                $repository->assign_native_correlation_hash( (int) $remaining['id'], (string) $hash );
+            }
+            update_option( 'sentient_forms_native_correlation_backfill_version', 'v1', false );
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_native_correlation_cursor', $complete_overlapping_request );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade( false );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_native_correlation_cursor', $complete_overlapping_request );
+        }
+
+        $this->assertSame(
+            51,
+            (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT COUNT(*) FROM %i WHERE form_id = %s AND native_correlation_hash IS NOT NULL',
+                    $ledger_table,
+                    'native-correlation-overlap'
+                )
+            )
+        );
+        $this->assertSame( 'v1', get_option( 'sentient_forms_native_correlation_backfill_version' ) );
+        $this->assertFalse( get_option( 'sentient_forms_native_correlation_cursor', false ) );
         $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
     }
 

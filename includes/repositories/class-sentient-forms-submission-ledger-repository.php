@@ -32,6 +32,10 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         {
             return new WP_Error( 'sentient_forms_invalid_submission_ledger_scope', __( 'Submission ledger records require a form source and form ID.', 'sentient-forms' ) );
         }
+        $native_entry_id = isset( $data['native_entry_id'] ) && is_scalar( $data['native_entry_id'] )
+            ? sanitize_text_field( (string) $data['native_entry_id'] )
+            : '';
+        $native_correlation_hash = self::native_correlation_hash( $form_source, $form_id, $native_entry_id );
 
         $logical_fields_json = $this->encode_json_field( $data['logical_fields_json'] ?? null, 'logical_fields_json', true );
         if ( is_wp_error( $logical_fields_json ) )
@@ -64,7 +68,8 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
                 'submission_uuid'        => $submission_uuid,
                 'form_source'            => $form_source,
                 'form_id'                => $form_id,
-                'native_entry_id'        => isset( $data['native_entry_id'] ) ? sanitize_text_field( (string) $data['native_entry_id'] ) : null,
+                'native_entry_id'        => '' !== $native_entry_id ? $native_entry_id : null,
+                'native_correlation_hash' => $native_correlation_hash,
                 'native_entry_url'       => isset( $data['native_entry_url'] ) ? esc_url_raw( (string) $data['native_entry_url'] ) : null,
                 'source_submitted_at'    => isset( $data['source_submitted_at'] ) ? sanitize_text_field( (string) $data['source_submitted_at'] ) : null,
                 'captured_at'            => isset( $data['captured_at'] ) ? sanitize_text_field( (string) $data['captured_at'] ) : $now,
@@ -76,7 +81,7 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
                 'updated_at'             => $now,
                 'expires_at'             => isset( $data['expires_at'] ) ? sanitize_text_field( (string) $data['expires_at'] ) : null,
             ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
 
         if ( false === $inserted )
@@ -124,6 +129,111 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         );
 
         return is_array( $row ) ? $this->decode_row( $row ) : null;
+    }
+
+    public function get_earliest_by_native_entry_id( string $form_source, string $form_id, string $native_entry_id ): ?array
+    {
+        $form_source     = sanitize_key( $form_source );
+        $form_id         = sanitize_text_field( $form_id );
+        $native_entry_id = sanitize_text_field( $native_entry_id );
+
+        if ( '' === $form_source || '' === $form_id || '' === $native_entry_id )
+        {
+            return null;
+        }
+
+        $row = $this->wpdb->get_row(
+            $this->wpdb->prepare(
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s AND native_entry_id = %s ORDER BY id ASC LIMIT 1',
+                $this->table_name(),
+                $form_source,
+                $form_id,
+                $native_entry_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array( $row ) ? $this->decode_row( $row ) : null;
+    }
+
+    public function get_by_native_correlation_hash( string $native_correlation_hash ): ?array
+    {
+        $native_correlation_hash = strtolower( sanitize_text_field( $native_correlation_hash ) );
+        if ( 1 !== preg_match( '/^[a-f0-9]{64}$/', $native_correlation_hash ) )
+        {
+            return null;
+        }
+
+        $row = $this->wpdb->get_row(
+            $this->wpdb->prepare(
+                'SELECT * FROM %i WHERE native_correlation_hash = %s LIMIT 1',
+                $this->table_name(),
+                $native_correlation_hash
+            ),
+            ARRAY_A
+        );
+
+        return is_array( $row ) ? $this->decode_row( $row ) : null;
+    }
+
+    public function assign_native_correlation_hash( int $id, string $native_correlation_hash ): bool | WP_Error
+    {
+        $native_correlation_hash = strtolower( sanitize_text_field( $native_correlation_hash ) );
+        if ( $id <= 0 || 1 !== preg_match( '/^[a-f0-9]{64}$/', $native_correlation_hash ) )
+        {
+            return new WP_Error( 'sentient_forms_invalid_native_correlation', __( 'Submission ledger correlation identity is invalid.', 'sentient-forms' ) );
+        }
+
+        $updated = $this->wpdb->query(
+            $this->wpdb->prepare(
+                'UPDATE %i SET native_correlation_hash = %s WHERE id = %d AND native_correlation_hash IS NULL',
+                $this->table_name(),
+                $native_correlation_hash,
+                $id
+            )
+        );
+        if ( false === $updated )
+        {
+            return new WP_Error( 'sentient_forms_native_correlation_write_failed', __( 'Submission ledger correlation identity could not be persisted.', 'sentient-forms' ) );
+        }
+        if ( 1 === $updated )
+        {
+            return true;
+        }
+
+        $stored = $this->wpdb->get_var(
+            $this->wpdb->prepare(
+                'SELECT native_correlation_hash FROM %i WHERE id = %d',
+                $this->table_name(),
+                $id
+            )
+        );
+
+        return $native_correlation_hash === $stored
+            ? true
+            : new WP_Error( 'sentient_forms_native_correlation_conflict', __( 'Submission ledger correlation identity conflicts with the stored record.', 'sentient-forms' ) );
+    }
+
+    public static function native_correlation_hash( string $form_source, string $form_id, string $native_entry_id ): ?string
+    {
+        $form_source     = sanitize_key( $form_source );
+        $form_id         = sanitize_text_field( $form_id );
+        $native_entry_id = sanitize_text_field( $native_entry_id );
+        if ( '' === $form_source || '' === $form_id || '' === $native_entry_id )
+        {
+            return null;
+        }
+
+        $encoded = wp_json_encode(
+            [ 'sentient_forms_native_correlation_v1', $form_source, $form_id, $native_entry_id ],
+            JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+        );
+        if ( false === $encoded )
+        {
+            return null;
+        }
+
+        return hash( 'sha256', $encoded );
     }
 
     /**

@@ -1048,11 +1048,20 @@ class Sentient_Forms_Action_Executor {
 			$components[] = (string) $form['id'];
 		}
 
-		if ( ! empty( $entry ) ) {
+		if ( ! self::submission_token_has_stable_uuid( $submission_token ) && ! empty( $entry ) ) {
 			$components[] = hash( 'sha256', wp_json_encode( $entry ) );
 		}
 
 		return substr( hash( 'sha256', implode( '|', $components ) ), 0, 32 );
+	}
+
+	private static function submission_token_has_stable_uuid( string $submission_token ): bool {
+		$prefix = 'submission:';
+		if ( ! str_starts_with( $submission_token, $prefix ) ) {
+			return false;
+		}
+
+		return wp_is_uuid( substr( $submission_token, strlen( $prefix ) ) );
 	}
 
 	private function get_cached_execution_result( string $execution_request_id, int $entry_id, array $context ) {
