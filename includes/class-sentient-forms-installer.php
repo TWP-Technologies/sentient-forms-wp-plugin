@@ -597,6 +597,7 @@ class Sentient_Forms_Installer
         $batch_size = 50;
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The bounded upgrade backfill must read current plugin-owned ledger rows and must not cache migration state.
         $rows = $wpdb->get_results(
             $wpdb->prepare(
                 'SELECT id, form_source, form_id, native_entry_id FROM %i WHERE id > %d AND native_entry_id IS NOT NULL AND native_entry_id <> %s AND native_correlation_hash IS NULL ORDER BY id ASC LIMIT %d',
@@ -694,6 +695,7 @@ class Sentient_Forms_Installer
         $table_name = $wpdb->prefix . 'sentient_submission_ledger';
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer readiness must inspect the live plugin-owned table schema during activation and upgrade.
         $column = $wpdb->get_var(
             $wpdb->prepare(
                 'SHOW COLUMNS FROM %i LIKE %s',
@@ -707,6 +709,7 @@ class Sentient_Forms_Installer
         }
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer readiness must inspect the live plugin-owned table indexes during activation and upgrade.
         $index = $wpdb->get_var(
             $wpdb->prepare(
                 'SHOW INDEX FROM %i WHERE Key_name = %s',
