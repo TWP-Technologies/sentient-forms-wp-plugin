@@ -457,14 +457,29 @@ final class Sentient_Forms_Plugin
             return false;
         }
 
-        $request_store->record(
+        $recorded = $request_store->record(
             $execution_request_id,
             [
-                'action_id' => $central_action_id ?: $action_id,
-                'adapter'   => $context['form_source'] ?? null,
-                'status'    => 'queued',
+                'action_id'      => $central_action_id ?: $action_id,
+                'adapter'        => $context['form_source'] ?? null,
+                'status'         => 'queued',
+                'payload_digest' => hash(
+                    'sha256',
+                    (string) wp_json_encode(
+                        [
+                            'central_action_id' => $central_action_id,
+                            'data'              => $data,
+                            'settings'          => $settings,
+                            'context'           => $context,
+                        ]
+                    )
+                ),
             ]
         );
+        if ( true !== $recorded )
+        {
+            return false;
+        }
 
         $batch_settings = isset( $settings['batch_settings'] ) && is_array( $settings['batch_settings'] )
             ? $settings['batch_settings']

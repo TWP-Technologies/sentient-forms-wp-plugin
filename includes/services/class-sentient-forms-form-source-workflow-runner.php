@@ -642,6 +642,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             ];
         }
 
+        if ( 'record_type_conflict' === $claim_state )
+        {
+            return [
+                'outcome'                => 'digest_conflict',
+                'result'                 => new WP_Error(
+                    'sentient_forms_execution_record_type_conflict',
+                    __( 'This execution identity is already owned by a different lifecycle.', 'sentient-forms' )
+                ),
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
+
         global $wpdb;
         $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
         if ( 'claimed' !== $claim_state )
@@ -1127,9 +1139,11 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $existing = $this->plugin->get_async_request_store()->get( $execution_request_id );
         $status   = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
 
-        return in_array( $status, [ 'queued', 'running', 'success' ], true )
-            ? 'replayed'
-            : 'failed';
+        return match ( $status ) {
+            'queued', 'running'      => 'replayed_active',
+            'success', 'succeeded'   => 'replayed_success',
+            default                  => 'failed',
+        };
     }
 
     private function get_local_execution_service(): Sentient_Forms_Local_Action_Execution_Service

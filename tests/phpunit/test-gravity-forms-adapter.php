@@ -234,6 +234,34 @@ final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action
     }
 }
 
+final class Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action extends Sentient_Forms_Spam_Analysis_Action
+{
+    public int $action_owned_notes = 0;
+
+    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+    {
+        return $this->process_response(
+            [
+                'result_data' => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'Production-faithful bundled spam result.',
+                ],
+            ],
+            [
+                'form'  => [ 'id' => $form_id ],
+                'entry' => [ 'id' => $entry_id ],
+            ],
+            $settings
+        );
+    }
+
+    protected function add_entry_note( int $entry_id, array $result_data, string $classification, bool $is_spam, array $settings ): void
+    {
+        ++$this->action_owned_notes;
+    }
+}
+
 final class Sentient_Forms_Test_Validation_Action_Executor extends Sentient_Forms_Action_Executor
 {
     /** @var callable */
@@ -254,6 +282,8 @@ final class Sentient_Forms_Test_Validation_Action_Executor extends Sentient_Form
 final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms_Gravity_Forms_Adapter
 {
     public bool $webhook_controls_supported = false;
+
+    public int $spam_status_updates = 0;
 
     /** @var array<int, array<string, mixed>> */
     public array $notes = [];
@@ -300,6 +330,11 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
             return false;
         }
 
+        if ( 'spam' === ( $this->entries[ $entry_id ]['status'] ?? null ) ) {
+            return true;
+        }
+
+        ++$this->spam_status_updates;
         $this->entries[ $entry_id ]['status'] = 'spam';
 
         return true;
@@ -977,6 +1012,74 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
+    public function test_active_async_replay_keeps_synchronous_dependents_blocked(): void
+    {
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id              = 799;
+        $entry_id             = 1799;
+        $option_key           = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $dependent_executions = 0;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                'sync_replay_dependent',
+                static function () use ( &$dependent_executions ): array {
+                    ++$dependent_executions;
+
+                    return [ 'ok' => true ];
+                }
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_prerequisite' => [
+                    'local_mapping_id'           => 'map_prerequisite',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => true ],
+                ],
+                'map_dependent'    => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => 'sync_replay_dependent',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'          => false,
+                        'dependency_ids' => [ 'map_prerequisite' ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args' );
+            },
+            10,
+            2
+        );
+
+        $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form  = [ 'id' => $form_id, 'title' => 'Active replay dependency', 'fields' => [] ];
+        ( new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() ) )->handle_accepted_submission( $entry, $form );
+        ( new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() ) )->handle_accepted_submission( $entry, $form );
+
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 0, $dependent_executions );
+
+        delete_option( $option_key );
+    }
+
     public function test_synchronous_accepted_success_is_visible_in_linked_action_log(): void
     {
         $form_id    = 792;
@@ -1645,6 +1748,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     'central_action_id'          => $action_id,
                     'action_type_indicator'      => 'custom',
                     'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
                     'trigger_hooks'              => [ 'after_submission' ],
                     'settings'                   => [
                         'async'                          => false,
@@ -1661,12 +1765,175 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             false
         );
 
-        $this->adapter->handle_accepted_submission(
-            [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ],
-            [ 'id' => $form_id, 'title' => 'Sync spam native effect', 'fields' => [] ]
-        );
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Sync spam native effect', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+
+        $adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertSame( 1, $adapter->spam_status_updates );
+        $this->assertCount( 1, $adapter->notes );
+
+        delete_option( $option_key );
+    }
+
+    public function test_registered_action_native_spam_finalization_is_idempotent(): void
+    {
+        $form_id    = 797;
+        $entry_id   = 1797;
+        $action_id  = 'self_applying_spam_action';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form       = [ 'id' => $form_id, 'title' => 'Self-applying spam action', 'fields' => [] ];
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $action_id,
+                static function ( array $data, array $settings, int | string $native_entry_id ) use ( $adapter ): array {
+                    $adapter->mark_entry_as_spam( $native_entry_id );
+
+                    return [
+                        'result_data' => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'The Action already applied the native spam status.',
+                        ],
+                    ];
+                }
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+
+        $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 1, $adapter->spam_status_updates );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertCount( 1, $adapter->notes );
+
+        delete_option( $option_key );
+    }
+
+    public function test_bundled_spam_action_leaves_native_note_ownership_to_the_adapter(): void
+    {
+        $form_id    = 796;
+        $entry_id   = 1796;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form       = [ 'id' => $form_id, 'title' => 'Bundled spam action', 'fields' => [] ];
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => 'spam_analysis',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'                   => false,
+                        'mark_as_spam'            => true,
+                        'spam_indicators_display' => 'simple',
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 1, $adapter->spam_status_updates );
+        $this->assertSame( 0, $action->action_owned_notes );
+        $this->assertCount( 1, $adapter->notes );
+
+        delete_option( $option_key );
+    }
+
+    public function test_synchronous_managed_spam_result_updates_the_native_entry_once(): void
+    {
+        $form_id    = 798;
+        $entry_id   = 1798;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $executions = 0;
+        update_option(
+            $option_key,
+            [
+                'map_managed_spam' => [
+                    'local_mapping_id'           => 'map_managed_spam',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_name_label'          => 'Managed spam detection',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'                    => false,
+                        'spam_result_display_mode' => 'all_results',
+                    ],
+                ],
+            ],
+            false
+        );
+        $this->set_action_executor(
+            new Sentient_Forms_Test_Validation_Action_Executor(
+                Sentient_Forms_Plugin::instance(),
+                static function () use ( &$executions ): array {
+                    ++$executions;
+
+                    return [
+                        'result_data' => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'Managed synchronous result should apply Gravity spam state.',
+                        ],
+                    ];
+                }
+            )
+        );
+
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Managed synchronous spam', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+
+        $adapter->handle_accepted_submission( $entry, $form );
+        $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( 1, $executions );
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertCount( 1, $adapter->notes );
+        $this->assertStringContainsString( 'Managed synchronous result should apply Gravity spam state.', $adapter->notes[0]['note_content'] ?? '' );
 
         delete_option( $option_key );
     }

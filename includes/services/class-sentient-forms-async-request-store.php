@@ -43,7 +43,22 @@ class Sentient_Forms_Async_Request_Store
         return $row ?: null;
     }
 
-    public function record( string $request_hash, array $context ): void
+    private function get_by_request_hash( string $request_hash ): ?array
+    {
+        $wpdb = $this->wpdb;
+        $row  = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE request_hash = %s',
+                $this->table(),
+                $request_hash
+            ),
+            ARRAY_A
+        );
+
+        return $row ?: null;
+    }
+
+    public function record( string $request_hash, array $context ): bool | WP_Error
     {
         $now         = current_time( 'mysql' );
         $action_id   = $context['action_id'] ?? '';
@@ -56,40 +71,101 @@ class Sentient_Forms_Async_Request_Store
         $existing = $this->get( $request_hash, $record_type );
         if ( $existing )
         {
+            $stored_digest = isset( $existing['payload_digest'] ) && is_scalar( $existing['payload_digest'] )
+                ? sanitize_text_field( (string) $existing['payload_digest'] )
+                : '';
+            if ( '' !== $stored_digest && is_scalar( $digest ) && '' !== (string) $digest && ! hash_equals( $stored_digest, (string) $digest ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_digest_conflict',
+                    __( 'This execution identity is already associated with a different payload.', 'sentient-forms' )
+                );
+            }
+
+            $existing_status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
+            $active_statuses = [ 'queued', 'running', 'success', 'succeeded', 'telemetry_queued' ];
+            if ( ! $this->is_expired( $existing ) && in_array( $existing_status, $active_statuses, true ) )
+            {
+                return false;
+            }
+
             $first_seen = $this->is_expired( $existing ) ? $now : ( $existing['first_seen_at'] ?? $now );
-            $this->wpdb->update(
+            $cutoff     = wp_date( 'Y-m-d H:i:s', time() - $this->ttl(), wp_timezone() );
+            $digest     = is_scalar( $digest ) && '' !== (string) $digest ? (string) $digest : $stored_digest;
+            $update_query = $this->wpdb->prepare(
+                "UPDATE %i SET action_id = %s, adapter = %s, status = %s, first_seen_at = %s, last_seen_at = %s, last_error = NULL, payload_digest = %s, telemetry_payload = %s WHERE request_hash = %s AND record_type = %s AND (status IN ('failed', 'error', 'retry_pending', 'dependency_wait') OR last_seen_at < %s)",
                 $this->table(),
-                [
-                    'action_id'     => $action_id,
-                    'adapter'       => $adapter,
-                    'status'        => $status,
-                    'first_seen_at' => $first_seen,
-                    'last_seen_at'  => $now,
-                    'last_error'    => null,
-                    'payload_digest'=> $digest,
-                    'telemetry_payload' => $telemetry_payload,
-                ],
-                [ 'request_hash' => $request_hash ],
-                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
-                [ '%s' ]
+                $action_id,
+                $adapter,
+                $status,
+                $first_seen,
+                $now,
+                $digest,
+                $telemetry_payload,
+                $request_hash,
+                $record_type,
+                $cutoff
             );
-            return;
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+            $updated = $this->wpdb->query( $update_query );
+            if ( false === $updated )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_persistence_failed',
+                    __( 'The async execution identity could not be persisted.', 'sentient-forms' )
+                );
+            }
+
+            return 1 === $updated;
         }
 
-        $this->wpdb->insert(
+        $insert_query = $this->wpdb->prepare(
+            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest, telemetry_payload) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
             $this->table(),
-            [
-                'request_hash' => $request_hash,
-                'action_id'    => $action_id,
-                'adapter'      => $adapter,
-                'record_type'  => $record_type,
-                'status'       => $status,
-                'first_seen_at'=> $now,
-                'last_seen_at' => $now,
-                'payload_digest' => $digest,
-                'telemetry_payload' => $telemetry_payload,
-            ],
-            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            $request_hash,
+            $action_id,
+            $adapter,
+            $record_type,
+            $status,
+            $now,
+            $now,
+            $digest,
+            $telemetry_payload
+        );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
+        $inserted = $this->wpdb->query( $insert_query );
+        if ( 1 === $inserted )
+        {
+            return true;
+        }
+
+        $owner = $this->get_by_request_hash( $request_hash );
+        if ( is_array( $owner ) && $record_type !== sanitize_key( (string) ( $owner['record_type'] ?? '' ) ) )
+        {
+            return new WP_Error(
+                'sentient_forms_async_request_record_type_conflict',
+                __( 'This execution identity is already owned by a different lifecycle.', 'sentient-forms' )
+            );
+        }
+        if ( is_array( $owner ) )
+        {
+            $owner_digest = isset( $owner['payload_digest'] ) && is_scalar( $owner['payload_digest'] )
+                ? sanitize_text_field( (string) $owner['payload_digest'] )
+                : '';
+            if ( '' !== $owner_digest && is_scalar( $digest ) && '' !== (string) $digest && ! hash_equals( $owner_digest, (string) $digest ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_request_digest_conflict',
+                    __( 'This execution identity is already associated with a different payload.', 'sentient-forms' )
+                );
+            }
+
+            return false;
+        }
+
+        return new WP_Error(
+            'sentient_forms_async_request_persistence_failed',
+            __( 'The async execution identity could not be persisted.', 'sentient-forms' )
         );
     }
 
@@ -142,6 +218,12 @@ class Sentient_Forms_Async_Request_Store
         $existing = $this->get( $request_hash, $record_type );
         if ( ! is_array( $existing ) )
         {
+            $owner = $this->get_by_request_hash( $request_hash );
+            if ( is_array( $owner ) && $record_type !== sanitize_key( (string) ( $owner['record_type'] ?? '' ) ) )
+            {
+                return [ 'state' => 'record_type_conflict', 'record' => $owner ];
+            }
+
             return [ 'state' => 'conflict', 'record' => null ];
         }
 

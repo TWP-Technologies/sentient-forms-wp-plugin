@@ -399,22 +399,30 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+            $context = [
+                'hook'                      => self::NATIVE_AFTER_SUBMISSION_HOOK,
+                'form_source'               => $this->get_id(),
+                'action_id'                 => (string) $mapping_id,
+                'mapping_id'                => (string) $mapping_id,
+                'local_mapping_id'          => (string) $mapping_id,
+                'form_id'                   => $form['id'] ?? null,
+                'entry_id'                  => $entry['id'] ?? null,
+                'submission_uuid'           => $outcome->get_submission_uuid(),
+                'central_action_id'         => $mapping['central_action_id'] ?? null,
+                'mark_as_spam'              => ! empty( $mapping['mark_as_spam'] ) || ! empty( $settings['mark_as_spam'] ),
+                'spam_confidence_threshold' => $settings['spam_confidence_threshold'] ?? $mapping['spam_confidence_threshold'] ?? 0.80,
+                'spam_indicators_display'   => $settings['spam_indicators_display'] ?? $mapping['spam_indicators_display'] ?? 'simple',
+                'spam_result_display_mode'  => $settings['spam_result_display_mode'] ?? $mapping['spam_result_display_mode'] ?? 'all_results',
+                'settings'                  => $settings,
+            ];
+            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
+
             $this->run_post_execution_actions(
                 $entry_id,
-                [
-                    'hook'              => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                    'form_source'       => $this->get_id(),
-                    'action_id'         => (string) $mapping_id,
-                    'mapping_id'        => (string) $mapping_id,
-                    'local_mapping_id'  => (string) $mapping_id,
-                    'form_id'           => $form['id'] ?? null,
-                    'entry_id'          => $entry['id'] ?? null,
-                    'submission_uuid'   => $outcome->get_submission_uuid(),
-                    'central_action_id' => $mapping['central_action_id'] ?? null,
-                    'settings'          => isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
-                        ? $mapping['settings']
-                        : [],
-                ],
+                $context,
                 $result
             );
         }

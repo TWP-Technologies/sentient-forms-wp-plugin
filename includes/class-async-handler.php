@@ -1151,7 +1151,7 @@ class Sentient_Forms_Async_Handler
         ];
         $payload_digest = $this->local_mapping_payload_digest( $payload );
 
-        $this->get_request_store()->record(
+        $recorded = $this->get_request_store()->record(
             $execution_request_id,
             [
                 'action_id'      => 'local_mapping_' . $local_mapping_id,
@@ -1160,6 +1160,10 @@ class Sentient_Forms_Async_Handler
                 'payload_digest' => $payload_digest,
             ]
         );
+        if ( true !== $recorded )
+        {
+            return false;
+        }
 
         $this->record_local_execution_event( $payload, 'queued' );
 
@@ -1442,6 +1446,10 @@ class Sentient_Forms_Async_Handler
             );
 
             unset( $context['job_id'] );
+            if ( '' !== $execution_request_id )
+            {
+                $this->get_request_store()->mark_status( $execution_request_id, 'retry_pending', $error->get_error_message() );
+            }
             $scheduled = $this->schedule_local_mapping(
                 absint( $payload['local_mapping_id'] ?? 0 ),
                 [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
@@ -1515,7 +1523,7 @@ class Sentient_Forms_Async_Handler
         );
         if ( '' !== $execution_request_id )
         {
-            $this->get_request_store()->mark_status( $execution_request_id, 'queued', $reason );
+            $this->get_request_store()->mark_status( $execution_request_id, 'dependency_wait', $reason );
         }
 
         unset( $context['job_id'] );
@@ -2271,7 +2279,6 @@ class Sentient_Forms_Async_Handler
         if ( $request_store->should_block( $evaluation_request_id, 'evaluation' ) )
         {
             // Treat duplicates as a no-op so health dashboards stay green, but keep the event visible.
-            $request_store->mark_status( $evaluation_request_id, 'skipped', __( 'Duplicate evaluation request blocked', 'sentient-forms' ), 'evaluation' );
             $this->emit_async_event(
                 'evaluation_duplicate_blocked',
                 array_merge(
@@ -2289,7 +2296,7 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $request_store->record(
+        $recorded = $request_store->record(
             $evaluation_request_id,
             [
                 'action_id'      => $job['action_id'] ?? $job['context']['action_id'] ?? '',
@@ -2299,6 +2306,10 @@ class Sentient_Forms_Async_Handler
                 'payload_digest' => $payload_data ? wp_hash( wp_json_encode( $payload_data ) ) : null,
             ]
         );
+        if ( true !== $recorded )
+        {
+            return false;
+        }
 
         $job_context = array_merge(
             [

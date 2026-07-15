@@ -49,7 +49,7 @@ final class Sentient_Forms_Accepted_Submission_Run_Result
         return array_keys(
             array_filter(
                 $this->mapping_outcomes,
-                static fn ( string $outcome ): bool => in_array( $outcome, [ 'queued', 'replayed' ], true )
+                static fn ( string $outcome ): bool => in_array( $outcome, [ 'queued', 'replayed_active' ], true )
             )
         );
     }

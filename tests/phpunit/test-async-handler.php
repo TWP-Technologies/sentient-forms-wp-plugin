@@ -181,6 +181,19 @@ class Sentient_Forms_Test_Spy_Async_Handler extends Sentient_Forms_Async_Handler
     }
 }
 
+final class Sentient_Forms_Test_Lost_Async_Request_Race_Store extends Sentient_Forms_Async_Request_Store
+{
+    public function should_block( string $request_hash, string $record_type = 'job' ): bool
+    {
+        return false;
+    }
+
+    public function record( string $request_hash, array $context ): bool | WP_Error
+    {
+        return false;
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
@@ -824,6 +837,76 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
 
         $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
+    }
+
+    public function test_process_action_async_does_not_enqueue_when_sync_execution_owns_the_identity(): void
+    {
+        $execution_request_id = 'accepted-sync-owns-global-identity';
+        $request_store        = $this->plugin->get_async_request_store();
+        $claim                = $request_store->claim_execution(
+            $execution_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-owner' ),
+            ]
+        );
+        $this->assertSame( 'claimed', $claim['state'] );
+
+        $force_request_id = static fn (): string => $execution_request_id;
+        add_filter( 'sentient_forms_execution_request_id', $force_request_id, 10, 5 );
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'entry_evaluation',
+                [
+                    'form'  => [ 'id' => 551, 'title' => 'Global identity conflict' ],
+                    'entry' => [ 'id' => 552, 'field_1' => 'Do not enqueue twice.' ],
+                ],
+                [ 'central_action_id' => 'spam_detection_v1' ],
+                [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_execution_request_id', $force_request_id, 10 );
+        }
+
+        $this->assertFalse( $scheduled );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertNotNull( $request_store->get( $execution_request_id, 'accepted_sync' ) );
+        $this->assertNull( $request_store->get( $execution_request_id, 'job' ) );
+    }
+
+    public function test_process_action_async_does_not_enqueue_after_losing_same_type_insert_race(): void
+    {
+        global $wpdb;
+
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'async_request_store' );
+        $property->setAccessible( true );
+        $original = $property->getValue( $this->plugin );
+        $property->setValue( $this->plugin, new Sentient_Forms_Test_Lost_Async_Request_Race_Store( $wpdb ) );
+
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'entry_evaluation',
+                [
+                    'form'  => [ 'id' => 553, 'title' => 'Concurrent scheduling' ],
+                    'entry' => [ 'id' => 554, 'field_1' => 'Schedule only once.' ],
+                ],
+                [ 'central_action_id' => 'spam_detection_v1' ],
+                [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ]
+            );
+        }
+        finally
+        {
+            $property->setValue( $this->plugin, $original );
+        }
+
+        $this->assertFalse( $scheduled );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
     }
 
     public function test_process_action_async_requires_central_action_id(): void
@@ -2544,13 +2627,16 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $first = $this->plugin->dispatch_action_evaluation( $job );
         $second = $this->plugin->dispatch_action_evaluation( $job );
+        $third = $this->plugin->dispatch_action_evaluation( $job );
 
         $this->assertTrue( $first );
         $this->assertFalse( $second, 'Second scheduling should be blocked by the evaluation ledger' );
+        $this->assertFalse( $third, 'Later duplicates must not reclaim the canonical evaluation owner' );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertCount( 1, $rows );
-        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'queued', $rows[0]['status'] );
     }
 
     public function test_dispatch_action_evaluation_emits_duplicate_block_event(): void
