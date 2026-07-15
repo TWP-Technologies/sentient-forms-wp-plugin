@@ -1627,6 +1627,13 @@ class Sentient_Forms_Async_Handler
     private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): void
     {
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $preflight_effect_outcomes = isset( $context['native_effect_outcomes'] ) && is_array( $context['native_effect_outcomes'] )
+            ? $context['native_effect_outcomes']
+            : [];
+        $native_effect_outcomes = Sentient_Forms_Native_Effect_Outcomes::merge(
+            is_array( $result ) ? Sentient_Forms_Native_Effect_Outcomes::from_execution_result( $result ) : [],
+            $preflight_effect_outcomes
+        );
         $execution_request_id = sanitize_text_field(
             (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
         );
@@ -1657,9 +1664,17 @@ class Sentient_Forms_Async_Handler
             if ( is_array( $stored_result ) )
             {
                 $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $stored_result );
+                if ( [] !== $native_effect_outcomes )
+                {
+                    $stored_result['native_effect_outcomes'] = $native_effect_outcomes;
+                }
             }
             $event['result_json']      = $stored_result;
             $event['token_usage_json'] = is_array( $result['result']['usage'] ?? null ) ? $result['result']['usage'] : null;
+        }
+        elseif ( [] !== $native_effect_outcomes )
+        {
+            $event['result_json'] = [ 'native_effect_outcomes' => $native_effect_outcomes ];
         }
 
         if ( $error )

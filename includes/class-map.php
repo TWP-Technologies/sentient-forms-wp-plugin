@@ -117,6 +117,7 @@ return [
 	'Sentient_Forms_Migration_Runs_Repository' => __DIR__ . '/repositories/class-sentient-forms-migration-runs-repository.php',
 	'Sentient_Forms_Model_Cache_Repository' => __DIR__ . '/repositories/class-sentient-forms-model-cache-repository.php',
 	'Sentient_Forms_Models_Controller' => __DIR__ . '/rest-api/controllers/class-models-controller.php',
+	'Sentient_Forms_Native_Effect_Outcomes' => __DIR__ . '/services/class-sentient-forms-native-effect-outcomes.php',
 	'Sentient_Forms_OpenRouter_Direct_Client' => __DIR__ . '/providers/class-sentient-forms-openrouter-direct-client.php',
 	'Sentient_Forms_OpenRouter_Model_Catalog_Refresh_Cron' => __DIR__ . '/services/class-sentient-forms-openrouter-model-catalog-refresh-cron.php',
 	'Sentient_Forms_OpenRouter_Model_Recommendations' => __DIR__ . '/class-sentient-forms-openrouter-model-recommendations.php',

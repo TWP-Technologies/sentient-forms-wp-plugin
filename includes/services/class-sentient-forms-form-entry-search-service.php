@@ -354,7 +354,7 @@ class Sentient_Forms_Form_Entry_Search_Service
         return array_values( array_unique( $candidates ) );
     }
 
-    private function adapter_for_source( string $form_source ): ?Sentient_Forms_Adapter_Interface
+    private function adapter_for_source( string $form_source ): ?Sentient_Forms_Form_Source_Discovery_Adapter_Interface
     {
         $registry = $this->adapter_registry();
         if ( null === $registry )

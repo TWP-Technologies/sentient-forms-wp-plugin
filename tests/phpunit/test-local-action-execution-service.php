@@ -3055,10 +3055,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'store_result', $effects['applied'] );
         $this->assertContains( 'spam_classification', $effects['applied'] );
 
-        $skipped = [];
-        foreach ( $effects['skipped'] as $skip )
+        $unsupported = [];
+        foreach ( $effects['unsupported'] as $outcome )
         {
-            $skipped[ $skip['effect'] ] = $skip['reason'];
+            $unsupported[ $outcome['effect'] ] = $outcome['reason'];
         }
 
         $this->assertSame(
@@ -3067,8 +3067,9 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'entry_note'                  => 'native_note_unsupported',
                 'mark_as_spam'                => 'native_spam_status_unsupported',
             ],
-            $skipped
+            $unsupported
         );
+        $this->assertSame( [], $effects['failed'] );
     }
 
     public function test_non_gravity_spam_effects_use_configured_classification_path(): void
@@ -3110,10 +3111,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
         $this->assertContains( 'spam_classification', $effects['applied'] );
 
-        $skipped = [];
-        foreach ( $effects['skipped'] as $skip )
+        $unsupported = [];
+        foreach ( $effects['unsupported'] as $outcome )
         {
-            $skipped[ $skip['effect'] ] = $skip['reason'];
+            $unsupported[ $outcome['effect'] ] = $outcome['reason'];
         }
 
         $this->assertSame(
@@ -3121,8 +3122,9 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'mark_as_spam' => 'native_spam_status_unsupported',
                 'spam_note'    => 'native_note_unsupported',
             ],
-            $skipped
+            $unsupported
         );
+        $this->assertSame( [], $effects['failed'] );
     }
 
     public function test_non_gravity_post_execution_actions_do_not_write_gravity_entry_meta(): void
@@ -3174,6 +3176,47 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'post_execution:wp_hook', $effects['applied'] );
         $this->assertSame( 1, $hook_calls );
         $this->assertNull( gform_get_meta( 501, 'sentient_forms_post_execution_actions' ) );
+    }
+
+    public function test_non_gravity_post_execution_entry_note_is_unsupported_not_failed(): void
+    {
+        $effects = ( new Sentient_Forms_Local_Result_Applier() )->apply(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'effect_mapping_json' => [
+                    'post_execution_actions' => [
+                        [
+                            'type'    => 'entry_note',
+                            'message' => 'Result: {{structured.summary}}',
+                        ],
+                    ],
+                ],
+            ],
+            [ 'id' => '42', 'title' => 'Contact Form 7' ],
+            [
+                'id'              => null,
+                'submission_uuid' => '44444444-5555-4666-8777-888888888888',
+            ],
+            [
+                'execution_request_id' => 'cf7-unsupported-post-entry-note',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'structured' => [ 'summary' => 'Provider-neutral result.' ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $effects['failed'] );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'post_execution:entry_note',
+                    'reason' => 'native_note_unsupported',
+                ],
+            ],
+            $effects['unsupported']
+        );
     }
 
     public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void

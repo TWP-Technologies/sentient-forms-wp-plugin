@@ -276,6 +276,77 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Fixture Form', $stored['provider_metadata_json']['form_name'] ?? null );
     }
 
+    public function test_accepted_runner_records_unsupported_native_effect_outcomes_before_filtering(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+        $action_id = 'fixture_unsupported_effects';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): array => [ 'classification' => 'ham' ]
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'unsupported_effects' => [
+                    'local_mapping_id'           => 'unsupported_effects',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Unsupported fixture effects',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'               => false,
+                        'effect_mapping_json' => [
+                            'store_result'                   => true,
+                            'entry_note'                     => [ 'template' => 'Result: {{classification}}' ],
+                            'mark_as_spam'                   => true,
+                            'suppress_notifications_on_spam' => true,
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+        $result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+            ->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'unsupported-effects' ]
+            );
+
+        $outcomes = $result->get_native_effect_outcomes( 'unsupported_effects' );
+        $this->assertSame(
+            [ 'entry_note', 'mark_as_spam', 'store_result', 'suppress_notifications' ],
+            array_column( $outcomes, 'effect' )
+        );
+        $this->assertSame( [ 'unsupported' ], array_values( array_unique( array_column( $outcomes, 'status' ) ) ) );
+        $reasons = array_values( array_unique( array_column( $outcomes, 'reason' ) ) );
+        sort( $reasons );
+        $this->assertSame(
+            [ 'native_entry_write_unavailable', 'native_notes_unavailable', 'native_spam_unavailable', 'notification_controls_unavailable' ],
+            $reasons
+        );
+
+        $logs = get_option( 'sentient_forms_action_log', [] );
+        $this->assertCount( 1, $logs );
+        $this->assertSame( $outcomes, $logs[0]['details']['native_effect_outcomes'] ?? null );
+
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->get_by_request_id( (string) ( $logs[0]['execution_request_id'] ?? '' ) );
+        $this->assertIsArray( $event );
+        $this->assertSame( $outcomes, $event['result_json']['native_effect_outcomes'] ?? null );
+    }
+
     public function test_synchronous_non_gravity_action_receives_distinct_mapping_execution_context(): void
     {
         global $wpdb;
@@ -456,6 +527,131 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
         $this->assertCount( 1, $events );
         $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
+    }
+
+    public function test_synchronous_success_replay_preserves_stored_effect_outcomes_over_current_preflight(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $action_id = 'fixture_stable_effect_replay';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static fn (): array => [ 'classification' => 'ham' ]
+            )
+        );
+        update_option(
+            'sentient_forms_actions_fixture_forms_99',
+            [
+                'stable_effect_replay' => [
+                    'local_mapping_id'           => 'stable_effect_replay',
+                    'central_action_id'          => $action_id,
+                    'action_name_label'          => 'Stable effect replay',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'               => false,
+                        'effect_mapping_json' => [
+                            'entry_note' => [ 'template' => 'Result: {{classification}}' ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'first' ]
+        );
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->list_for_submission_uuid( $first->get_submission_uuid() );
+        $this->assertCount( 1, $events );
+
+        $wpdb->update(
+            $wpdb->prefix . 'sentient_execution_events',
+            [
+                'result_json' => wp_json_encode(
+                    [
+                        'native_effect_outcomes' => [
+                            [
+                                'effect' => 'entry_note',
+                                'status' => 'applied',
+                                'reason' => 'historical_native_application',
+                            ],
+                        ],
+                    ]
+                ),
+            ],
+            [ 'execution_request_id' => $events[0]['execution_request_id'] ],
+            [ '%s' ],
+            [ '%s' ]
+        );
+
+        $replay = $runner->run_accepted_submission_with_outcome(
+            new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+            [ 'native' => 'replay' ]
+        );
+
+        $this->assertSame( 'replayed_success', $replay->get_mapping_outcomes()['stable_effect_replay'] ?? null );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'entry_note',
+                    'status' => 'applied',
+                    'reason' => 'historical_native_application',
+                ],
+            ],
+            $replay->get_native_effect_outcomes( 'stable_effect_replay' )
+        );
+    }
+
+    public function test_synchronous_accepted_execution_rejects_changed_settings_for_the_same_identity(): void
+    {
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $calls     = 0;
+        $action_id = 'fixture_digest_conflict';
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Context_Tracking_Action(
+                $action_id,
+                static function () use ( &$calls ): array {
+                    ++$calls;
+
+                    return [ 'classification' => 'ham' ];
+                }
+            )
+        );
+        $mapping = [
+            'local_mapping_id'           => 'digest_conflict',
+            'central_action_id'          => $action_id,
+            'action_name_label'          => 'Digest conflict fixture',
+            'action_type_indicator'      => 'custom',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'async' => false, 'marker' => 'first' ],
+        ];
+        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'digest_conflict' => $mapping ], false );
+
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first  = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $mapping['settings']['marker'] = 'changed';
+        update_option( 'sentient_forms_actions_fixture_forms_99', [ 'digest_conflict' => $mapping ], false );
+        $conflict = $runner->run_accepted_submission_with_outcome( new Sentient_Forms_Test_Accepted_Submission_Adapter(), [] );
+
+        $this->assertSame( $first->get_submission_uuid(), $conflict->get_submission_uuid() );
+        $this->assertSame( 1, $calls );
+        $this->assertSame( 'digest_conflict', $conflict->get_mapping_outcomes()['digest_conflict'] ?? null );
+        $error = $conflict->get_execution_result( 'digest_conflict' );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_execution_digest_conflict', $error->get_error_code() );
     }
 
     public function test_synchronous_accepted_failure_is_terminal_without_explicit_safe_retry(): void

@@ -19,7 +19,7 @@ class Sentient_Forms_Local_Result_Applier
      * @param array<string, mixed> $execution_result Normalized execution result.
      * @param array<string, mixed> $action           Local custom action row.
      *
-     * @return array{applied: array<int, string>, skipped: array<int, array<string, string>>}|WP_Error
+     * @return array{applied: array<int, string>, skipped: array<int, array<string, string>>, failed: array<int, array<string, string>>, unsupported: array<int, array<string, string>>}|WP_Error
      */
     public function apply( array $mapping, array $form, array $entry, array $execution_result, array $action = [] ): array | WP_Error
     {
@@ -35,6 +35,8 @@ class Sentient_Forms_Local_Result_Applier
                         'reason' => 'no_effect_mapping',
                     ],
                 ],
+                'failed'      => [],
+                'unsupported' => [],
             ];
         }
 
@@ -43,6 +45,8 @@ class Sentient_Forms_Local_Result_Applier
         $entry_id         = absint( $entry['id'] ?? 0 );
         $applied          = [];
         $skipped          = [];
+        $failed           = [];
+        $unsupported      = [];
         $result           = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
 
         if ( $is_gravity_forms && $entry_id > 0 && function_exists( 'gform_update_meta' ) )
@@ -107,7 +111,7 @@ class Sentient_Forms_Local_Result_Applier
 
             if ( ! $is_gravity_forms )
             {
-                $skipped[] = [
+                $unsupported[] = [
                     'effect' => 'meta:' . $meta_key,
                     'reason' => 'native_meta_unsupported',
                 ];
@@ -137,7 +141,7 @@ class Sentient_Forms_Local_Result_Applier
         {
             if ( ! $is_gravity_forms )
             {
-                $skipped[] = [
+                $unsupported[] = [
                     'effect' => 'entry_note',
                     'reason' => 'native_note_unsupported',
                 ];
@@ -184,14 +188,24 @@ class Sentient_Forms_Local_Result_Applier
                 }
 
                 $spam_status_reason = $this->non_native_spam_status_skip_reason( $effects, $result );
-                $skipped[] = [
-                    'effect' => 'mark_as_spam',
-                    'reason' => $spam_status_reason,
-                ];
+                if ( str_ends_with( $spam_status_reason, '_unsupported' ) )
+                {
+                    $unsupported[] = [
+                        'effect' => 'mark_as_spam',
+                        'reason' => $spam_status_reason,
+                    ];
+                }
+                else
+                {
+                    $skipped[] = [
+                        'effect' => 'mark_as_spam',
+                        'reason' => $spam_status_reason,
+                    ];
+                }
 
                 if ( $this->non_native_spam_note_requested( $effects, $result ) )
                 {
-                    $skipped[] = [
+                    $unsupported[] = [
                         'effect' => 'spam_note',
                         'reason' => 'native_note_unsupported',
                     ];
@@ -267,16 +281,36 @@ class Sentient_Forms_Local_Result_Applier
                     continue;
                 }
 
-                $skipped[] = [
-                    'effect' => $effect_name,
-                    'reason' => sanitize_key( (string) ( $post_execution_result['status'] ?? 'failed' ) ),
-                ];
+                $status = sanitize_key( (string) ( $post_execution_result['status'] ?? 'failed' ) );
+                if ( str_ends_with( $status, '_unsupported' ) )
+                {
+                    $unsupported[] = [
+                        'effect' => $effect_name,
+                        'reason' => $status,
+                    ];
+                }
+                elseif ( str_starts_with( $status, 'skipped' ) )
+                {
+                    $skipped[] = [
+                        'effect' => $effect_name,
+                        'reason' => $status,
+                    ];
+                }
+                else
+                {
+                    $failed[] = [
+                        'effect' => $effect_name,
+                        'reason' => $status,
+                    ];
+                }
             }
         }
 
         return [
             'applied' => $applied,
             'skipped' => $skipped,
+            'failed'      => $failed,
+            'unsupported' => $unsupported,
         ];
     }
 

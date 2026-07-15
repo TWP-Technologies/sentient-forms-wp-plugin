@@ -3963,6 +3963,13 @@ class AsyncHandlerTest extends WP_UnitTestCase
                 'action_id'            => 'local_first_' . $mapping_id,
                 'execution_request_id' => 'elementor-local-async-request-success',
                 'submission_uuid'      => $submission_uuid,
+                'native_effect_outcomes' => [
+                    [
+                        'effect' => 'entry_note',
+                        'status' => 'unsupported',
+                        'reason' => 'native_notes_unavailable',
+                    ],
+                ],
             ]
         );
         $this->assertTrue( $scheduled );
@@ -3983,6 +3990,21 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNull( $event['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
         $this->assertSame( 'Elementor local execution completed.', $event['result_json']['structured']['summary'] ?? null );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'all',
+                    'status' => 'skipped',
+                    'reason' => 'no_effect_mapping',
+                ],
+                [
+                    'effect' => 'entry_note',
+                    'status' => 'unsupported',
+                    'reason' => 'native_notes_unavailable',
+                ],
+            ],
+            $event['result_json']['native_effect_outcomes'] ?? null
+        );
 
         $request = $this->plugin->get_async_request_store()->get( 'elementor-local-async-request-success' );
         $this->assertSame( 'success', $request['status'] ?? null );

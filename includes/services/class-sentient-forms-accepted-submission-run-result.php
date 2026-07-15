@@ -16,12 +16,14 @@ final class Sentient_Forms_Accepted_Submission_Run_Result
      * @param array<string, string>               $mapping_outcomes
      * @param array<string, array<string, mixed>> $resolved_mappings
      * @param array<string, mixed>                $execution_results
+     * @param array<string, array<int, array{effect: string, status: string, reason: string}>> $native_effect_outcomes
      */
     public function __construct(
         private ?string $submission_uuid,
         private array $mapping_outcomes = [],
         private array $resolved_mappings = [],
-        private array $execution_results = []
+        private array $execution_results = [],
+        private array $native_effect_outcomes = []
     )
     {
     }
@@ -65,5 +67,15 @@ final class Sentient_Forms_Accepted_Submission_Run_Result
     public function get_execution_result( string $mapping_id ): mixed
     {
         return $this->execution_results[ $mapping_id ] ?? null;
+    }
+
+    /**
+     * @return array<int, array{effect: string, status: string, reason: string}>
+     */
+    public function get_native_effect_outcomes( string $mapping_id ): array
+    {
+        $outcomes = $this->native_effect_outcomes[ $mapping_id ] ?? [];
+
+        return is_array( $outcomes ) ? $outcomes : [];
     }
 }

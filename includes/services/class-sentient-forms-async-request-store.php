@@ -112,6 +112,11 @@ class Sentient_Forms_Async_Request_Store
         $action_id = sanitize_text_field( (string) ( $context['action_id'] ?? '' ) );
         $adapter   = isset( $context['adapter'] ) ? sanitize_key( (string) $context['adapter'] ) : null;
         $digest    = isset( $context['payload_digest'] ) ? sanitize_text_field( (string) $context['payload_digest'] ) : null;
+        if ( null === $digest || '' === $digest )
+        {
+            return [ 'state' => 'digest_conflict', 'record' => null ];
+        }
+
         $inserted  = $this->wpdb->query(
             $this->wpdb->prepare(
                 'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
@@ -140,17 +145,25 @@ class Sentient_Forms_Async_Request_Store
             return [ 'state' => 'conflict', 'record' => null ];
         }
 
+        $stored_digest = isset( $existing['payload_digest'] ) && is_scalar( $existing['payload_digest'] )
+            ? sanitize_text_field( (string) $existing['payload_digest'] )
+            : '';
+        if ( '' === $stored_digest || ! hash_equals( $stored_digest, $digest ) )
+        {
+            return [ 'state' => 'digest_conflict', 'record' => $existing ];
+        }
+
         $status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
         if ( $retry_failed_safely && in_array( $status, [ 'failed', 'error' ], true ) )
         {
             $claimed = $this->wpdb->query(
                 $this->wpdb->prepare(
-                    "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL, payload_digest = %s WHERE request_hash = %s AND record_type = %s AND status IN ('failed', 'error')",
+                    "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
                     $this->table(),
                     $now,
-                    $digest,
                     $request_hash,
-                    $record_type
+                    $record_type,
+                    $digest
                 )
             );
             if ( 1 === $claimed )

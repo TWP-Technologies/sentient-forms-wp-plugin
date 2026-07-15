@@ -111,6 +111,47 @@ class AdapterRegistryTest extends WP_UnitTestCase
         }
     }
 
+    public function test_registry_accepts_a_discovery_only_adapter_without_false_native_capabilities(): void
+    {
+        $adapter = new class implements Sentient_Forms_Form_Source_Discovery_Adapter_Interface {
+            public function get_id(): string
+            {
+                return 'discovery_only';
+            }
+
+            public function get_name(): string
+            {
+                return 'Discovery Only';
+            }
+
+            public function is_active(): bool
+            {
+                return true;
+            }
+
+            public function get_forms(): array
+            {
+                return [];
+            }
+
+            public function get_form_fields( $form_id ): array
+            {
+                return [];
+            }
+        };
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+
+        $registry->register_adapter( $adapter );
+
+        $this->assertSame( $adapter, $registry->get_adapter_by_id( 'discovery_only' ) );
+        $descriptor = $registry->get_capability_descriptor( 'discovery_only' );
+        $this->assertIsArray( $descriptor );
+        $this->assertFalse( $descriptor['native_entry']['read'] );
+        $this->assertFalse( $descriptor['native_entry']['write'] );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+    }
+
     public function test_registry_is_authoritative_for_registered_form_source_membership(): void
     {
         $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );

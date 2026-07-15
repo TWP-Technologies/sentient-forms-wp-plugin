@@ -303,9 +303,9 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      *
      * @param string $form_source_slug The identifier for the form source to retrieve the adapter for.
      *
-     * @return Sentient_Forms_Adapter_Interface|null The adapter instance if found, or null if no matching adapter exists.
+     * @return Sentient_Forms_Form_Source_Discovery_Adapter_Interface|null The adapter instance if found, or null if no matching adapter exists.
      */
-    private function get_adapter( string $form_source_slug ): ?Sentient_Forms_Adapter_Interface
+    private function get_adapter( string $form_source_slug ): ?Sentient_Forms_Form_Source_Discovery_Adapter_Interface
     {
         return $this->adapter_registry->get_adapter_by_id( $form_source_slug );
     }

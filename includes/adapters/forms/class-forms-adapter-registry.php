@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * Class Sentient_Forms_Adapter_Registry
  * Responsible for discovering, storing, and providing access to instances
- * of available form adapter classes that implement Sentient_Forms_Adapter_Interface.
+ * of available form adapter classes that implement the minimal discovery contract.
  */
 class Sentient_Forms_Form_Adapter_Registry
 {
@@ -27,7 +27,7 @@ class Sentient_Forms_Form_Adapter_Registry
      * Array of registered adapter instances.
      * The keys are the adapter IDs (from $adapter->get_id()).
      *
-     * @var Sentient_Forms_Adapter_Interface[]
+     * @var Sentient_Forms_Form_Source_Discovery_Adapter_Interface[]
      */
     private array $adapters = [];
 
@@ -54,11 +54,11 @@ class Sentient_Forms_Form_Adapter_Registry
      * Registers a form adapter.
      * Adds a valid adapter instance to the registry.
      *
-     * @param Sentient_Forms_Adapter_Interface $adapter The adapter instance to register.
+     * @param Sentient_Forms_Form_Source_Discovery_Adapter_Interface $adapter The adapter instance to register.
      *
      * @return void
      */
-    public function register_adapter( Sentient_Forms_Adapter_Interface $adapter ): void
+    public function register_adapter( Sentient_Forms_Form_Source_Discovery_Adapter_Interface $adapter ): void
     {
         $this->adapters[ $adapter->get_id() ] = $adapter;
     }
@@ -80,9 +80,9 @@ class Sentient_Forms_Form_Adapter_Registry
      *
      * @param string $id The unique ID of the adapter (e.g., 'gravity_forms').
      *
-     * @return Sentient_Forms_Adapter_Interface|null The adapter instance, or null if not found.
+     * @return Sentient_Forms_Form_Source_Discovery_Adapter_Interface|null The adapter instance, or null if not found.
      */
-    public function get_adapter_by_id( string $id ): ?Sentient_Forms_Adapter_Interface
+    public function get_adapter_by_id( string $id ): ?Sentient_Forms_Form_Source_Discovery_Adapter_Interface
     {
         return $this->adapters[ $id ] ?? null;
     }
@@ -90,7 +90,7 @@ class Sentient_Forms_Form_Adapter_Registry
     /**
      * Retrieves all registered adapters, regardless of their active status.
      *
-     * @return Sentient_Forms_Adapter_Interface[] An array of all registered adapter instances.
+     * @return Sentient_Forms_Form_Source_Discovery_Adapter_Interface[] An array of all registered adapter instances.
      */
     public function get_all_adapters(): array
     {
@@ -153,7 +153,7 @@ class Sentient_Forms_Form_Adapter_Registry
      *
      * @param null|bool $is_active Optional. If true, only active adapters are returned; false for inactive.
      *
-     * @return Sentient_Forms_Adapter_Interface[] An array of active adapter instances.
+     * @return Sentient_Forms_Form_Source_Discovery_Adapter_Interface[] An array of active adapter instances.
      */
     public function get_adapters( null | bool $is_active = null ): array
     {
@@ -191,7 +191,7 @@ class Sentient_Forms_Form_Adapter_Registry
      *
      * @return array<string, mixed>
      */
-    private function normalize_capability_descriptor( Sentient_Forms_Adapter_Interface $adapter ): array
+    private function normalize_capability_descriptor( Sentient_Forms_Form_Source_Discovery_Adapter_Interface $adapter ): array
     {
         $provided = method_exists( $adapter, 'get_capability_descriptor' )
             ? $adapter->get_capability_descriptor()

@@ -323,6 +323,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $execution_request_ids = [];
         $resolved_mappings     = [];
         $execution_results     = [];
+        $native_effect_outcomes = [];
         $capability_descriptor = method_exists( $adapter, 'get_capability_descriptor' )
             ? $adapter->get_capability_descriptor()
             : [];
@@ -339,7 +340,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             $action_settings = $this->runtime_settings_resolver->resolve_mapping( $node['mapping'], $form_source, $form_id );
-            $action_settings = $this->filter_mapping_for_native_capabilities( $action_settings, $capability_descriptor );
+            $filtered_mapping = $this->filter_mapping_with_native_effect_outcomes( $action_settings, $capability_descriptor );
+            $action_settings = $filtered_mapping['mapping'];
+            $native_effect_outcomes[ (string) $mapping_id ] = $filtered_mapping['outcomes'];
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $resolved_mappings[ (string) $mapping_id ] = $action_settings;
             $central_action_id = $this->central_action_id( $action_settings );
@@ -368,11 +371,19 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $action_settings = $resolved_mappings[ (string) $mapping_id ]
-                ?? $this->filter_mapping_for_native_capabilities(
+            if ( isset( $resolved_mappings[ (string) $mapping_id ] ) )
+            {
+                $action_settings = $resolved_mappings[ (string) $mapping_id ];
+            }
+            else
+            {
+                $filtered_mapping = $this->filter_mapping_with_native_effect_outcomes(
                     $this->runtime_settings_resolver->resolve_mapping( $node['mapping'], $form_source, $form_id ),
                     $capability_descriptor
                 );
+                $action_settings = $filtered_mapping['mapping'];
+                $native_effect_outcomes[ (string) $mapping_id ] = $filtered_mapping['outcomes'];
+            }
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $resolved_mappings[ (string) $mapping_id ] = $action_settings;
             $central_action_id = $this->central_action_id( $action_settings );
@@ -409,6 +420,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $execution_request_ids,
                 $action_settings
             );
+            $mapping_native_effect_outcomes = $native_effect_outcomes[ (string) $mapping_id ] ?? [];
+            $dependency_context['native_effect_outcomes'] = $mapping_native_effect_outcomes;
 
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
@@ -422,6 +435,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         $action_settings,
                         $submission_uuid,
                         $execution_request_ids[ (string) $mapping_id ] ?? '',
+                        $mapping_native_effect_outcomes,
                         fn (): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
                             absint( $action_settings['local_form_mapping_id'] ?? 0 ),
                             $form,
@@ -438,6 +452,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         )
                     );
                     $mapping_outcomes[ (string) $mapping_id ] = $run['outcome'];
+                    $native_effect_outcomes[ (string) $mapping_id ] = $run['native_effect_outcomes'];
                     if ( null !== $run['result'] )
                     {
                         $execution_results[ (string) $mapping_id ] = $run['result'];
@@ -470,7 +485,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         (string) $mapping_id,
                         $action_settings,
                         $submission_uuid,
-                        $execution_request_ids[ (string) $mapping_id ] ?? ''
+                        $execution_request_ids[ (string) $mapping_id ] ?? '',
+                        $mapping_native_effect_outcomes
                     );
                 }
                 continue;
@@ -486,6 +502,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     $action_settings,
                     $submission_uuid,
                     $execution_request_ids[ (string) $mapping_id ] ?? '',
+                    $mapping_native_effect_outcomes,
                     fn (): array | bool | WP_Error => $this->execute_synchronous_mapping(
                         $central_action_id,
                         $form_source,
@@ -500,6 +517,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     )
                 );
                 $mapping_outcomes[ (string) $mapping_id ] = $run['outcome'];
+                $native_effect_outcomes[ (string) $mapping_id ] = $run['native_effect_outcomes'];
                 if ( null !== $run['result'] )
                 {
                     $execution_results[ (string) $mapping_id ] = $run['result'];
@@ -543,7 +561,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     (string) $mapping_id,
                     $action_settings,
                     $submission_uuid,
-                    $execution_request_ids[ (string) $mapping_id ] ?? ''
+                    $execution_request_ids[ (string) $mapping_id ] ?? '',
+                    $mapping_native_effect_outcomes
                 );
             }
         }
@@ -552,7 +571,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $submission_uuid,
             $mapping_outcomes,
             $resolved_mappings,
-            $execution_results
+            $execution_results,
+            $native_effect_outcomes
         );
     }
 
@@ -562,7 +582,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * @param array<string, mixed> $mapping
      * @param callable(): (array<string, mixed>|bool|WP_Error) $execute
      *
-     * @return array{outcome: string, result: array<string, mixed>|bool|WP_Error|null}
+     * @return array{outcome: string, result: array<string, mixed>|bool|WP_Error|null, native_effect_outcomes: array<int, array{effect: string, status: string, reason: string}>}
      */
     private function execute_claimed_synchronous_mapping(
         string $form_source,
@@ -572,14 +592,16 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $mapping,
         string $submission_uuid,
         string $execution_request_id,
+        array $native_effect_outcomes,
         callable $execute
     ): array
     {
         if ( '' === $execution_request_id )
         {
             return [
-                'outcome' => 'failed',
-                'result'  => new WP_Error( 'sentient_forms_missing_execution_request_id', __( 'Synchronous execution identity is missing.', 'sentient-forms' ) ),
+                'outcome'                => 'failed',
+                'result'                 => new WP_Error( 'sentient_forms_missing_execution_request_id', __( 'Synchronous execution identity is missing.', 'sentient-forms' ) ),
+                'native_effect_outcomes' => $native_effect_outcomes,
             ];
         }
 
@@ -608,6 +630,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         );
         $claim_state = sanitize_key( (string) ( $claim['state'] ?? 'conflict' ) );
 
+        if ( 'digest_conflict' === $claim_state )
+        {
+            return [
+                'outcome'                => 'digest_conflict',
+                'result'                 => new WP_Error(
+                    'sentient_forms_execution_digest_conflict',
+                    __( 'This execution identity was already used for a different action payload.', 'sentient-forms' )
+                ),
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
+
         global $wpdb;
         $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
         if ( 'claimed' !== $claim_state )
@@ -616,22 +650,28 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             if ( 'success' === $claim_state )
             {
                 return [
-                    'outcome' => 'replayed_success',
-                    'result'  => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [],
+                    'outcome'                => 'replayed_success',
+                    'result'                 => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [],
+                    'native_effect_outcomes' => $this->replayed_native_effect_outcomes( $event, $native_effect_outcomes ),
                 ];
             }
             if ( 'failed' === $claim_state )
             {
                 return [
-                    'outcome' => 'replayed_failed',
-                    'result'  => new WP_Error(
+                    'outcome'                => 'replayed_failed',
+                    'result'                 => new WP_Error(
                         isset( $event['error_code'] ) ? sanitize_key( (string) $event['error_code'] ) : 'sentient_forms_synchronous_execution_failed',
                         __( 'Synchronous accepted action previously failed.', 'sentient-forms' )
                     ),
+                    'native_effect_outcomes' => $this->replayed_native_effect_outcomes( $event, $native_effect_outcomes ),
                 ];
             }
 
-            return [ 'outcome' => 'replayed_active', 'result' => null ];
+            return [
+                'outcome'                => 'replayed_active',
+                'result'                 => null,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
         }
 
         $event_base = [
@@ -658,6 +698,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'status'        => 'failed',
                     'error_code'    => $result->get_error_code(),
                     'error_message' => $safe_error,
+                    'result_json'   => [ 'native_effect_outcomes' => $native_effect_outcomes ],
                 ] )
             );
             $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
@@ -669,16 +710,30 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $mapping,
                 $submission_uuid,
                 $execution_request_id,
-                $result
+                $result,
+                $native_effect_outcomes
             );
 
-            return [ 'outcome' => 'failed', 'result' => $result ];
+            return [
+                'outcome'                => 'failed',
+                'result'                 => $result,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
         }
 
         $result_payload = is_array( $result ) ? $result : [ 'completed' => (bool) $result ];
+        $native_effect_outcomes = Sentient_Forms_Native_Effect_Outcomes::merge(
+            Sentient_Forms_Native_Effect_Outcomes::from_execution_result( $result_payload ),
+            $native_effect_outcomes
+        );
+        $result_payload['native_effect_outcomes'] = $native_effect_outcomes;
         $stored_result  = class_exists( 'Sentient_Forms_Local_Data_Governance' )
             ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result_payload )
             : [];
+        if ( [] !== $native_effect_outcomes )
+        {
+            $stored_result['native_effect_outcomes'] = $native_effect_outcomes;
+        }
         $events->record(
             array_merge( $event_base, [
                 'status'      => 'succeeded',
@@ -694,10 +749,32 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $mapping,
             $submission_uuid,
             $execution_request_id,
-            $result_payload
+            $result_payload,
+            $native_effect_outcomes
         );
 
-        return [ 'outcome' => 'succeeded', 'result' => $result ];
+        return [
+            'outcome'                => 'succeeded',
+            'result'                 => is_array( $result ) ? $result_payload : $result,
+            'native_effect_outcomes' => $native_effect_outcomes,
+        ];
+    }
+
+    /**
+     * Keep terminal replay evidence stable when source capabilities change later.
+     *
+     * @param array<string, mixed>|null $event
+     * @param array<int, array{effect: string, status: string, reason: string}> $fallback
+     *
+     * @return array<int, array{effect: string, status: string, reason: string}>
+     */
+    private function replayed_native_effect_outcomes( ?array $event, array $fallback ): array
+    {
+        $stored = Sentient_Forms_Native_Effect_Outcomes::from_execution_result(
+            is_array( $event['result_json'] ?? null ) ? $event['result_json'] : []
+        );
+
+        return [] !== $stored ? $stored : $fallback;
     }
 
     /**
@@ -710,7 +787,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         string $mapping_id,
         array $mapping,
         string $submission_uuid,
-        string $execution_request_id
+        string $execution_request_id,
+        array $native_effect_outcomes
     ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
@@ -730,6 +808,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'execution_request_id' => $execution_request_id,
                 'submission_uuid'      => $submission_uuid,
                 'mapping_id'           => $mapping_id,
+                'details'              => [ 'native_effect_outcomes' => $native_effect_outcomes ],
             ]
         );
     }
@@ -746,7 +825,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $mapping,
         string $submission_uuid,
         string $execution_request_id,
-        array $result
+        array $result,
+        array $native_effect_outcomes
     ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
@@ -779,6 +859,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'execution_request_id'=> $execution_request_id,
                 'submission_uuid'     => $submission_uuid,
                 'mapping_id'          => $mapping_id,
+                'details'             => [ 'native_effect_outcomes' => $native_effect_outcomes ],
             ]
         );
     }
@@ -794,7 +875,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $mapping,
         string $submission_uuid,
         string $execution_request_id,
-        WP_Error $error
+        WP_Error $error,
+        array $native_effect_outcomes
     ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
@@ -821,6 +903,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'execution_request_id' => $execution_request_id,
                 'submission_uuid'      => $submission_uuid,
                 'mapping_id'           => $mapping_id,
+                'details'              => [ 'native_effect_outcomes' => $native_effect_outcomes ],
             ]
         );
     }
@@ -957,6 +1040,130 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             && ! empty( $node['enabled'] )
             && ! empty( $node['hook_enabled'] )
             && ! $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION );
+    }
+
+    /**
+     * Preserve attributable outcomes before removing unsupported native effects.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $descriptor
+     *
+     * @return array{mapping: array<string, mixed>, outcomes: array<int, array{effect: string, status: string, reason: string}>}
+     */
+    private function filter_mapping_with_native_effect_outcomes( array $mapping, array $descriptor ): array
+    {
+        return [
+            'mapping'  => $this->filter_mapping_for_native_capabilities( $mapping, $descriptor ),
+            'outcomes' => $this->unsupported_native_effect_outcomes( $mapping, $descriptor ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $descriptor
+     *
+     * @return array<int, array{effect: string, status: string, reason: string}>
+     */
+    private function unsupported_native_effect_outcomes( array $mapping, array $descriptor ): array
+    {
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+            ? $mapping['settings']
+            : [];
+        $effects = isset( $settings['effect_mapping_json'] ) && is_array( $settings['effect_mapping_json'] )
+            ? $settings['effect_mapping_json']
+            : [];
+        $spam = isset( $effects['spam'] ) && is_array( $effects['spam'] )
+            ? $effects['spam']
+            : [];
+        $native_entry = isset( $descriptor['native_entry'] ) && is_array( $descriptor['native_entry'] )
+            ? $descriptor['native_entry']
+            : [];
+        $native_enrichment = isset( $descriptor['native_enrichment'] ) && is_array( $descriptor['native_enrichment'] )
+            ? $descriptor['native_enrichment']
+            : [];
+        $outcomes = [];
+
+        if ( empty( $native_entry['write'] ) )
+        {
+            if ( ! empty( $effects['store_result'] ) )
+            {
+                $this->add_unsupported_native_effect_outcome( $outcomes, 'store_result', 'native_entry_write_unavailable' );
+            }
+            if ( ! empty( $effects['store_result_meta'] ) )
+            {
+                $this->add_unsupported_native_effect_outcome( $outcomes, 'store_result_meta', 'native_entry_write_unavailable' );
+            }
+            if ( ! empty( $effects['meta'] ) )
+            {
+                $this->add_unsupported_native_effect_outcome( $outcomes, 'entry_metadata', 'native_entry_write_unavailable' );
+            }
+        }
+
+        if ( empty( $native_enrichment['notes'] ) )
+        {
+            if ( ! empty( $effects['entry_note'] ) || ! empty( $spam['note'] ) )
+            {
+                $this->add_unsupported_native_effect_outcome( $outcomes, 'entry_note', 'native_notes_unavailable' );
+            }
+        }
+
+        if ( empty( $native_enrichment['spam'] ) || empty( $native_enrichment['status'] ) )
+        {
+            $spam_requested = ! empty( $effects['mark_as_spam'] )
+                || ! empty( $spam['enabled'] )
+                || isset( $spam['classification_path'] )
+                || isset( $spam['confidence_path'] );
+            if ( $spam_requested )
+            {
+                $this->add_unsupported_native_effect_outcome( $outcomes, 'mark_as_spam', 'native_spam_unavailable' );
+            }
+        }
+
+        if (
+            empty( $native_enrichment['notification_controls'] )
+            && ( ! empty( $settings['suppress_notifications_on_spam'] )
+                || ! empty( $effects['suppress_notifications_on_spam'] )
+                || ! empty( $spam['suppress_notifications_on_spam'] ) )
+        )
+        {
+            $this->add_unsupported_native_effect_outcome( $outcomes, 'suppress_notifications', 'notification_controls_unavailable' );
+        }
+
+        if (
+            empty( $native_enrichment['webhook_controls'] )
+            && ( ! empty( $settings['suppress_webhooks_on_spam'] )
+                || ! empty( $effects['suppress_webhooks_on_spam'] )
+                || ! empty( $spam['suppress_webhooks_on_spam'] ) )
+        )
+        {
+            $this->add_unsupported_native_effect_outcome( $outcomes, 'suppress_webhooks', 'webhook_controls_unavailable' );
+        }
+
+        ksort( $outcomes );
+
+        return array_values( $outcomes );
+    }
+
+    /**
+     * @param array<string, array{effect: string, status: string, reason: string}> $outcomes
+     */
+    private function add_unsupported_native_effect_outcome(
+        array &$outcomes,
+        string $effect,
+        string $reason
+    ): void
+    {
+        $effect = sanitize_key( $effect );
+        if ( '' === $effect )
+        {
+            return;
+        }
+
+        $outcomes[ $effect ] = [
+            'effect' => $effect,
+            'status' => 'unsupported',
+            'reason' => sanitize_key( $reason ),
+        ];
     }
 
     /**
