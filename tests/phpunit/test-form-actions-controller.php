@@ -3489,7 +3489,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         {
             $template = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
             $this->assertIsArray( $template, sprintf( '%s template should exist', $action_code ) );
-            $this->assertSame( [ 'gform_after_submission' ], $template['hooks'] ?? null );
+            $this->assertSame( [ 'after_submission' ], $template['hooks'] ?? null );
             $this->assertSame( [ 'after_submission' ], $template['definition_json']['supported_execution_modes'] ?? null );
             $this->assertArrayNotHasKey( 'response_format', $template['definition_json'] ?? [] );
             $this->assertSame( 'object', $template['structured_output_schema']['type'] ?? null );

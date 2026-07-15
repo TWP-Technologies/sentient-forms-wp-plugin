@@ -33,18 +33,19 @@ The adapter pattern is part of the plugin architecture, not a convenience layer.
 - The Sentient Forms Submission Ledger plus linked action runs is the cross-source parity surface when native source capabilities are absent or unavailable.
 - Current supported Form Source surfaces are Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms. Verify the live registry and release artifact when a local checkout, branch, or package appears to disagree.
 
-### CPS Master Actions Pattern
-Actions with `action_type_indicator: 'master'` in their settings use the managed-template path and may execute without requiring a local PHP action class:
+### Action Authority And Action Facets
 
-- **Schedule Path**: `Async_Handler::schedule_action()` checks `action_type_indicator`. If `'master'`, it bypasses the local action registry requirement.
-- **Execution Path**: `Async_Handler::process_action()` routes master actions directly to `Action_Executor::execute()` instead of calling a local `$action->execute()` method.
-- **Settings Key**: Stored linkages use `is_action_enabled_for_form` (not `enabled`) and `trigger_hooks` (not `hooks`).
-- **Regression Tests**: See `test-async-handler.php` for `test_schedule_action_allows_master_actions_without_local_class()` and related tests.
+- The bundled Action Catalog is the executable authority for Action prompts, output contracts, canonical lifecycles, source-neutral effects, and allowed facets. CPS does not own WordPress Action definitions.
+- An Action facet is a reusable capability around an Action that may have stricter subscription, managed-execution, lifecycle, Form Source capability, managed-infrastructure capability, or metering requirements.
+- Every provider-routing path that has adopted the Action policy/facet model must resolve the base policy and all enabled facet policies before selecting a provider; the strictest access, execution, lifecycle, capability, and metering requirements win. Policy/facet definitions and routing primitives may land before integration into legacy form-triggered execution, but staged publication must not be described as runtime enforcement for those paths.
+- Keep entitlement separate from provider routing. An active-subscription feature may still use Direct OpenRouter, while a managed-only feature requires CPS and managed credits.
+- Do not create separate Direct and CPS implementations for every Action, and do not multiply Action codes for every facet permutation.
+- Treat legacy `master`/CPS-template branches as migration residue. Do not add new callers or compatibility filters; remove them through the coordinated legacy-cleanup stack after current stored mappings are normalized.
 
 
 ### Svelte 5 SPA Conventions
 - SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
-- Use Zod at admin-app trust boundaries wherever practical: REST envelopes, imported/exported JSON, persisted action/form configuration, migration payloads, and unknown browser/runtime payloads should be parsed with schemas before application code trusts their shape. Derive TypeScript types from those schemas instead of duplicating handwritten boundary types.
+- Zod parsing is mandatory at admin-app trust boundaries: REST envelopes, imported/exported JSON, persisted action/form configuration, migration payloads, cached/session values, and unknown browser/runtime payloads must be parsed before application code trusts their shape. Derive TypeScript boundary types from those schemas instead of duplicating handwritten types. Any exception must be narrow, documented inline, and covered by a test that proves why schema parsing is inapplicable.
 - When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
 - Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes `npx sv check` and fails if legacy syntax or `createEventDispatcher` usage slips back in.
 - The `/actions/custom` route is the canonical custom-action UX. Always go through `$lib/stores/custom-actions` so quota, notifications, and CPS envelopes stay consistent. The store expects CPS to return `{ action, quota }` on mutations and `{ actions, quota }` on reads; update the shared TypeScript types if the CPS contract changes.

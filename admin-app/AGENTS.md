@@ -16,4 +16,9 @@ This directory contains the Svelte 5 WordPress-admin SPA. Follow the parent `wp-
 
 ## Security Practices
 
-- JavaScript doesn't enforce expected datatypes and UI shapes; Zod does. Zod is a requirement of this admin app to help enforce a defense in-depth pattern whereby we limit security vulnerabilities through malformed data intake using Zod.
+- JavaScript and TypeScript do not validate runtime payloads. Zod is required defense in depth for this admin app.
+- Every REST response, imported/exported JSON document, persisted configuration value, migration payload, cache/session value, and unknown browser/runtime payload MUST be parsed by a named Zod schema before it reaches application state or rendering.
+- Fetch unknown values through the shared transport and parse them through the endpoint-schema registry before caching. Invalid network or cached values must fail safely, and malformed cache entries must be evicted.
+- Derive boundary types with `z.infer`; handwritten interfaces are allowed only for post-parse view models.
+- Do not add generic `request<T>()`, `wpFetch<T>()`, `as T`, or equivalent trust casts at network/storage boundaries. A narrow exception must be documented inline and backed by a test demonstrating why no structured schema applies, such as a raw file download.
+- Zod errors exposed to the UI or logs must contain safe endpoint/schema/issue metadata, never the raw sensitive payload.
