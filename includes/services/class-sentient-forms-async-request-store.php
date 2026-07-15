@@ -313,15 +313,26 @@ class Sentient_Forms_Async_Request_Store
 
     private function is_expired( array $record ): bool
     {
-        $ttl = $this->ttl();
-        $cutoff = time() - $ttl;
-        $last_seen = strtotime( $record['last_seen_at'] ?? 'now' );
-        return $last_seen < $cutoff;
+        $last_seen = DateTimeImmutable::createFromFormat(
+            '!Y-m-d H:i:s',
+            (string) ( $record['last_seen_at'] ?? '' ),
+            wp_timezone()
+        );
+        $parse_errors = DateTimeImmutable::getLastErrors();
+        if (
+            false === $last_seen
+            || ( is_array( $parse_errors ) && ( 0 < $parse_errors['warning_count'] || 0 < $parse_errors['error_count'] ) )
+        )
+        {
+            return false;
+        }
+
+        return $last_seen->getTimestamp() < time() - $this->ttl();
     }
 
     public function purge_older_than( int $timestamp ): int
     {
-        $mysql = gmdate( 'Y-m-d H:i:s', $timestamp );
+        $mysql = wp_date( 'Y-m-d H:i:s', $timestamp, wp_timezone() );
         $wpdb  = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(

@@ -274,6 +274,23 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_async_request_digest_conflict', $claim->get_error_code() );
     }
 
+    public function test_malformed_active_timestamp_fails_closed(): void
+    {
+        $request_hash = 'malformed-active-timestamp';
+        $database     = new Sentient_Forms_Test_Async_Request_Insert_Race_Wpdb(
+            [
+                'request_hash' => $request_hash,
+                'record_type'  => 'job',
+                'status'       => 'queued',
+                'last_seen_at' => 'not-a-mysql-datetime',
+            ],
+            false
+        );
+        $store        = new Sentient_Forms_Async_Request_Store( $database );
+
+        $this->assertTrue( $store->should_block( $request_hash ) );
+    }
+
     public function test_failed_same_type_request_has_one_atomic_retry_winner(): void
     {
         $request_hash = 'failed-retry-' . wp_generate_password( 24, false, false );
@@ -307,7 +324,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         $this->assertTrue( $this->store->record( $request_hash, $context ) );
         $wpdb->update(
             $wpdb->prefix . 'sentient_async_requests',
-            [ 'last_seen_at' => gmdate( 'Y-m-d H:i:s', time() - ( 2 * DAY_IN_SECONDS ) ) ],
+            [ 'last_seen_at' => wp_date( 'Y-m-d H:i:s', time() - ( 2 * DAY_IN_SECONDS ), wp_timezone() ) ],
             [ 'request_hash' => $request_hash ],
             [ '%s' ],
             [ '%s' ]
@@ -315,5 +332,49 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
 
         $this->assertTrue( $this->store->record( $request_hash, $context ) );
         $this->assertFalse( $this->store->record( $request_hash, $context ) );
+    }
+
+    public function test_fresh_requests_use_the_site_timezone_for_expiry_and_purge_cutoffs(): void
+    {
+        global $wpdb;
+
+        $request_hash     = 'site-timezone-' . wp_generate_password( 24, false, false );
+        $original_timezone = get_option( 'timezone_string' );
+        $original_offset   = get_option( 'gmt_offset' );
+        $original_default  = date_default_timezone_get();
+        $ttl_filter        = static fn(): int => HOUR_IN_SECONDS;
+
+        try
+        {
+            update_option( 'timezone_string', 'Pacific/Honolulu' );
+            update_option( 'gmt_offset', -10 );
+            date_default_timezone_set( 'UTC' );
+            add_filter( 'sentient_forms_async_request_ttl', $ttl_filter );
+
+            $this->assertTrue(
+                $this->store->record(
+                    $request_hash,
+                    [
+                        'action_id' => 'entry_summary_v1',
+                        'status'    => 'queued',
+                    ]
+                )
+            );
+            $this->assertTrue( $this->store->should_block( $request_hash ) );
+            $this->assertSame( 0, $this->store->purge_older_than( time() - MINUTE_IN_SECONDS ) );
+            $this->assertTrue( $this->store->should_block( $request_hash ) );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_async_request_ttl', $ttl_filter );
+            date_default_timezone_set( $original_default );
+            update_option( 'timezone_string', $original_timezone );
+            update_option( 'gmt_offset', $original_offset );
+            $wpdb->delete(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ]
+            );
+        }
     }
 }
