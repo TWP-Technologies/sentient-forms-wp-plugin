@@ -3428,6 +3428,30 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
     }
 
+    public function test_finalize_async_success_local_mapping_honors_structured_is_spam_fallback(): void
+    {
+        $form_id    = 52;
+        $entry_id   = 709;
+        $mapping_id = 'local_first_52';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+
+        $adapter->finalize_async_success(
+            $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id ),
+            [
+                'result' => [
+                    'structured' => [
+                        'is_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
     public function test_finalize_async_success_local_mapping_does_not_fallback_from_configured_confidence_path(): void
     {
         $form_id    = 50;
