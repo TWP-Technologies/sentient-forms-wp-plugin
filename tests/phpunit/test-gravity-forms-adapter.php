@@ -399,12 +399,13 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
     }
 }
 
-final class Sentient_Forms_Test_Gravity_Webhooks_Addon
-{
-}
-
 final class Sentient_Forms_Test_Gravity_Webhook_Dispatch_Adapter extends Sentient_Forms_Gravity_Forms_Adapter
 {
+    protected function gravity_forms_webhooks_feed_controls_available(): bool
+    {
+        return true;
+    }
+
     public function dispatch_webhooks( array $entry, array $form, array $feed_ids ): bool
     {
         return parent::dispatch_deferred_webhooks( $entry, $form, $feed_ids );
@@ -3599,17 +3600,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
     }
 
-    /**
-     * @runInSeparateProcess
-     * @preserveGlobalState disabled
-     */
     public function test_deferred_webhook_dispatch_honors_gravity_forms_result_contract(): void
     {
-        if ( ! class_exists( 'GF_Webhooks', false ) )
-        {
-            class_alias( Sentient_Forms_Test_Gravity_Webhooks_Addon::class, 'GF_Webhooks' );
-        }
-
         $adapter = new Sentient_Forms_Test_Gravity_Webhook_Dispatch_Adapter( Sentient_Forms_Plugin::instance() );
         $entry   = [ 'id' => 7406, 'form_id' => 406 ];
         $form    = [ 'id' => 406, 'title' => 'Webhook dispatch contract', 'fields' => [] ];

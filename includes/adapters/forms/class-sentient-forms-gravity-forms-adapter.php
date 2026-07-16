@@ -488,7 +488,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $this->workflow_runner;
     }
 
-    private function gravity_forms_webhooks_feed_controls_available(): bool
+    protected function gravity_forms_webhooks_feed_controls_available(): bool
     {
         $addon_available = class_exists( 'GF_Webhooks' )
             || class_exists( 'Gravity_Forms_Webhooks' )
