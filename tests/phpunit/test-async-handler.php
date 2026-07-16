@@ -4162,14 +4162,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
 		$this->assertSame( 'Async local execution completed.', gform_get_meta( 654, 'sentient_forms_async_summary' ) );
         $this->assertNotEmpty( gform_get_meta( 654, 'sentient_forms_last_processed_at' ) );
-
-        $completion_notes = gform_get_meta( 654, 'sentient_forms_notes' );
-        $this->assertIsArray( $completion_notes );
-        $this->assertCount( 1, $completion_notes );
-        $this->assertStringContainsString(
-            'Sentient Forms finished',
-            (string) ( $completion_notes[0]['content'] ?? '' )
-        );
+        $this->assertNotEmpty( gform_get_meta( 654, 'sentient_forms_last_response' ) );
+        $this->assertNull( gform_get_meta( 654, 'sentient_forms_notes' ) );
         $this->assertSame( 1, $adapter->success_calls );
         $this->assertSame( 0, $adapter->error_calls );
         $this->assertSame( $stable_mapping_id, $adapter->last_success_context['action_id'] ?? null );
