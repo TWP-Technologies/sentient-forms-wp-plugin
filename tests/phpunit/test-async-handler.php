@@ -36,6 +36,10 @@ if ( ! class_exists( 'GFAPI' ) )
         public static array $forms = [];
         public static int $get_entry_calls = 0;
         public static int $get_form_calls = 0;
+        public static mixed $maybe_process_feeds_result = [];
+        public static ?Throwable $maybe_process_feeds_exception = null;
+        /** @var array<int,array<string,mixed>> */
+        public static array $maybe_process_feeds_calls = [];
 
         public static function get_entry( $entry_id ) {
             ++self::$get_entry_calls;
@@ -87,6 +91,17 @@ if ( ! class_exists( 'GFAPI' ) )
             self::$entries[ (int) $entry['id'] ] = $entry;
 
             return true;
+        }
+
+        public static function maybe_process_feeds( $entry, $form, $addon_slug = '', $reset_meta = false, $bypass_feed_delay = false )
+        {
+            self::$maybe_process_feeds_calls[] = compact( 'entry', 'form', 'addon_slug', 'reset_meta', 'bypass_feed_delay' );
+            if ( self::$maybe_process_feeds_exception )
+            {
+                throw self::$maybe_process_feeds_exception;
+            }
+
+            return self::$maybe_process_feeds_result;
         }
     }
 }
