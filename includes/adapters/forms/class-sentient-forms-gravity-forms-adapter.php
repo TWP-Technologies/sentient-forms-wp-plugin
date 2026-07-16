@@ -5012,6 +5012,19 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        if ( $this->is_local_mapping_completion_context( $context ) )
+        {
+            $this->resolve_deferred_notifications_after_async_completion(
+                $context,
+                $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+            );
+            $this->resolve_deferred_webhooks_after_async_completion(
+                $context,
+                $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+            );
+            return;
+        }
+
         $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_error', '' );
         $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_processed_at', current_time( 'mysql' ) );
 
@@ -5055,10 +5068,23 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $context,
             $this->should_suppress_deferred_notifications_from_result( $context, $result ),
         );
-            $this->resolve_deferred_webhooks_after_async_completion(
-                $context,
-                $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
-            );
+        $this->resolve_deferred_webhooks_after_async_completion(
+            $context,
+            $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+        );
+    }
+
+    /**
+     * Determine whether adapter finalization follows a completed local-first mapping.
+     *
+     * Local mappings apply configured native effects before adapter finalization. The
+     * adapter owns only deferred delivery resolution for this completion path.
+     *
+     * @param array<string, mixed> $context Async job context.
+     */
+    private function is_local_mapping_completion_context( array $context ): bool
+    {
+        return 'local_mapping' === sanitize_key( (string) ( $context['job_type'] ?? '' ) );
     }
 
     private function maybe_persist_realtime_clarification_late_result( int $entry_id, array $context, array $result ): void
@@ -6931,6 +6957,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private function should_suppress_notifications_on_spam_for_context( array $context ): bool
     {
+        if ( $this->is_local_mapping_completion_context( $context ) )
+        {
+            return $this->should_suppress_notifications_on_spam( $context );
+        }
+
         $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
         if ( array_key_exists( 'suppress_notifications_on_spam', $settings ) )
         {
@@ -6946,6 +6977,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private function should_suppress_webhooks_on_spam_for_context( array $context ): bool
     {
+        if ( $this->is_local_mapping_completion_context( $context ) )
+        {
+            return $this->should_suppress_webhooks_on_spam( $context );
+        }
+
         $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
         if ( array_key_exists( 'suppress_webhooks_on_spam', $settings ) )
         {
@@ -7384,13 +7420,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // FR-008: Log failed action execution
         $this->log_action_execution( $context, [], 'error', $error );
 
+        $is_local_mapping_error = $this->is_local_mapping_completion_context( $context );
+
         $this->resolve_deferred_notifications_after_async_completion(
             $context,
-            $this->should_suppress_notifications_on_spam_for_context( $context )
+            ! $is_local_mapping_error && $this->should_suppress_notifications_on_spam_for_context( $context )
         );
         $this->resolve_deferred_webhooks_after_async_completion(
             $context,
-            $this->should_suppress_webhooks_on_spam_for_context( $context )
+            ! $is_local_mapping_error && $this->should_suppress_webhooks_on_spam_for_context( $context )
         );
     }
 
@@ -8020,16 +8058,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
-        $classification = $this->extract_spam_classification( $result );
+        $classification = $this->extract_spam_classification_for_context( $context, $result );
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
             return false;
         }
 
-        $confidence = $this->extract_spam_confidence( $result );
-        $threshold  = isset( $context['spam_confidence_threshold'] )
-            ? (float) $context['spam_confidence_threshold']
-            : 0.80;
+        $confidence = $this->extract_spam_confidence_for_context( $context, $result );
+        $threshold  = $this->get_spam_confidence_threshold_for_context( $context );
 
         return ( $confidence ?? 1.0 ) >= $threshold;
     }
@@ -8052,18 +8088,168 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
-        $classification = $this->extract_spam_classification( $result );
+        $classification = $this->extract_spam_classification_for_context( $context, $result );
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
             return false;
         }
 
-        $confidence = $this->extract_spam_confidence( $result );
-        $threshold  = isset( $context['spam_confidence_threshold'] )
-            ? (float) $context['spam_confidence_threshold']
-            : 0.80;
+        $confidence = $this->extract_spam_confidence_for_context( $context, $result );
+        $threshold  = $this->get_spam_confidence_threshold_for_context( $context );
 
         return ( $confidence ?? 1.0 ) >= $threshold;
+    }
+
+    /**
+     * Resolve the spam confidence threshold used for deferred delivery decisions.
+     *
+     * @param array<string, mixed> $context Async job context.
+     */
+    private function get_spam_confidence_threshold_for_context( array $context ): float
+    {
+        $spam_effect = $this->get_spam_effect_config_for_context( $context );
+        if ( $this->is_local_mapping_completion_context( $context ) && is_numeric( $spam_effect['min_confidence'] ?? null ) )
+        {
+            return (float) $spam_effect['min_confidence'];
+        }
+
+        if ( is_numeric( $context['spam_confidence_threshold'] ?? null ) )
+        {
+            return (float) $context['spam_confidence_threshold'];
+        }
+
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        if ( is_numeric( $settings['spam_confidence_threshold'] ?? null ) )
+        {
+            return (float) $settings['spam_confidence_threshold'];
+        }
+
+        return is_numeric( $spam_effect['min_confidence'] ?? null ) ? (float) $spam_effect['min_confidence'] : 0.80;
+    }
+
+    /**
+     * Extract the configured local spam classification when available.
+     *
+     * @param array<string, mixed> $context Async job context.
+     * @param array<string, mixed> $result  Async result payload.
+     */
+    private function extract_spam_classification_for_context( array $context, array $result ): ?string
+    {
+        $configured = $this->extract_local_spam_effect_value( $context, $result, 'classification_path' );
+        $normalized = $this->normalize_spam_classification_value( $configured );
+        if ( '' !== $normalized )
+        {
+            return $normalized;
+        }
+
+        $fallback = $this->extract_spam_classification( $result );
+        if ( ! $this->is_local_mapping_completion_context( $context ) )
+        {
+            return $fallback;
+        }
+
+        $normalized = $this->normalize_spam_classification_value( $fallback );
+        if ( '' !== $normalized )
+        {
+            return $normalized;
+        }
+
+        $provider_result = isset( $result['result'] ) && is_array( $result['result'] ) ? $result['result'] : $result;
+        $normalized      = $this->normalize_spam_classification_value( $this->extract_spam_classification( $provider_result ) );
+        if ( '' !== $normalized )
+        {
+            return $normalized;
+        }
+
+        $is_spam = $this->extract_nested_post_execution_value( $provider_result, 'structured.is_spam' );
+
+        return true === $is_spam || 'true' === strtolower( (string) $is_spam ) ? 'spam' : null;
+    }
+
+    /**
+     * Extract the configured local spam confidence when available.
+     *
+     * @param array<string, mixed> $context Async job context.
+     * @param array<string, mixed> $result  Async result payload.
+     */
+    private function extract_spam_confidence_for_context( array $context, array $result ): ?float
+    {
+        $configured = $this->extract_local_spam_effect_value( $context, $result, 'confidence_path' );
+        if ( is_numeric( $configured ) )
+        {
+            return (float) $configured;
+        }
+
+        $spam_effect = $this->get_spam_effect_config_for_context( $context );
+        if (
+            $this->is_local_mapping_completion_context( $context )
+            && isset( $spam_effect['confidence_path'] )
+            && is_scalar( $spam_effect['confidence_path'] )
+            && '' !== trim( (string) $spam_effect['confidence_path'] )
+        )
+        {
+            return null;
+        }
+
+        return $this->extract_spam_confidence( $result );
+    }
+
+    /**
+     * Normalize a spam classification using the local effect applier's semantics.
+     */
+    private function normalize_spam_classification_value( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $value ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
+    }
+
+    /**
+     * Resolve one configured local spam-effect value from the provider result.
+     *
+     * @param array<string, mixed> $context  Async job context.
+     * @param array<string, mixed> $result   Async result payload.
+     * @param string               $path_key Spam effect path setting.
+     *
+     * @return mixed|null
+     */
+    private function extract_local_spam_effect_value( array $context, array $result, string $path_key )
+    {
+        if ( ! $this->is_local_mapping_completion_context( $context ) )
+        {
+            return null;
+        }
+
+        $spam_effect = $this->get_spam_effect_config_for_context( $context );
+        $path        = isset( $spam_effect[ $path_key ] ) && is_scalar( $spam_effect[ $path_key ] )
+            ? trim( (string) $spam_effect[ $path_key ] )
+            : '';
+        if ( '' === $path )
+        {
+            return null;
+        }
+
+        $provider_result = isset( $result['result'] ) && is_array( $result['result'] ) ? $result['result'] : $result;
+        return $this->extract_nested_post_execution_value( $provider_result, $path );
+    }
+
+    /**
+     * Resolve the local spam-effect configuration from an async context.
+     *
+     * @param array<string, mixed> $context Async job context.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_spam_effect_config_for_context( array $context ): array
+    {
+        $effects = $this->get_local_effect_mapping( $context );
+
+        return isset( $effects['spam'] ) && is_array( $effects['spam'] ) ? $effects['spam'] : [];
     }
 
     /**

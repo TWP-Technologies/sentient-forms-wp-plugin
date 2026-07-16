@@ -194,9 +194,36 @@ final class Sentient_Forms_Test_Lost_Async_Request_Race_Store extends Sentient_F
     }
 }
 
+final class Sentient_Forms_Test_Recording_Gravity_Adapter extends Sentient_Forms_Gravity_Forms_Adapter
+{
+    public int $success_calls = 0;
+    public int $error_calls = 0;
+    public bool $throw_after_success = false;
+    /** @var array<string,mixed> */
+    public array $last_success_context = [];
+
+    public function finalize_async_success( array $context, array $result ): void
+    {
+        ++$this->success_calls;
+        $this->last_success_context = $context;
+        parent::finalize_async_success( $context, $result );
+
+        if ( $this->throw_after_success )
+        {
+            throw new RuntimeException( 'Synthetic adapter finalization failure.' );
+        }
+    }
+
+    public function finalize_async_error( array $context, WP_Error $error ): void
+    {
+        ++$this->error_calls;
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
+    private ?Sentient_Forms_Form_Source_Discovery_Adapter_Interface $original_gravity_adapter = null;
 
     private function guidance_example( string $text, string $rationale = 'Business-specific rationale' ): array
     {
@@ -330,6 +357,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
+        if ( $this->original_gravity_adapter )
+        {
+            $this->plugin->get_form_adapter_registry()->register_adapter( $this->original_gravity_adapter );
+            $this->original_gravity_adapter = null;
+        }
         parent::tearDown();
     }
 
@@ -4101,6 +4133,13 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		);
 
 		$handler   = $this->plugin->get_async_handler();
+        $adapter           = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $stable_mapping_id = 'local_first_' . $mapping_id;
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $adapter->throw_after_success = true;
+        gform_update_meta( 654, 'sentient_forms_deferred_webhook_feed_ids', [] );
+        gform_update_meta( 654, 'sentient_forms_deferred_webhook_mapping_ids', [ $stable_mapping_id ] );
 		$scheduled = $handler->schedule_local_mapping(
 			$mapping_id,
 			[ 'id' => 321 ],
@@ -4118,9 +4157,18 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
 		$job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 		$payload = $job['args'][0] ?? [];
+        $queued_before_processing = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
 		$handler->process_local_mapping( $payload );
 
 		$this->assertSame( 'Async local execution completed.', gform_get_meta( 654, 'sentient_forms_async_summary' ) );
+        $this->assertNotEmpty( gform_get_meta( 654, 'sentient_forms_last_processed_at' ) );
+        $this->assertNotEmpty( gform_get_meta( 654, 'sentient_forms_last_response' ) );
+        $this->assertNull( gform_get_meta( 654, 'sentient_forms_notes' ) );
+        $this->assertSame( 1, $adapter->success_calls );
+        $this->assertSame( 0, $adapter->error_calls );
+        $this->assertSame( $stable_mapping_id, $adapter->last_success_context['action_id'] ?? null );
+        $this->assertSame( [], gform_get_meta( 654, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [], gform_get_meta( 654, 'sentient_forms_deferred_webhook_mapping_ids' ) );
 
 		$event = $events->get_by_request_id( 'local-async-request-success' );
 		$this->assertIsArray( $event );
@@ -4131,6 +4179,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
 		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-success' );
 		$this->assertSame( 'success', $request['status'] ?? null );
+        $this->assertCount(
+            $queued_before_processing,
+            $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+            'A finalization failure must not retry an already-completed provider action.'
+        );
 
 		foreach ( $GLOBALS['__sentient_forms_http_calls'] as $call )
 		{
