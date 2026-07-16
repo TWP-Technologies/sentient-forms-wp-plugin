@@ -58,6 +58,10 @@ if ( ! class_exists( 'GFAPI' ) )
         public static array $forms = [];
 
         public static bool $skip_field_values_on_full_entry_update = false;
+        public static mixed $maybe_process_feeds_result = [];
+        public static ?Throwable $maybe_process_feeds_exception = null;
+        /** @var array<int,array<string,mixed>> */
+        public static array $maybe_process_feeds_calls = [];
 
         public static function get_entry( $entry_id )
         {
@@ -157,6 +161,17 @@ if ( ! class_exists( 'GFAPI' ) )
             self::$entries[ $entry_id ][ (string) $field_id ] = $value;
 
             return true;
+        }
+
+        public static function maybe_process_feeds( $entry, $form, $addon_slug = '', $reset_meta = false, $bypass_feed_delay = false )
+        {
+            self::$maybe_process_feeds_calls[] = compact( 'entry', 'form', 'addon_slug', 'reset_meta', 'bypass_feed_delay' );
+            if ( self::$maybe_process_feeds_exception )
+            {
+                throw self::$maybe_process_feeds_exception;
+            }
+
+            return self::$maybe_process_feeds_result;
         }
     }
 }
@@ -300,6 +315,12 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
     /** @var array<int, array<string, mixed>> */
     public array $entries = [];
 
+    public bool $deferred_webhook_dispatch_result = true;
+
+    public bool $throw_on_deferred_webhook_dispatch = false;
+
+    public bool $throw_on_notification_dispatch = false;
+
     public function get_capability_descriptor(): array
     {
         $descriptor = parent::get_capability_descriptor();
@@ -352,6 +373,11 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
 
     protected function dispatch_entry_notifications( array $form, array $entry, array $notification_ids ): array
     {
+        if ( $this->throw_on_notification_dispatch )
+        {
+            throw new RuntimeException( 'Synthetic notification replay failure.' );
+        }
+
         $this->dispatched_notifications[] = [
             'form'             => $form,
             'entry'            => $entry,
@@ -364,8 +390,25 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
     protected function dispatch_deferred_webhooks( array $entry, array $form, array $feed_ids ): bool
     {
         $this->dispatched_webhooks[] = compact( 'entry', 'form', 'feed_ids' );
+        if ( $this->throw_on_deferred_webhook_dispatch )
+        {
+            throw new RuntimeException( 'Synthetic webhook replay failure.' );
+        }
 
+        return $this->deferred_webhook_dispatch_result;
+    }
+}
+
+final class Sentient_Forms_Test_Gravity_Webhook_Dispatch_Adapter extends Sentient_Forms_Gravity_Forms_Adapter
+{
+    protected function gravity_forms_webhooks_feed_controls_available(): bool
+    {
         return true;
+    }
+
+    public function dispatch_webhooks( array $entry, array $form, array $feed_ids ): bool
+    {
+        return parent::dispatch_deferred_webhooks( $entry, $form, $feed_ids );
     }
 }
 
@@ -461,6 +504,18 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         {
             GFAPI::$skip_field_values_on_full_entry_update = false;
         }
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'maybe_process_feeds_result' ) )
+        {
+            GFAPI::$maybe_process_feeds_result = [];
+        }
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'maybe_process_feeds_exception' ) )
+        {
+            GFAPI::$maybe_process_feeds_exception = null;
+        }
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'maybe_process_feeds_calls' ) )
+        {
+            GFAPI::$maybe_process_feeds_calls = [];
+        }
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
 
@@ -486,6 +541,86 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $property   = $reflection->getProperty( 'async_handler' );
         $property->setAccessible( true );
         $property->setValue( Sentient_Forms_Plugin::instance(), $handler );
+    }
+
+    private function with_plugin_logger( Sentient_Forms_Logger $logger, callable $callback ): void
+    {
+        $plugin            = Sentient_Forms_Plugin::instance();
+        $plugin_reflection = new ReflectionClass( $plugin );
+        $logger_property   = $plugin_reflection->getProperty( 'logger' );
+        $logger_property->setAccessible( true );
+        $original_logger = $logger_property->getValue( $plugin );
+        $logger_property->setValue( $plugin, $logger );
+
+        try
+        {
+            $callback();
+        } finally
+        {
+            $logger_property->setValue( $plugin, $original_logger );
+        }
+    }
+
+    private function make_deferred_delivery_adapter(
+        int $form_id,
+        int $entry_id
+    ): Sentient_Forms_Test_Gravity_Forms_Adapter_Spy
+    {
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Deferred delivery finalization',
+            'fields' => [],
+        ];
+        $adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        return $adapter;
+    }
+
+    private function seed_deferred_webhook_state( int $entry_id, string $mapping_id = 'map_spam' ): void
+    {
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids', [ 'feed_crm' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids', [ $mapping_id ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_decision', 'pending' );
+    }
+
+    private function seed_deferred_notification_state( int $entry_id, string $mapping_id = 'map_spam' ): void
+    {
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ $mapping_id ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+    }
+
+    /** @return array<string, mixed> */
+    private function make_deferred_delivery_context( int $form_id, int $entry_id, string $mapping_id = 'map_spam' ): array
+    {
+        return [
+            'entry_id'          => $entry_id,
+            'form_id'           => $form_id,
+            'action_id'         => $mapping_id,
+            'central_action_id' => 'spam_detection_v1',
+            'mark_as_spam'      => true,
+            'settings'          => [
+                'suppress_webhooks_on_spam'    => true,
+                'suppress_notifications_on_spam' => true,
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function make_spam_classification_result( string $classification ): array
+    {
+        return [
+            'result_data' => [
+                'classification' => $classification,
+                'confidence'     => 0.99,
+                'justification'  => 'Synthetic deferred delivery classification.',
+            ],
+        ];
     }
 
     public function test_gravity_forms_exposes_exact_accepted_submission_hook(): void
@@ -3226,6 +3361,261 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertCount( 1, $classification_notes );
         $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+    }
+
+    public function test_finalize_async_success_replays_deferred_webhooks_once_for_ham(): void
+    {
+        $form_id  = 401;
+        $entry_id = 7401;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $adapter->finalize_async_success(
+            $this->make_deferred_delivery_context( $form_id, $entry_id ),
+            $this->make_spam_classification_result( 'ham' )
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [ 'feed_crm' ], $adapter->dispatched_webhooks[0]['feed_ids'] ?? [] );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+    }
+
+    public function test_finalize_async_success_suppresses_deferred_webhooks_for_spam(): void
+    {
+        $form_id  = 402;
+        $entry_id = 7402;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $adapter->finalize_async_success(
+            $this->make_deferred_delivery_context( $form_id, $entry_id ),
+            $this->make_spam_classification_result( 'spam' )
+        );
+
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+    }
+
+    public function test_finalize_async_success_retains_deferred_webhook_state_when_dispatch_returns_false(): void
+    {
+        $form_id  = 403;
+        $entry_id = 7403;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $adapter->deferred_webhook_dispatch_result = false;
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $logger = new class( false ) extends Sentient_Forms_Logger {
+            /** @var array<int, array{message: string, context: array<string, mixed>}> */
+            public array $errors = [];
+
+            public function error( string $message, array $context = [] ): void
+            {
+                $this->errors[] = compact( 'message', 'context' );
+            }
+        };
+
+        $this->with_plugin_logger(
+            $logger,
+            function () use ( $adapter, $form_id, $entry_id ): void {
+                $adapter->finalize_async_success(
+                    $this->make_deferred_delivery_context( $form_id, $entry_id ),
+                    $this->make_spam_classification_result( 'ham' )
+                );
+            }
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [ 'feed_crm' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame(
+            [
+                [
+                    'message' => 'deferred Gravity Forms Webhook replay failed',
+                    'context' => [
+                        'entry_id' => $entry_id,
+                        'form_id'  => $form_id,
+                        'feed_ids' => [ 'feed_crm' ],
+                        'reason'   => 'dispatch_returned_false',
+                    ],
+                ],
+            ],
+            $logger->errors
+        );
+    }
+
+    public function test_finalize_async_success_retains_deferred_webhook_state_when_dispatch_throws(): void
+    {
+        $form_id  = 404;
+        $entry_id = 7404;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $adapter->throw_on_deferred_webhook_dispatch = true;
+        $this->seed_deferred_notification_state( $entry_id );
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $logger = new class( false ) extends Sentient_Forms_Logger {
+            /** @var array<int, array{message: string, context: array<string, mixed>}> */
+            public array $errors = [];
+
+            public function error( string $message, array $context = [] ): void
+            {
+                $this->errors[] = compact( 'message', 'context' );
+            }
+        };
+
+        $this->with_plugin_logger(
+            $logger,
+            function () use ( $adapter, $form_id, $entry_id ): void {
+                $adapter->finalize_async_success(
+                    $this->make_deferred_delivery_context( $form_id, $entry_id ),
+                    $this->make_spam_classification_result( 'ham' )
+                );
+            }
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertCount( 1, $adapter->dispatched_notifications );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertSame( [ 'feed_crm' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame(
+            [
+                [
+                    'message' => 'deferred Gravity Forms Webhook replay failed',
+                    'context' => [
+                        'entry_id'       => $entry_id,
+                        'form_id'        => $form_id,
+                        'feed_ids'       => [ 'feed_crm' ],
+                        'reason'         => 'dispatch_exception',
+                        'exception_type' => RuntimeException::class,
+                    ],
+                ],
+            ],
+            $logger->errors
+        );
+    }
+
+    public function test_finalize_async_success_replays_webhook_when_notification_resolution_throws(): void
+    {
+        $form_id  = 405;
+        $entry_id = 7405;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $adapter->throw_on_notification_dispatch = true;
+        $this->seed_deferred_notification_state( $entry_id );
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $logger = new class( false ) extends Sentient_Forms_Logger {
+            /** @var array<int, array{message: string, context: array<string, mixed>}> */
+            public array $errors = [];
+
+            public function error( string $message, array $context = [] ): void
+            {
+                $this->errors[] = compact( 'message', 'context' );
+            }
+        };
+
+        $this->with_plugin_logger(
+            $logger,
+            function () use ( $adapter, $form_id, $entry_id ): void {
+                $adapter->finalize_async_success(
+                    $this->make_deferred_delivery_context( $form_id, $entry_id ),
+                    $this->make_spam_classification_result( 'ham' )
+                );
+            }
+        );
+
+        $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame(
+            [
+                [
+                    'message' => 'deferred async delivery resolution failed',
+                    'context' => [
+                        'channel'        => 'notifications',
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry_id,
+                        'mapping_id'     => 'map_spam',
+                        'exception_type' => RuntimeException::class,
+                    ],
+                ],
+            ],
+            $logger->errors
+        );
+    }
+
+    public function test_finalize_async_error_replays_webhook_when_notification_resolution_throws(): void
+    {
+        $form_id  = 407;
+        $entry_id = 7407;
+        $adapter  = $this->make_deferred_delivery_adapter( $form_id, $entry_id );
+        $adapter->throw_on_notification_dispatch = true;
+        $this->seed_deferred_notification_state( $entry_id );
+        $this->seed_deferred_webhook_state( $entry_id );
+
+        $context = $this->make_deferred_delivery_context( $form_id, $entry_id );
+        $context['settings']['suppress_notifications_on_spam'] = false;
+        $context['settings']['suppress_webhooks_on_spam'] = false;
+
+        $logger = new class( false ) extends Sentient_Forms_Logger {
+            /** @var array<int, array{message: string, context: array<string, mixed>}> */
+            public array $errors = [];
+
+            public function error( string $message, array $context = [] ): void
+            {
+                $this->errors[] = compact( 'message', 'context' );
+            }
+        };
+
+        $this->with_plugin_logger(
+            $logger,
+            function () use ( $adapter, $context ): void {
+                $adapter->finalize_async_error( $context, new WP_Error( 'synthetic_failure', 'Synthetic provider failure.' ) );
+            }
+        );
+
+        $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame(
+            [
+                [
+                    'message' => 'deferred async delivery resolution failed',
+                    'context' => [
+                        'channel'        => 'notifications',
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry_id,
+                        'mapping_id'     => 'map_spam',
+                        'exception_type' => RuntimeException::class,
+                    ],
+                ],
+            ],
+            $logger->errors
+        );
+    }
+
+    public function test_deferred_webhook_dispatch_honors_gravity_forms_result_contract(): void
+    {
+        $adapter = new Sentient_Forms_Test_Gravity_Webhook_Dispatch_Adapter( Sentient_Forms_Plugin::instance() );
+        $entry   = [ 'id' => 7406, 'form_id' => 406 ];
+        $form    = [ 'id' => 406, 'title' => 'Webhook dispatch contract', 'fields' => [] ];
+
+        GFAPI::$maybe_process_feeds_result = false;
+
+        $this->assertFalse( $adapter->dispatch_webhooks( $entry, $form, [ 'feed_crm' ] ) );
+        $this->assertCount( 1, GFAPI::$maybe_process_feeds_calls );
+        $this->assertSame( 'gravityformswebhooks', GFAPI::$maybe_process_feeds_calls[0]['addon_slug'] ?? null );
+
+        GFAPI::$maybe_process_feeds_result = [];
+
+        $this->assertTrue( $adapter->dispatch_webhooks( $entry, $form, [ 'feed_crm' ] ) );
+        $this->assertCount( 2, GFAPI::$maybe_process_feeds_calls );
     }
 
     public function test_finalize_async_success_runs_post_execution_entry_note_and_hook(): void

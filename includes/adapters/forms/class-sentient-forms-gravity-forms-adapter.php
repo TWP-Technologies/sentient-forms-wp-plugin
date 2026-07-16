@@ -488,7 +488,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $this->workflow_runner;
     }
 
-    private function gravity_forms_webhooks_feed_controls_available(): bool
+    protected function gravity_forms_webhooks_feed_controls_available(): bool
     {
         $addon_available = class_exists( 'GF_Webhooks' )
             || class_exists( 'Gravity_Forms_Webhooks' )
@@ -5014,13 +5014,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         if ( $this->is_local_mapping_completion_context( $context ) )
         {
-            $this->resolve_deferred_notifications_after_async_completion(
+            $this->resolve_deferred_delivery_after_async_completion(
                 $context,
-                $this->should_suppress_deferred_notifications_from_result( $context, $result ),
-            );
-            $this->resolve_deferred_webhooks_after_async_completion(
-                $context,
-                $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+                fn (): bool => $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+                fn (): bool => $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
             );
             return;
         }
@@ -5064,13 +5061,65 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->log_action_execution( $context, $result, 'success' );
         $this->run_post_execution_actions( $entry_id, $context, $result );
 
-        $this->resolve_deferred_notifications_after_async_completion(
+        $this->resolve_deferred_delivery_after_async_completion(
             $context,
-            $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+            fn (): bool => $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+            fn (): bool => $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
         );
-        $this->resolve_deferred_webhooks_after_async_completion(
-            $context,
-            $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+    }
+
+    /**
+     * Resolve deferred delivery channels independently after async completion.
+     *
+     * @param array<string, mixed> $context                      Async job context.
+     * @param callable():bool      $should_suppress_notifications Notification suppression decision.
+     * @param callable():bool      $should_suppress_webhooks      Webhook suppression decision.
+     */
+    private function resolve_deferred_delivery_after_async_completion(
+        array $context,
+        callable $should_suppress_notifications,
+        callable $should_suppress_webhooks
+    ): void
+    {
+        try
+        {
+            $this->resolve_deferred_notifications_after_async_completion( $context, $should_suppress_notifications() );
+        } catch ( Throwable $throwable )
+        {
+            $this->log_deferred_delivery_resolution_exception( 'notifications', $context, $throwable );
+        }
+
+        try
+        {
+            $this->resolve_deferred_webhooks_after_async_completion( $context, $should_suppress_webhooks() );
+        } catch ( Throwable $throwable )
+        {
+            $this->log_deferred_delivery_resolution_exception( 'webhooks', $context, $throwable );
+        }
+    }
+
+    /**
+     * Log an identifier-only deferred delivery resolver failure.
+     *
+     * @param string                   $channel   Deferred delivery channel.
+     * @param array<string, mixed>     $context   Async job context.
+     * @param Throwable                $throwable Resolver failure.
+     */
+    private function log_deferred_delivery_resolution_exception(
+        string $channel,
+        array $context,
+        Throwable $throwable
+    ): void
+    {
+        $this->plugin->get_logger()->error(
+            'deferred async delivery resolution failed',
+            [
+                'channel'        => sanitize_key( $channel ),
+                'form_id'        => absint( $context['form_id'] ?? 0 ),
+                'entry_id'       => absint( $context['entry_id'] ?? 0 ),
+                'mapping_id'     => $this->resolve_deferred_notification_mapping_id( $context ),
+                'exception_type' => get_class( $throwable ),
+            ]
         );
     }
 
@@ -7422,13 +7471,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $is_local_mapping_error = $this->is_local_mapping_completion_context( $context );
 
-        $this->resolve_deferred_notifications_after_async_completion(
+        $this->resolve_deferred_delivery_after_async_completion(
             $context,
-            ! $is_local_mapping_error && $this->should_suppress_notifications_on_spam_for_context( $context )
-        );
-        $this->resolve_deferred_webhooks_after_async_completion(
-            $context,
-            ! $is_local_mapping_error && $this->should_suppress_webhooks_on_spam_for_context( $context )
+            fn (): bool => ! $is_local_mapping_error && $this->should_suppress_notifications_on_spam_for_context( $context ),
+            fn (): bool => ! $is_local_mapping_error && $this->should_suppress_webhooks_on_spam_for_context( $context ),
         );
     }
 
@@ -8299,19 +8345,65 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $form = $this->get_form_object( $form_id );
         $entry = $this->get_entry_record( $entry_id );
-        if ( ! is_array( $form ) || ! is_array( $entry ) || ! $this->dispatch_deferred_webhooks( $entry, $form, $feed_ids ) )
+        if ( ! is_array( $form ) || ! is_array( $entry ) )
         {
-            sentient_forms_debug_log(
-                'Sentient Forms could not replay deferred Gravity Forms Webhooks.',
-                [
-                    'entry_id' => $entry_id,
-                    'form_id'  => $form_id,
-                ]
+            $this->log_deferred_webhook_replay_failure( $entry_id, $form_id, $feed_ids, 'form_or_entry_unavailable' );
+            return;
+        }
+
+        try
+        {
+            $dispatched = $this->dispatch_deferred_webhooks( $entry, $form, $feed_ids );
+        } catch ( Throwable $throwable )
+        {
+            $this->log_deferred_webhook_replay_failure(
+                $entry_id,
+                $form_id,
+                $feed_ids,
+                'dispatch_exception',
+                $throwable
             );
             return;
         }
 
+        if ( ! $dispatched )
+        {
+            $this->log_deferred_webhook_replay_failure( $entry_id, $form_id, $feed_ids, 'dispatch_returned_false' );
+            return;
+        }
+
         $this->clear_deferred_webhook_state( $entry_id );
+    }
+
+    /**
+     * Log a deferred Webhook replay failure without form or entry payload data.
+     *
+     * @param int                    $entry_id  Gravity Forms entry ID.
+     * @param int                    $form_id   Gravity Forms form ID.
+     * @param array<int, string>     $feed_ids  Deferred Webhook feed IDs.
+     * @param string                 $reason    Stable failure reason.
+     * @param Throwable|null         $throwable Optional dispatch failure.
+     */
+    private function log_deferred_webhook_replay_failure(
+        int $entry_id,
+        int $form_id,
+        array $feed_ids,
+        string $reason,
+        ?Throwable $throwable = null
+    ): void
+    {
+        $context = [
+            'entry_id' => $entry_id,
+            'form_id'  => $form_id,
+            'feed_ids' => array_values( array_map( 'sanitize_key', $feed_ids ) ),
+            'reason'   => sanitize_key( $reason ),
+        ];
+        if ( null !== $throwable )
+        {
+            $context['exception_type'] = get_class( $throwable );
+        }
+
+        $this->plugin->get_logger()->error( 'deferred Gravity Forms Webhook replay failed', $context );
     }
 
     /**
@@ -8332,13 +8424,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->webhook_replay_allowed_feed_ids = $feed_ids;
         try
         {
-            GFAPI::maybe_process_feeds( $entry, $form, self::GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG );
+            $processed_feeds = GFAPI::maybe_process_feeds( $entry, $form, self::GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG );
+            return is_array( $processed_feeds );
         } finally
         {
             $this->webhook_replay_allowed_feed_ids = $previous_allowed_feed_ids;
         }
-
-        return true;
     }
 
     /**
