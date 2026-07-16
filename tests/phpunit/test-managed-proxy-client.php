@@ -91,6 +91,517 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'managed_capability_policy', $payload );
     }
 
+    public function test_execute_rejects_legacy_digest_only_settled_success(): void
+    {
+        $this->mock_execute_response(
+            200,
+            [
+                'success' => true,
+                'data'    => [
+                    'execution_request_id' => 'managed-legacy-settled',
+                    'status'               => 'settled',
+                    'replay'               => true,
+                    'response_digest'      => 'sha256:' . str_repeat( 'a', 64 ),
+                    'metering'             => [
+                        'event_id'              => '11111111-1111-4111-8111-111111111111',
+                        'free_usage'            => false,
+                        'pricing_policy_version' => 'test-policy',
+                        'debited_credits'        => 1,
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-legacy-settled' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_settled_replay_unavailable', $result->get_error_code() );
+        $this->assertSame( 'managed-legacy-settled', $result->get_error_data()['execution_request_id'] ?? null );
+        $this->assertArrayNotHasKey( 'response_digest', $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_malformed_succeeded_response(): void
+    {
+        $this->mock_execute_response(
+            200,
+            [
+                'success' => true,
+                'data'    => [
+                    'execution_request_id' => 'managed-malformed-success',
+                    'status'               => 'succeeded',
+                    'metering'             => [
+                        'event_id'              => '11111111-1111-4111-8111-111111111111',
+                        'free_usage'            => false,
+                        'pricing_policy_version' => 'test-policy',
+                        'debited_credits'        => 1,
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-malformed-success' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+        $this->assertSame( 'managed-malformed-success', $result->get_error_data()['execution_request_id'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_unknown_success_envelope_fields_before_unwrapping(): void
+    {
+        $response = self::canonical_execute_envelope( 'managed-unknown-success-envelope-field' );
+        $response['provider_debug'] = 'must-not-escape';
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-unknown-success-envelope-field' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+        $this->assertNull( $result->get_error_data() );
+        $this->assertStringNotContainsString( 'must-not-escape', wp_json_encode( $result->get_error_data() ) );
+    }
+
+    public function test_execute_rejects_managed_currency_in_succeeded_response(): void
+    {
+        $response = self::canonical_execute_envelope( 'managed-currency-rejected' );
+        $response['data']['metering']['currency'] = 'USD';
+        $response['data']['metering']['billed_amount_microusd'] = 1250;
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-currency-rejected' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_explicit_null_optional_privacy_contracts(): void
+    {
+        $response = self::canonical_execute_envelope( 'managed-null-privacy-contracts' );
+        $response['data']['privacy_route_assertion'] = null;
+        $response['data']['privacy_route_fallback']  = null;
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-null-privacy-contracts' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+    }
+
+    public function test_execute_preserves_settled_recovery_unavailable_error(): void
+    {
+        $this->mock_execute_response(
+            503,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'settled_recovery_unavailable',
+                    'message' => 'Managed execution settled, but its response payload is unavailable for replay.',
+                    'meta'    => [
+                        'execution_request_id' => 'managed-historical-settled',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-historical-settled' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'settled_recovery_unavailable', $result->get_error_code() );
+        $this->assertSame( 503, $result->get_error_data()['status'] ?? null );
+        $this->assertSame(
+            'managed-historical-settled',
+            $result->get_error_data()['execution_request_id'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_malformed_recovery_error_without_exposing_remote_payload(): void
+    {
+        $this->mock_execute_response(
+            503,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'settled_recovery_unavailable',
+                    'message' => 'Managed execution settled, but its response payload is unavailable for replay.',
+                    'meta'    => [
+                        'execution_request_id' => '',
+                        'raw_provider_output'  => 'must-not-escape',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-malformed-recovery' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 503, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+        $this->assertStringNotContainsString( 'must-not-escape', wp_json_encode( $result->get_error_data() ) );
+    }
+
+    /**
+     * @dataProvider reserved_generic_error_metadata
+     */
+    public function test_execute_rejects_generic_error_with_reserved_managed_metadata(
+        string $reserved_key,
+        mixed $reserved_value
+    ): void
+    {
+        $this->mock_execute_response(
+            422,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'provider_error',
+                    'message' => 'The managed provider rejected the request.',
+                    'meta'    => [
+                        $reserved_key => $reserved_value,
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-reserved-generic-meta' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 422, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+        $this->assertArrayNotHasKey( $reserved_key, $result->get_error_data() );
+    }
+
+    public function reserved_generic_error_metadata(): array
+    {
+        return [
+            'execution request identity' => [
+                'execution_request_id',
+                'managed-reserved-generic-meta',
+            ],
+            'privacy route failure'      => [
+                'privacy_route_failure',
+                [
+                    'schema' => 'must-not-escape',
+                ],
+            ],
+        ];
+    }
+
+    public function test_execute_rejects_generic_error_with_list_metadata(): void
+    {
+        $this->mock_execute_response(
+            422,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'provider_error',
+                    'message' => 'The managed provider rejected the request.',
+                    'meta'    => [ 'unexpected' ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-list-generic-meta' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 422, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    /**
+     * @dataProvider malformed_generic_error_strings
+     */
+    public function test_execute_rejects_malformed_generic_error_strings_without_throwing(
+        string $field,
+        mixed $malformed_value
+    ): void
+    {
+        $error = [
+            'code'    => 'provider_error',
+            'message' => 'The managed provider rejected the request.',
+        ];
+        $error[ $field ] = $malformed_value;
+        $this->mock_execute_response(
+            422,
+            [
+                'success' => false,
+                'error'   => $error,
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-malformed-generic-error' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 422, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function malformed_generic_error_strings(): array
+    {
+        return [
+            'array code'    => [ 'code', [ 'invalid' ] ],
+            'object code'   => [ 'code', (object) [ 'invalid' => true ] ],
+            'null code'     => [ 'code', null ],
+            'empty code'    => [ 'code', '' ],
+            'array message' => [ 'message', [ 'invalid' ] ],
+        ];
+    }
+
+    public function test_execute_accepts_identical_canonical_success_as_exact_settled_replay(): void
+    {
+        $this->mock_execute_response(
+            200,
+            self::canonical_execute_envelope( 'managed-req-1' )
+        );
+
+        $first  = $this->execute_minimal_request( 'managed-req-1' );
+        $replay = $this->execute_minimal_request( 'managed-req-1' );
+
+        $this->assertIsArray( $first );
+        $this->assertSame( $first, $replay );
+        $this->assertSame( 'succeeded', $replay['status'] ?? null );
+        $this->assertSame( '{"summary":"ok"}', $replay['output']['text'] ?? null );
+    }
+
+    public function test_execute_rejects_success_for_a_different_execution_request(): void
+    {
+        $this->mock_execute_response( 200, self::canonical_execute_envelope( 'managed-other-request' ) );
+
+        $result = $this->execute_minimal_request( 'managed-expected-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+        $this->assertNull( $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_recovery_error_for_a_different_execution_request(): void
+    {
+        $this->mock_execute_response(
+            503,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'settled_recovery_unavailable',
+                    'message' => 'Managed execution settled, but its response payload is unavailable for replay.',
+                    'meta'    => [
+                        'execution_request_id' => 'managed-other-request',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-expected-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 503, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'execution_request_id', $result->get_error_data() );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function test_execute_normalizes_privacy_route_failure_without_remote_payload(): void
+    {
+        $privacy_route_failure = [
+            'schema'         => 'sentient_forms_privacy_route_failure.v1',
+            'policy_version' => 'managed-zdr-v1',
+            'reason_code'    => 'managed_zdr_route_unavailable',
+            'selected_model' => 'openai/gpt-4.1-mini',
+        ];
+        $this->mock_execute_response(
+            503,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'managed_privacy_route_unavailable',
+                    'message' => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+                    'meta'    => [
+                        'privacy_route_failure' => $privacy_route_failure,
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-privacy-route-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_privacy_route_unavailable', $result->get_error_code() );
+        $this->assertSame( 503, $result->get_error_data()['status'] ?? null );
+        $this->assertSame(
+            'managed-privacy-route-request',
+            $result->get_error_data()['execution_request_id'] ?? null
+        );
+        $this->assertSame(
+            $privacy_route_failure,
+            $result->get_error_data()['privacy_route_failure'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function test_execute_rejects_malformed_privacy_route_failure_without_remote_payload(): void
+    {
+        $this->mock_execute_response(
+            503,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'managed_privacy_route_unavailable',
+                    'message' => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+                    'meta'    => [
+                        'privacy_route_failure' => [
+                            'schema'            => 'sentient_forms_privacy_route_failure.v1',
+                            'policy_version'    => 'managed-zdr-v1',
+                            'reason_code'       => 'managed_zdr_route_unavailable',
+                            'selected_model'    => 'openai/gpt-4.1-mini',
+                            'provider_response' => 'must-not-escape',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-privacy-route-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 503, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+        $this->assertStringNotContainsString( 'must-not-escape', wp_json_encode( $result->get_error_data() ) );
+    }
+
+    /**
+     * @dataProvider stable_lifecycle_errors
+     */
+    public function test_execute_normalizes_stable_lifecycle_errors_without_remote_payload(
+        string $code,
+        int $status
+    ): void
+    {
+        $this->mock_execute_response(
+            $status,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => $code,
+                    'message' => 'Managed execution has not reached a replayable terminal response.',
+                    'meta'    => [
+                        'execution_request_id' => 'managed-lifecycle-request',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-lifecycle-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( $code, $result->get_error_code() );
+        $this->assertSame( $status, $result->get_error_data()['status'] ?? null );
+        $this->assertSame(
+            'managed-lifecycle-request',
+            $result->get_error_data()['execution_request_id'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    public function stable_lifecycle_errors(): array
+    {
+        return [
+            'in progress'        => [ 'in_progress', 409 ],
+            'digest conflict'    => [ 'digest_conflict', 409 ],
+            'settlement pending' => [ 'settlement_pending', 503 ],
+            'indeterminate'      => [ 'indeterminate', 503 ],
+        ];
+    }
+
+    public function test_execute_rejects_malformed_lifecycle_error_without_exposing_remote_payload(): void
+    {
+        $this->mock_execute_response(
+            409,
+            [
+                'success' => false,
+                'error'   => [
+                    'code'    => 'in_progress',
+                    'message' => 'Managed execution has not reached a replayable terminal response.',
+                    'meta'    => [
+                        'execution_request_id' => 'managed-lifecycle-request',
+                        'provider_payload'      => 'must-not-escape',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->execute_minimal_request( 'managed-lifecycle-request' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_error', $result->get_error_code() );
+        $this->assertSame( 409, $result->get_error_data()['status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+        $this->assertStringNotContainsString( 'must-not-escape', wp_json_encode( $result->get_error_data() ) );
+    }
+
+    public function test_execute_rejects_inconsistent_token_accounting(): void
+    {
+        $response = self::canonical_execute_envelope( 'managed-invalid-token-accounting' );
+        $response['data']['token_usage']['total_tokens'] = 20;
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-invalid-token-accounting' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+    }
+
+    /**
+     * @dataProvider valid_privacy_response_contracts
+     */
+    public function test_execute_accepts_valid_optional_privacy_response_contracts( array $privacy_fields ): void
+    {
+        $response = self::canonical_execute_envelope( 'managed-privacy-response' );
+        $response['data'] = array_merge( $response['data'], $privacy_fields );
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-privacy-response' );
+
+        $this->assertIsArray( $result );
+        foreach ( array_keys( $privacy_fields ) as $key )
+        {
+            $this->assertSame( $privacy_fields[ $key ], $result[ $key ] ?? null );
+        }
+    }
+
+    public function valid_privacy_response_contracts(): array
+    {
+        $assertion = [
+            'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+            'zdr_enforced'        => true,
+            'data_collection'     => 'deny',
+            'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+        ];
+
+        return [
+            'assertion only' => [
+                [ 'privacy_route_assertion' => $assertion ],
+            ],
+            'assertion and fallback' => [
+                [
+                    'privacy_route_assertion' => $assertion,
+                    'privacy_route_fallback'  => [
+                        'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+                        'policy_version' => 'managed-zdr-v1',
+                        'reason_code'    => 'managed_zdr_primary_route_unavailable',
+                        'original_model' => 'openai/gpt-4.1',
+                        'fallback_model' => 'openai/gpt-4.1-mini',
+                        'executed_model' => 'openai/gpt-4.1-mini',
+                        'attempts'       => 2,
+                    ],
+                ],
+            ],
+        ];
+    }
+
     public function test_execute_sends_only_a_satisfied_nonempty_managed_capability_policy(): void
     {
         $calls = [];
@@ -101,7 +612,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                 return [
                     'headers'  => [],
                     'response' => [ 'code' => 200, 'message' => 'OK' ],
-                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'body'     => self::canonical_execute_response_body( $args ),
                     'cookies'  => [],
                 ];
             }
@@ -204,7 +715,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                 return [
                     'headers'  => [],
                     'response' => [ 'code' => 200, 'message' => 'OK' ],
-                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'body'     => self::canonical_execute_response_body( $args ),
                     'cookies'  => [],
                 ];
             }
@@ -323,7 +834,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                         'code'    => 200,
                         'message' => 'OK',
                     ],
-                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'body'     => self::canonical_execute_response_body( $args ),
                     'cookies'  => [],
                 ];
             }
@@ -515,7 +1026,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                         'code'    => 200,
                         'message' => 'OK',
                     ],
-                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'body'     => self::canonical_execute_response_body( $args ),
                     'cookies'  => [],
                 ];
             }
@@ -583,7 +1094,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                         'code'    => 200,
                         'message' => 'OK',
                     ],
-                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'body'     => self::canonical_execute_response_body( $args ),
                     'cookies'  => [],
                 ];
             }
@@ -760,5 +1271,63 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $this->http_mock = $callback;
         add_filter( 'pre_http_request', $this->http_mock, 10, 3 );
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function mock_execute_response( int $status, array $body ): void
+    {
+        $this->mock_http(
+            static function () use ( $status, $body ): array {
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => $status,
+                        'message' => 200 === $status ? 'OK' : 'Service Unavailable',
+                    ],
+                    'body'     => wp_json_encode( $body ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    private function execute_minimal_request( string $execution_request_id ): array | WP_Error
+    {
+        return ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => $execution_request_id,
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+            ]
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function canonical_execute_envelope( string $execution_request_id ): array
+    {
+        $response = json_decode(
+            (string) file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+            true
+        );
+        $response['data']['execution_request_id'] = $execution_request_id;
+
+        return $response;
+    }
+
+    private static function canonical_execute_response_body( array $args ): string
+    {
+        $request = json_decode( $args['body'] ?? '', true );
+        $response = self::canonical_execute_envelope( $request['execution_request_id'] ?? '' );
+
+        return (string) wp_json_encode( $response );
     }
 }

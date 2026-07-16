@@ -1275,7 +1275,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'privacy_route_policy', $payload );
     }
 
-    public function test_managed_generation_normalizes_optional_privacy_route_assertion(): void
+    public function test_managed_generation_rejects_invalid_optional_privacy_route_assertion(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -1317,19 +1317,14 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
         $data = $this->run_site_context_generation_job( $job_id );
 
-        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
-        $this->assertSame(
-            [
-                'schema'              => 'sentient_forms_privacy_route_assertion.v1',
-                'zdr_enforced'        => true,
-                'data_collection'     => 'deny',
-                'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
-            ],
-            $data['context']['metadata']['privacy_route_assertion'] ?? null
-        );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $data['generation_job']['code'] ?? null );
+        $this->assertStringNotContainsString( 'untrusted_extra', wp_json_encode( $data ) );
+        $this->assertStringNotContainsString( '<script>', wp_json_encode( $data ) );
     }
 
-    public function test_managed_generation_preserves_optional_privacy_route_fallback_metadata(): void
+    public function test_managed_generation_rejects_invalid_optional_privacy_route_fallback_metadata(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -1374,21 +1369,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
         $data = $this->run_site_context_generation_job( $job_id );
 
-        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
-        $this->assertSame( 'google/gemini-3-flash-preview', $data['context']['metadata']['model'] ?? null );
-        $this->assertSame(
-            [
-                'schema'         => 'sentient_forms_privacy_route_fallback.v1',
-                'policy_version' => '2026-06-managed-zdr-fallback-v1',
-                'reason_code'    => 'managed_zdr_primary_route_unavailable',
-                'original_model' => 'openai/gpt-5.5',
-                'fallback_model' => 'google/gemini-3-flash-preview',
-                'executed_model' => 'google/gemini-3-flash-preview',
-                'attempts'       => 1,
-            ],
-            $data['context']['metadata']['privacy_route_fallback'] ?? null
-        );
-        $this->assertStringNotContainsString( 'raw-cps-id-should-not-survive', wp_json_encode( $data['context']['metadata'] ?? [] ) );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $data['generation_job']['code'] ?? null );
+        $this->assertStringNotContainsString( 'raw-cps-id-should-not-survive', wp_json_encode( $data ) );
     }
 
     public function test_managed_generation_fails_when_required_zdr_route_is_not_asserted(): void
@@ -1406,12 +1390,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->mock_managed_site_context_generation(
             $calls,
             [
-                'privacy_route_assertion' => [
-                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
-                    'zdr_enforced'        => false,
-                    'data_collection'     => 'allow',
-                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
-                ],
+                'privacy_route_assertion' => null,
             ]
         );
 
@@ -3847,6 +3826,11 @@ class SiteContextControllerTest extends WP_UnitTestCase
                     'url'  => $url,
                 ];
 
+                $request = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $execution_request_id = is_array( $request )
+                    ? (string) ( $request['execution_request_id'] ?? '' )
+                    : '';
+
                 $content = wp_json_encode(
                     [
                         'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
@@ -3860,7 +3844,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
                 $data = array_merge(
                     [
-                        'execution_request_id'    => 'site_context_managed_test',
+                        'execution_request_id'    => $execution_request_id,
                         'provider'                => 'sentient_managed',
                         'model'                   => 'openai/gpt-5.5',
                         'status'                  => 'succeeded',
@@ -3871,9 +3855,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
                             'total_tokens'  => 42,
                         ],
                         'metering'                => [
-                            'event_id'        => '66666666-6666-4666-8666-666666666666',
-                            'free_usage'      => false,
-                            'debited_credits' => 2,
+                            'event_id'               => '66666666-6666-4666-8666-666666666666',
+                            'free_usage'             => false,
+                            'pricing_policy_version' => 'managed-credit-policy-v1',
+                            'debited_credits'        => 2,
                         ],
                         'privacy_route_assertion' => [
                             'schema'              => 'sentient_forms_privacy_route_assertion.v1',
@@ -3884,6 +3869,14 @@ class SiteContextControllerTest extends WP_UnitTestCase
                     ],
                     is_array( $data_overrides ) ? $data_overrides : []
                 );
+                if (
+                    is_array( $data_overrides )
+                    && array_key_exists( 'privacy_route_assertion', $data_overrides )
+                    && null === $data_overrides['privacy_route_assertion']
+                )
+                {
+                    unset( $data['privacy_route_assertion'] );
+                }
 
                 return [
                     'headers'  => [],

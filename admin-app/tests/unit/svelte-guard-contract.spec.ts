@@ -32,7 +32,7 @@ describe('Svelte guard command contract', () => {
 
 		try {
 			const result = spawnSync(
-				'node',
+				process.execPath,
 				[resolve(projectRoot, 'scripts/svelte-guard.mjs')],
 				{
 					cwd: fixtureRoot,

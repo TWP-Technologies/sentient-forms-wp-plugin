@@ -90,14 +90,69 @@ class ContractSchemaParityTest extends WP_UnitTestCase
             Sentient_Forms_Managed_Capability_Policy::allowed_capabilities(),
             $policy['properties']['required_capabilities']['items']['enum'] ?? null
         );
+        $this->assertSame( 1, $policy['properties']['required_capabilities']['minItems'] ?? null );
         $this->assertSame( 4, $policy['properties']['required_capabilities']['maxItems'] ?? null );
         $this->assertTrue( $policy['properties']['required_capabilities']['uniqueItems'] ?? false );
+    }
 
-        $error      = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-error.schema.json' );
-        $capability = $error['properties']['error']['properties']['meta']['properties']['capability'] ?? null;
-        $this->assertIsArray( $capability );
-        $this->assertSame( 'string', $capability['type'] ?? null );
-        $this->assertSame( 128, $capability['maxLength'] ?? null );
+    public function test_managed_execute_contract_requires_replayable_success_or_explicit_recovery_error(): void
+    {
+        $success    = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-success.schema.json' );
+        $properties = $success['properties']['data']['properties'] ?? null;
+        $required   = $success['properties']['data']['required'] ?? null;
+
+        $this->assertIsArray( $properties );
+        $this->assertSame( 'succeeded', $properties['status']['const'] ?? null );
+        $this->assertArrayNotHasKey( 'replay', $properties );
+        $this->assertArrayNotHasKey( 'response_digest', $properties );
+        $this->assertSame(
+            [
+                'execution_request_id',
+                'provider',
+                'model',
+                'status',
+                'output',
+                'token_usage',
+                'metering',
+            ],
+            $required
+        );
+
+        $error       = $this->decode_json_file( self::SNAPSHOT_ROOT . '/managed/execute-error.schema.json' );
+        $definitions = $error['$defs'] ?? null;
+        $branches    = $error['oneOf'] ?? null;
+        $this->assertIsArray( $definitions );
+        $this->assertIsArray( $branches );
+        $lifecycle = $branches[0]['properties']['error']['properties'] ?? null;
+        $recovery  = $branches[1]['properties']['error']['properties'] ?? null;
+        $this->assertSame(
+            [ 'in_progress', 'digest_conflict', 'settlement_pending', 'indeterminate' ],
+            $definitions['lifecycleCode']['enum'] ?? null
+        );
+        $this->assertSame( '#/$defs/lifecycleCode', $lifecycle['code']['$ref'] ?? null );
+        $this->assertSame(
+            'Managed execution has not reached a replayable terminal response.',
+            $lifecycle['message']['const'] ?? null
+        );
+        $this->assertSame(
+            [ 'execution_request_id' ],
+            $lifecycle['meta']['required'] ?? null
+        );
+        $this->assertFalse( $lifecycle['meta']['additionalProperties'] ?? true );
+        $this->assertSame(
+            'settled_recovery_unavailable',
+            $definitions['settledRecoveryUnavailableCode']['const'] ?? null
+        );
+        $this->assertSame( '#/$defs/settledRecoveryUnavailableCode', $recovery['code']['$ref'] ?? null );
+        $this->assertSame(
+            'Managed execution settled, but its response payload is unavailable for replay.',
+            $recovery['message']['const'] ?? null
+        );
+        $this->assertSame(
+            [ 'execution_request_id' ],
+            $recovery['meta']['required'] ?? null
+        );
+        $this->assertFalse( $recovery['meta']['additionalProperties'] ?? true );
     }
 
     public function test_billing_checkout_and_managed_metadata_boundaries_match_cps(): void

@@ -38,49 +38,15 @@
               }
             }
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "succeeded"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "required": [
-              "provider",
-              "model",
-              "output",
-              "token_usage"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "settled"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "required": [
-              "replay",
-              "response_digest"
-            ]
-          }
         }
       ],
       "required": [
         "execution_request_id",
+        "provider",
+        "model",
         "status",
+        "output",
+        "token_usage",
         "metering"
       ],
       "properties": {
@@ -100,18 +66,7 @@
         },
         "status": {
           "type": "string",
-          "enum": [
-            "succeeded",
-            "settled"
-          ]
-        },
-        "replay": {
-          "type": "boolean",
-          "const": true
-        },
-        "response_digest": {
-          "type": "string",
-          "pattern": "^sha256:[0-9a-f]{64}$"
+          "const": "succeeded"
         },
         "output": {
           "type": "object",

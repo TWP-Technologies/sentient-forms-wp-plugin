@@ -33,11 +33,6 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "capability": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            },
             "privacy_route_failure": {
               "type": "object",
               "additionalProperties": false,
@@ -72,40 +67,61 @@
       }
     }
   },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "error": {
-            "properties": {
-              "code": {
-                "const": "managed_privacy_route_unavailable"
-              }
-            },
-            "required": [
-              "code"
-            ]
-          }
+  "$defs": {
+    "lifecycleCode": {
+      "enum": [
+        "in_progress",
+        "digest_conflict",
+        "settlement_pending",
+        "indeterminate"
+      ]
+    },
+    "settledRecoveryUnavailableCode": {
+      "const": "settled_recovery_unavailable"
+    },
+    "privacyRouteUnavailableCode": {
+      "const": "managed_privacy_route_unavailable"
+    },
+    "reservedManagedErrorCode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/lifecycleCode"
+        },
+        {
+          "$ref": "#/$defs/settledRecoveryUnavailableCode"
+        },
+        {
+          "$ref": "#/$defs/privacyRouteUnavailableCode"
         }
-      },
-      "then": {
-        "properties": {
-          "error": {
-            "required": [
-              "meta"
-            ],
-            "properties": {
-              "message": {
-                "const": "No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR."
-              },
-              "meta": {
-                "additionalProperties": false,
-                "properties": {
-                  "privacy_route_failure": true
-                },
-                "required": [
-                  "privacy_route_failure"
-                ]
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "error": {
+          "required": [
+            "meta"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/lifecycleCode"
+            },
+            "message": {
+              "const": "Managed execution has not reached a replayable terminal response."
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "execution_request_id"
+              ],
+              "properties": {
+                "execution_request_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
               }
             }
           }
@@ -113,32 +129,86 @@
       }
     },
     {
-      "if": {
-        "properties": {
-          "error": {
-            "properties": {
-              "code": {
-                "not": {
-                  "const": "managed_privacy_route_unavailable"
+      "properties": {
+        "error": {
+          "required": [
+            "meta"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/settledRecoveryUnavailableCode"
+            },
+            "message": {
+              "const": "Managed execution settled, but its response payload is unavailable for replay."
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "execution_request_id"
+              ],
+              "properties": {
+                "execution_request_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
                 }
               }
-            },
-            "required": [
-              "code"
-            ]
+            }
           }
         }
-      },
-      "then": {
-        "properties": {
-          "error": {
-            "properties": {
-              "meta": {
-                "not": {
-                  "required": [
-                    "privacy_route_failure"
-                  ]
-                }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "required": [
+            "meta"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/privacyRouteUnavailableCode"
+            },
+            "message": {
+              "const": "No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR."
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "privacy_route_failure"
+              ],
+              "properties": {
+                "privacy_route_failure": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "error": {
+          "properties": {
+            "code": {
+              "not": {
+                "$ref": "#/$defs/reservedManagedErrorCode"
+              }
+            },
+            "meta": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "execution_request_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "privacy_route_failure"
+                    ]
+                  }
+                ]
               }
             }
           }
