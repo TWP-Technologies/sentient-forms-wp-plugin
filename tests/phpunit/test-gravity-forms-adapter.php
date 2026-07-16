@@ -3612,7 +3612,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, GFAPI::$maybe_process_feeds_calls );
         $this->assertSame( 'gravityformswebhooks', GFAPI::$maybe_process_feeds_calls[0]['addon_slug'] ?? null );
 
-        GFAPI::$maybe_process_feeds_result = [ [ 'id' => 'feed_crm' ] ];
+        GFAPI::$maybe_process_feeds_result = [];
 
         $this->assertTrue( $adapter->dispatch_webhooks( $entry, $form, [ 'feed_crm' ] ) );
         $this->assertCount( 2, GFAPI::$maybe_process_feeds_calls );

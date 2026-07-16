@@ -181,6 +181,9 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         GFAPI::$get_entry_calls                        = 0;
         GFAPI::$get_form_calls                         = 0;
         GFAPI::$skip_field_values_on_full_entry_update = false;
+        GFAPI::$maybe_process_feeds_result              = [];
+        GFAPI::$maybe_process_feeds_exception           = null;
+        GFAPI::$maybe_process_feeds_calls               = [];
     }
 
     /**

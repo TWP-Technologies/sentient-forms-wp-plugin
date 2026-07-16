@@ -8425,12 +8425,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         try
         {
             $processed_feeds = GFAPI::maybe_process_feeds( $entry, $form, self::GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG );
+            return is_array( $processed_feeds );
         } finally
         {
             $this->webhook_replay_allowed_feed_ids = $previous_allowed_feed_ids;
         }
-
-        return is_array( $processed_feeds );
     }
 
     /**
