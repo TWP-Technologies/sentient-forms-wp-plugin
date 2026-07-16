@@ -222,13 +222,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             $mapping_outcomes[ $mapping_key ] = 'succeeded';
             $execution_results[ $mapping_key ] = $result;
-            $classification = is_array( $result ) ? $this->extract_spam_classification( $result ) : '';
+            $trusted_structure = is_array( $result ) && $this->validation_result_has_trusted_structure( $result );
+            $classification = $trusted_structure ? $this->extract_spam_classification( $result ) : '';
             if ( '' !== $classification )
             {
                 $spam_classifications[ $mapping_key ] = $classification;
             }
 
-            $validation = is_array( $result ) ? $this->extract_validation_payload( $result ) : null;
+            $validation = $trusted_structure ? $this->extract_validation_payload( $result ) : null;
             if ( is_array( $validation ) && false === ( $validation['is_valid'] ?? true ) )
             {
                 $message = sanitize_text_field( (string) ( $validation['message'] ?? '' ) );

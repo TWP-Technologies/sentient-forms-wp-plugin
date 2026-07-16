@@ -291,6 +291,21 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $cases = [
             7958 => new WP_Error( 'provider_timeout', 'Private provider timeout details.' ),
             7959 => [ 'content' => 'Unstructured provider response.' ],
+            7960 => [
+                'result_data' => [
+                    'structured_output_valid' => false,
+                    'structured_output'       => [
+                        'is_valid' => false,
+                        'message'  => 'Untrusted validation output must not block.',
+                        'fields'   => [
+                            [
+                                'field_id' => '9',
+                                'message'  => 'Untrusted field error.',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
         ];
 
         foreach ( $cases as $form_id => $action_result )

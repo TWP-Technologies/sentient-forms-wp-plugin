@@ -500,6 +500,16 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             7955 => [
                 'content' => 'Unstructured provider response.',
             ],
+            7956 => [
+                'result_data' => [
+                    'structured_output_valid' => false,
+                    'structured_output'       => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Untrusted spam output must not apply.',
+                    ],
+                ],
+            ],
         ];
 
         foreach ( $cases as $form_id => $action_result )
