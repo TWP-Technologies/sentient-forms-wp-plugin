@@ -1397,6 +1397,22 @@ class Sentient_Forms_Async_Handler
         );
 
         do_action( 'sentient_forms_async_success', $context, $result );
+        try
+        {
+            $this->notify_adapter_success( $context, $result );
+        } catch ( Throwable $throwable )
+        {
+            $this->plugin->get_logger()->error(
+                'async adapter success finalization failed',
+                [
+                    'form_source'    => sanitize_key( (string) ( $context['form_source'] ?? '' ) ),
+                    'form_id'       => sanitize_text_field( (string) ( $context['form_id'] ?? '' ) ),
+                    'entry_id'      => sanitize_text_field( (string) ( $context['entry_id'] ?? '' ) ),
+                    'mapping_id'    => sanitize_key( (string) ( $context['mapping_id'] ?? $context['local_mapping_id'] ?? $context['action_id'] ?? '' ) ),
+                    'exception_type' => get_class( $throwable ),
+                ]
+            );
+        }
         $this->emit_async_event( 'local_mapping_success', $context, $result );
 
         $this->get_metadata_store()->update_status(
