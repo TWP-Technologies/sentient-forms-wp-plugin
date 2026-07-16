@@ -3403,6 +3403,129 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 0, $adapter->spam_status_updates );
     }
 
+    public function test_finalize_async_success_local_mapping_normalizes_configured_spam_classification(): void
+    {
+        $form_id    = 49;
+        $entry_id   = 706;
+        $mapping_id = 'local_first_49';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+
+        $adapter->finalize_async_success(
+            $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id ),
+            [
+                'result' => [
+                    'verdict' => [
+                        'kind'  => 'likely-spam',
+                        'score' => 0.99,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
+    public function test_finalize_async_success_local_mapping_does_not_fallback_from_configured_confidence_path(): void
+    {
+        $form_id    = 50;
+        $entry_id   = 707;
+        $mapping_id = 'local_first_50';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+
+        $adapter->finalize_async_success(
+            $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id ),
+            [
+                'result' => [
+                    'verdict' => [
+                        'kind' => 'spam',
+                    ],
+                    'structured' => [
+                        'confidence' => 0.10,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
+    public function test_finalize_async_error_local_mapping_replays_held_deliveries_without_spam_result(): void
+    {
+        $form_id    = 51;
+        $entry_id   = 708;
+        $mapping_id = 'local_first_51';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+
+        $adapter->finalize_async_error(
+            $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id ),
+            new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_notifications );
+        $this->assertSame( [ 'notif_admin' ], $adapter->dispatched_notifications[0]['notification_ids'] ?? [] );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [ 'feed_crm' ], $adapter->dispatched_webhooks[0]['feed_ids'] ?? [] );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
+    private function create_deferred_delivery_adapter(
+        int $form_id,
+        int $entry_id,
+        string $mapping_id
+    ): Sentient_Forms_Test_Gravity_Forms_Adapter_Spy
+    {
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Local spam delivery controls',
+            'fields' => [],
+        ];
+        $adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ $mapping_id ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids', [ 'feed_crm' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids', [ $mapping_id ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_decision', 'pending' );
+
+        return $adapter;
+    }
+
+    private function local_spam_delivery_context( int $form_id, int $entry_id, string $mapping_id ): array
+    {
+        return [
+            'entry_id'          => $entry_id,
+            'form_id'           => $form_id,
+            'action_id'         => $mapping_id,
+            'central_action_id' => 'sentient_forms_local_custom_action',
+            'job_type'          => 'local_mapping',
+            'settings'          => [
+                'effect_mapping_json' => [
+                    'spam' => [
+                        'classification_path'            => 'verdict.kind',
+                        'confidence_path'                => 'verdict.score',
+                        'min_confidence'                  => 0.95,
+                        'mark_as_spam'                    => true,
+                        'suppress_notifications_on_spam' => true,
+                        'suppress_webhooks_on_spam'      => true,
+                    ],
+                ],
+            ],
+        ];
+    }
+
     public function test_finalize_async_success_persists_local_first_structured_output_validity(): void
     {
         $entry_id = 702;

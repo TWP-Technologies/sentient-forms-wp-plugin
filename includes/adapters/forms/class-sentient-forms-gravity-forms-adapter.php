@@ -7420,13 +7420,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // FR-008: Log failed action execution
         $this->log_action_execution( $context, [], 'error', $error );
 
+        $is_local_mapping_error = $this->is_local_mapping_completion_context( $context );
+
         $this->resolve_deferred_notifications_after_async_completion(
             $context,
-            $this->should_suppress_notifications_on_spam_for_context( $context )
+            ! $is_local_mapping_error && $this->should_suppress_notifications_on_spam_for_context( $context )
         );
         $this->resolve_deferred_webhooks_after_async_completion(
             $context,
-            $this->should_suppress_webhooks_on_spam_for_context( $context )
+            ! $is_local_mapping_error && $this->should_suppress_webhooks_on_spam_for_context( $context )
         );
     }
 
@@ -8134,12 +8136,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private function extract_spam_classification_for_context( array $context, array $result ): ?string
     {
         $configured = $this->extract_local_spam_effect_value( $context, $result, 'classification_path' );
-        if ( is_scalar( $configured ) && '' !== trim( (string) $configured ) )
+        $normalized = $this->normalize_spam_classification_value( $configured );
+        if ( '' !== $normalized )
         {
-            return strtolower( trim( (string) $configured ) );
+            return $normalized;
         }
 
-        return $this->extract_spam_classification( $result );
+        $fallback = $this->extract_spam_classification( $result );
+        if ( ! $this->is_local_mapping_completion_context( $context ) )
+        {
+            return $fallback;
+        }
+
+        $normalized = $this->normalize_spam_classification_value( $fallback );
+
+        return '' !== $normalized ? $normalized : null;
     }
 
     /**
@@ -8156,7 +8167,33 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return (float) $configured;
         }
 
+        $spam_effect = $this->get_spam_effect_config_for_context( $context );
+        if (
+            $this->is_local_mapping_completion_context( $context )
+            && isset( $spam_effect['confidence_path'] )
+            && is_scalar( $spam_effect['confidence_path'] )
+            && '' !== trim( (string) $spam_effect['confidence_path'] )
+        )
+        {
+            return null;
+        }
+
         return $this->extract_spam_confidence( $result );
+    }
+
+    /**
+     * Normalize a spam classification using the local effect applier's semantics.
+     */
+    private function normalize_spam_classification_value( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $value ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
     }
 
     /**
