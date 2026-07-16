@@ -8155,7 +8155,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         $provider_result = isset( $result['result'] ) && is_array( $result['result'] ) ? $result['result'] : $result;
-        $is_spam         = $this->extract_nested_post_execution_value( $provider_result, 'structured.is_spam' );
+        $normalized      = $this->normalize_spam_classification_value( $this->extract_spam_classification( $provider_result ) );
+        if ( '' !== $normalized )
+        {
+            return $normalized;
+        }
+
+        $is_spam = $this->extract_nested_post_execution_value( $provider_result, 'structured.is_spam' );
 
         return true === $is_spam || 'true' === strtolower( (string) $is_spam ) ? 'spam' : null;
     }
