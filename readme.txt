@@ -74,7 +74,7 @@ Realtime Clarification Assistant:
 
 No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure.
 
-The optional diagnostic-consent setting enables metadata-only local events. The separate on-site logging setting must also be enabled for the plugin to write those events to its masked log. Allowed metadata includes plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes. Local diagnostic events exclude form field contents, prompts, model outputs/results, raw error messages, visitor identifiers, saved provider secrets, billing secrets, and OpenRouter BYOK payloads. Debug mode cannot bypass consent, and no telemetry leaves the WordPress site in this release.
+Optional diagnostics stay on the WordPress site. They require diagnostic consent and on-site logging, record only bounded technical metadata, and exclude form contents, prompts, model outputs, raw errors, visitor identifiers, and secrets. Debug mode cannot bypass consent.
 
 == Installation ==
 
