@@ -16,6 +16,8 @@ if ( ! defined( 'ABSPATH' ) )
 interface Sentient_Forms_Native_Entry_Capabilities_Adapter_Interface
 {
     /**
+     * Describe native entry capabilities independent of runtime availability.
+     *
      * @return array<string, bool>
      */
     public function get_structural_native_entry_capabilities(): array;

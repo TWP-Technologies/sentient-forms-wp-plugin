@@ -329,6 +329,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         ];
     }
 
+    /**
+     * Describe Gravity Forms native entry capabilities independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_native_entry_capabilities(): array
     {
         return [
@@ -339,6 +344,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         ];
     }
 
+    /**
+     * Describe Gravity Forms native effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_native_effect_capabilities(): array
     {
         return [
@@ -350,6 +360,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         ];
     }
 
+    /**
+     * Describe Gravity Forms validation effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_validation_effect_capabilities(): array
     {
         return [
@@ -359,11 +374,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         ];
     }
 
+    /**
+     * Get the source-neutral realtime lifecycle identifier.
+     *
+     * @return string
+     */
     public function get_realtime_native_hook(): string
     {
         return 'real_time';
     }
 
+    /**
+     * Describe Gravity Forms realtime capabilities independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_realtime_capabilities(): array
     {
         return [ 'qna_storage' => true ];
@@ -376,7 +401,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function get_capability_descriptor(): array
     {
-        $is_active = $this->is_active();
+        $is_active          = $this->is_active();
+        $native_entry       = $this->get_structural_native_entry_capabilities();
+        $native_enrichment  = $this->get_structural_native_effect_capabilities();
+        $native_enrichment['webhook_controls'] = $this->gravity_forms_webhooks_feed_controls_available();
+        $validation_effects = $this->get_structural_validation_effect_capabilities();
 
         return [
             'slug'                 => 'gravity_forms',
@@ -419,24 +448,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     'unsupported_reason' => null,
                 ],
             ],
-            'native_entry'         => [
-                'id'    => true,
-                'link'  => true,
-                'read'  => true,
-                'write' => true,
-            ],
-            'native_enrichment'    => [
-                'notes'                 => true,
-                'status'                => true,
-                'spam'                  => true,
-                'notification_controls' => true,
-                'webhook_controls'      => $this->gravity_forms_webhooks_feed_controls_available(),
-            ],
-            'validation_effects'   => [
-                'field_errors'    => true,
-                'form_errors'     => true,
-                'submission_spam' => true,
-            ],
+            'native_entry'         => $native_entry,
+            'native_enrichment'    => $native_enrichment,
+            'validation_effects'   => $validation_effects,
             'ledger'               => [
                 'required_for_parity' => false,
                 'enabled'             => false,

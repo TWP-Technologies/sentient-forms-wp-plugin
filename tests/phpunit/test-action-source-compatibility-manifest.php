@@ -420,6 +420,41 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
         $this->assertSame( 'intentional_unsupported', $wpforms_row['support_status'] ?? null );
     }
 
+    public function test_unknown_source_without_realtime_is_classified_by_capability_not_slug(): void
+    {
+        $plugin  = Sentient_Forms_Plugin::instance();
+        $adapter = new class( $plugin ) extends Sentient_Forms_Contact_Form_7_Adapter
+        {
+            public function get_id(): string
+            {
+                return 'future_forms';
+            }
+
+            public function get_name(): string
+            {
+                return 'Future Forms';
+            }
+        };
+        $manifest   = new Sentient_Forms_Action_Source_Compatibility_Manifest();
+        $build_row  = new ReflectionMethod( $manifest, 'build_row' );
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+
+        $this->assertIsArray( $definition );
+        $row = $build_row->invoke(
+            $manifest,
+            'clarification_assistant_v1',
+            $definition,
+            $adapter->get_id(),
+            $adapter->get_capability_descriptor(),
+            $adapter
+        );
+
+        $this->assertFalse( $row['source_capabilities']['lifecycles']['real_time'] ?? true );
+        $this->assertFalse( $row['supported'] ?? true );
+        $this->assertSame( 'intentional_unsupported', $row['support_status'] ?? null );
+        $this->assertSame( 'unsupported_lifecycle', $row['unsupported_reason_code'] ?? null );
+    }
+
     public function test_after_submission_actions_share_ledger_baseline_without_generalizing_gravity_native_effects(): void
     {
         $manifest = new Sentient_Forms_Action_Source_Compatibility_Manifest();

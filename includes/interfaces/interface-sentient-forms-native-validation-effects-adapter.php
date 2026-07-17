@@ -17,6 +17,8 @@ if ( ! defined( 'ABSPATH' ) )
 interface Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     /**
+     * Describe native validation effects independent of runtime availability.
+     *
      * @return array<string, bool>
      */
     public function get_structural_validation_effect_capabilities(): array;

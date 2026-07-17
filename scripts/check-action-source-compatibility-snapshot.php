@@ -51,6 +51,11 @@ final class Sentient_Forms_Action_Source_Compatibility_Snapshot_Verifier
      *
      * Each path and content block is framed as `<byte-length>:<bytes>`. Source
      * CRLF and lone CR line endings normalize to LF before content framing.
+     *
+     * @param string $plugin_root Absolute plugin root.
+     *
+     * @return string Source digest.
+     * @throws LogicException When a semantic source is missing or unreadable.
      */
     public static function source_sha256( string $plugin_root ): string
     {
@@ -82,6 +87,16 @@ final class Sentient_Forms_Action_Source_Compatibility_Snapshot_Verifier
         return hash_final( $hash );
     }
 
+    /**
+     * Verify that a checked projection snapshot matches its semantic sources.
+     *
+     * @param string      $plugin_root  Absolute plugin root.
+     * @param string|null $snapshot_path Optional snapshot override.
+     *
+     * @return string The verified source digest.
+     * @throws LogicException When semantic sources or the checked snapshot are missing or stale.
+     * @throws JsonException When the checked snapshot is not valid JSON.
+     */
     public static function verify_snapshot( string $plugin_root, ?string $snapshot_path = null ): string
     {
         $snapshot_path = $snapshot_path

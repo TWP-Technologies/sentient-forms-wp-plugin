@@ -62,6 +62,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         return (bool) apply_filters( 'sentient_forms_wpforms_is_active', $is_active, $this );
     }
 
+    /**
+     * Describe WPForms native entry capabilities independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_native_entry_capabilities(): array
     {
         return [
@@ -72,6 +77,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         ];
     }
 
+    /**
+     * Describe WPForms validation effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
     public function get_structural_validation_effect_capabilities(): array
     {
         return [
@@ -88,6 +98,10 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     {
         $is_active                      = $this->is_active();
         $native_entry_storage_available = $is_active && $this->native_entry_storage_available();
+        $native_entry                   = $this->get_structural_native_entry_capabilities();
+        $native_entry['id']             = $native_entry_storage_available;
+        $native_entry['link']           = $native_entry_storage_available;
+        $validation_effects             = $this->get_structural_validation_effect_capabilities();
 
         return [
             'slug'                 => 'wpforms',
@@ -130,12 +144,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                     'unsupported_reason' => __( 'Realtime WPForms support is not available in this release.', 'sentient-forms' ),
                 ],
             ],
-            'native_entry'         => [
-                'id'    => $native_entry_storage_available,
-                'link'  => $native_entry_storage_available,
-                'read'  => false,
-                'write' => false,
-            ],
+            'native_entry'         => $native_entry,
             'native_enrichment'    => [
                 'notes'                 => false,
                 'status'                => false,
@@ -143,11 +152,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
-            'validation_effects'   => [
-                'field_errors'    => true,
-                'form_errors'     => true,
-                'submission_spam' => false,
-            ],
+            'validation_effects'   => $validation_effects,
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,

@@ -26,14 +26,6 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS => Sentient_Forms_Elementor_Forms_Adapter::class,
     ];
 
-    private const INTENTIONAL_UNSUPPORTED = [
-        'clarification_assistant_v1' => [
-            Sentient_Forms_Form_Sources::CONTACT_FORM_7,
-            Sentient_Forms_Form_Sources::WPFORMS,
-            Sentient_Forms_Form_Sources::ELEMENTOR_PRO_FORMS,
-        ],
-    ];
-
     private const ORDINARY_AFTER_SUBMISSION_ACTIONS = [
         'entry_summary_v1',
         'sentiment_urgency_v1',
@@ -52,6 +44,12 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
     /** @var array<int, array<string, mixed>>|null */
     private ?array $rows = null;
 
+    /**
+     * Build a compatibility manifest from the canonical adapter registry.
+     *
+     * @param Sentient_Forms_Form_Adapter_Registry|null $registry        Adapter registry to inspect.
+     * @param Sentient_Forms_Action_Policy_Resolver|null $policy_resolver Action policy resolver to use.
+     */
     public function __construct(
         ?Sentient_Forms_Form_Adapter_Registry $registry = null,
         ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null
@@ -61,6 +59,12 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         $this->policy_resolver = $policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
     }
 
+    /**
+     * Enumerate every bundled Action and canonical Form Source pair.
+     *
+     * @return array<int, array<string, mixed>>
+     * @throws LogicException When a canonical Form Source adapter contract is invalid.
+     */
     public function all(): array
     {
         $this->assert_canonical_adapters();
@@ -117,6 +121,15 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         }
     }
 
+    /**
+     * Query one bundled Action and canonical Form Source pair.
+     *
+     * @param string $action_code Bundled Action code.
+     * @param string $form_source Canonical Form Source identifier.
+     *
+     * @return array<string, mixed>|null
+     * @throws LogicException When a canonical Form Source adapter contract is invalid.
+     */
     public function get( string $action_code, string $form_source ): ?array
     {
         $action_code = sanitize_key( $action_code );
@@ -133,6 +146,12 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         return null;
     }
 
+    /**
+     * Produce the versioned public-safe compatibility contract.
+     *
+     * @return array<string, mixed>
+     * @throws LogicException When a canonical adapter or semantic source-hash input is invalid.
+     */
     public function public_projection(): array
     {
         $rows = array_map(
@@ -214,7 +233,7 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
                 static fn( string $capability ): bool => true !== ( $source_capabilities['requirements'][ $capability ] ?? false )
             )
         );
-        $intentional_unsupported = $this->is_intentional_unsupported( $action_code, $form_source );
+        $intentional_unsupported = [] === $supported_lifecycles;
         $supported = ! $intentional_unsupported
             && [] !== $supported_lifecycles
             && [] === $missing_capabilities;
@@ -539,11 +558,6 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         }
 
         return array_values( array_unique( $surfaces ) );
-    }
-
-    private function is_intentional_unsupported( string $action_code, string $form_source ): bool
-    {
-        return in_array( $form_source, self::INTENTIONAL_UNSUPPORTED[ $action_code ] ?? [], true );
     }
 
     /**
