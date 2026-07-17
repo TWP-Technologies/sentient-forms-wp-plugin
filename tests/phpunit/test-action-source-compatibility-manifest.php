@@ -365,6 +365,10 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
             $this->assertTrue( $content['supported'] ?? false );
             $this->assertSame( [ 'validation' ], $content['supported_lifecycles'] ?? null );
             $this->assertTrue( $content['source_capabilities']['validation_effects']['field_errors'] ?? false );
+            $this->assertSame(
+                'contact_form_7' !== $source,
+                $content['source_capabilities']['validation_effects']['form_errors'] ?? null
+            );
 
             $this->assertIsArray( $spam );
             $this->assertTrue( $spam['supported'] ?? false );
