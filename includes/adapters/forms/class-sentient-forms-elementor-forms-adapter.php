@@ -51,6 +51,20 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
     }
 
     /**
+     * Describe Elementor validation effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => true,
+            'submission_spam' => false,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function get_capability_descriptor(): array
@@ -58,6 +72,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         $has_elementor        = $this->has_elementor();
         $has_pro_forms        = $this->has_elementor_pro_forms_api();
         $has_form_submissions = $has_pro_forms && $this->has_elementor_pro_form_submissions_api();
+        $validation_effects   = $this->get_structural_validation_effect_capabilities();
 
         if ( ! $has_elementor )
         {
@@ -143,11 +158,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
-            'validation_effects'   => [
-                'field_errors'    => true,
-                'form_errors'     => true,
-                'submission_spam' => false,
-            ],
+            'validation_effects'   => $validation_effects,
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,

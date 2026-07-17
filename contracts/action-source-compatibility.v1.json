@@ -1,0 +1,699 @@
+{
+    "contract_version": 1,
+    "source_sha256": "2795b456b2074b9cc302e0ab85665a7a206e598bfc6bbcd1a764ef92c0652477",
+    "action_codes": [
+        "spam_detection_v1",
+        "content_validation_v1",
+        "entry_summary_v1",
+        "sentiment_urgency_v1",
+        "missing_information_v1",
+        "pain_point_intent_v1",
+        "routing_recommendation_v1",
+        "toxicity_moderation_v1",
+        "lead_grading_v1",
+        "suggested_reply_v1",
+        "clarification_assistant_v1"
+    ],
+    "form_sources": [
+        "gravity_forms",
+        "contact_form_7",
+        "wpforms",
+        "elementor_pro_forms"
+    ],
+    "rows": [
+        {
+            "action_code": "spam_detection_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "native_spam_state"
+                    ],
+                    "native_effects": [
+                        "native_spam_state"
+                    ],
+                    "requires_submission_ledger": false
+                },
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta",
+                        "native_spam_state",
+                        "notification_controls",
+                        "webhook_controls"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "spam_detection_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "native_spam_state"
+                    ],
+                    "native_effects": [
+                        "native_spam_state"
+                    ],
+                    "requires_submission_ledger": false
+                },
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "spam_detection_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "form_errors"
+                    ],
+                    "native_effects": [
+                        "form_errors"
+                    ],
+                    "requires_submission_ledger": false
+                },
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "spam_detection_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "form_errors"
+                    ],
+                    "native_effects": [
+                        "form_errors"
+                    ],
+                    "requires_submission_ledger": false
+                },
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "content_validation_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "native_effects": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "content_validation_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "field_errors"
+                    ],
+                    "native_effects": [
+                        "field_errors"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "content_validation_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "native_effects": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "content_validation_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "validation": {
+                    "required_capabilities": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "native_effects": [
+                        "field_errors",
+                        "form_errors"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "entry_summary_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "entry_summary_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "entry_summary_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "entry_summary_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "sentiment_urgency_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "sentiment_urgency_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "sentiment_urgency_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "sentiment_urgency_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "missing_information_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "missing_information_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "missing_information_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "missing_information_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "pain_point_intent_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "pain_point_intent_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "pain_point_intent_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "pain_point_intent_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "routing_recommendation_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "routing_recommendation_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "routing_recommendation_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "routing_recommendation_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "toxicity_moderation_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "toxicity_moderation_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "toxicity_moderation_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "toxicity_moderation_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "lead_grading_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "lead_grading_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "lead_grading_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "lead_grading_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "suggested_reply_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [
+                        "entry_note",
+                        "entry_meta"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "suggested_reply_v1",
+            "form_source": "contact_form_7",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "suggested_reply_v1",
+            "form_source": "wpforms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "suggested_reply_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "after_submission": {
+                    "required_capabilities": [
+                        "accepted_submission"
+                    ],
+                    "native_effects": [],
+                    "requires_submission_ledger": true
+                }
+            }
+        },
+        {
+            "action_code": "clarification_assistant_v1",
+            "form_source": "gravity_forms",
+            "support_status": "supported",
+            "lifecycles": {
+                "real_time": {
+                    "required_capabilities": [
+                        "realtime_qna_storage"
+                    ],
+                    "native_effects": [
+                        "native_realtime_qna_storage"
+                    ],
+                    "requires_submission_ledger": false
+                }
+            }
+        },
+        {
+            "action_code": "clarification_assistant_v1",
+            "form_source": "contact_form_7",
+            "support_status": "intentional_unsupported",
+            "lifecycles": {}
+        },
+        {
+            "action_code": "clarification_assistant_v1",
+            "form_source": "wpforms",
+            "support_status": "intentional_unsupported",
+            "lifecycles": {}
+        },
+        {
+            "action_code": "clarification_assistant_v1",
+            "form_source": "elementor_pro_forms",
+            "support_status": "intentional_unsupported",
+            "lifecycles": {}
+        }
+    ]
+}

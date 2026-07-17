@@ -66,8 +66,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         'real_time',
     ];
 
-    /** The only bundled action currently allowed to use the visitor-facing realtime hook. */
-    private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
     private const REALTIME_HIDDEN_FIELD_EXPOSURE_MODES = [
         'omit_hidden',
         'label_hidden',
@@ -4097,16 +4095,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $new_id = uniqid( 'map_', false );
         }
 
-        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
-        $lifecycle_validation = $this->validate_form_source_trigger_hooks(
-            sanitize_key( (string) $form_source_slug ),
-            $trigger_hooks
-        );
-        if ( is_wp_error( $lifecycle_validation ) )
-        {
-            return $lifecycle_validation;
-        }
-
         if ( $request->has_param( 'settings' ) )
         {
             $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
@@ -4116,17 +4104,25 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
         $settings      = $request->has_param( 'settings' )
             ? $this->sanitize_settings( $request->get_param( 'settings' ) )
             : [];
-        $realtime_policy = $this->validate_realtime_trigger_policy(
+        $local_custom_action = $this->find_local_custom_action_for_mapping(
+            [
+                'central_action_id' => $request->get_param( 'central_action_id' ),
+            ]
+        );
+        $lifecycle_validation = $this->validate_action_source_compatibility(
+            sanitize_key( (string) $form_source_slug ),
             $trigger_hooks,
             $request->get_param( 'central_action_id' ),
-            $settings
+            $settings,
+            $local_custom_action
         );
-        if ( is_wp_error( $realtime_policy ) )
+        if ( is_wp_error( $lifecycle_validation ) )
         {
-            return $realtime_policy;
+            return $lifecycle_validation;
         }
 
         $action = [
@@ -4246,7 +4242,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $trigger_hooks = [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ];
         }
 
-        $lifecycle_validation = $this->validate_form_source_trigger_hooks( $form_source, $trigger_hooks );
+        $lifecycle_validation = $this->validate_action_source_compatibility(
+            $form_source,
+            $trigger_hooks,
+            $custom_action_code,
+            $settings,
+            $custom_action
+        );
         if ( is_wp_error( $lifecycle_validation ) )
         {
             return $lifecycle_validation;
@@ -4256,12 +4258,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( is_wp_error( $storage_validation ) )
         {
             return $storage_validation;
-        }
-
-        $realtime_policy = $this->validate_realtime_trigger_policy( $trigger_hooks, $custom_action_code, $settings );
-        if ( is_wp_error( $realtime_policy ) )
-        {
-            return $realtime_policy;
         }
 
         $definition = is_array( $custom_action['definition_json'] ?? null ) ? $custom_action['definition_json'] : [];
@@ -4405,25 +4401,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
         );
         $requested_hooks  = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
-        $trigger_hooks    = $requested_hooks;
-
-        if ( [] !== $requested_hooks && [] !== $definition_hooks )
-        {
-            $trigger_hooks = array_values( array_intersect( $requested_hooks, $definition_hooks ) );
-            if ( [] === $trigger_hooks )
-            {
-                return $this->prepare_error_response(
-                    'rest_invalid_bundled_action_hooks',
-                    __( 'Selected trigger hooks are not supported by this bundled action template.', 'sentient-forms' ),
-                    400
-                );
-            }
-        }
-
-        if ( [] === $trigger_hooks )
-        {
-            $trigger_hooks = $definition_hooks;
-        }
+        $trigger_hooks    = [] !== $requested_hooks ? $requested_hooks : $definition_hooks;
 
         if ( [] === $trigger_hooks )
         {
@@ -4434,16 +4412,15 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
-        $lifecycle_validation = $this->validate_form_source_trigger_hooks( $form_source, $trigger_hooks );
+        $lifecycle_validation = $this->validate_action_source_compatibility(
+            $form_source,
+            $trigger_hooks,
+            $template_code,
+            $settings
+        );
         if ( is_wp_error( $lifecycle_validation ) )
         {
             return $lifecycle_validation;
-        }
-
-        $realtime_policy = $this->validate_realtime_trigger_policy( $trigger_hooks, $template_code, $settings );
-        if ( is_wp_error( $realtime_policy ) )
-        {
-            return $realtime_policy;
         }
 
         $template_row = $this->ensure_bundled_action_template_row( $template_code, $definition );
@@ -5161,15 +5138,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 if ( $request->has_param( 'is_action_enabled_for_form' ) )
                 {
                     $enabled = rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) );
-                    if ( $enabled )
-                    {
-                        $repair = $this->repair_local_first_action_before_enable( $local_first_row );
-                        if ( is_wp_error( $repair ) )
-                        {
-                            return $repair;
-                        }
-                    }
-
                     $update['enabled'] = $enabled;
                 }
 
@@ -5248,23 +5216,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 $policy_settings = $request->has_param( 'settings' )
                     ? ( $settings ?? [] )
                     : ( is_array( $local_first_row['settings_json'] ?? null ) ? $local_first_row['settings_json'] : [] );
-                $lifecycle_validation = $this->validate_form_source_trigger_hooks(
+                $policy_custom_action = $this->local_custom_actions
+                    ? $this->local_custom_actions->get( absint( $local_first_row['action_id'] ?? 0 ) )
+                    : null;
+                $lifecycle_validation = $this->validate_action_source_compatibility(
                     sanitize_key( (string) $form_source_slug ),
-                    $policy_trigger_hooks
+                    $policy_trigger_hooks,
+                    $policy_action_id,
+                    $policy_settings,
+                    is_array( $policy_custom_action ) ? $policy_custom_action : null
                 );
                 if ( is_wp_error( $lifecycle_validation ) )
                 {
                     return $lifecycle_validation;
-                }
-
-                $realtime_policy = $this->validate_realtime_trigger_policy(
-                    $policy_trigger_hooks,
-                    $policy_action_id,
-                    $policy_settings
-                );
-                if ( is_wp_error( $realtime_policy ) )
-                {
-                    return $realtime_policy;
                 }
 
                 $dependency_validation = $this->validate_local_first_mapping_dependencies_for_row(
@@ -5276,6 +5240,15 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 if ( is_wp_error( $dependency_validation ) )
                 {
                     return $dependency_validation;
+                }
+
+                if ( true === ( $update['enabled'] ?? false ) )
+                {
+                    $repair = $this->repair_local_first_action_before_enable( $local_first_row );
+                    if ( is_wp_error( $repair ) )
+                    {
+                        return $repair;
+                    }
                 }
 
                 $updated = $this->local_form_mappings->update(
@@ -5303,6 +5276,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( $request->has_param( 'central_action_id' ) )
         {
             $linkage[ 'central_action_id' ] = $request->get_param( 'central_action_id' );
+            // A stored numeric link belongs to the previous Action identity. Re-resolve it
+            // from the replacement code so compatibility checks cannot use stale metadata.
+            unset( $linkage['action_id'] );
         }
         if ( $request->has_param( 'action_type_indicator' ) )
         {
@@ -5346,23 +5322,21 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $linkage[ 'settings' ] = $settings;
         }
 
-        $lifecycle_validation = $this->validate_form_source_trigger_hooks(
+        $linkage_custom_action = $this->find_local_custom_action_for_mapping( $linkage );
+        if ( is_array( $linkage_custom_action ) && absint( $linkage_custom_action['id'] ?? 0 ) > 0 )
+        {
+            $linkage['action_id'] = absint( $linkage_custom_action['id'] );
+        }
+        $lifecycle_validation = $this->validate_action_source_compatibility(
             sanitize_key( (string) $form_source_slug ),
-            isset( $linkage['trigger_hooks'] ) && is_array( $linkage['trigger_hooks'] ) ? $linkage['trigger_hooks'] : []
+            isset( $linkage['trigger_hooks'] ) && is_array( $linkage['trigger_hooks'] ) ? $linkage['trigger_hooks'] : [],
+            $linkage['central_action_id'] ?? '',
+            isset( $linkage['settings'] ) && is_array( $linkage['settings'] ) ? $linkage['settings'] : [],
+            $linkage_custom_action
         );
         if ( is_wp_error( $lifecycle_validation ) )
         {
             return $lifecycle_validation;
-        }
-
-        $realtime_policy = $this->validate_realtime_trigger_policy(
-            isset( $linkage['trigger_hooks'] ) && is_array( $linkage['trigger_hooks'] ) ? $linkage['trigger_hooks'] : [],
-            $linkage['central_action_id'] ?? '',
-            isset( $linkage['settings'] ) && is_array( $linkage['settings'] ) ? $linkage['settings'] : []
-        );
-        if ( is_wp_error( $realtime_policy ) )
-        {
-            return $realtime_policy;
         }
 
         $actions_to_validate       = $actions;
@@ -5548,6 +5522,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( ! isset( $duplicate['settings'] ) || ! is_array( $duplicate['settings'] ) )
         {
             $duplicate['settings'] = [];
+        }
+
+        $duplicate_custom_action = $this->find_local_custom_action_for_mapping( $duplicate );
+        $contract_validation = $this->validate_action_source_compatibility(
+            sanitize_key( (string) $form_source_slug ),
+            $source_trigger_hooks,
+            $duplicate['central_action_id'] ?? '',
+            $duplicate['settings'],
+            $duplicate_custom_action
+        );
+        if ( is_wp_error( $contract_validation ) )
+        {
+            return $contract_validation;
         }
 
         $parent_source = 'mapping' === $parent['type']
@@ -6716,12 +6703,16 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return Sentient_Forms_Form_Source_Lifecycles::normalize_id( $scope_key ) ?? 'all';
     }
 
-    private function action_allows_realtime_hook( mixed $central_action_id ): bool
-    {
-        return self::REALTIME_ACTION_ID === sanitize_key( (string) $central_action_id );
-    }
-
-    private function validate_realtime_trigger_policy( array $trigger_hooks, mixed $central_action_id, array $settings = [] ): true | WP_Error
+    /**
+     * Preserve the fail-closed custom Action realtime policy.
+     *
+     * @param array<int, string>   $trigger_hooks Requested lifecycle hooks.
+     * @param array<string, mixed> $settings      Sanitized mapping settings.
+     */
+    private function validate_custom_realtime_trigger_policy(
+        array $trigger_hooks,
+        array $settings = []
+    ): true | WP_Error
     {
         $has_realtime = in_array( 'real_time', $this->sanitize_trigger_hooks( $trigger_hooks ), true );
         if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
@@ -6729,16 +6720,219 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $has_realtime = $has_realtime || 'real_time' === sanitize_key( (string) $settings['execution_mode'] );
         }
 
-        if ( ! $has_realtime || $this->action_allows_realtime_hook( $central_action_id ) )
+        if ( ! $has_realtime )
         {
             return true;
         }
 
         return $this->prepare_error_response(
             'rest_invalid_realtime_action',
-            __( 'Realtime triggers are only supported by the Realtime Clarification Assistant action.', 'sentient-forms' ),
+            __( 'Realtime triggers are not enabled for this custom Action.', 'sentient-forms' ),
             400
         );
+    }
+
+    /**
+     * Validate a mapping against both its Form Source and bundled Action contract.
+     *
+     * True custom Actions retain the generic Form Source and realtime policy.
+     *
+     * @param array<int, string>        $trigger_hooks       Requested lifecycle hooks.
+     * @param array<string, mixed>      $settings            Sanitized mapping settings.
+     * @param array<string, mixed>|null $local_custom_action Local custom Action row, when available.
+     */
+    private function validate_action_source_compatibility(
+        string $form_source_slug,
+        array $trigger_hooks,
+        mixed $central_action_id,
+        array $settings = [],
+        ?array $local_custom_action = null
+    ): true | WP_Error
+    {
+        $trigger_hooks = $this->sanitize_trigger_hooks( $trigger_hooks );
+        $execution_lifecycle = null;
+        if ( array_key_exists( 'execution_mode', $settings ) )
+        {
+            $execution_lifecycle = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $settings['execution_mode'] );
+            if ( null === $execution_lifecycle )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_action_execution_mode',
+                    __( 'The selected execution mode is not a recognized Action lifecycle.', 'sentient-forms' ),
+                    400
+                );
+            }
+        }
+
+        $source_validation = $this->validate_form_source_trigger_hooks( $form_source_slug, $trigger_hooks );
+        if ( is_wp_error( $source_validation ) )
+        {
+            return $source_validation;
+        }
+
+        $bundled_action_code = $this->resolve_bundled_action_code( $central_action_id, $local_custom_action );
+        if ( null === $bundled_action_code )
+        {
+            return $this->validate_custom_realtime_trigger_policy( $trigger_hooks, $settings );
+        }
+
+        if ( ! class_exists( 'Sentient_Forms_Action_Source_Compatibility_Manifest' ) )
+        {
+            return $this->prepare_error_response(
+                'rest_action_source_contract_missing',
+                __( 'The bundled Action compatibility contract is unavailable.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        try
+        {
+            $manifest = new Sentient_Forms_Action_Source_Compatibility_Manifest();
+            $row      = $manifest->get( $bundled_action_code, sanitize_key( $form_source_slug ) );
+        }
+        catch ( LogicException )
+        {
+            return $this->prepare_error_response(
+                'rest_action_source_contract_missing',
+                __( 'The bundled Action compatibility contract is unavailable.', 'sentient-forms' ),
+                500
+            );
+        }
+        if ( ! is_array( $row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_action_source_contract_missing',
+                __( 'The bundled Action compatibility contract is unavailable for this Form Source.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        if ( true !== ( $row['supported'] ?? false ) )
+        {
+            return $this->prepare_error_response(
+                'rest_unsupported_action_source',
+                __( 'This bundled Action is not supported for the selected Form Source.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $requested_lifecycles = $trigger_hooks;
+        if ( null !== $execution_lifecycle )
+        {
+            $requested_lifecycles[] = $execution_lifecycle;
+        }
+        $requested_lifecycles = array_values( array_unique( $requested_lifecycles ) );
+
+        $supported_lifecycles = is_array( $row['supported_lifecycles'] ?? null )
+            ? $row['supported_lifecycles']
+            : [];
+        $lifecycle_contracts = is_array( $row['lifecycle_contracts'] ?? null )
+            ? $row['lifecycle_contracts']
+            : [];
+
+        foreach ( $requested_lifecycles as $lifecycle )
+        {
+            if (
+                ! in_array( $lifecycle, $supported_lifecycles, true )
+                || ! array_key_exists( $lifecycle, $lifecycle_contracts )
+            )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_action_lifecycle',
+                    __( 'The selected lifecycle is not supported by this bundled Action for the selected Form Source.', 'sentient-forms' ),
+                    400
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Resolve executable bundled identity without treating arbitrary custom codes as bundled.
+     *
+     * @param array<string, mixed>|null $local_custom_action Local custom Action row, when available.
+     */
+    private function resolve_bundled_action_code( mixed $central_action_id, ?array $local_custom_action = null ): ?string
+    {
+        $action_code = is_scalar( $central_action_id ) ? sanitize_key( (string) $central_action_id ) : '';
+        if ( ! is_array( $local_custom_action ) )
+        {
+            return '' !== $action_code && Sentient_Forms_Bundled_Action_Templates::has( $action_code )
+                ? $action_code
+                : null;
+        }
+
+        $template = $this->resolve_template_for_local_custom_action( $local_custom_action );
+        $template_code = is_array( $template ) && is_scalar( $template['code'] ?? null )
+            ? sanitize_key( (string) $template['code'] )
+            : '';
+        if ( '' !== $template_code && Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
+        {
+            return $template_code;
+        }
+
+        $custom_code = is_scalar( $local_custom_action['code'] ?? null )
+            ? sanitize_key( (string) $local_custom_action['code'] )
+            : '';
+        if ( ! Sentient_Forms_Bundled_Action_Templates::is_managed_custom_action_code( $custom_code ) )
+        {
+            return null;
+        }
+
+        $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $custom_code );
+
+        return '' !== $template_code && Sentient_Forms_Bundled_Action_Templates::has( $template_code )
+            ? $template_code
+            : null;
+    }
+
+    /**
+     * Resolve the linked local custom Action for an option-backed mapping when possible.
+     *
+     * @param array<string, mixed> $mapping Option-backed mapping payload.
+     * @return array<string, mixed>|null
+     */
+    private function find_local_custom_action_for_mapping( array $mapping ): ?array
+    {
+        if ( ! $this->local_custom_actions )
+        {
+            return null;
+        }
+
+        $action_code = is_scalar( $mapping['central_action_id'] ?? null )
+            ? sanitize_key( (string) $mapping['central_action_id'] )
+            : '';
+        $action_type = is_scalar( $mapping['action_type_indicator'] ?? null )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+        if (
+            'master' === $action_type
+            && '' !== $action_code
+            && Sentient_Forms_Bundled_Action_Templates::has( $action_code )
+        )
+        {
+            return null;
+        }
+
+        $action_id = absint( $mapping['action_id'] ?? 0 );
+        if ( $action_id > 0 )
+        {
+            $action = $this->local_custom_actions->get( $action_id );
+            if ( is_array( $action ) )
+            {
+                return $action;
+            }
+        }
+
+        if ( '' === $action_code )
+        {
+            return null;
+        }
+
+        $action = $this->local_custom_actions->get_by_code( $action_code );
+
+        return is_array( $action ) ? $action : null;
     }
 
     private function validate_form_source_trigger_hooks( string $form_source_slug, array $trigger_hooks ): true | WP_Error

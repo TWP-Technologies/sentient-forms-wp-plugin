@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party WPForms Form Source adapter.
  */
-class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
+class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface, Sentient_Forms_Native_Entry_Capabilities_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'wpforms_process_complete';
     private const NATIVE_VALIDATION_HOOK = 'wpforms_process';
@@ -63,12 +63,45 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     }
 
     /**
+     * Describe WPForms native entry capabilities independent of installation state.
+     *
+     * @return array<string, bool>
+     */
+    public function get_structural_native_entry_capabilities(): array
+    {
+        return [
+            'id'    => true,
+            'link'  => true,
+            'read'  => false,
+            'write' => false,
+        ];
+    }
+
+    /**
+     * Describe WPForms validation effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => true,
+            'submission_spam' => false,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function get_capability_descriptor(): array
     {
         $is_active                      = $this->is_active();
         $native_entry_storage_available = $is_active && $this->native_entry_storage_available();
+        $native_entry                   = $this->get_structural_native_entry_capabilities();
+        $native_entry['id']             = $native_entry_storage_available;
+        $native_entry['link']           = $native_entry_storage_available;
+        $validation_effects             = $this->get_structural_validation_effect_capabilities();
 
         return [
             'slug'                 => 'wpforms',
@@ -111,12 +144,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                     'unsupported_reason' => __( 'Realtime WPForms support is not available in this release.', 'sentient-forms' ),
                 ],
             ],
-            'native_entry'         => [
-                'id'    => $native_entry_storage_available,
-                'link'  => $native_entry_storage_available,
-                'read'  => false,
-                'write' => false,
-            ],
+            'native_entry'         => $native_entry,
             'native_enrichment'    => [
                 'notes'                 => false,
                 'status'                => false,
@@ -124,11 +152,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
-            'validation_effects'   => [
-                'field_errors'    => true,
-                'form_errors'     => true,
-                'submission_spam' => false,
-            ],
+            'validation_effects'   => $validation_effects,
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,

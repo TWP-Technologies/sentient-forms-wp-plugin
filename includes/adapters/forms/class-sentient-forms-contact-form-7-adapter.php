@@ -58,11 +58,26 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
     }
 
     /**
+     * Describe Contact Form 7 validation effects independent of installation state.
+     *
+     * @return array<string, bool>
+     */
+    public function get_structural_validation_effect_capabilities(): array
+    {
+        return [
+            'field_errors'    => true,
+            'form_errors'     => false,
+            'submission_spam' => true,
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function get_capability_descriptor(): array
     {
-        $is_active = $this->is_active();
+        $is_active          = $this->is_active();
+        $validation_effects = $this->get_structural_validation_effect_capabilities();
 
         return [
             'slug'                 => 'contact_form_7',
@@ -118,11 +133,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
-            'validation_effects'   => [
-                'field_errors'    => true,
-                'form_errors'     => false,
-                'submission_spam' => true,
-            ],
+            'validation_effects'   => $validation_effects,
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,
