@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.11.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.10.0...v0.11.0) (2026-07-16)
+
+
+### Features
+
+* **actions:** centralize provider route decisions ([4cf7b37](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4cf7b37a269cc6ae35a44ac534be64938ef38040))
+* **actions:** declare executable product policies ([aaf45bd](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/aaf45bd9771127bb184dc20673ccb07151aa85db))
+* **actions:** define composable facet policy ([ad98908](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ad9890825af5b9f49b78910e199d4b121f056de7))
+* **actions:** establish executable action authority ([#48](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/48)) ([3f29b4a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3f29b4abeda619575476995db87d76921119e2c7))
+* **actions:** route spam rationale through facet policy ([82eea4d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/82eea4d87d37e394de5eaaf9ec878be6488ffdd8))
+
+
+### Bug Fixes
+
+* **actions:** enforce executable authority preflight ([e621227](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e6212279cd901faf636a526210ecd70450333434))
+* **actions:** harden facet prompt contracts ([d96594a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d96594a9ac246f013a03d03899bde7b2a4afbef3))
+* **actions:** key execution by submission UUID ([ebf8f70](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ebf8f70a60481de0a32867551f25399356db7689))
+* **actions:** preserve utf8 prompt bounds ([3d43b89](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3d43b89367810e650dedb39f61552af8c1b4e006))
+* **actions:** reject unsupported administrative capabilities ([010bde1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/010bde19c3b78c8039dedf2e17ee58334cba51ce))
+* **actions:** require declared facet output ([c1f08cf](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c1f08cfe5df3ce9bd6428f9c82e951217660bca9))
+* **async:** finalize successful local mappings ([85c4a08](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/85c4a0889fd2f411316f5cdb00a4b96c0d1aaa4e))
+* **async:** finalize successful local mappings ([#52](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/52)) ([c708f18](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c708f1894c1b7fe6101070b235caf038b424ad0f))
+* **async:** honor site timezone for request leases ([bf91f8b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/bf91f8b329795e26b6ccc27cc33f256835198c09))
+* **ci:** isolate webhook contract test ([f44f384](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/f44f38415f8fd9c89539c6e7666c8d35f2b4e205))
+* **ci:** satisfy plugin package checks ([7f8a430](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7f8a43092ccb62d4bcf1d106058f1824931fc893))
+* **form-sources:** address kernel review findings ([c9897a4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c9897a47d9b14c0e93fcc101535e8bfa57c387f8))
+* **form-sources:** close exact-head review findings ([a8dad2a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a8dad2a4332af96dd79ac13e4c0070d515d0c91a))
+* **form-sources:** close final review gaps ([78b9a8f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/78b9a8f484ae286485a6f673ac9d965d6d71e3c1))
+* **form-sources:** harden submission correlation ([80798d8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/80798d8588ef705701b6ab8ee53c20aeeb4b3b62))
+* **form-sources:** harden workflow kernel contracts ([ca1ebce](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ca1ebce82a1394008b417f6b6512a112d43cf6c9))
+* **form-sources:** preserve accepted execution evidence ([2536419](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2536419706bd800b65cbcda5c9a61e8053bf5c32))
+* **form-sources:** preserve accepted workflow compatibility ([c7fc10e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c7fc10ef10bfa01c7b972bdff68ba23c79f19355))
+* **form-sources:** preserve replay and ledger integrity ([b2daea0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b2daea0ad3bfa599688c25a349c91a2a67715582))
+* **gravity:** align deferred spam outcomes ([33f4323](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/33f4323d78abb921d1c0aea2f4487e7ac6f52a4b))
+* **gravity:** close deferred replay review gaps ([d35cd6d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d35cd6df6b756a8d5f7d1a20e5e27f813091aacd))
+* **gravity:** harden deferred webhook replay ([e8f15b8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e8f15b8e2c15f052be5f7f55aa4bff6929256702))
+* **gravity:** harden deferred webhook replay ([#53](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/53)) ([0e76749](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0e767491c0947afc8d7b8a3984434b08c2afc8a4))
+* **gravity:** honor structured spam fallback ([7ad3574](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7ad35748fdf579ea3625ea4cb232bb58f43a7558))
+* **gravity:** honor wrapped spam classification ([01e8ba6](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/01e8ba66f01e2fcce86ae37bd2a1b7bed6421c9f))
+* **gravity:** preserve local effect authority ([fe9a7fe](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/fe9a7fef989aabb0c6113ef95f1a404b7a6be414))
+* **wporg:** document installer migration queries ([5628713](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/562871381933d7aff78d54ef6797a0c587ea85ad))
+
 ## [0.10.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.9.1...v0.10.0) (2026-07-07)
 
 

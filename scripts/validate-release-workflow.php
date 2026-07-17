@@ -10,9 +10,10 @@ if ( PHP_SAPI !== 'cli' )
 }
 
 $plugin_root = dirname( __DIR__ );
-$workflow      = $plugin_root . '/.github/workflows/release-please.yml';
-$sync_workflow = $plugin_root . '/.github/workflows/release-pr-sync.yml';
-$issues        = [];
+$workflow         = $plugin_root . '/.github/workflows/release-please.yml';
+$sync_workflow    = $plugin_root . '/.github/workflows/release-pr-sync.yml';
+$package_workflow = $plugin_root . '/.github/workflows/wporg-package.yml';
+$issues           = [];
 
 if ( ! file_exists( $workflow ) )
 {
@@ -48,6 +49,23 @@ else
     }
 }
 
+if ( ! file_exists( $package_workflow ) )
+{
+    $issues[] = 'Missing .github/workflows/wporg-package.yml.';
+}
+else
+{
+    $package_contents = file_get_contents( $package_workflow );
+    if ( ! is_string( $package_contents ) || '' === trim( $package_contents ) )
+    {
+        $issues[] = 'wporg-package.yml is empty or unreadable.';
+    }
+    else
+    {
+        sentient_forms_validate_reviewed_package_inputs( $package_contents, 'wporg-package.yml', $issues );
+    }
+}
+
 if ( [] !== $issues )
 {
     echo "Sentient Forms release workflow validation failed:\n";
@@ -67,6 +85,8 @@ echo "Sentient Forms release workflow validation passed.\n";
  */
 function sentient_forms_validate_release_workflow( string $contents, array &$issues ): void
 {
+    sentient_forms_validate_reviewed_package_inputs( $contents, 'release-please.yml', $issues );
+
     if ( false === strpos( $contents, 'skip-github-release: true' ) )
     {
         $issues[] = 'Release Please must keep skip-github-release: true so the package job owns release assets.';
@@ -116,12 +136,40 @@ function sentient_forms_validate_release_workflow( string $contents, array &$iss
 }
 
 /**
+ * Ensure release packages use only inputs committed to the reviewed source tree.
+ *
+ * @param array<int,string> $issues
+ */
+function sentient_forms_validate_reviewed_package_inputs( string $contents, string $workflow_name, array &$issues ): void
+{
+    if ( false !== strpos( $contents, 'composer openrouter-model-snapshot' ) )
+    {
+        $issues[] = "{$workflow_name} must not refresh the OpenRouter model snapshot while packaging a release.";
+    }
+
+    if ( false !== strpos( $contents, 'bun run build:wp' ) )
+    {
+        $issues[] = "{$workflow_name} must package the reviewed admin assets instead of rebuilding them.";
+    }
+
+    if ( false !== strpos( $contents, 'bun install --frozen-lockfile' ) )
+    {
+        $issues[] = "{$workflow_name} must not install unused admin build dependencies while packaging a release.";
+    }
+}
+
+/**
  * Validate Release PR Sync only runs for exact Release Please branches.
  *
  * @param array<int,string> $issues
  */
 function sentient_forms_validate_release_pr_sync_workflow( string $contents, array &$issues ): void
 {
+    if ( false === strpos( $contents, 'bun run build:wp' ) )
+    {
+        $issues[] = 'release-pr-sync.yml must rebuild and commit the reviewed admin assets on the release branch.';
+    }
+
     if ( false !== strpos( $contents, "contains(github.head_ref, 'release-please')" ) )
     {
         $issues[] = 'release-pr-sync.yml must not use broad release-please substring matching for job gating.';

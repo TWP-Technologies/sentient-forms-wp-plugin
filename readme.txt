@@ -4,7 +4,7 @@ Tags: forms, ai, automation, openrouter, form-automation
 Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.10.0
+Stable tag: 0.11.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,7 +14,7 @@ AI actions for Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms: 
 
 Sentient Forms adds AI actions to Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs.
 
-Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Sentient Forms Submission Ledger. Elementor Pro Forms requires Elementor Pro Forms APIs. Those three do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
+Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Submission Ledger; see the FAQ for limitations. Elementor Pro Forms requires its Forms APIs.
 
 A TWP Technologies, LLC product. Product site: https://sentientforms.com. Public development: https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 
@@ -24,7 +24,7 @@ Use your OpenRouter key for direct execution, or connect Sentient Forms Managed 
 
 == Source ==
 
-JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.10.0. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
+JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.11.0. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
 
 == External services ==
 
