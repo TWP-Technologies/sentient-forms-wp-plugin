@@ -169,7 +169,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_content_validation_writes_matching_field_and_header_errors_through_three_argument_hook(): void
     {
         $form_id    = 7956;
-        $action_id  = 'wpforms_content_validation_fixture';
+        $action_id  = 'content_validation_v1';
         $option_key = 'sentient_forms_actions_wpforms_' . $form_id;
         $executions = 0;
         $seen       = [];
@@ -188,7 +188,9 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                     $seen = $form_data;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => $untrusted_form_error,
                             'fields'   => [
@@ -197,6 +199,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                                     'is_valid' => false,
                                     'message'  => 'Tell us what you need built.',
                                 ],
+                            ],
                             ],
                         ],
                     ];
@@ -226,7 +229,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 3, $accepted_args );
         $this->assertSame( 1, $executions );
         $this->assertSame( 'validation', $seen['hook'] ?? null );
-        $this->assertSame( 'wpforms_process', $seen['native_hook'] ?? null );
+        $this->assertSame( 'wpforms_process', $seen['execution_context']['native_hook'] ?? null );
         $this->assertSame( 'wpforms', $seen['form_source'] ?? null );
         $this->assertSame( 'test', $seen['entry']['project_details'] ?? null );
         $this->assertSame( [ 'source' ], $seen['execution_context']['native_validation_context']['entry_keys'] ?? null );
@@ -269,7 +272,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_validation_blocks_priority_ten_payment_callbacks_before_they_charge(): void
     {
         $form_id       = 7960;
-        $action_id     = 'wpforms_payment_order_validation_fixture';
+        $action_id     = 'content_validation_v1';
         $process       = (object) [ 'errors' => [] ];
         $payment_count = 0;
 
@@ -278,10 +281,13 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
             new Sentient_Forms_Test_WPForms_Validation_Action(
                 $action_id,
                 static fn(): array => [
-                    'validation' => [
-                        'is_valid' => false,
-                        'message'  => 'Payment must not run for an invalid submission.',
-                        'fields'   => [],
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'is_valid' => false,
+                            'message'  => 'Payment must not run for an invalid submission.',
+                            'fields'   => [],
+                        ],
                     ],
                 ]
             )
@@ -312,9 +318,10 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_spam_validation_blocks_with_header_error_without_native_spam_state(): void
     {
         $form_id    = 7957;
-        $action_id  = 'spam_analysis';
+        $action_id  = 'spam_detection_v1';
         $process    = (object) [ 'errors' => [] ];
         $executions = 0;
+        $headers    = [];
         $this->configure_validation_mapping(
             $form_id,
             new Sentient_Forms_Test_WPForms_Validation_Action(
@@ -342,7 +349,12 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                 }
             )
         );
-        $adapter = $this->initialize_validation_adapter( $process, true );
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
+        $adapter = $this->initialize_validation_adapter( $process, true, $emitter );
 
         do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
         $descriptor = $adapter->get_capability_descriptor();
@@ -353,6 +365,14 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
         $this->assertFalse( $descriptor['validation_effects']['submission_spam'] ?? true );
         $this->assertFalse( $descriptor['native_entry']['write'] ?? true );
+        $this->assertSame( Sentient_Forms_Validation_Rejection_Trace_Emitter::HEADER_NAME, $headers[0][0] ?? null );
+        $trace = json_decode( rawurldecode( $headers[0][1] ?? '' ), true );
+        $request_trace_id = $trace['rejections'][0]['request_trace_id'] ?? '';
+        $this->assertNotEmpty( $request_trace_id );
+        $this->assertSame(
+            'validation-rejection:' . $request_trace_id,
+            $trace['rejections'][0]['rejection_trace_id'] ?? null
+        );
     }
 
     public function test_wpforms_provider_and_unstructured_failures_leave_process_errors_unchanged(): void

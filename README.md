@@ -88,7 +88,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 
 ## Release Readiness
 
-Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.10.0, evidence must cover the declared validation behavior across all four Form Sources, supported after-submission ledger workflows, and Gravity Forms-only realtime behavior without implying universal native-effect parity.
+Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.11.0, evidence must cover the declared validation behavior across all four Form Sources, supported after-submission ledger workflows, and Gravity Forms-only realtime behavior without implying universal native-effect parity.
 
 For WordPress.org submission, prefer the latest validated GitHub release ZIP and manifest over an ad hoc local ZIP. The public source tag named in `readme.txt` and `assets/dist/SOURCE.md` must exist before upload. If a local rebuild is necessary, run the same package checks against the rebuilt package and preserve the package path/hash in release evidence.
 

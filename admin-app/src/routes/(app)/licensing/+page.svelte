@@ -747,13 +747,24 @@
 		}
 	}
 
-	async function handleTopUpCheckout(pack: BusinessTopUpPack) {
+	function createCheckoutAttemptId(): string {
+		if (typeof globalThis.crypto?.randomUUID !== 'function') {
+			throw new Error('Secure checkout attempt identity is unavailable in this browser.');
+		}
+
+		return globalThis.crypto.randomUUID();
+	}
+
+	async function handleTopUpCheckout(pack: BusinessTopUpPack, checkoutAttemptId?: string) {
 		topUpPackPending = pack.code;
 		billingError = null;
+		let effectiveCheckoutAttemptId = checkoutAttemptId;
 
 		try {
+			effectiveCheckoutAttemptId ??= createCheckoutAttemptId();
 			const session = await client.createTopUpCheckoutSession(
 				{
+					checkout_attempt_id: effectiveCheckoutAttemptId,
 					pack_code: pack.code,
 					success_url: currentRouteUrl(),
 					cancel_url: currentRouteUrl(),
@@ -767,7 +778,7 @@
 		} catch (error) {
 			console.error('Failed to create top-up checkout session', error);
 			setBillingError(error, 'checkout', async () => {
-				await handleTopUpCheckout(pack);
+				await handleTopUpCheckout(pack, effectiveCheckoutAttemptId);
 			});
 		} finally {
 			topUpPackPending = null;

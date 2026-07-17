@@ -76,6 +76,8 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
      *     assignment: string,
      *     observed_effect: string,
      *     rejected: bool,
+     *     negative_effect_applied: bool,
+     *     evidence_mode: string,
      *     request_id: ?string,
      *     trace_id: ?string,
      *     native_hook: string,
@@ -125,7 +127,15 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         {
             $observation = match ( $form_source )
             {
-                'gravity_forms'       => self::run_gravity_forms( $form_id, $runner, $emitter ),
+                'gravity_forms'       => self::run_gravity_forms(
+                    $form_id,
+                    $action_code,
+                    $assignment,
+                    $mapping_id,
+                    $runner,
+                    $emitter,
+                    $boundary
+                ),
                 'contact_form_7'      => self::run_contact_form_7( $form_id, $action_code, $runner, $emitter ),
                 'wpforms'             => self::run_wpforms( $form_id, $runner, $emitter ),
                 'elementor_pro_forms' => self::run_elementor( $form_id, $runner, $emitter ),
@@ -143,6 +153,8 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         $request_id = $trace['request_trace_id'] ?? ( $boundary->calls[0]['context']['execution_request_id'] ?? null );
         $trace_id = $trace['rejection_trace_id'] ?? null;
         $rejected = (bool) ( $observation['rejected'] ?? false );
+        $negative_effect_applied = (bool) ( $observation['negative_effect_applied'] ?? $rejected );
+        $evidence_mode = self::evidence_mode( $form_source, $action_code );
 
         if ( 1 !== count( $boundary->calls ) )
         {
@@ -152,7 +164,11 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         {
             throw new RuntimeException( 'The validation assignment did not produce its real request ID.' );
         }
-        if ( 'reject' === $assignment && ( ! $rejected || ! is_string( $request_id ) || '' === $request_id || ! is_string( $trace_id ) || '' === $trace_id ) )
+        if (
+            'reject' === $assignment
+            && 'blocking_errors' === $evidence_mode
+            && ( ! $rejected || ! $negative_effect_applied || ! is_string( $trace_id ) || '' === $trace_id )
+        )
         {
             throw new RuntimeException(
                 sprintf(
@@ -165,7 +181,24 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                 )
             );
         }
-        if ( 'accept' === $assignment && ( $rejected || null !== $trace_id ) )
+        if (
+            'reject' === $assignment
+            && 'native_spam_state' === $evidence_mode
+            && ( ! $negative_effect_applied || null !== $trace_id )
+        )
+        {
+            throw new RuntimeException(
+                sprintf(
+                    'Native spam evidence for %s/%s must apply the native effect without fabricating a validation-rejection trace (effect=%s trace=%s observation=%s).',
+                    $form_source,
+                    $action_code,
+                    $negative_effect_applied ? 'true' : 'false',
+                    is_string( $trace_id ) ? $trace_id : 'null',
+                    wp_json_encode( $observation )
+                )
+            );
+        }
+        if ( 'accept' === $assignment && ( $rejected || $negative_effect_applied || null !== $trace_id ) )
         {
             throw new RuntimeException( 'The accepted validation assignment unexpectedly rejected the submission.' );
         }
@@ -176,6 +209,8 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
             'assignment'      => $assignment,
             'observed_effect' => (string) $observation['observed_effect'],
             'rejected'        => $rejected,
+            'negative_effect_applied' => $negative_effect_applied,
+            'evidence_mode'   => $evidence_mode,
             'request_id'      => is_string( $request_id ) && '' !== $request_id ? $request_id : null,
             'trace_id'        => is_string( $trace_id ) && '' !== $trace_id ? $trace_id : null,
             'native_hook'     => (string) $observation['native_hook'],
@@ -196,6 +231,34 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         }
     }
 
+    private static function evidence_mode( string $form_source, string $action_code ): string
+    {
+        $projection = ( new Sentient_Forms_Action_Source_Compatibility_Manifest() )->public_projection();
+        foreach ( (array) ( $projection['rows'] ?? [] ) as $row )
+        {
+            if (
+                ! is_array( $row )
+                || $action_code !== ( $row['action_code'] ?? null )
+                || $form_source !== ( $row['form_source'] ?? null )
+            )
+            {
+                continue;
+            }
+
+            $validation = $row['lifecycles']['validation'] ?? null;
+            if ( ! is_array( $validation ) )
+            {
+                break;
+            }
+
+            return in_array( 'native_spam_state', (array) ( $validation['native_effects'] ?? [] ), true )
+                ? 'native_spam_state'
+                : 'blocking_errors';
+        }
+
+        throw new RuntimeException( 'The validation evidence mode is absent from the executable compatibility manifest.' );
+    }
+
     /** @return array<string, mixed> */
     private static function provider_result( string $action_code, string $assignment ): array
     {
@@ -208,12 +271,16 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                         'classification' => 'reject' === $assignment ? 'spam' : 'ham',
                         'confidence'     => 0.99,
                         'justification'  => 'Exact-artifact external-boundary fixture.',
+                        'indicators'     => 'reject' === $assignment
+                            ? [
+                                [
+                                    'type'     => 'commercial_solicitation',
+                                    'evidence' => 'Exact-artifact validation fixture.',
+                                    'weight'   => 'high',
+                                ],
+                            ]
+                            : [],
                     ],
-                ],
-                'validation'  => [
-                    'is_valid' => 'accept' === $assignment,
-                    'message'  => 'reject' === $assignment ? 'Submission classified as spam.' : '',
-                    'fields'   => [],
                 ],
             ];
         }
@@ -265,6 +332,12 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                 'status'               => 'active',
             ]
         );
+        $effects = is_array( $catalog['effect_mapping_json'] ?? null ) ? $catalog['effect_mapping_json'] : [];
+        if ( 'spam_detection_v1' === $action_code )
+        {
+            $effects['spam'] = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+            $effects['spam']['mark_as_spam'] = true;
+        }
         $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
             [
                 'form_source'         => $form_source,
@@ -275,7 +348,7 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                 'input_bindings_json' => [],
                 'execution_mode'      => 'sync',
                 'settings_json'       => [ 'async' => false ],
-                'effect_mapping_json' => $catalog['effect_mapping_json'] ?? [],
+                'effect_mapping_json' => $effects,
                 'enabled'             => true,
             ]
         );
@@ -298,7 +371,7 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
     {
         return match ( $form_source )
         {
-            'gravity_forms'       => [ 'gform_validation' ],
+            'gravity_forms'       => [ 'gform_validation', 'gform_entry_post_save' ],
             'contact_form_7'      => [ 'wpcf7_validate', 'wpcf7_spam', 'sentient_forms_contact_form_7_is_active', 'sentient_forms_contact_form_7_current_submission' ],
             'wpforms'             => [ 'wpforms_process', 'sentient_forms_wpforms_is_active', 'sentient_forms_wpforms_object' ],
             'elementor_pro_forms' => [ 'elementor_pro/forms/validation', 'sentient_forms_elementor_is_active', 'sentient_forms_elementor_pro_forms_api_available', 'sentient_forms_elementor_posts_with_data' ],
@@ -336,11 +409,15 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         }
     }
 
-    /** @return array{rejected: bool, observed_effect: string, native_hook: string} */
+    /** @return array{rejected: bool, negative_effect_applied: bool, observed_effect: string, native_hook: string, native_hooks?: array<int, string>} */
     private static function run_gravity_forms(
         string $form_id,
+        string $action_code,
+        string $assignment,
+        int $mapping_id,
         Sentient_Forms_Form_Source_Workflow_Runner $runner,
-        Sentient_Forms_Validation_Rejection_Trace_Emitter $emitter
+        Sentient_Forms_Validation_Rejection_Trace_Emitter $emitter,
+        Sentient_Forms_Test_Exact_Artifact_Execution_Boundary $boundary
     ): array
     {
         $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner, $emitter );
@@ -353,11 +430,60 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
             [ 'source' => 'exact-artifact' ]
         );
         $rejected = ! (bool) ( $result['is_valid'] ?? true );
+        $negative_effect_applied = $rejected;
+        $observed_effect = $rejected ? 'gravity_forms_validation_rejected' : 'gravity_forms_validation_accepted';
+        $native_hooks = [ 'gform_validation' ];
+
+        if ( 'spam_detection_v1' === $action_code )
+        {
+            $entry_id = 100000 + (int) $form_id;
+            $entry = [ 'id' => $entry_id, 'form_id' => (int) $form_id, 'status' => 'active' ];
+            $form = [ 'id' => (int) $form_id, 'fields' => [ $field ] ];
+            GFAPI::$entries[ $entry_id ] = $entry;
+            GFAPI::$forms[ (int) $form_id ] = $form;
+            try
+            {
+                $request_id = $boundary->calls[0]['context']['execution_request_id'] ?? '';
+                $provider_result = self::provider_result( $action_code, $assignment );
+                $structured = $provider_result['result_data']['structured_output'] ?? [];
+                global $wpdb;
+                $event_id = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+                    [
+                        'execution_request_id' => $request_id,
+                        'mapping_id'           => $mapping_id,
+                        'mapping_key'          => (string) ( $boundary->calls[0]['context']['mapping_id'] ?? $mapping_id ),
+                        'action_code'          => $action_code,
+                        'form_source'          => 'gravity_forms',
+                        'form_id'              => $form_id,
+                        'provider'             => 'openrouter',
+                        'status'               => 'succeeded',
+                        'result_json'          => [ 'structured' => is_array( $structured ) ? $structured : [] ],
+                    ]
+                );
+                if ( ! is_int( $event_id ) )
+                {
+                    throw new RuntimeException( 'Unable to persist the Gravity Forms validation result before the native entry hook.' );
+                }
+
+                apply_filters( 'gform_entry_post_save', $entry, $form );
+                $negative_effect_applied = 'spam' === ( GFAPI::$entries[ $entry_id ]['status'] ?? 'active' );
+                $observed_effect = $negative_effect_applied
+                    ? 'gravity_forms_entry_marked_spam'
+                    : 'gravity_forms_spam_state_preserved';
+                $native_hooks[] = 'gform_entry_post_save';
+            }
+            finally
+            {
+                unset( GFAPI::$entries[ $entry_id ], GFAPI::$forms[ (int) $form_id ] );
+            }
+        }
 
         return [
             'rejected'        => $rejected,
-            'observed_effect' => $rejected ? 'gravity_forms_validation_rejected' : 'gravity_forms_validation_accepted',
+            'negative_effect_applied' => $negative_effect_applied,
+            'observed_effect' => $observed_effect,
             'native_hook'     => 'gform_validation',
+            'native_hooks'    => $native_hooks,
         ];
     }
 

@@ -20,6 +20,13 @@ class Sentient_Forms_Async_Handler
     private const BASE_BACKOFF_SECONDS = 60;
     private const ACTION_SCHEDULER_GROUP = 'sentient_forms_async';
     private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
+    private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
+    private const ELEMENTOR_PRO_FORM_SOURCE = 'elementor_pro_forms';
+    private const ADAPTER_COMPLETION_SETTING_KEYS = [
+        'spam_confidence_threshold',
+        'spam_result_display_mode',
+        'spam_indicators_display',
+    ];
     private const LOCAL_DIAGNOSTIC_SCHEMA = 'sentient_forms_local_async_diagnostic.v1';
     private const LOCAL_DIAGNOSTIC_METADATA_KEYS = [
         'action_id',
@@ -589,6 +596,10 @@ class Sentient_Forms_Async_Handler
         }
 
         $form_source     = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
+        if ( self::LEGACY_ELEMENTOR_FORM_SOURCE === $form_source )
+        {
+            $form_source = self::ELEMENTOR_PRO_FORM_SOURCE;
+        }
         $form_id         = sanitize_text_field( (string) ( $context['form_id'] ?? $form['id'] ?? '' ) );
         $entry_id        = sanitize_text_field( (string) ( $context['entry_id'] ?? $entry['id'] ?? '' ) );
         $submission_uuid = $this->resolve_submission_uuid(
@@ -612,6 +623,7 @@ class Sentient_Forms_Async_Handler
             $execution_request_id = $this->generate_local_mapping_request_id( $local_mapping_id, $form_source, $form_id, $entry_lookup_id, $context );
         }
 
+        $context = $this->promote_adapter_completion_settings( $context );
         $job_context = $this->normalize_context(
             array_merge(
                 $context,
@@ -619,6 +631,7 @@ class Sentient_Forms_Async_Handler
                     'action_id'             => $context['action_id'] ?? sprintf( 'local_first_%d', $local_mapping_id ),
                     'central_action_id'     => $context['central_action_id'] ?? 'sentient_forms_local_custom_action',
                     'form_source'           => $form_source,
+                    'adapter_id'            => $form_source,
                     'form_id'               => $form_id,
                     'entry_id'              => '' !== $entry_id ? $entry_id : null,
                     'submission_uuid'       => $submission_uuid,
@@ -648,7 +661,7 @@ class Sentient_Forms_Async_Handler
         ];
         $payload_digest = $this->local_mapping_payload_digest( $payload );
 
-        $this->get_request_store()->record(
+        $recorded = $this->get_request_store()->record(
             $execution_request_id,
             [
                 'action_id'      => 'local_mapping_' . $local_mapping_id,
@@ -657,6 +670,27 @@ class Sentient_Forms_Async_Handler
                 'payload_digest' => $payload_digest,
             ]
         );
+        if ( is_wp_error( $recorded ) )
+        {
+            return false;
+        }
+
+        if ( false === $recorded )
+        {
+            if ( ! $rescheduling_existing_request )
+            {
+                return false;
+            }
+
+            $existing = $this->get_request_store()->get( $execution_request_id, 'job' );
+            $existing_digest = is_array( $existing ) && is_scalar( $existing['payload_digest'] ?? null )
+                ? sanitize_text_field( (string) $existing['payload_digest'] )
+                : '';
+            if ( '' === $existing_digest || ! hash_equals( $existing_digest, $payload_digest ) )
+            {
+                return false;
+            }
+        }
 
         $this->record_local_execution_event( $payload, 'queued' );
 
@@ -888,6 +922,22 @@ class Sentient_Forms_Async_Handler
         );
 
         do_action( 'sentient_forms_async_success', $context, $result );
+        try
+        {
+            $this->notify_adapter_success( $context, $result );
+        } catch ( Throwable $throwable )
+        {
+            $this->plugin->get_logger()->error(
+                'async adapter success finalization failed',
+                [
+                    'form_source'    => sanitize_key( (string) ( $context['form_source'] ?? '' ) ),
+                    'form_id'        => sanitize_text_field( (string) ( $context['form_id'] ?? '' ) ),
+                    'entry_id'       => sanitize_text_field( (string) ( $context['entry_id'] ?? '' ) ),
+                    'mapping_id'     => sanitize_key( (string) ( $context['mapping_id'] ?? $context['local_mapping_id'] ?? $context['action_id'] ?? '' ) ),
+                    'exception_type' => get_class( $throwable ),
+                ]
+            );
+        }
         $this->emit_async_event( 'local_mapping_success', $context, $result );
 
         $this->get_metadata_store()->update_status(
@@ -937,6 +987,7 @@ class Sentient_Forms_Async_Handler
             );
 
             unset( $context['job_id'] );
+            $context['rescheduling_existing_request'] = true;
             $scheduled = $this->schedule_local_mapping(
                 absint( $payload['local_mapping_id'] ?? 0 ),
                 [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
@@ -1151,6 +1202,32 @@ class Sentient_Forms_Async_Handler
                 ]
             )
         );
+    }
+
+    /**
+     * Promote the adapter completion settings required after identifier-only replay.
+     *
+     * Identity and routing fields remain owned by the canonical job context.
+     *
+     * @param array<string, mixed> $context Runtime context.
+     *
+     * @return array<string, mixed>
+     */
+    private function promote_adapter_completion_settings( array $context ): array
+    {
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] )
+            ? $context['settings']
+            : [];
+
+        foreach ( self::ADAPTER_COMPLETION_SETTING_KEYS as $setting_key )
+        {
+            if ( array_key_exists( $setting_key, $settings ) )
+            {
+                $context[ $setting_key ] = $settings[ $setting_key ];
+            }
+        }
+
+        return $context;
     }
 
     private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): void
@@ -1518,7 +1595,7 @@ class Sentient_Forms_Async_Handler
                 ];
             }
 
-            if ( in_array( $initial, [ 'succeeded', 'success' ], true ) )
+            if ( in_array( $initial, [ 'succeeded', 'success', 'replayed_success' ], true ) )
             {
                 continue;
             }
@@ -1543,6 +1620,10 @@ class Sentient_Forms_Async_Handler
             }
 
             $record = $this->get_request_store()->get( $dependency_request_id, 'job' );
+            if ( ! $record && 'replayed_active' === $initial )
+            {
+                $record = $this->get_request_store()->get( $dependency_request_id, 'accepted_sync' );
+            }
             if ( ! $record )
             {
                 $pending_dependencies[] = $dependency_id;

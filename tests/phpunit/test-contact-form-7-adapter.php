@@ -329,7 +329,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
     public function test_cf7_content_validation_invalidates_matching_tag_through_two_argument_hook(): void
     {
         $form_id    = 7951;
-        $action_id  = 'cf7_content_validation_fixture';
+        $action_id  = 'content_validation_v1';
         $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
         $executions = 0;
         $seen       = [];
@@ -344,14 +344,18 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                     $seen = $form_data;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => 'Please add useful project details.',
                             'fields'   => [
                                 [
                                     'field_id' => 'project-details',
+                                    'is_valid' => false,
                                     'message' => 'Tell us what you need built.',
                                 ],
+                            ],
                             ],
                         ],
                     ];
@@ -383,7 +387,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
-        $this->assertSame( 'wpcf7_validate', $seen['hook'] ?? null );
+        $this->assertSame( 'validation', $seen['hook'] ?? null );
+        $this->assertSame( 'wpcf7_validate', $seen['execution_context']['native_hook'] ?? null );
         $this->assertSame( 'contact_form_7', $seen['form_source'] ?? null );
         $this->assertSame( 'test', $seen['entry']['project-details'] ?? null );
         $this->assertCount( 1, $result->invalidations );
@@ -398,9 +403,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
     public function test_cf7_spam_hook_reuses_validation_outcome_without_second_execution(): void
     {
         $form_id    = 7952;
-        $action_id  = 'cf7_spam_validation_fixture';
+        $action_id  = 'spam_detection_v1';
         $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
         $executions = 0;
+        $headers    = [];
         $tag        = $this->cf7_tag( 'text*', 'text', 'your-name' );
         $form       = $this->cf7_form( $form_id, 'CF7 Spam Validation', [ $tag ] );
         $submission = $this->cf7_submission( $form, [ 'your-name' => 'Buy now' ] );
@@ -417,6 +423,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                                 'classification' => 'spam',
                                 'confidence'     => 0.99,
                                 'justification'  => 'Known spam fixture.',
+                                'indicators'     => [],
                             ],
                         ],
                     ];
@@ -425,7 +432,12 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $runner = $this->configure_validation_mapping( $form_id, $action );
         add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
         add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
-        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        $emitter = new Sentient_Forms_Validation_Rejection_Trace_Emitter(
+            static function ( string $name, string $value ) use ( &$headers ): void {
+                $headers[] = [ $name, $value ];
+            }
+        );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance(), $runner, $emitter );
         $adapter->init();
 
         apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $tag ] );
@@ -433,6 +445,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertTrue( $spam );
         $this->assertSame( 1, $executions );
+        $this->assertSame( [], $headers );
     }
 
     public function test_cf7_validation_failures_fail_open_and_descriptor_preserves_mail_sent_boundary(): void

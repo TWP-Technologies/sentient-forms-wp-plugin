@@ -230,7 +230,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $page_id    = $this->create_elementor_form_page();
         $form_id    = $page_id . ':formabc';
-        $action_id  = 'elementor_content_validation_fixture';
+        $action_id  = 'content_validation_v1';
         $executions = 0;
         $seen       = [];
         $handler    = new Sentient_Forms_Test_Elementor_Ajax_Handler();
@@ -259,13 +259,16 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                     $seen = $form_data;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => 'Please review your submission.',
                             'fields'   => [
                                 [ 'field_id' => 'full_name', 'is_valid' => false, 'message' => 'Provide your full name.' ],
                                 [ 'field_id' => 'full_name.first', 'is_valid' => false, 'message' => 'Unresolvable compound child.' ],
                                 [ 'field_id' => 'missing_field', 'is_valid' => false, 'message' => 'Unknown field.' ],
+                            ],
                             ],
                         ],
                     ];
@@ -298,7 +301,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
         $this->assertSame( 'validation', $seen['hook'] ?? null );
-        $this->assertSame( 'elementor_pro/forms/validation', $seen['native_hook'] ?? null );
+        $this->assertSame( 'elementor_pro/forms/validation', $seen['execution_context']['native_hook'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $seen['form_source'] ?? null );
         $this->assertSame( [ 'first' => 'Ada', 'last' => 'Lovelace' ], $seen['entry']['full_name'] ?? null );
         $this->assertSame( [ 'full_name', 'email' ], $seen['execution_context']['native_validation_context']['record_field_ids'] ?? null );
@@ -332,7 +335,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $source_page_id    = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
         $embedding_page_id = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
         $source_form_id    = $source_page_id . ':formabc';
-        $action_id         = 'elementor_template_source_validation_fixture';
+        $action_id         = 'content_validation_v1';
         $executions        = 0;
         $seen_form_id      = null;
         $handler           = new Sentient_Forms_Test_Elementor_Ajax_Handler();
@@ -349,10 +352,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                     $seen_form_id = (string) $form_id;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => 'Template-source validation ran.',
                             'fields'   => [],
+                            ],
                         ],
                     ];
                 }
@@ -460,12 +466,14 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             ]
         );
         $form_id   = $page_id . ':formabc';
-        $action_id = 'elementor_compound_collision_validation_fixture';
+        $action_id = 'content_validation_v1';
         $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
         $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,
                 static fn(): array => [
-                    'validation' => [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
                         'is_valid' => false,
                         'message'  => 'Review the submitted fields.',
                         'fields'   => [
@@ -474,6 +482,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                                 'is_valid' => false,
                                 'message'  => 'Must never attach to the collapsed field.',
                             ],
+                        ],
                         ],
                     ],
                 ]
@@ -510,7 +519,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $page_id   = $this->create_elementor_form_page();
         $form_id   = $page_id . ':formabc';
-        $action_id = 'spam_analysis';
+        $action_id = 'spam_detection_v1';
         $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
         $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,

@@ -146,9 +146,45 @@ if ( ! function_exists( 'gform_update_meta' ) )
     }
 }
 
+final class Sentient_Forms_Test_Lost_Local_Mapping_Request_Race_Store extends Sentient_Forms_Async_Request_Store
+{
+    public function should_block( string $request_hash, string $record_type = 'job' ): bool
+    {
+        return false;
+    }
+
+    public function record( string $request_hash, array $context ): bool | WP_Error
+    {
+        return false;
+    }
+}
+
+final class Sentient_Forms_Test_Recording_Elementor_Adapter extends Sentient_Forms_Elementor_Forms_Adapter
+{
+    public int $success_calls = 0;
+    public int $error_calls = 0;
+    /** @var array<string, mixed> */
+    public array $last_success_context = [];
+
+    public function finalize_async_success( array $context, array $result ): void
+    {
+        ++$this->success_calls;
+        $this->last_success_context = $context;
+        parent::finalize_async_success( $context, $result );
+
+        throw new RuntimeException( 'Synthetic adapter finalization failure.' );
+    }
+
+    public function finalize_async_error( array $context, WP_Error $error ): void
+    {
+        ++$this->error_calls;
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
+    private ?Sentient_Forms_Form_Source_Discovery_Adapter_Interface $original_elementor_adapter = null;
 
     protected function setUp(): void
     {
@@ -231,6 +267,11 @@ class AsyncHandlerTest extends WP_UnitTestCase
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
+        if ( $this->original_elementor_adapter )
+        {
+            $this->plugin->get_form_adapter_registry()->register_adapter( $this->original_elementor_adapter );
+            $this->original_elementor_adapter = null;
+        }
         parent::tearDown();
     }
 
@@ -1025,6 +1066,228 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'entry', $jobs[0]['args'][0] ?? [] );
     }
 
+    public function test_schedule_local_mapping_ignores_volatile_dependency_state_in_payload_identity(): void
+    {
+        $handler = $this->plugin->get_async_handler();
+        $context = [
+            'form_source'                      => 'gravity_forms',
+            'form_id'                          => '56',
+            'entry_id'                         => '203',
+            'dependency_mapping_ids'           => [ 'local_first_900' ],
+            'dependency_execution_request_ids' => [ 'local_first_900' => 'prerequisite-request-id' ],
+            'dependency_initial_outcomes'      => [ 'local_first_900' => 'queued' ],
+            'dependency_wait_started_at'       => 100,
+            'dependency_wait_max_seconds'      => 600,
+            'dependency_wait_poll_seconds'     => 10,
+        ];
+
+        $first = $handler->schedule_local_mapping( 901, [ 'id' => 56 ], [ 'id' => 203 ], $context );
+
+        $context['dependency_initial_outcomes']['local_first_900'] = 'replayed_active';
+        $context['dependency_wait_started_at'] = 200;
+        $replay = $handler->schedule_local_mapping( 901, [ 'id' => 56 ], [ 'id' => 203 ], $context );
+
+        $this->assertTrue( $first );
+        $this->assertFalse( $replay );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+    }
+
+    public function test_schedule_local_mapping_does_not_enqueue_when_accepted_sync_owns_identity(): void
+    {
+        $execution_request_id = 'accepted-sync-owns-local-mapping-identity';
+        $request_store        = $this->plugin->get_async_request_store();
+        $claim                = $request_store->claim_execution(
+            $execution_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-owner' ),
+            ]
+        );
+        $this->assertSame( 'claimed', $claim['state'] );
+
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            901,
+            [ 'id' => 551 ],
+            [ 'id' => 552 ],
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '551',
+                'entry_id'             => '552',
+                'execution_request_id' => $execution_request_id,
+            ]
+        );
+
+        $this->assertFalse( $scheduled );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertNotNull( $request_store->get( $execution_request_id, 'accepted_sync' ) );
+        $this->assertNull( $request_store->get( $execution_request_id, 'job' ) );
+    }
+
+    public function test_schedule_local_mapping_does_not_enqueue_after_losing_same_type_insert_race(): void
+    {
+        global $wpdb;
+
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'async_request_store' );
+        $original   = $property->getValue( $this->plugin );
+        $property->setValue( $this->plugin, new Sentient_Forms_Test_Lost_Local_Mapping_Request_Race_Store( $wpdb ) );
+
+        try
+        {
+            $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+                901,
+                [ 'id' => 553 ],
+                [ 'id' => 554 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => '553',
+                    'entry_id'             => '554',
+                    'execution_request_id' => 'local-mapping-lost-insert-race',
+                ]
+            );
+        }
+        finally
+        {
+            $property->setValue( $this->plugin, $original );
+        }
+
+        $this->assertFalse( $scheduled );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+    }
+
+    public function test_schedule_local_mapping_canonicalizes_legacy_elementor_identity(): void
+    {
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            901,
+            [ 'id' => '91:formabc' ],
+            [ 'submission_uuid' => '11111111-1111-4111-8111-111111111111' ],
+            [
+                'form_source'     => 'elementor_forms',
+                'adapter_id'      => 'elementor_forms',
+                'form_id'         => '91:formabc',
+                'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertSame( 'elementor_pro_forms', $job['args'][0]['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $job['args'][0]['context']['form_source'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $job['args'][0]['context']['adapter_id'] ?? null );
+    }
+
+    public function test_schedule_local_mapping_promotes_only_allowlisted_nested_adapter_completion_settings(): void
+    {
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            901,
+            [ 'id' => 213 ],
+            [ 'id' => 913 ],
+            [
+                'form_source'      => 'gravity_forms',
+                'form_id'          => '213',
+                'entry_id'         => '913',
+                'action_id'        => 'local_first_901',
+                'central_action_id' => 'spam_detection_v1',
+                'settings'         => [
+                    'spam_confidence_threshold' => 0.95,
+                    'spam_result_display_mode'  => 'none',
+                    'spam_indicators_display'   => 'detailed',
+                    'central_action_id'          => 'nested_identity_override',
+                    'form_source'               => 'contact_form_7',
+                    'action_id'                 => 'nested_action_override',
+                    'job_id'                    => 'nested_job_override',
+                ],
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $context = $job['args'][0]['context'] ?? [];
+        $this->assertSame( 0.95, $context['spam_confidence_threshold'] ?? null );
+        $this->assertSame( 'none', $context['spam_result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $context['spam_indicators_display'] ?? null );
+        $this->assertSame( 'spam_detection_v1', $context['central_action_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $context['form_source'] ?? null );
+        $this->assertSame( 'local_first_901', $context['action_id'] ?? null );
+        $this->assertNotSame( 'nested_job_override', $context['job_id'] ?? null );
+    }
+
+    public function test_process_local_mapping_accepts_replayed_success_dependency_outcome(): void
+    {
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                901,
+                [ 'id' => 211 ],
+                [ 'id' => 911 ],
+                [
+                    'form_source'                      => 'gravity_forms',
+                    'form_id'                          => '211',
+                    'entry_id'                         => '911',
+                    'execution_request_id'             => 'local-replayed-success-dependent',
+                    'dependency_mapping_ids'           => [ 'local_first_900' ],
+                    'dependency_execution_request_ids' => [ 'local_first_900' => 'accepted-sync-replayed-success' ],
+                    'dependency_initial_outcomes'      => [ 'local_first_900' => 'replayed_success' ],
+                    'dependency_wait_started_at'       => time(),
+                    'dependency_wait_max_seconds'      => 120,
+                    'dependency_wait_poll_seconds'     => 5,
+                ]
+            )
+        );
+
+        $payload = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] )['args'][0] ?? [];
+        $handler->process_local_mapping( $payload );
+
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $row = $this->plugin->get_async_request_store()->get( 'local-replayed-success-dependent', 'job' );
+        $this->assertSame( 'failed', $row['status'] ?? null );
+    }
+
+    public function test_process_local_mapping_reads_replayed_active_dependency_from_accepted_sync_store(): void
+    {
+        $store                 = $this->plugin->get_async_request_store();
+        $dependency_request_id = 'accepted-sync-replayed-active';
+        $claim                 = $store->claim_execution(
+            $dependency_request_id,
+            [
+                'action_id'      => 'spam_detection_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-replayed-active' ),
+            ]
+        );
+        $this->assertSame( 'claimed', $claim['state'] ?? null );
+        $store->mark_status( $dependency_request_id, 'success', null, 'accepted_sync' );
+
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                901,
+                [ 'id' => 212 ],
+                [ 'id' => 912 ],
+                [
+                    'form_source'                      => 'gravity_forms',
+                    'form_id'                          => '212',
+                    'entry_id'                         => '912',
+                    'execution_request_id'             => 'local-replayed-active-dependent',
+                    'dependency_mapping_ids'           => [ 'local_first_900' ],
+                    'dependency_execution_request_ids' => [ 'local_first_900' => $dependency_request_id ],
+                    'dependency_initial_outcomes'      => [ 'local_first_900' => 'replayed_active' ],
+                    'dependency_wait_started_at'       => time(),
+                    'dependency_wait_max_seconds'      => 120,
+                    'dependency_wait_poll_seconds'     => 5,
+                ]
+            )
+        );
+
+        $payload = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] )['args'][0] ?? [];
+        $handler->process_local_mapping( $payload );
+
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $row = $store->get( 'local-replayed-active-dependent', 'job' );
+        $this->assertSame( 'failed', $row['status'] ?? null );
+    }
+
     public function test_process_local_mapping_requeues_identifier_payload_while_dependency_is_pending(): void
     {
         $dependency_id = 'local-pending-dependency';
@@ -1328,7 +1591,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
             3
         );
 
-        $handler   = $this->plugin->get_async_handler();
+        $handler = $this->plugin->get_async_handler();
+        $adapter = new Sentient_Forms_Test_Recording_Elementor_Adapter( $this->plugin );
+        $this->original_elementor_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'elementor_pro_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
         $scheduled = $handler->schedule_local_mapping(
             $mapping_id,
             [
@@ -1355,6 +1621,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNull( $payload['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $payload['submission_uuid'] ?? null );
 
+        $queued_before_processing = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
         $handler->process_local_mapping( $payload );
 
         $event = $events->get_by_request_id( 'elementor-local-async-request-success' );
@@ -1369,6 +1636,14 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $request = $this->plugin->get_async_request_store()->get( 'elementor-local-async-request-success' );
         $this->assertSame( 'success', $request['status'] ?? null );
+        $this->assertSame( 1, $adapter->success_calls );
+        $this->assertSame( 0, $adapter->error_calls );
+        $this->assertSame( 'local_first_' . $mapping_id, $adapter->last_success_context['action_id'] ?? null );
+        $this->assertCount(
+            $queued_before_processing,
+            $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+            'A finalization failure must not retry an already-completed provider action.'
+        );
     }
 
     public function test_process_local_mapping_retries_transient_openrouter_failure(): void

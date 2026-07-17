@@ -1863,6 +1863,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             'managed_capacity_known'     => $managed_capacity_known,
             'managed_capacity_available' => is_array( $managed ) && $authoritative_managed_capacity,
             'direct_ready'               => is_array( $direct ) && $this->provider_consent_exists( 'openrouter' ),
+            'policy_preflight_complete'  => true,
         ];
         $filtered = apply_filters( 'sentient_forms_action_provider_runtime_state', $state, $effective_policy, $selection );
         if ( is_array( $filtered ) )

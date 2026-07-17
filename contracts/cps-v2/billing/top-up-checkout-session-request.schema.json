@@ -6,7 +6,8 @@
   "required": [
     "pack_code",
     "success_url",
-    "cancel_url"
+    "cancel_url",
+    "checkout_attempt_id"
   ],
   "properties": {
     "pack_code": {
@@ -41,6 +42,11 @@
     "quantity": {
       "type": "integer",
       "minimum": 1
+    },
+    "checkout_attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Client-generated identifier for one checkout attempt. Reuse it only when retrying that same attempt."
     }
   },
   "additionalProperties": true

@@ -1075,13 +1075,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                                 'description'       => __( 'Manual scalar field values keyed by field id.', 'sentient-forms' ),
                                 'type'              => 'object',
                                 'required'          => false,
-							],
-							'entry_id'      => [
-								'description'       => __( 'Optional native entry id used for trace input import.', 'sentient-forms' ),
-								'type'              => 'integer',
-								'required'          => false,
-								'validate_callback' => [ $this, 'validate_entry_id_param' ],
-							],
+                            ],
+                            'entry_id'      => [
+                                'description'       => __( 'Optional native entry id used for trace input import.', 'sentient-forms' ),
+                                'type'              => 'integer',
+                                'required'          => false,
+                                'validate_callback' => [ $this, 'validate_entry_id_param' ],
+                            ],
                             'field_scope'   => [
                                 'description'       => __( 'Entry import scope for trace input filtering.', 'sentient-forms' ),
                                 'type'              => 'string',
@@ -3029,13 +3029,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-		[ $entry_values, $input_meta ] = $this->resolve_trace_entry_values(
-			$form_source_slug,
-			$form_id,
-			$actions,
-			$manual_values,
-			$entry_id,
-			$field_scope,
+        [ $entry_values, $input_meta ] = $this->resolve_trace_entry_values(
+            $form_source_slug,
+            $form_id,
+            $actions,
+            $manual_values,
+            $entry_id,
+            $field_scope,
         );
         if ( is_wp_error( $entry_values ) )
         {
@@ -3308,14 +3308,14 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      *
      * @return array{0: array<string, string>|WP_Error, 1: array<string, mixed>}
      */
-	private function resolve_trace_entry_values(
-		string $form_source_slug,
-		string $form_id,
-		array $actions,
-		array $manual_values,
-		int $entry_id,
-		string $field_scope
-	): array
+    private function resolve_trace_entry_values(
+        string $form_source_slug,
+        string $form_id,
+        array $actions,
+        array $manual_values,
+        int $entry_id,
+        string $field_scope
+    ): array
     {
         $meta = [
             'entry_id'           => $entry_id > 0 ? $entry_id : null,
@@ -3326,29 +3326,29 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( $entry_id <= 0 )
         {
-			return [ $manual_values, $meta ];
-		}
+            return [ $manual_values, $meta ];
+        }
 
-		$registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
-		$adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
-		if ( ! $adapter || ! method_exists( $adapter, 'get_entry_data' ) )
-		{
-			return [
-				$this->prepare_error_response( 'rest_form_source_unavailable', __( 'Form source adapter is not available for trace input import.', 'sentient-forms' ), 400 ),
-				$meta,
-			];
-		}
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
+        if ( ! $adapter || ! method_exists( $adapter, 'get_entry_data' ) )
+        {
+            return [
+                $this->prepare_error_response( 'rest_form_source_unavailable', __( 'Form source adapter is not available for trace input import.', 'sentient-forms' ), 400 ),
+                $meta,
+            ];
+        }
 
-		$entry = $adapter->get_entry_data( $entry_id, $form_id );
-		if ( is_wp_error( $entry ) || ( ! is_array( $entry ) && ! is_object( $entry ) ) )
-		{
-			return [
-				$this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 ),
-				$meta,
-			];
-		}
+        $entry = $adapter->get_entry_data( $entry_id, $form_id );
+        if ( is_wp_error( $entry ) || ( ! is_array( $entry ) && ! is_object( $entry ) ) )
+        {
+            return [
+                $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 ),
+                $meta,
+            ];
+        }
 
-		$imported_values = $this->extract_scalar_entry_values( is_array( $entry ) ? $entry : get_object_vars( $entry ) );
+        $imported_values = $this->extract_scalar_entry_values( is_array( $entry ) ? $entry : get_object_vars( $entry ) );
         if ( 'mapped_and_rule' === $field_scope )
         {
             $allowed_field_ids = $this->collect_trace_referenced_field_ids( $actions, $imported_values );

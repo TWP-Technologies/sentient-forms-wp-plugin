@@ -492,7 +492,11 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
     /** @return array<string, mixed> */
     private function exercise_concrete_validation_hook(): array
     {
-        $mode = 'validation_rejection' === $this->assignment['required_semantic_outcome'] ? 'reject' : 'accept';
+        $mode = in_array(
+            $this->assignment['required_semantic_outcome'],
+            [ 'validation_rejection', 'validation_effect_applied' ],
+            true
+        ) ? 'reject' : 'accept';
         $result = Sentient_Forms_Test_Exact_Artifact_Validation_Scenario::run(
             $this->assignment['form_source'],
             $this->assignment['action_code'],
@@ -501,7 +505,11 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertSame( $this->assignment['form_source'], $result['form_source'] ?? null );
         $this->assertSame( $this->assignment['action_code'], $result['action_code'] ?? null );
         $this->assertSame( $mode, $result['assignment'] ?? null );
-        $this->assertSame( 'reject' === $mode, $result['rejected'] ?? null );
+        $this->assertSame( 'reject' === $mode, $result['negative_effect_applied'] ?? null );
+        if ( 'blocking_errors' === ( $result['evidence_mode'] ?? null ) )
+        {
+            $this->assertSame( 'reject' === $mode, $result['rejected'] ?? null );
+        }
         $this->assertSame( 1, $result['provider_calls'] ?? null );
         $this->assertNotEmpty( $result['native_hook'] ?? null );
         $this->assertIsArray( $result['native_hooks'] ?? null );

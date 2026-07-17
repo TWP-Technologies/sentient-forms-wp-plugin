@@ -392,7 +392,17 @@ class Sentient_Forms_Managed_Service_Client
      */
     private function normalize_checkout_payload( array $payload, bool $requires_plan = true ): array | WP_Error
     {
-        $normalized = [];
+        if ( ! isset( $payload['checkout_attempt_id'] ) || ! is_string( $payload['checkout_attempt_id'] ) || ! wp_is_uuid( $payload['checkout_attempt_id'] ) )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed billing checkout requires a valid checkout_attempt_id UUID.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [
+            'checkout_attempt_id' => $payload['checkout_attempt_id'],
+        ];
 
         foreach ( [ 'success_url', 'cancel_url' ] as $required_url )
         {

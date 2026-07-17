@@ -882,6 +882,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
+                $this->assertSame( '22222222-2222-4222-8222-222222222222', $body['checkout_attempt_id'] ?? null );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
                 $this->assertArrayNotHasKey( 'trial_period_days', $body );
             }
@@ -891,6 +892,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '22222222-2222-4222-8222-222222222222',
             'plan_code'         => 'starter',
             'success_url'       => 'https://example.test/success',
             'cancel_url'        => 'https://example.test/cancel',
@@ -917,6 +919,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '22222222-2222-4222-8222-222222222222',
             'success_url' => 'https://example.test/success',
             'cancel_url'  => 'https://example.test/cancel',
         ] ) );
@@ -941,6 +944,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '22222222-2222-4222-8222-222222222222',
             'plan_code'   => 'starter',
             'price_id'    => 'price_client_owned',
             'success_url' => 'https://example.test/success',
@@ -983,6 +987,37 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 410, $response->get_status() );
         $data = $response->get_data();
         $this->assertSame( 'managed_subscription_change_uses_portal', $data['code'] ?? null );
+    }
+
+    public function test_checkout_routes_reject_invalid_attempt_identity_before_proxying(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+            'tier'           => 'business',
+        ] );
+
+        foreach ( [ 'billing/checkout-session', 'billing/top-up-session' ] as $route )
+        {
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/' . $route );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $request->add_header( 'Content-Type', 'application/json' );
+            $request->set_body( wp_json_encode( [
+                'checkout_attempt_id' => 'not-a-uuid',
+                'plan_code'           => 'starter',
+                'pack_code'           => 'top_up_small',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+                'quantity'            => 1,
+            ] ) );
+
+            $response = rest_get_server()->dispatch( $request );
+            $this->assertSame( 400, $response->get_status() );
+            $this->assertSame( 'rest_invalid_param', $response->get_data()['code'] ?? null );
+        }
     }
 
     public function test_create_portal_session_success(): void
@@ -1117,6 +1152,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
+                $this->assertSame( '33333333-3333-4333-8333-333333333333', $body['checkout_attempt_id'] ?? null );
                 $this->assertSame( 'top_up_small', $body['pack_code'] ?? null );
                 $this->assertSame( 'https://example.test/success', $body['success_url'] ?? null );
                 $this->assertSame( 'https://example.test/cancel', $body['cancel_url'] ?? null );
@@ -1128,6 +1164,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '33333333-3333-4333-8333-333333333333',
             'pack_code'   => 'top_up_small',
             'success_url' => 'https://example.test/success',
             'cancel_url'  => 'https://example.test/cancel',
@@ -1187,6 +1224,7 @@ class LicenseControllerTest extends WP_UnitTestCase
             $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
             $request->add_header( 'Content-Type', 'application/json' );
             $request->set_body( wp_json_encode( [
+                'checkout_attempt_id' => '33333333-3333-4333-8333-333333333333',
                 'pack_code'   => 'top_up_small',
                 'success_url' => 'https://example.test/success',
                 'cancel_url'  => 'https://example.test/cancel',

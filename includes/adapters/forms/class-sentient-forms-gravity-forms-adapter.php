@@ -232,26 +232,34 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
             $mappings = $result->get_resolved_mappings();
             $mapping  = $mappings[ $mapping_id ] ?? null;
-            $execution_result = $result->get_execution_result( $mapping_id );
+            $spam_payload = $result->get_spam_payload( $mapping_id );
             if (
                 ! is_array( $mapping )
-                || ! is_array( $execution_result )
+                || ! is_array( $spam_payload )
                 || 'local_first' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) )
             )
             {
                 continue;
             }
 
-            $structured = $execution_result['result_data']['structured_output'] ?? null;
-            if ( is_array( $structured ) )
+            $canonical_result = [ 'result_data' => $spam_payload ];
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+            $context  = $mapping;
+            if ( ! array_key_exists( 'mark_as_spam', $context ) )
             {
-                $execution_result['result_data'] = array_merge(
-                    is_array( $execution_result['result_data'] ?? null ) ? $execution_result['result_data'] : [],
-                    $structured
-                );
+                $context['mark_as_spam'] = ! empty( $settings['mark_as_spam'] );
             }
+            foreach ( [ 'spam_confidence_threshold', 'spam_indicators_display', 'spam_result_display_mode' ] as $setting_key )
+            {
+                if ( ! array_key_exists( $setting_key, $context ) && array_key_exists( $setting_key, $settings ) )
+                {
+                    $context[ $setting_key ] = $settings[ $setting_key ];
+                }
+            }
+            $context['settings'] = $settings;
 
-            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $mapping, $execution_result );
+            $this->record_blocking_spam_notification_state( $entry_id, $context, $canonical_result );
+            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $canonical_result );
         }
     }
 
@@ -6198,7 +6206,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             {
                 $note = $this->format_spam_detection_note( $result, $context, false );
                 $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
-                $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'ham' );
+                if ( 'spam' !== $this->get_entry_meta( $entry_id, 'spam_classification' ) )
+                {
+                    $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'ham' );
+                }
             }
             return;
         }
@@ -6219,7 +6230,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 );
                 $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
             }
-            $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'reviewed' );
+            if ( 'spam' !== $this->get_entry_meta( $entry_id, 'spam_classification' ) )
+            {
+                $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'reviewed' );
+            }
             return;
         }
 
@@ -7527,8 +7541,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     ): array
     {
         $mapping_ids = [];
-        foreach ( $outcome->get_queued_mapping_ids() as $mapping_id )
+        foreach ( $outcome->get_mapping_outcomes() as $mapping_id => $mapping_outcome )
         {
+            if ( ! in_array( $mapping_outcome, [ 'queued', 'replayed', 'replayed_active' ], true ) )
+            {
+                continue;
+            }
+
             $mapping = $outcome->get_resolved_mapping( $mapping_id );
             if ( ! is_array( $mapping ) )
             {

@@ -213,6 +213,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $result = $client->create_checkout_session(
             'proxy-secret',
             [
+                'checkout_attempt_id'   => '22222222-2222-4222-8222-222222222222',
                 'success_url'           => 'https://example.test/success',
                 'cancel_url'            => 'https://example.test/cancel',
                 'plan_code'             => 'starter',
@@ -227,6 +228,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'Bearer proxy-secret', $calls[0]['args']['headers']['Authorization'] );
 
         $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( '22222222-2222-4222-8222-222222222222', $payload['checkout_attempt_id'] );
         $this->assertSame( 'https://example.test/success', $payload['success_url'] );
         $this->assertSame( 'https://example.test/cancel', $payload['cancel_url'] );
         $this->assertSame( 'starter', $payload['plan_code'] );
@@ -247,6 +249,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
 
         $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
         $base   = [
+            'checkout_attempt_id' => '22222222-2222-4222-8222-222222222222',
             'success_url' => 'https://example.test/success',
             'cancel_url'  => 'https://example.test/cancel',
         ];
@@ -289,6 +292,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $result = $client->create_top_up_checkout_session(
             'proxy-secret',
             [
+                'checkout_attempt_id' => '33333333-3333-4333-8333-333333333333',
                 'pack_code'  => 'business_1000',
                 'success_url' => 'https://example.test/success',
                 'cancel_url'  => 'https://example.test/cancel',
@@ -301,8 +305,36 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'https://minimal.sentient.test/v2/billing/checkout/top-up-session', $calls[0]['url'] );
 
         $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( '33333333-3333-4333-8333-333333333333', $payload['checkout_attempt_id'] );
         $this->assertSame( 'business_1000', $payload['pack_code'] );
         $this->assertSame( 2, $payload['quantity'] );
+    }
+
+    public function test_checkout_rejects_missing_or_invalid_attempt_identity_before_http(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = compact( 'args', 'url' );
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $base   = [
+            'plan_code'   => 'starter',
+            'success_url' => 'https://example.test/success',
+            'cancel_url'  => 'https://example.test/cancel',
+        ];
+
+        foreach ( [ $base, array_merge( $base, [ 'checkout_attempt_id' => 'not-a-uuid' ] ) ] as $payload )
+        {
+            $result = $client->create_checkout_session( 'proxy-secret', $payload );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_managed_billing_invalid_payload', $result->get_error_code() );
+        }
+
+        $this->assertCount( 0, $calls );
     }
 
     public function test_managed_checkout_start_posts_consent_and_site_identity_without_proxy_auth(): void

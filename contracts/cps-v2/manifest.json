@@ -5,7 +5,8 @@
       "method": "GET",
       "path": "/v2/health",
       "schemas": {
-        "success": "health/get-success.schema.json"
+        "success": "health/get-success.schema.json",
+        "error": "common/error.schema.json"
       }
     },
     {

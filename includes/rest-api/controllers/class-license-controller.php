@@ -219,6 +219,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'create_checkout_session' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
+                        'checkout_attempt_id' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => [ $this, 'validate_checkout_attempt_id' ],
+                        ],
                         'plan_code' => [
                             'required'          => true,
                             'type'              => 'string',
@@ -296,6 +302,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'create_top_up_checkout_session' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
+                        'checkout_attempt_id' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => [ $this, 'validate_checkout_attempt_id' ],
+                        ],
                         'pack_code' => [
                             'required'          => true,
                             'type'              => 'string',
@@ -689,6 +701,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = [
+            'checkout_attempt_id' => (string) $request->get_param( 'checkout_attempt_id' ),
             'plan_code'        => $plan_code,
             'success_url'       => (string) $request->get_param( 'success_url' ),
             'cancel_url'        => (string) $request->get_param( 'cancel_url' ),
@@ -717,6 +730,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = [
+            'checkout_attempt_id' => (string) $request->get_param( 'checkout_attempt_id' ),
             'pack_code'   => sanitize_key( (string) $request->get_param( 'pack_code' ) ),
             'success_url' => (string) $request->get_param( 'success_url' ),
             'cancel_url'  => (string) $request->get_param( 'cancel_url' ),
@@ -845,6 +859,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         return true;
+    }
+
+    public function validate_checkout_attempt_id( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        return $this->validate_checkout_intent_id( $value, $request, $param );
     }
 
     private function has_managed_license_key_format( string $license_key ): bool

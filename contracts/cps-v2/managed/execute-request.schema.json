@@ -51,7 +51,9 @@
     "model": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 191
+      "maxLength": 191,
+      "pattern": "^[!-~]+$",
+      "description": "Managed provider model identifier containing 1 to 191 printable ASCII characters without spaces."
     },
     "action_code": {
       "type": "string",

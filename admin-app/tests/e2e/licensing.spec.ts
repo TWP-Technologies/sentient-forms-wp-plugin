@@ -816,12 +816,13 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 	await expect(page.getByRole('button', { name: 'Add capacity' })).toHaveCount(0);
 });
 
-test('business subscriptions expose canonical top-up packs and send pack code', async ({
+test('business top-up checkout uses a fresh attempt per click and preserves it across retry', async ({
 	page
 }) => {
 	await seedRuntimeConfig(page, { apiBaseUrl: '/wp-json/sentient-forms/v1/' });
 
 	let topUpRequests = 0;
+	const checkoutAttemptIds: string[] = [];
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
@@ -889,12 +890,33 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing/top-up-session', (route) => {
 		topUpRequests += 1;
 		const body = route.request().postDataJSON() as
-			| { pack_code?: string; success_url?: string; cancel_url?: string; quantity?: number }
+			| {
+					checkout_attempt_id?: string;
+					pack_code?: string;
+					success_url?: string;
+					cancel_url?: string;
+					quantity?: number;
+			  }
 			| undefined;
+		expect(body?.checkout_attempt_id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+		);
+		checkoutAttemptIds.push(body?.checkout_attempt_id ?? '');
 		expect(body?.pack_code).toBe('top_up_medium');
 		expect(body?.quantity).toBe(1);
 		expect(typeof body?.success_url).toBe('string');
 		expect(typeof body?.cancel_url).toBe('string');
+
+		if (topUpRequests < 3) {
+			return route.fulfill({
+				status: 503,
+				body: JSON.stringify({
+					code: 'billing_provider_unreachable',
+					message: 'Stripe is temporarily unavailable.'
+				}),
+				headers: { 'content-type': 'application/json' }
+			});
+		}
 
 		return route.fulfill({
 			status: 200,
@@ -924,6 +946,16 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 	);
 	await addCapacityButtons.nth(1).click();
 	await expect.poll(() => topUpRequests).toBe(1);
+	await expect(page.getByRole('button', { name: 'Retry checkout' })).toBeVisible();
+
+	await addCapacityButtons.nth(1).click();
+	await expect.poll(() => topUpRequests).toBe(2);
+	await expect(page.getByRole('button', { name: 'Retry checkout' })).toBeVisible();
+
+	expect(checkoutAttemptIds[0]).not.toBe(checkoutAttemptIds[1]);
+	await page.getByRole('button', { name: 'Retry checkout' }).click();
+	await expect.poll(() => topUpRequests).toBe(3);
+	expect(checkoutAttemptIds[2]).toBe(checkoutAttemptIds[1]);
 	await topUpRedirectRequest;
 });
 

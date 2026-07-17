@@ -292,6 +292,7 @@ const billingPortalSessionRequestSchema = z.strictObject({
 });
 
 const billingCheckoutSessionRequestSchema = z.strictObject({
+	checkout_attempt_id: z.uuid(),
 	plan_code: z.enum(['starter', 'pro', 'business']),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
@@ -327,6 +328,7 @@ const managedCheckoutStartSchema = z.object({
 });
 
 const topUpCheckoutSessionRequestSchema = z.strictObject({
+	checkout_attempt_id: z.uuid(),
 	pack_code: z.string().min(1),
 	success_url: z.string().url(),
 	cancel_url: z.string().url(),
@@ -1423,31 +1425,28 @@ const spamGuidanceManagedDecisionReasonSchema = z.enum([
 	'managed_preferred_and_ready',
 	'managed_ready_with_capacity'
 ]);
-const spamGuidanceProviderObservationSchema = z.discriminatedUnion(
-	'provider_observation_type',
-	[
-		z.object({
-			...spamGuidanceGenerationBaseShape,
-			route: z.literal('openrouter'),
-			route_decision_reason: spamGuidanceDirectDecisionReasonSchema,
-			provider_observation_type: z.literal('subscription_gated_direct_response'),
-			provider_observation_id: z
-				.string()
-				.regex(/^fallback-openrouter:gen-[A-Za-z0-9._:-]+$/)
-				.max(255)
-		}),
-		z.object({
-			...spamGuidanceGenerationBaseShape,
-			route: z.literal('sentient_managed'),
-			route_decision_reason: spamGuidanceManagedDecisionReasonSchema,
-			provider_observation_type: z.literal('cps_managed_lifecycle'),
-			provider_observation_id: z
-				.string()
-				.regex(/^cps-lifecycle:[A-Za-z0-9][A-Za-z0-9._:-]+$/)
-				.max(255)
-		})
-	]
-);
+const spamGuidanceProviderObservationSchema = z.discriminatedUnion('provider_observation_type', [
+	z.object({
+		...spamGuidanceGenerationBaseShape,
+		route: z.literal('openrouter'),
+		route_decision_reason: spamGuidanceDirectDecisionReasonSchema,
+		provider_observation_type: z.literal('subscription_gated_direct_response'),
+		provider_observation_id: z
+			.string()
+			.regex(/^fallback-openrouter:gen-[A-Za-z0-9._:-]+$/)
+			.max(255)
+	}),
+	z.object({
+		...spamGuidanceGenerationBaseShape,
+		route: z.literal('sentient_managed'),
+		route_decision_reason: spamGuidanceManagedDecisionReasonSchema,
+		provider_observation_type: z.literal('cps_managed_lifecycle'),
+		provider_observation_id: z
+			.string()
+			.regex(/^cps-lifecycle:[A-Za-z0-9][A-Za-z0-9._:-]+$/)
+			.max(255)
+	})
+]);
 const spamGuidanceNoObservationBaseShape = {
 	...spamGuidanceGenerationBaseShape,
 	provider_observation_type: z.undefined().optional(),

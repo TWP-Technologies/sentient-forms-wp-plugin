@@ -2503,6 +2503,7 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.createCheckoutSession(
 				{
+					checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 					plan_code: 'starter',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
@@ -2512,11 +2513,55 @@ describe('SentientFormsApiClient', () => {
 		).rejects.toThrow();
 	});
 
+	it('passes checkout attempt identity through authenticated checkout requests', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					session_id: 'cs_checkout_123',
+					checkout_url: 'https://checkout.stripe.com/c/pay/cs_checkout_123',
+					customer_id: 'cus_123'
+				})
+		});
+
+		await client.createCheckoutSession(
+			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
+				plan_code: 'starter',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/billing/checkout-session`,
+			expect.objectContaining({
+				body: JSON.stringify({
+					checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
+					plan_code: 'starter',
+					success_url: 'https://example.test/success',
+					cancel_url: 'https://example.test/cancel'
+				})
+			})
+		);
+	});
+
 	it.each([
-		['missing plan', { success_url: 'https://example.test/success', cancel_url: 'https://example.test/cancel' }],
+		[
+			'missing plan',
+			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		],
 		[
 			'unsupported plan',
 			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 				plan_code: 'future',
 				success_url: 'https://example.test/success',
 				cancel_url: 'https://example.test/cancel'
@@ -2525,6 +2570,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'client-selected price',
 			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 				plan_code: 'starter',
 				price_id: 'price_client_owned',
 				success_url: 'https://example.test/success',
@@ -2534,8 +2580,26 @@ describe('SentientFormsApiClient', () => {
 		[
 			'multi-site quantity',
 			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 				plan_code: 'starter',
 				quantity: 2,
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		],
+		[
+			'missing checkout attempt identity',
+			{
+				plan_code: 'starter',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel'
+			}
+		],
+		[
+			'invalid checkout attempt identity',
+			{
+				checkout_attempt_id: 'not-a-uuid',
+				plan_code: 'starter',
 				success_url: 'https://example.test/success',
 				cancel_url: 'https://example.test/cancel'
 			}
@@ -2588,6 +2652,7 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.createTopUpCheckoutSession(
 				{
+					checkout_attempt_id: '33333333-3333-4333-8333-333333333333',
 					pack_code: 'top_up_small',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
@@ -2595,6 +2660,46 @@ describe('SentientFormsApiClient', () => {
 				{ showNotifications: false }
 			)
 		).rejects.toThrow();
+	});
+
+	it('passes checkout attempt identity through top-up requests', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					session_id: 'cs_top_up_123',
+					checkout_url: 'https://checkout.stripe.com/c/pay/cs_top_up_123',
+					customer_id: 'cus_123',
+					top_up_credits: 1000,
+					pack_code: 'top_up_small'
+				})
+		});
+
+		await client.createTopUpCheckoutSession(
+			{
+				checkout_attempt_id: '33333333-3333-4333-8333-333333333333',
+				pack_code: 'top_up_small',
+				success_url: 'https://example.test/success',
+				cancel_url: 'https://example.test/cancel',
+				quantity: 1
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/billing/top-up-session`,
+			expect.objectContaining({
+				body: JSON.stringify({
+					checkout_attempt_id: '33333333-3333-4333-8333-333333333333',
+					pack_code: 'top_up_small',
+					success_url: 'https://example.test/success',
+					cancel_url: 'https://example.test/cancel',
+					quantity: 1
+				})
+			})
+		);
 	});
 
 	it('completes managed checkout and unwraps activation metadata', async () => {
@@ -2643,12 +2748,10 @@ describe('SentientFormsApiClient', () => {
 
 	it('rejects managed checkout completion without an activation token before fetch', async () => {
 		await expect(
-			client.completeManagedCheckout(
-				{
-					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-					checkout_session_id: 'cs_test_123'
-				} as never
-			)
+			client.completeManagedCheckout({
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
+				checkout_session_id: 'cs_test_123'
+			} as never)
 		).rejects.toThrow();
 
 		expect(mockFetch).not.toHaveBeenCalled();

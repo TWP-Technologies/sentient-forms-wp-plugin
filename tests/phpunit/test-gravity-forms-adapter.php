@@ -3484,11 +3484,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     if ( 'spam_detection_v1' === $central_action_id ) {
                         return [
                             'result_data' => [
-                                'classification' => 'spam',
-                            ],
-                            'validation'  => [
-                                'is_valid' => false,
-                                'message'  => 'Blocked as spam.',
+                                'structured_output_valid' => true,
+                                'structured_output'       => [
+                                    'classification' => 'spam',
+                                    'confidence'     => 0.99,
+                                    'justification'  => 'Trusted validation-phase spam classification.',
+                                    'indicators'     => [],
+                                ],
                             ],
                         ];
                     }
@@ -3515,8 +3517,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
 
         $this->assertSame( [ 'spam_detection_v1' ], $calls );
-        $this->assertFalse( $result['is_valid'] );
-        $this->assertStringContainsString( 'Blocked as spam.', (string) ( $result['form']['validation_message'] ?? '' ) );
+        $this->assertTrue( $result['is_valid'] );
+        $this->assertEmpty( $result['form']['validation_message'] ?? '' );
         $this->assertStringNotContainsString( 'Downstream should not run.', (string) ( $result['form']['validation_message'] ?? '' ) );
 
         delete_option( $option_key );
@@ -3534,15 +3536,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 static function (): array {
                     return [
                         'result_data' => [
-                            'classification' => 'spam',
-                            'justification'  => 'Validation-phase spam block',
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'classification' => 'spam',
+                                'confidence'     => 0.99,
+                                'justification'  => 'Validation-phase spam classification.',
+                                'indicators'     => [],
+                            ],
                         ],
                         'meta'       => [
                             'credits_debited' => 3,
-                        ],
-                        'validation' => [
-                            'is_valid' => false,
-                            'message'  => 'Blocked as spam.',
                         ],
                     ];
                 }
@@ -3562,7 +3565,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $entries = get_option( 'sentient_forms_action_log', [] );
 
-        $this->assertFalse( $result['is_valid'] );
+        $this->assertTrue( $result['is_valid'] );
         $this->assertIsArray( $entries );
         $this->assertNotEmpty( $entries );
         $this->assertSame( 'gravity_forms', $entries[0]['form_source'] ?? null );
@@ -3571,6 +3574,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'spam_detection_v1', $entries[0]['action_code'] ?? null );
         $this->assertSame( 'blocked', $entries[0]['status'] ?? null );
         $this->assertSame( 'spam', $entries[0]['classification'] ?? null );
+        $this->assertTrue( $entries[0]['structured_output_valid'] ?? false );
         $this->assertSame( 3, $entries[0]['credits_used'] ?? null );
 
         delete_option( 'sentient_forms_action_log' );
@@ -3681,11 +3685,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     if ( 'spam_detection_v1' === $central_action_id ) {
                         return [
                             'result_data' => [
-                                'classification' => 'likely_spam',
-                            ],
-                            'validation'  => [
-                                'is_valid' => false,
-                                'message'  => 'Likely spam blocked.',
+                                'structured_output_valid' => true,
+                                'structured_output'       => [
+                                    'classification' => 'likely_spam',
+                                    'confidence'     => 0.99,
+                                    'justification'  => 'Trusted likely-spam fixture.',
+                                    'indicators'     => [],
+                                ],
                             ],
                         ];
                     }
@@ -3712,8 +3718,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
 
         $this->assertSame( [ 'spam_detection_v1' ], $calls );
-        $this->assertFalse( $result['is_valid'] );
-        $this->assertStringContainsString( 'Likely spam blocked.', (string) ( $result['form']['validation_message'] ?? '' ) );
+        $this->assertTrue( $result['is_valid'] );
+        $this->assertEmpty( $result['form']['validation_message'] ?? '' );
 
         delete_option( $option_key );
     }
@@ -3747,18 +3753,21 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     if ( 'spam_detection_v1' === $central_action_id ) {
                         return [
                             'result_data' => [
-                                'classification' => 'ham',
-                            ],
-                            'validation'  => [
-                                'is_valid' => true,
+                                'structured_output_valid' => true,
+                                'structured_output'       => [
+                                    'classification' => 'ham',
+                                    'confidence'     => 0.99,
+                                    'justification'  => 'Trusted ham fixture.',
+                                    'indicators'     => [],
+                                ],
                             ],
                         ];
                     }
 
                     return [
-                        'validation' => [
-                            'is_valid' => false,
-                            'message'  => 'Tell us more.',
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [ 'is_valid' => false, 'message' => 'Tell us more.', 'fields' => [] ],
                         ],
                     ];
                 }
@@ -3818,9 +3827,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     }
 
                     return [
-                        'validation' => [
-                            'is_valid' => false,
-                            'message'  => 'Tell us more.',
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [ 'is_valid' => false, 'message' => 'Tell us more.', 'fields' => [] ],
                         ],
                     ];
                 }
@@ -4171,13 +4180,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsInt( $credential_id );
         $this->assertIsInt( $consents->record( 'openrouter', '2026-04-19', 0 ) );
 
+        $template = Sentient_Forms_Bundled_Action_Templates::get( 'content_validation_v1' );
+        $this->assertIsArray( $template );
+        $template_id = $this->create_bundled_template_fixture( 'content_validation_v1' );
+
         $action_id = $custom_actions->create(
             [
-                'code'                 => 'gf_local_openrouter_validation',
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'content_validation_v1' ),
                 'display_name'         => 'GF Local OpenRouter Validation',
-                'definition_json'      => [
-                    'prompt_template' => 'Validate this Gravity Forms submission.',
-                ],
+                'template_id'          => $template_id,
+                'definition_json'      => Sentient_Forms_Bundled_Action_Templates::linkage_definition( 'content_validation_v1' ),
                 'model_selection_json' => [
                     'provider'      => 'openrouter',
                     'model'         => 'anthropic/claude-sonnet-4.6',
@@ -4197,7 +4209,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'action_id'           => $action_id,
                 'input_bindings_json' => [],
                 'execution_mode'      => 'sync',
-                'effect_mapping_json' => [],
+                'effect_mapping_json' => $template['effect_mapping_json'],
                 'enabled'             => true,
             ]
         );
@@ -5419,11 +5431,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $this->truncate_local_first_runtime_tables();
             delete_option( 'sentient_forms_action_log' );
             $form_id = $recognized ? 7905 : 7904;
-            $fixture = $this->create_local_mapping_fixture( $form_id, 'validation_structure_fixture', 'gform_validation', [ 'async' => false ] );
+            $fixture = $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
             $secret  = 'RAW_PROVIDER_UNSTRUCTURED_' . $form_id;
             $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
             $service->results[ $fixture['mapping_id'] ] = $recognized
-                ? [ 'validation' => [ 'is_valid' => true, 'message' => '', 'fields' => [] ] ]
+                ? [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+                    ],
+                ]
                 : [ 'content' => $secret, 'provider_payload' => [ 'raw' => $secret ] ];
             $this->set_action_executor( $service );
 
@@ -5448,6 +5465,219 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 [ 'source' => 'form-submit' ]
             );
         $this->assertSame( [], $skipped->get_validation_rejection_traces() );
+    }
+
+    public function test_persisted_local_validation_fails_open_for_unattested_provider_shape(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        delete_option( 'sentient_forms_action_log' );
+
+        $fixture = $this->create_local_mapping_fixture( 7910, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = [
+            'validation' => [
+                'is_valid' => false,
+                'message'  => 'RAW_PROVIDER_REJECTION_7910',
+                'fields'   => [],
+            ],
+        ];
+        $this->set_action_executor( $service );
+
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7910, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome    = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+        $logs       = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertCount( 1, $service->calls );
+        $this->assertSame( 'succeeded', $outcome->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $this->assertSame( $validation, $this->adapter->apply_validation_result( $validation, $outcome ) );
+        $this->assertSame( [], $outcome->get_validation_rejection_traces() );
+        $this->assertFalse( $logs[0]['structured_output_valid'] ?? true );
+        $this->assertStringNotContainsString( 'RAW_PROVIDER_REJECTION_7910', (string) wp_json_encode( $logs ) );
+    }
+
+    public function test_persisted_local_validation_requires_same_wrapper_attestation(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $fixture = $this->create_local_mapping_fixture( 7911, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'result_data' => [
+                'structured_output' => [
+                    'is_valid' => false,
+                    'message'  => 'Cross-wrapper output must not be trusted.',
+                    'fields'   => [],
+                ],
+            ],
+        ];
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7911, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation );
+
+        $this->assertSame( $validation, $this->adapter->apply_validation_result( $validation, $outcome ) );
+        $this->assertSame( [], $outcome->get_validation_rejection_traces() );
+    }
+
+    public function test_persisted_local_validation_catches_throwables_and_redacts_details(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        delete_option( 'sentient_forms_action_log' );
+
+        $fixture = $this->create_local_mapping_fixture( 7912, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = static function (): array {
+            throw new RuntimeException( 'RAW_THROWABLE_PRIVATE_7912' );
+        };
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7912, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation );
+        $logs = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $this->assertSame( 'sentient_forms_validation_execution_exception', $outcome->get_errors()[ $fixture['runtime_key'] ]['code'] ?? null );
+        $this->assertSame( $validation, $this->adapter->apply_validation_result( $validation, $outcome ) );
+        $this->assertStringNotContainsString( 'RAW_THROWABLE_PRIVATE_7912', (string) wp_json_encode( $logs ) );
+    }
+
+    public function test_validation_attempt_identity_is_stable_within_runner_and_distinct_between_attempts(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $fixture = $this->create_local_mapping_fixture( 7913, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+            ],
+        ];
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7913, 'failed_validation' => false, 'fields' => [] ] ];
+        $runner_a = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service );
+        $runner_b = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service );
+
+        $first  = $runner_a->run_validation( $this->adapter, $validation );
+        $replay = $runner_a->run_validation( $this->adapter, $validation );
+        $second = $runner_b->run_validation( $this->adapter, $validation );
+        $key    = $fixture['runtime_key'];
+
+        $this->assertSame( $first->get_execution_request_ids()[ $key ], $replay->get_execution_request_ids()[ $key ] );
+        $this->assertNotSame( $first->get_execution_request_ids()[ $key ], $second->get_execution_request_ids()[ $key ] );
+        $this->assertCount( 2, $service->calls );
+        $this->assertSame( 'validation', $service->calls[0]['context']['hook'] ?? null );
+        $this->assertSame( 'gform_validation', $service->calls[0]['context']['native_hook'] ?? null );
+    }
+
+    public function test_content_validation_ignores_valid_field_rows_and_uses_safe_form_fallback(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $fixture = $this->create_local_mapping_fixture( 7914, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [
+                    'is_valid' => false,
+                    'message'  => '',
+                    'fields'   => [ [ 'field_id' => '3', 'is_valid' => true, 'message' => 'Must not be applied.' ] ],
+                ],
+            ],
+        ];
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7914, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation );
+
+        $this->assertSame( [], $outcome->get_field_errors() );
+        $this->assertSame(
+            'This submission could not be validated. Please review your entry and try again.',
+            $outcome->get_form_error()
+        );
+    }
+
+    public function test_spam_validation_requires_action_bound_attestation_and_confidence_threshold(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $spam = $this->create_local_mapping_fixture(
+            7915,
+            'spam_detection_v1',
+            'gform_validation',
+            [ 'async' => false, 'spam_confidence_threshold' => 0.8 ]
+        );
+        $child = $this->create_local_mapping_fixture(
+            7915,
+            'content_validation_v1',
+            'gform_validation',
+            [
+                'async'                 => false,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'validation' => [ 'type' => 'mapping', 'mapping_id' => $spam['runtime_key'] ],
+                ],
+            ]
+        );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $spam['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.2,
+                    'justification'  => 'Below threshold.',
+                    'indicators'     => [],
+                ],
+            ],
+        ];
+        $service->results[ $child['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+            ],
+        ];
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7915, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation );
+
+        $this->assertSame( 'succeeded', $outcome->get_mapping_outcomes()[ $child['runtime_key'] ] ?? null );
+        $this->assertSame( [], $outcome->get_spam_classifications() );
+        $this->assertSame( [], $outcome->get_spam_payloads() );
+        $this->assertCount( 2, $service->calls );
+    }
+
+    public function test_content_validation_does_not_trust_attested_spam_payload(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $fixture = $this->create_local_mapping_fixture( 7916, 'content_validation_v1', 'gform_validation', [ 'async' => false ] );
+        $service = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $service->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'Wrong Action contract.',
+                    'indicators'     => [],
+                ],
+            ],
+        ];
+        $validation = [ 'is_valid' => true, 'form' => [ 'id' => 7916, 'failed_validation' => false, 'fields' => [] ] ];
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $service ) )
+            ->run_validation( $this->adapter, $validation );
+
+        $this->assertSame( [], $outcome->get_spam_classifications() );
+        $this->assertSame( [], $outcome->get_spam_payloads() );
+        $this->assertSame( $validation, $this->adapter->apply_validation_result( $validation, $outcome ) );
     }
 
     public function test_persisted_local_spam_validation_bridges_once_to_saved_entry(): void
@@ -5512,6 +5742,30 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 'active', GFAPI::$entries[17903]['status'] );
         $this->assertCount( 1, $service->calls );
+    }
+
+    public function test_gravity_spam_effect_does_not_downgrade_existing_spam_state(): void
+    {
+        $entry_id = 17917;
+        gform_update_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
+
+        $method = new ReflectionMethod( $this->adapter, 'maybe_mark_entry_as_spam_from_result' );
+        $method->setAccessible( true );
+        $method->invoke(
+            $this->adapter,
+            $entry_id,
+            [ 'spam_result_display_mode' => 'all_results', 'spam_confidence_threshold' => 0.8 ],
+            [ 'result_data' => [ 'classification' => 'ham', 'confidence' => 0.99, 'justification' => 'Ham.' ] ]
+        );
+        $this->assertNotSame( 'ham', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+
+        $method->invoke(
+            $this->adapter,
+            $entry_id,
+            [ 'spam_result_display_mode' => 'none', 'spam_confidence_threshold' => 0.8 ],
+            [ 'result_data' => [ 'classification' => 'spam', 'confidence' => 0.2, 'justification' => 'Below threshold.' ] ]
+        );
+        $this->assertNotSame( 'reviewed', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
     }
 
     public function test_persisted_local_sync_accepted_mappings_execute_in_dependency_order_and_log_success(): void

@@ -6,7 +6,8 @@
   "required": [
     "plan_code",
     "success_url",
-    "cancel_url"
+    "cancel_url",
+    "checkout_attempt_id"
   ],
   "properties": {
     "price_id": false,
@@ -46,6 +47,11 @@
     },
     "customer_name": {
       "type": "string"
+    },
+    "checkout_attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Client-generated identifier for one checkout attempt. Reuse it only when retrying that same attempt."
     }
   },
   "additionalProperties": true

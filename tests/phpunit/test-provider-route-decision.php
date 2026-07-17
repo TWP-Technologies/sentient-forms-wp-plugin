@@ -110,6 +110,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => true,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ],
             'openrouter'
         );
@@ -135,6 +136,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => true,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ],
             'sentient_managed'
         );
@@ -160,6 +162,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => true,
                 'direct_ready'               => false,
+                'policy_preflight_complete' => true,
             ],
             'openrouter'
         );
@@ -181,6 +184,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => false,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ],
             'sentient_managed'
         );
@@ -207,6 +211,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_capacity_known'     => false,
                 'managed_capacity_available' => false,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ],
             'sentient_managed'
         );
@@ -292,6 +297,7 @@ class Tests_Provider_Route_Decision extends WP_UnitTestCase
                 'managed_ready'              => true,
                 'managed_capacity_available' => true,
                 'direct_ready'               => true,
+                'policy_preflight_complete' => true,
             ],
             'openrouter'
         );
