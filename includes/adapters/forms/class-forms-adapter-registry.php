@@ -114,7 +114,7 @@ class Sentient_Forms_Form_Adapter_Registry
      */
     public function has_registered_source( string $id ): bool
     {
-        return isset( $this->adapters[ sanitize_key( strtolower( $id ) ) ] );
+        return isset( $this->adapters[ $id ] );
     }
 
     /**

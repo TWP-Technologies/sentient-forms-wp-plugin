@@ -157,18 +157,19 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $fields     = $this->validation_fields();
         $entry      = [ 'fields' => [ 1 => 'Ada Lovelace', 2 => 'test' ], 'source' => 'frontend' ];
         $form_data  = $this->validation_form_data( $form_id );
+        $untrusted_form_error = 'Please <strong>review</strong> <script>alert(1)</script> your submission.';
 
         Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
             new Sentient_Forms_Test_WPForms_Validation_Action(
                 $action_id,
-                static function ( array $form_data ) use ( &$executions, &$seen ): array {
+                static function ( array $form_data ) use ( &$executions, &$seen, $untrusted_form_error ): array {
                     ++$executions;
                     $seen = $form_data;
 
                     return [
                         'validation' => [
                             'is_valid' => false,
-                            'message'  => 'Please review your submission.',
+                            'message'  => $untrusted_form_error,
                             'fields'   => [
                                 [
                                     'field_id' => '2',
@@ -202,7 +203,35 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'test', $seen['entry']['project_details'] ?? null );
         $this->assertSame( [ 'source' ], $seen['execution_context']['native_validation_context']['entry_keys'] ?? null );
         $this->assertSame( 'Tell us what you need built.', $process->errors[ $form_id ][2] ?? null );
-        $this->assertSame( 'Please review your submission.', $process->errors[ $form_id ]['header'] ?? null );
+        $this->assertSame( sanitize_text_field( $untrusted_form_error ), $process->errors[ $form_id ]['header'] ?? null );
+        $this->assertStringNotContainsString( '<', (string) ( $process->errors[ $form_id ]['header'] ?? '' ) );
+    }
+
+    public function test_wpforms_native_form_error_boundary_sanitizes_untrusted_html(): void
+    {
+        $form_id              = 7961;
+        $process              = (object) [ 'errors' => [] ];
+        $adapter              = $this->initialize_validation_adapter( $process );
+        $untrusted_form_error = 'Please <strong>review</strong> <script>alert(1)</script> your submission.';
+        $result               = new Sentient_Forms_Validation_Run_Result(
+            [],
+            [],
+            [],
+            [],
+            $untrusted_form_error
+        );
+
+        $adapter->apply_validation_result(
+            [
+                'fields'    => $this->validation_fields(),
+                'form_data' => $this->validation_form_data( $form_id ),
+            ],
+            $result
+        );
+
+        $header = (string) ( $process->errors[ $form_id ]['header'] ?? '' );
+        $this->assertSame( sanitize_text_field( $untrusted_form_error ), $header );
+        $this->assertStringNotContainsString( '<', $header );
     }
 
     public function test_wpforms_validation_blocks_priority_ten_payment_callbacks_before_they_charge(): void

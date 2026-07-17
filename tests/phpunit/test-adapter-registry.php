@@ -166,6 +166,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
 
         $this->assertSame( array_keys( $registry->get_all_adapters() ), $registry->get_registered_source_ids() );
         $this->assertTrue( $registry->has_registered_source( 'fake_source' ) );
+        $this->assertFalse( $registry->has_registered_source( 'FAKE_SOURCE' ) );
+        $this->assertNull( $registry->get_adapter_by_id( 'FAKE_SOURCE' ) );
 
         $registry->unregister_adapter( 'gravity_forms' );
 

@@ -256,7 +256,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $form_error      = $result->get_form_error();
         if ( null !== $form_error && '' !== $form_error )
         {
-            $header_messages[] = $form_error;
+            $header_messages[] = sanitize_text_field( $form_error );
         }
         foreach ( $result->get_spam_classifications() as $classification )
         {
