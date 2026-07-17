@@ -244,7 +244,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         remove_all_actions( 'wpcf7_mail_sent' );
         remove_all_filters( 'wpcf7_validate' );
         remove_all_filters( 'wpcf7_spam' );
-        foreach ( [ '44', '47', '48', '49', '7951', '7952', '7953', '7954', '7955' ] as $form_id )
+        foreach ( [ '44', '47', '48', '49', '7951', '7952', '7953', '7954', '7955', '7956', '7957' ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
         }
@@ -329,6 +329,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                             'fields'   => [
                                 [
                                     'field_id' => 'project-details',
+                                    'is_valid' => false,
                                     'message' => 'Tell us what you need built.',
                                 ],
                             ],
@@ -370,7 +371,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
-        $this->assertSame( 'wpcf7_validate', $seen['hook'] ?? null );
+        $this->assertSame( 'validation', $seen['hook'] ?? null );
+        $this->assertSame( 'wpcf7_validate', $seen['native_hook'] ?? null );
         $this->assertSame( 'contact_form_7', $seen['form_source'] ?? null );
         $this->assertSame( 'test', $seen['entry']['project-details'] ?? null );
         $this->assertCount( 1, $result->invalidations );
@@ -378,10 +380,106 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Tell us what you need built.', $result->invalidations[0]['message'] ?? null );
     }
 
+    public function test_cf7_form_only_validation_error_leaves_field_result_unchanged(): void
+    {
+        $form_id     = 7956;
+        $action_id   = 'cf7_form_validation_fixture';
+        $option_key  = 'sentient_forms_actions_contact_form_7_' . $form_id;
+        $submit_tag  = $this->cf7_tag( 'submit', 'submit', 'send' );
+        $unnamed_tag = $this->cf7_tag( 'text', 'text', '' );
+        $email_tag   = $this->cf7_tag( 'email*', 'email', 'your-email' );
+        $form        = $this->cf7_form( $form_id, 'CF7 Form Validation', [ $submit_tag, $unnamed_tag, $email_tag ] );
+        $submission  = $this->cf7_submission( $form, [ 'your-email' => 'visitor@example.test' ] );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_CF7_Validation_Action(
+                $action_id,
+                static fn(): array => [
+                    'validation' => [
+                        'is_valid' => false,
+                        'message'  => '<strong>Please review this submission.</strong>',
+                        'fields'   => [],
+                    ],
+                ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_form' => [
+                    'local_mapping_id'           => 'map_form',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        $result = apply_filters(
+            'wpcf7_validate',
+            new Sentient_Forms_Test_CF7_Validation_Result(),
+            [ $submit_tag, $unnamed_tag, $email_tag ]
+        );
+
+        $this->assertSame( [], $result->invalidations );
+    }
+
+    public function test_cf7_form_only_validation_error_leaves_unnamed_submit_only_result_unchanged(): void
+    {
+        $form_id    = 7957;
+        $action_id  = 'cf7_submit_only_validation_fixture';
+        $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
+        $submit_tag = $this->cf7_tag( 'submit', 'submit', '' );
+        $form       = $this->cf7_form( $form_id, 'CF7 Submit-only Validation', [ $submit_tag ] );
+        $submission = $this->cf7_submission( $form, [] );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_CF7_Validation_Action(
+                $action_id,
+                static fn(): array => [
+                    'validation' => [
+                        'is_valid' => false,
+                        'message'  => 'Please review this submission.',
+                        'fields'   => [],
+                    ],
+                ]
+            )
+        );
+        update_option(
+            $option_key,
+            [
+                'map_form' => [
+                    'local_mapping_id'           => 'map_form',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ],
+            false
+        );
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter( 'sentient_forms_contact_form_7_current_submission', static fn() => $submission );
+        $adapter = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $adapter->init();
+
+        $result = apply_filters( 'wpcf7_validate', new Sentient_Forms_Test_CF7_Validation_Result(), [ $submit_tag ] );
+
+        $this->assertSame( [], $result->invalidations );
+    }
+
     public function test_cf7_spam_hook_reuses_validation_outcome_without_second_execution(): void
     {
         $form_id    = 7952;
-        $action_id  = 'cf7_spam_validation_fixture';
+        $action_id  = 'spam_analysis';
         $option_key = 'sentient_forms_actions_contact_form_7_' . $form_id;
         $executions = 0;
         $tag        = $this->cf7_tag( 'text*', 'text', 'your-name' );
@@ -401,6 +499,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                                 'classification' => 'spam',
                                 'confidence'     => 0.99,
                                 'justification'  => 'Known spam fixture.',
+                                'indicators'     => [
+                                    [
+                                        'type'     => 'commercial_solicitation',
+                                        'evidence' => 'Known spam fixture.',
+                                        'weight'   => 'high',
+                                    ],
+                                ],
                             ],
                         ],
                     ];
@@ -507,6 +612,17 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                         'classification' => 'spam',
                         'confidence'     => 0.99,
                         'justification'  => 'Untrusted spam output must not apply.',
+                    ],
+                ],
+            ],
+            7957 => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Wrong schema for this custom validation Action.',
+                        'indicators'     => [],
                     ],
                 ],
             ],
@@ -737,11 +853,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $this->assertCount( 2, $calls );
         $this->assertSame( [ 'first', 'second' ], array_column( $calls, 'marker' ) );
-        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $calls, 'hook' ) );
+        $this->assertSame( [ 'after_submission', 'after_submission' ], array_column( $calls, 'hook' ) );
         $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $calls, 'form_source' ) );
-        $this->assertSame( [ 'fixture_first', 'fixture_second' ], array_column( array_column( $calls, 'execution_context' ), 'mapping_id' ) );
-        $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( array_column( $calls, 'execution_context' ), 'submission_uuid' ) );
-        $request_ids = array_column( array_column( $calls, 'execution_context' ), 'execution_request_id' );
+        $execution_contexts = array_column( $calls, 'execution_context' );
+        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $execution_contexts, 'native_hook' ) );
+        $this->assertSame( [ 'fixture_first', 'fixture_second' ], array_column( $execution_contexts, 'mapping_id' ) );
+        $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $execution_contexts, 'submission_uuid' ) );
+        $request_ids = array_column( $execution_contexts, 'execution_request_id' );
         $this->assertCount( 2, array_unique( $request_ids ) );
         $this->assertNotEmpty( $request_ids[0] );
         $this->assertNotEmpty( $request_ids[1] );
@@ -788,7 +906,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $contexts = array_column( $executor->calls, 'context' );
 
         $this->assertCount( 2, $contexts );
-        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $contexts, 'hook' ) );
+        $this->assertSame( [ 'after_submission', 'after_submission' ], array_column( $contexts, 'hook' ) );
+        $this->assertSame( [ 'fixture_forms_submission_accepted', 'fixture_forms_submission_accepted' ], array_column( $contexts, 'native_hook' ) );
         $this->assertSame( [ 'fixture_forms', 'fixture_forms' ], array_column( $contexts, 'form_source' ) );
         $this->assertSame( [ 'concrete_first', 'concrete_second' ], array_column( $contexts, 'mapping_id' ) );
         $this->assertSame( [ $submission_uuid, $submission_uuid ], array_column( $contexts, 'submission_uuid' ) );

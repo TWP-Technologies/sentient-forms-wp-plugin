@@ -20,6 +20,7 @@ final class Sentient_Forms_Validation_Run_Result
      * @param array<int, array{field_id: string, message: string}> $field_errors
      * @param array<string, string>               $spam_classifications
      * @param array<string, string>               $execution_request_ids
+     * @param array<string, array<string, mixed>> $spam_payloads
      */
     public function __construct(
         private array $mapping_outcomes = [],
@@ -29,7 +30,8 @@ final class Sentient_Forms_Validation_Run_Result
         private ?string $form_error = null,
         private array $field_errors = [],
         private array $spam_classifications = [],
-        private array $execution_request_ids = []
+        private array $execution_request_ids = [],
+        private array $spam_payloads = []
     )
     {
     }
@@ -90,6 +92,22 @@ final class Sentient_Forms_Validation_Run_Result
     public function get_spam_classifications(): array
     {
         return $this->spam_classifications;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    public function get_spam_payloads(): array
+    {
+        return $this->spam_payloads;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function get_spam_payload( string $mapping_id ): ?array
+    {
+        return $this->spam_payloads[ $mapping_id ] ?? null;
     }
 
     /**

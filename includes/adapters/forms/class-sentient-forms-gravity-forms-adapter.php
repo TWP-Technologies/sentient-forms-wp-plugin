@@ -226,26 +226,37 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
             $mappings = $result->get_resolved_mappings();
             $mapping  = $mappings[ $mapping_id ] ?? null;
-            $execution_result = $result->get_execution_result( $mapping_id );
+            $spam_payload = $result->get_spam_payload( $mapping_id );
             if (
                 ! is_array( $mapping )
-                || ! is_array( $execution_result )
+                || ! is_array( $spam_payload )
                 || 'local_first' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) )
             )
             {
                 continue;
             }
 
-            $structured = $execution_result['result_data']['structured_output'] ?? null;
-            if ( is_array( $structured ) )
-            {
-                $execution_result['result_data'] = array_merge(
-                    is_array( $execution_result['result_data'] ?? null ) ? $execution_result['result_data'] : [],
-                    $structured
-                );
-            }
+            $canonical_result = [ 'result_data' => $spam_payload ];
 
-            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $mapping, $execution_result );
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+            $context  = $mapping;
+            if ( ! array_key_exists( 'mark_as_spam', $context ) )
+            {
+                $context['mark_as_spam'] = ! empty( $settings['mark_as_spam'] );
+            }
+            foreach ( [ 'spam_confidence_threshold', 'spam_indicators_display', 'spam_result_display_mode' ] as $setting_key )
+            {
+                if ( ! array_key_exists( $setting_key, $context ) && array_key_exists( $setting_key, $settings ) )
+                {
+                    $context[ $setting_key ] = $settings[ $setting_key ];
+                }
+            }
+            $context['settings'] = $settings;
+
+            $this->record_blocking_spam_notification_state( $entry_id, $context, $canonical_result );
+            $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $canonical_result );
         }
     }
 

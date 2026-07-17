@@ -26,6 +26,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
     /** @var array<string, array<string, mixed>|bool|WP_Error> */
     private array $validation_execution_cache = [];
 
+    /** @var array<string, string> */
+    private array $validation_request_ids = [];
+
     /** @var array<string, true> */
     private array $validation_logged_request_ids = [];
 
@@ -91,6 +94,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $field_errors          = [];
         $form_error            = null;
         $spam_classifications  = [];
+        $spam_payloads         = [];
         $execution_request_ids = [];
 
         foreach ( (array) ( $plan['cycle_ids'] ?? [] ) as $cycle_id )
@@ -118,17 +122,27 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $request_fingerprint = Sentient_Forms_Action_Executor::generate_execution_request_id(
                 $action_id,
                 $form,
                 $entry,
                 [
-                    'hook'        => $native_hook,
+                    'hook'        => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                    'native_hook' => $native_hook,
                     'form_source' => $form_source,
                     'action_id'   => (string) $mapping_id,
                     'mapping_id'  => (string) $mapping_id,
                 ]
             );
+            if ( ! isset( $this->validation_request_ids[ $request_fingerprint ] ) )
+            {
+                $this->validation_request_ids[ $request_fingerprint ] = substr(
+                    hash( 'sha256', $request_fingerprint . '|' . wp_generate_uuid4() ),
+                    0,
+                    32
+                );
+            }
+            $execution_request_ids[ (string) $mapping_id ] = $this->validation_request_ids[ $request_fingerprint ];
         }
 
         foreach ( (array) ( $plan['order'] ?? [] ) as $mapping_id )
@@ -185,17 +199,27 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $result     = $this->validation_execution_cache[ $request_id ] ?? null;
             if ( ! array_key_exists( $request_id, $this->validation_execution_cache ) )
             {
-                $result = $this->execute_validation_mapping(
-                    $action_id,
-                    $form_source,
-                    $form_id,
-                    $native_hook,
-                    $form,
-                    $entry,
-                    $mapping_key,
-                    $mapping,
-                    $dependency_context
-                );
+                try
+                {
+                    $result = $this->execute_validation_mapping(
+                        $action_id,
+                        $form_source,
+                        $form_id,
+                        $native_hook,
+                        $form,
+                        $entry,
+                        $mapping_key,
+                        $mapping,
+                        $dependency_context
+                    );
+                }
+                catch ( Throwable )
+                {
+                    $result = new WP_Error(
+                        'sentient_forms_validation_execution_exception',
+                        __( 'Validation action failed open.', 'sentient-forms' )
+                    );
+                }
                 if ( '' !== $request_id )
                 {
                     $this->validation_execution_cache[ $request_id ] = $result;
@@ -222,16 +246,27 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             $mapping_outcomes[ $mapping_key ] = 'succeeded';
             $execution_results[ $mapping_key ] = $result;
-            $trusted_structure = is_array( $result ) && $this->validation_result_has_trusted_structure( $result );
-            $classification = $trusted_structure ? $this->extract_spam_classification( $result ) : '';
+            $trusted_internal_action = $this->plugin->get_action( $action_id ) instanceof Sentient_Forms_Action_Interface;
+            $contract_code = $this->validation_output_contract_code( $action_id, $trusted_internal_action );
+            $validation = is_array( $result ) && 'content_validation_v1' === $contract_code
+                ? $this->extract_trusted_content_validation_payload( $result, $trusted_internal_action )
+                : null;
+            $spam_payload = is_array( $result ) && 'spam_detection_v1' === $contract_code
+                ? $this->extract_trusted_spam_payload( $result )
+                : null;
+            $classification = is_array( $spam_payload )
+                ? sanitize_key( (string) ( $spam_payload['classification'] ?? '' ) )
+                : '';
+            $trusted_structure = null !== $validation || '' !== $classification;
             if ( '' !== $classification )
             {
                 $spam_classifications[ $mapping_key ] = $classification;
+                $spam_payloads[ $mapping_key ] = $spam_payload;
             }
 
-            $validation = $trusted_structure ? $this->extract_validation_payload( $result ) : null;
             if ( is_array( $validation ) && false === ( $validation['is_valid'] ?? true ) )
             {
+                $field_error_count_before = count( $field_errors );
                 $message = sanitize_text_field( (string) ( $validation['message'] ?? '' ) );
                 if ( '' !== $message && null === $form_error )
                 {
@@ -254,8 +289,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         $field_errors[] = [ 'field_id' => $field_id, 'message' => $field_message ];
                     }
                 }
+                if ( null === $form_error && $field_error_count_before === count( $field_errors ) )
+                {
+                    $form_error = __( 'This submission could not be validated. Please review your entry and try again.', 'sentient-forms' );
+                }
             }
 
+            $blocked = is_array( $validation ) && false === ( $validation['is_valid'] ?? true );
+            $blocked = $blocked || in_array( $classification, [ 'spam', 'likely_spam' ], true );
             $this->log_validation_success(
                 $form_source,
                 $form_id,
@@ -263,7 +304,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $mapping,
                 $request_id,
                 is_array( $result ) ? $result : [],
-                is_array( $validation ) && false === ( $validation['is_valid'] ?? true )
+                $blocked,
+                $trusted_structure,
+                $classification
             );
         }
 
@@ -275,7 +318,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $form_error,
             $field_errors,
             $spam_classifications,
-            $execution_request_ids
+            $execution_request_ids,
+            $spam_payloads
         );
     }
 
@@ -312,7 +356,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $form,
                 $entry,
                 [
-                    'hook'                  => $native_hook,
+                    'hook'                  => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                    'native_hook'           => $native_hook,
                     'form_source'           => $form_source,
                     'mapping_id'            => $mapping_id,
                     'local_mapping_id'      => $mapping_id,
@@ -329,6 +374,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $form_source,
             $form_id,
             $native_hook,
+            Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
             $form,
             $entry,
             $mapping_id,
@@ -343,89 +389,107 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      *
      * @return array<string, mixed>|null
      */
-    private function extract_validation_payload( array $result ): ?array
+    private function extract_trusted_content_validation_payload( array $result, bool $allow_unattested ): ?array
     {
         $candidates = [
-            $result['validation'] ?? null,
-            $result['result']['validation'] ?? null,
-            $result['evaluation_payload']['validation'] ?? null,
-            $result['result']['evaluation_payload']['validation'] ?? null,
-            $result['result_data']['structured_output'] ?? null,
-            $result['result']['result_data']['structured_output'] ?? null,
-            $result['structured'] ?? null,
-            $result['result']['structured'] ?? null,
-            $result['evaluation_payload']['result_data']['structured_output'] ?? null,
-            $result['result']['evaluation_payload']['result_data']['structured_output'] ?? null,
+            [ 'candidate_path' => [ 'result_data', 'structured_output' ], 'container_path' => [ 'result_data' ] ],
+            [ 'candidate_path' => [ 'result', 'result_data', 'structured_output' ], 'container_path' => [ 'result', 'result_data' ] ],
+            [ 'candidate_path' => [ 'structured' ], 'container_path' => [] ],
+            [ 'candidate_path' => [ 'result', 'structured' ], 'container_path' => [ 'result' ] ],
+            [ 'candidate_path' => [ 'evaluation_payload', 'result_data', 'structured_output' ], 'container_path' => [ 'evaluation_payload', 'result_data' ] ],
+            [ 'candidate_path' => [ 'result', 'evaluation_payload', 'result_data', 'structured_output' ], 'container_path' => [ 'result', 'evaluation_payload', 'result_data' ] ],
         ];
-
-        foreach ( $candidates as $candidate )
+        if ( $allow_unattested )
         {
-            if ( ! is_array( $candidate ) || ! array_key_exists( 'is_valid', $candidate ) )
+            array_unshift(
+                $candidates,
+                [ 'candidate_path' => [ 'validation' ], 'container_path' => [], 'allow_unattested' => true ],
+                [ 'candidate_path' => [ 'result', 'validation' ], 'container_path' => [ 'result' ], 'allow_unattested' => true ]
+            );
+        }
+
+        return $this->select_unique_attested_structured_output(
+            'content_validation_v1',
+            $result,
+            $candidates
+        );
+    }
+
+    /**
+     * Select one schema-valid structured payload while binding parser
+     * attestation to the exact wrapper that contains the candidate.
+     *
+     * @param array<string, mixed>                                                                                  $result
+     * @param array<int, array{candidate_path: array<int, string>, container_path: array<int, string>, allow_unattested?: bool}> $candidate_specs
+     *
+     * @return array<string, mixed>|null
+     */
+    private function select_unique_attested_structured_output(
+        string $action_code,
+        array $result,
+        array $candidate_specs
+    ): ?array
+    {
+        $selected = null;
+        $found    = false;
+        foreach ( $candidate_specs as $candidate_spec )
+        {
+            $container = $this->array_value_at_path( $result, $candidate_spec['container_path'] );
+            if ( ! is_array( $container ) )
             {
                 continue;
             }
 
-            return [
-                'is_valid' => rest_sanitize_boolean( $candidate['is_valid'] ),
-                'message'  => isset( $candidate['message'] ) && is_scalar( $candidate['message'] )
-                    ? sanitize_text_field( (string) $candidate['message'] )
-                    : '',
-                'fields'   => isset( $candidate['fields'] ) && is_array( $candidate['fields'] )
-                    ? $candidate['fields']
-                    : [],
-            ];
+            $marker_present   = array_key_exists( 'structured_output_valid', $container );
+            $allow_unattested = true === ( $candidate_spec['allow_unattested'] ?? false );
+            if ( ( $marker_present && true !== $container['structured_output_valid'] )
+                || ( ! $marker_present && ! $allow_unattested ) )
+            {
+                continue;
+            }
+
+            $candidate = $this->array_value_at_path( $result, $candidate_spec['candidate_path'] );
+            if ( ! is_array( $candidate ) )
+            {
+                continue;
+            }
+
+            if ( ! Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid( $action_code, $candidate ) )
+            {
+                continue;
+            }
+
+            if ( $found && $selected != $candidate ) // phpcs:ignore WordPress.PHP.StrictComparisons.LooseComparison -- Schema validation fixes leaf types; loose array comparison intentionally ignores key order.
+            {
+                return null;
+            }
+
+            $selected = $candidate;
+            $found    = true;
         }
 
-        return null;
+        return $selected;
     }
 
     /**
-     * Determine whether a completed validation response has a trusted structure.
+     * @param array<string, mixed> $values
+     * @param array<int, string>   $path
      *
-     * An explicit validity marker is authoritative when present. Responses without
-     * a marker must match a content-validation or spam-classification shape that
-     * this runner can safely interpret.
-     *
-     * @param array<string, mixed> $result
+     * @return mixed
      */
-    private function validation_result_has_trusted_structure( array $result ): bool
+    private function array_value_at_path( array $values, array $path )
     {
-        $marker_paths = [
-            [],
-            [ 'result' ],
-            [ 'result_data' ],
-            [ 'result', 'result_data' ],
-            [ 'evaluation_payload' ],
-            [ 'evaluation_payload', 'result' ],
-            [ 'evaluation_payload', 'result_data' ],
-            [ 'result', 'evaluation_payload' ],
-            [ 'result', 'evaluation_payload', 'result' ],
-            [ 'result', 'evaluation_payload', 'result_data' ],
-        ];
-        foreach ( $marker_paths as $path )
+        $value = $values;
+        foreach ( $path as $key )
         {
-            $container = $result;
-            foreach ( $path as $key )
+            if ( ! is_array( $value ) || ! array_key_exists( $key, $value ) )
             {
-                if ( ! isset( $container[ $key ] ) || ! is_array( $container[ $key ] ) )
-                {
-                    continue 2;
-                }
-                $container = $container[ $key ];
+                return null;
             }
-
-            if ( array_key_exists( 'structured_output_valid', $container ) )
-            {
-                return rest_sanitize_boolean( $container['structured_output_valid'] );
-            }
+            $value = $value[ $key ];
         }
 
-        if ( null !== $this->extract_validation_payload( $result ) )
-        {
-            return true;
-        }
-
-        return in_array( $this->extract_spam_classification( $result ), [ 'ham', 'likely_spam', 'spam' ], true );
+        return $value;
     }
 
     private function safe_error_code( WP_Error $error, string $fallback ): string
@@ -497,7 +561,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $mapping,
         string $execution_request_id,
         array $result,
-        bool $blocked
+        bool $blocked,
+        bool $trusted_structure,
+        string $classification
     ): void
     {
         if ( '' !== $execution_request_id && isset( $this->validation_logged_request_ids[ $execution_request_id ] ) )
@@ -514,7 +580,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return;
         }
 
-        $classification = $this->extract_spam_classification( $result );
         $meta           = isset( $result['meta'] ) && is_array( $result['meta'] )
             ? $result['meta']
             : ( isset( $result['result']['meta'] ) && is_array( $result['result']['meta'] ) ? $result['result']['meta'] : [] );
@@ -527,21 +592,24 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             )
             : __( 'Validation action completed.', 'sentient-forms' );
 
-        Sentient_Forms_Action_Log_Controller::log_execution(
-            [
-                'form_source'             => $form_source,
-                'form_id'                 => $form_id,
-                'action_code'             => $this->central_action_id( $mapping ),
-                'action_label'            => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
-                'status'                  => $blocked ? 'blocked' : 'success',
-                'result_summary'          => wp_trim_words( $summary, 20, '...' ),
-                'classification'          => $classification,
-                'credits_used'            => $credits_used,
-                'execution_request_id'    => $execution_request_id,
-                'mapping_id'              => $mapping_id,
-                'structured_output_valid' => $this->validation_result_has_trusted_structure( $result ),
-            ]
-        );
+        $log_entry = [
+            'form_source'             => $form_source,
+            'form_id'                 => $form_id,
+            'action_code'             => $this->central_action_id( $mapping ),
+            'action_label'            => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+            'status'                  => $blocked ? 'blocked' : 'success',
+            'result_summary'          => wp_trim_words( $summary, 20, '...' ),
+            'credits_used'            => $credits_used,
+            'execution_request_id'    => $execution_request_id,
+            'mapping_id'              => $mapping_id,
+            'structured_output_valid' => $trusted_structure,
+        ];
+        if ( '' !== $classification )
+        {
+            $log_entry['classification'] = $classification;
+        }
+
+        Sentient_Forms_Action_Log_Controller::log_execution( $log_entry );
     }
 
     /**
@@ -1075,6 +1143,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         $form_source,
                         $form_id,
                         $native_hook,
+                        Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
                         $form,
                         $entry,
                         (string) $mapping_id,
@@ -1777,6 +1846,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         string $form_source,
         string $form_id,
         string $native_hook,
+        string $lifecycle,
         array $form,
         array $entry,
         string $mapping_id,
@@ -1789,7 +1859,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( $action instanceof Sentient_Forms_Action_Interface )
         {
             $execution_context = [
-                'hook'                 => $native_hook,
+                'hook'                 => $lifecycle,
+                'native_hook'          => $native_hook,
                 'form_source'          => $form_source,
                 'mapping_id'           => $mapping_id,
                 'local_mapping_id'     => $mapping_id,
@@ -1804,7 +1875,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 [
                     'form'              => $form,
                     'entry'             => $entry,
-                    'hook'              => $native_hook,
+                    'hook'              => $lifecycle,
+                    'native_hook'       => $native_hook,
                     'form_source'       => $form_source,
                     'execution_context' => $execution_context,
                 ],
@@ -1819,7 +1891,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $form,
             $entry,
             [
-                'hook'              => $native_hook,
+                'hook'              => $lifecycle,
+                'native_hook'       => $native_hook,
                 'form_source'       => $form_source,
                 'action_id'         => $mapping_id,
                 'mapping_id'        => $mapping_id,
@@ -2231,7 +2304,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            if ( ! in_array( $this->extract_spam_classification( $result ), [ 'spam', 'likely_spam' ], true ) )
+            $action_id = $this->central_action_id( $mapping );
+            $trusted_internal_action = $this->plugin->get_action( $action_id ) instanceof Sentient_Forms_Action_Interface;
+            if ( 'spam_detection_v1' !== $this->validation_output_contract_code( $action_id, $trusted_internal_action ) )
+            {
+                continue;
+            }
+
+            $spam_payload = $this->extract_trusted_spam_payload( $result );
+            $classification = is_array( $spam_payload )
+                ? sanitize_key( (string) ( $spam_payload['classification'] ?? '' ) )
+                : '';
+            if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
             {
                 continue;
             }
@@ -2259,7 +2343,28 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
     private function is_spam_action_id( string $action_id ): bool
     {
-        return in_array( sanitize_key( $action_id ), [ 'spam_detection_v1', 'spam_analysis' ], true );
+        return 'spam_detection_v1' === $this->validation_output_contract_code( $action_id, false );
+    }
+
+    private function validation_output_contract_code( string $action_id, bool $trusted_internal_action ): string
+    {
+        $action_id = sanitize_key( $action_id );
+        if ( 'spam_analysis' === $action_id )
+        {
+            return 'spam_detection_v1';
+        }
+
+        $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $action_id );
+        if ( in_array( $template_code, [ 'content_validation_v1', 'spam_detection_v1' ], true ) )
+        {
+            return $template_code;
+        }
+        if ( '' !== $template_code )
+        {
+            return '';
+        }
+
+        return $trusted_internal_action ? 'content_validation_v1' : '';
     }
 
     /**
@@ -2297,6 +2402,32 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
 
         return '';
+    }
+
+    /**
+     * Release a spam classification only from a parser-attested payload that
+     * satisfies the plugin-owned executable schema.
+     *
+     * @param array<string, mixed> $result
+     */
+    private function extract_trusted_spam_payload( array $result ): ?array
+    {
+        $candidates = [
+            [ 'candidate_path' => [ 'structured' ], 'container_path' => [] ],
+            [ 'candidate_path' => [ 'structured_output' ], 'container_path' => [] ],
+            [ 'candidate_path' => [ 'result_data', 'structured_output' ], 'container_path' => [ 'result_data' ] ],
+            [ 'candidate_path' => [ 'result', 'structured' ], 'container_path' => [ 'result' ] ],
+            [ 'candidate_path' => [ 'result', 'structured_output' ], 'container_path' => [ 'result' ] ],
+            [ 'candidate_path' => [ 'result', 'result_data', 'structured_output' ], 'container_path' => [ 'result', 'result_data' ] ],
+            [ 'candidate_path' => [ 'evaluation_payload', 'result_data', 'structured_output' ], 'container_path' => [ 'evaluation_payload', 'result_data' ] ],
+            [ 'candidate_path' => [ 'result', 'evaluation_payload', 'result_data', 'structured_output' ], 'container_path' => [ 'result', 'evaluation_payload', 'result_data' ] ],
+        ];
+
+        return $this->select_unique_attested_structured_output(
+            'spam_detection_v1',
+            $result,
+            $candidates
+        );
     }
 
     /**

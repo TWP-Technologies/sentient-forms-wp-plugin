@@ -265,6 +265,66 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         );
     }
 
+    public function test_executable_structured_output_validation_requires_exact_catalog_shapes(): void
+    {
+        $content_validation = [
+            'is_valid' => false,
+            'message'  => 'Please add useful detail.',
+            'fields'   => [
+                [
+                    'field_id' => '3',
+                    'is_valid' => false,
+                    'message'  => 'Project details need more substance.',
+                ],
+            ],
+        ];
+        $this->assertTrue(
+            Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid(
+                'content_validation_v1',
+                $content_validation
+            )
+        );
+
+        $wrong_boolean = $content_validation;
+        $wrong_boolean['is_valid'] = 'false';
+        $this->assertFalse(
+            Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid(
+                'content_validation_v1',
+                $wrong_boolean
+            )
+        );
+
+        $unknown_property = $content_validation;
+        $unknown_property['raw_provider_payload'] = 'must not cross the executable boundary';
+        $this->assertFalse(
+            Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid(
+                'content_validation_v1',
+                $unknown_property
+            )
+        );
+
+        $spam = [
+            'classification' => 'spam',
+            'confidence'     => 0.99,
+            'justification'  => 'Trusted validation-phase spam classification.',
+            'indicators'     => [],
+        ];
+        $this->assertTrue(
+            Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid(
+                'spam_detection_v1',
+                $spam
+            )
+        );
+
+        $spam['unknown'] = true;
+        $this->assertFalse(
+            Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid(
+                'spam_detection_v1',
+                $spam
+            )
+        );
+    }
+
     public function test_clarification_assistant_template_is_realtime_json_with_virtual_questions(): void
     {
         $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );

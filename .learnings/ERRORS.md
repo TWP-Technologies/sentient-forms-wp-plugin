@@ -30,6 +30,39 @@ Normalize raw text to LF before calculating marker offsets for generated patches
 
 ---
 
+## [ERR-20260717-004] phpunit-bat-filter-regex-quoting
+
+**Logged**: 2026-07-17T06:35:00-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A grouped PHPUnit filter passed through the Windows batch shim was split at the regex alternation before PHPUnit started.
+
+### Error
+```text
+'attested_' is not recognized as an internal or external command
+```
+
+### Context
+- The focused filter contained parentheses and a pipe character.
+- PowerShell invoked `vendor\\bin\\phpunit.bat`, adding a second `cmd.exe` parsing layer.
+
+### Suggested Fix
+For regex filters on Windows, invoke `php vendor\\phpunit\\phpunit\\phpunit --filter '<regex>'` directly instead of the batch shim.
+
+### Metadata
+- Reproducible: yes
+- Related Files: phpunit.xml, tests/phpunit/test-gravity-forms-adapter.php
+- See Also: ERR-20260717-003
+
+### Resolution
+- **Resolved**: 2026-07-17T06:36:00-05:00
+- **Notes**: The direct PHP runner executed all six intended regression tests successfully.
+
+---
+
 ## [ERR-20260710-006] opaque_parallel_read_failure
 
 **Logged**: 2026-07-10T10:20:06-05:00
@@ -217,5 +250,108 @@ Invoke `php vendor/phpunit/phpunit/phpunit --filter '<class expression>'` and ca
 ### Resolution
 - **Resolved**: 2026-07-10T11:10:32-05:00
 - **Notes**: The class-filtered runs passed with 219 tests / 1,582 assertions and 146 tests / 1,095 assertions.
+
+---
+
+## [ERR-20260717-001] phpunit-polyfill-autoloader-invocation
+
+**Logged**: 2026-07-17T02:20:00-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The PHPUnit polyfill autoloader was invoked as though it were the test runner, producing exit code 0 while executing no tests.
+
+### Error
+```text
+php vendor/yoast/phpunit-polyfills/phpunitpolyfills-autoload.php --filter <class>
+Exit code: 0, no PHPUnit result or log file
+```
+
+### Context
+- A focused rerun used the polyfill bootstrap file instead of the repository's PHPUnit executable.
+- Because the bootstrap exits successfully, checking only the process exit code could have created a false green.
+- No repository or runtime state changed beyond this learning entry.
+
+### Suggested Fix
+Invoke `php vendor/phpunit/phpunit/phpunit --configuration phpunit.xml --filter '<class expression>'`, and require the captured log to contain the PHPUnit test summary in addition to exit code 0. Inspect the checkout's actual configuration filename rather than assuming the common `.dist` suffix.
+
+### Metadata
+- Reproducible: yes
+- Related Files: phpunit.xml
+- See Also: ERR-20260710-007
+
+### Resolution
+- **Resolved**: 2026-07-17T02:20:00-05:00
+- **Notes**: Corrected both the runner and the checkout-specific configuration filename, then added an explicit summary-presence check to the focused rerun.
+
+---
+
+## [ERR-20260717-003] validation-command-assumptions
+
+**Logged**: 2026-07-17T02:58:09-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Three read-only validation commands assumed a source path, PHPUnit file invocation, or shell timeout behavior that this checkout does not provide.
+
+### Error
+```text
+rg: includes/services/class-sentient-forms-local-execution-service.php: The system cannot find the file specified.
+Class test-bundled-action-templates could not be found
+command timed out after 1022 milliseconds
+```
+
+### Context
+- The local execution service filename includes `-action-`, and a combined lookup failed when given the shorter guessed path.
+- This WordPress PHPUnit suite discovers tests through `phpunit.xml`; passing a hyphenated test filename directly made PHPUnit derive a nonexistent class name.
+- A one-second shell timeout terminates the child process; it is not an asynchronous launch mechanism.
+
+### Suggested Fix
+Resolve filenames with `rg --files` before targeting them, invoke focused WordPress tests through the configured suite plus `--filter`, and use a long child timeout with an early-yielding orchestration cell for long-running suites.
+
+### Metadata
+- Reproducible: yes
+- Related Files: includes/services/class-sentient-forms-local-action-execution-service.php, phpunit.xml
+- See Also: ERR-20260717-001, ERR-20260710-007
+
+### Resolution
+- **Resolved**: 2026-07-17T02:58:09-05:00
+- **Notes**: Reissued each lookup/test with the checkout-resolved path and configured suite; the final full run completed with 1,191 tests and 9,828 assertions.
+
+---
+
+## [ERR-20260717-002] powershell-rg-alternation-quoting
+
+**Logged**: 2026-07-17T02:24:00-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A PowerShell-quoted ripgrep alternation lost its closing quoted branch and reached ripgrep as an invalid regular expression.
+
+### Error
+```text
+rg: regex parse error: unclosed group
+```
+
+### Context
+- The lookup only needed one literal action code.
+- The unnecessary alternation increased quoting risk without adding evidence.
+
+### Suggested Fix
+Use `rg -F` for literal identifiers; introduce a regular expression only when matching behavior actually requires one.
+
+### Metadata
+- Reproducible: yes
+- Related Files: includes/class-sentient-forms-bundled-action-templates.php
+
+### Resolution
+- **Resolved**: 2026-07-17T02:24:00-05:00
+- **Notes**: Reissued the lookup with `rg -F` and obtained the canonical schema definition.
 
 ---

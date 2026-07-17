@@ -247,9 +247,9 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                             'is_valid' => false,
                             'message'  => 'Please review your submission.',
                             'fields'   => [
-                                [ 'field_id' => 'full_name', 'message' => 'Provide your full name.' ],
-                                [ 'field_id' => 'full_name.first', 'message' => 'Unresolvable compound child.' ],
-                                [ 'field_id' => 'missing_field', 'message' => 'Unknown field.' ],
+                                [ 'field_id' => 'full_name', 'is_valid' => false, 'message' => 'Provide your full name.' ],
+                                [ 'field_id' => 'full_name.first', 'is_valid' => false, 'message' => 'Unresolvable compound child.' ],
+                                [ 'field_id' => 'missing_field', 'is_valid' => false, 'message' => 'Unknown field.' ],
                             ],
                         ],
                     ];
@@ -276,7 +276,8 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $descriptor = $adapter->get_capability_descriptor();
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
-        $this->assertSame( 'elementor_pro/forms/validation', $seen['hook'] ?? null );
+        $this->assertSame( 'validation', $seen['hook'] ?? null );
+        $this->assertSame( 'elementor_pro/forms/validation', $seen['native_hook'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $seen['form_source'] ?? null );
         $this->assertSame( [ 'first' => 'Ada', 'last' => 'Lovelace' ], $seen['entry']['full_name'] ?? null );
         $this->assertSame( [ 'full_name', 'email' ], $seen['execution_context']['native_validation_context']['record_field_ids'] ?? null );
@@ -327,6 +328,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                         'validation' => [
                             'is_valid' => false,
                             'message'  => 'Template-source validation ran.',
+                            'fields'   => [],
                         ],
                     ];
                 }
@@ -484,7 +486,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $page_id   = $this->create_elementor_form_page();
         $form_id   = $page_id . ':formabc';
-        $action_id = 'elementor_spam_validation_fixture';
+        $action_id = 'spam_analysis';
         $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
         Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
             new Sentient_Forms_Test_Elementor_Validation_Action(
@@ -496,6 +498,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                             'classification' => 'spam',
                             'confidence'     => 0.99,
                             'justification'  => 'Private classification details.',
+                            'indicators'     => [
+                                [
+                                    'type'     => 'commercial_solicitation',
+                                    'evidence' => 'Private classification details.',
+                                    'weight'   => 'high',
+                                ],
+                            ],
                         ],
                     ],
                 ]
@@ -525,6 +534,17 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $cases = [
             'provider'     => new WP_Error( 'provider_timeout', 'Private provider timeout details.' ),
             'unstructured' => [ 'content' => 'Unstructured provider response.' ],
+            'wrong_schema' => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Wrong schema for this custom validation Action.',
+                        'indicators'     => [],
+                    ],
+                ],
+            ],
         ];
 
         foreach ( $cases as $case => $action_result )

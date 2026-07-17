@@ -83,8 +83,13 @@ class Sentient_Forms_Action_Executor {
 		}
 
 		$client                = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token      = self::derive_submission_token( $form, $entry );
-		$execution_request_id  = self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+		$submission_token     = self::derive_submission_token( $form, $entry );
+		$explicit_request_id  = isset( $context['execution_request_id'] ) && is_scalar( $context['execution_request_id'] )
+			? sanitize_text_field( trim( (string) $context['execution_request_id'] ) )
+			: '';
+		$execution_request_id = '' !== $explicit_request_id
+			? $explicit_request_id
+			: self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
 		$entry_id              = isset( $entry['id'] ) ? (int) $entry['id'] : 0;
 		$cached_result         = $this->get_cached_execution_result( $execution_request_id, $entry_id, $context );
 
@@ -356,9 +361,9 @@ class Sentient_Forms_Action_Executor {
 			return $response;
 		}
 
-		if ( isset( $response['validation'] ) && is_array( $response['validation'] ) ) {
-			return $response;
-		}
+
+		// A provider-supplied top-level bridge is not itself proof of parsing.
+		unset( $response['validation'] );
 
 		$result_data = isset( $response['result_data'] ) && is_array( $response['result_data'] )
 			? $response['result_data']
@@ -382,26 +387,20 @@ class Sentient_Forms_Action_Executor {
 	 * @return array<string, mixed>|null
 	 */
 	private function extract_content_validation_payload( array $result_data ): ?array {
-		$candidates = array();
-
 		if (
-			! empty( $result_data['structured_output_valid'] )
-			&& isset( $result_data['structured_output'] )
-			&& is_array( $result_data['structured_output'] )
+			true !== ( $result_data['structured_output_valid'] ?? null )
+			|| ! isset( $result_data['structured_output'] )
+			|| ! is_array( $result_data['structured_output'] )
 		) {
-			$candidates[] = $result_data['structured_output'];
+			return null;
 		}
 
-		$candidates[] = $result_data;
-
-		foreach ( $candidates as $candidate ) {
-			$normalized = $this->normalize_content_validation_payload( $candidate );
-			if ( null !== $normalized ) {
-				return $normalized;
-			}
+		$candidate = $result_data['structured_output'];
+		if ( ! Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid( 'content_validation_v1', $candidate ) ) {
+			return null;
 		}
 
-		return null;
+		return $this->normalize_content_validation_payload( $candidate );
 	}
 
 	/**

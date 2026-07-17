@@ -173,6 +173,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                             'fields'   => [
                                 [
                                     'field_id' => '2',
+                                    'is_valid' => false,
                                     'message'  => 'Tell us what you need built.',
                                 ],
                             ],
@@ -198,7 +199,8 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
 
         $this->assertSame( 3, $accepted_args );
         $this->assertSame( 1, $executions );
-        $this->assertSame( 'wpforms_process', $seen['hook'] ?? null );
+        $this->assertSame( 'validation', $seen['hook'] ?? null );
+        $this->assertSame( 'wpforms_process', $seen['native_hook'] ?? null );
         $this->assertSame( 'wpforms', $seen['form_source'] ?? null );
         $this->assertSame( 'test', $seen['entry']['project_details'] ?? null );
         $this->assertSame( [ 'source' ], $seen['execution_context']['native_validation_context']['entry_keys'] ?? null );
@@ -248,6 +250,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                     'validation' => [
                         'is_valid' => false,
                         'message'  => 'Payment must not run for an invalid submission.',
+                        'fields'   => [],
                     ],
                 ]
             )
@@ -279,7 +282,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_spam_validation_blocks_with_header_error_without_native_spam_state(): void
     {
         $form_id    = 7957;
-        $action_id  = 'wpforms_spam_validation_fixture';
+        $action_id  = 'spam_analysis';
         $process    = (object) [ 'errors' => [] ];
         $executions = 0;
         Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
@@ -295,6 +298,13 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                                 'classification' => 'spam',
                                 'confidence'     => 0.99,
                                 'justification'  => 'Known spam fixture.',
+                                'indicators'     => [
+                                    [
+                                        'type'     => 'commercial_solicitation',
+                                        'evidence' => 'Known spam fixture.',
+                                        'weight'   => 'high',
+                                    ],
+                                ],
                             ],
                         ],
                     ];
@@ -332,6 +342,17 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                                 'message'  => 'Untrusted field error.',
                             ],
                         ],
+                    ],
+                ],
+            ],
+            7962 => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Wrong schema for this custom validation Action.',
+                        'indicators'     => [],
                     ],
                 ],
             ],
