@@ -32,7 +32,7 @@ describe('Svelte guard command contract', () => {
 
 		try {
 			const result = spawnSync(
-				process.execPath,
+				'node',
 				[resolve(projectRoot, 'scripts/svelte-guard.mjs')],
 				{
 					cwd: fixtureRoot,
@@ -41,6 +41,7 @@ describe('Svelte guard command contract', () => {
 			);
 			const output = `${result.stdout}${result.stderr}`;
 
+			expect(result.error).toBeUndefined();
 			expect(result.status).toBe(1);
 			expect(output).toContain('src/first.svelte');
 			expect(output).toContain('src/second.svelte');

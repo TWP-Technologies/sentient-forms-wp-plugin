@@ -308,19 +308,32 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
     protected function process_response( array $response, array $payload, array $settings ): array
     {
         $result_data    = is_array( $response[ 'result_data' ] ?? null ) ? $response[ 'result_data' ] : [];
+        $result_data    = $this->attest_structured_output( $result_data );
         $meta           = is_array( $response[ 'meta' ] ?? null ) ? $response[ 'meta' ] : [];
-        $classification = isset( $result_data[ 'classification' ] ) ? strtolower( (string) $result_data[ 'classification' ] ) : '';
+        $structured_output = true === ( $result_data[ 'structured_output_valid' ] ?? false )
+            && is_array( $result_data[ 'structured_output' ] ?? null )
+            ? $result_data[ 'structured_output' ]
+            : [];
+        $classification = isset( $structured_output[ 'classification' ] )
+            ? sanitize_key( (string) $structured_output[ 'classification' ] )
+            : '';
         $is_spam        = in_array( $classification, [ 'spam', 'likely_spam' ], true );
+        $evaluation_payload = is_array( $response[ 'evaluation_payload' ] ?? null )
+            ? $response[ 'evaluation_payload' ]
+            : [];
+        foreach ( [ 'classification', 'confidence', 'justification', 'reasoning', 'indicators', 'spam_indicators', 'is_spam' ] as $semantic_key )
+        {
+            unset( $evaluation_payload[ $semantic_key ] );
+        }
+        $evaluation_payload[ 'result_data' ] = $result_data;
+        $evaluation_payload[ 'meta' ]        = $meta;
 
         $result = [
             'result_data'        => $result_data,
             'meta'               => $meta,
             'classification'     => $classification,
             'is_spam'            => $is_spam,
-            'evaluation_payload' => $response[ 'evaluation_payload' ] ?? [
-                'result_data' => $result_data,
-                'meta'        => $meta,
-            ],
+            'evaluation_payload' => $evaluation_payload,
         ];
 
         $entry_id = $payload[ 'entry' ][ 'id' ] ?? null;
@@ -357,6 +370,131 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
         }
 
         return $result;
+    }
+
+    /**
+     * Convert the retained legacy response shape into the catalog-owned spam
+     * contract before shared workflow code consumes it.
+     *
+     * @param array<string, mixed> $result_data Legacy CPS result data.
+     * @return array<string, mixed>
+     */
+    private function attest_structured_output( array $result_data ): array
+    {
+        $existing_output = $result_data[ 'structured_output' ] ?? null;
+        if (
+            true === ( $result_data[ 'structured_output_valid' ] ?? false )
+            && is_array( $existing_output )
+            && Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid( 'spam_detection_v1', $existing_output )
+        )
+        {
+            $result_data = $this->strip_legacy_semantic_fields( $result_data );
+            $result_data[ 'structured_output_valid' ] = true;
+            $result_data[ 'structured_output' ]       = $existing_output;
+
+            return $result_data;
+        }
+
+        $result_data[ 'structured_output_valid' ] = false;
+        unset( $result_data[ 'structured_output' ] );
+
+        $classification = is_string( $result_data[ 'classification' ] ?? null )
+            ? sanitize_key( $result_data[ 'classification' ] )
+            : '';
+        $confidence     = $result_data[ 'confidence' ] ?? null;
+        $justification  = $result_data[ 'justification' ] ?? $result_data[ 'reasoning' ] ?? null;
+        $indicators     = $this->normalize_spam_indicators(
+            $result_data[ 'indicators' ] ?? $result_data[ 'spam_indicators' ] ?? []
+        );
+
+        if (
+            !in_array( $classification, [ 'ham', 'likely_spam', 'spam' ], true )
+            || !( is_int( $confidence ) || is_float( $confidence ) )
+            || $confidence < 0
+            || $confidence > 1
+            || !is_string( $justification )
+            || '' === trim( $justification )
+            || null === $indicators
+        )
+        {
+            return $this->strip_legacy_semantic_fields( $result_data );
+        }
+
+        $structured_output = [
+            'classification' => $classification,
+            'confidence'     => $confidence,
+            'justification'  => sanitize_textarea_field( $justification ),
+            'indicators'     => $indicators,
+        ];
+
+        if ( !Sentient_Forms_Bundled_Action_Templates::is_structured_output_valid( 'spam_detection_v1', $structured_output ) )
+        {
+            return $this->strip_legacy_semantic_fields( $result_data );
+        }
+
+        $result_data = $this->strip_legacy_semantic_fields( $result_data );
+        $result_data[ 'structured_output_valid' ] = true;
+        $result_data[ 'structured_output' ]       = $structured_output;
+
+        return $result_data;
+    }
+
+    /**
+     * Remove unvalidated legacy semantic fields after boundary conversion.
+     *
+     * @param array<string, mixed> $result_data Legacy CPS result data.
+     * @return array<string, mixed>
+     */
+    private function strip_legacy_semantic_fields( array $result_data ): array
+    {
+        foreach ( [ 'classification', 'confidence', 'justification', 'reasoning', 'indicators', 'spam_indicators', 'is_spam' ] as $semantic_key )
+        {
+            unset( $result_data[ $semantic_key ] );
+        }
+
+        return $result_data;
+    }
+
+    /**
+     * Normalize legacy spam indicators without inventing missing evidence.
+     *
+     * @param mixed $raw_indicators Legacy indicator collection.
+     * @return array<int, array<string, string>>|null
+     */
+    private function normalize_spam_indicators( mixed $raw_indicators ): ?array
+    {
+        if ( !is_array( $raw_indicators ) )
+        {
+            return null;
+        }
+
+        $indicators = [];
+        foreach ( $raw_indicators as $indicator )
+        {
+            if ( !is_array( $indicator ) )
+            {
+                return null;
+            }
+
+            $type     = is_string( $indicator[ 'type' ] ?? null ) ? sanitize_key( $indicator[ 'type' ] ) : null;
+            $evidence = is_string( $indicator[ 'evidence' ] ?? null )
+                ? sanitize_textarea_field( $indicator[ 'evidence' ] )
+                : null;
+            $weight   = is_string( $indicator[ 'weight' ] ?? null ) ? sanitize_key( $indicator[ 'weight' ] ) : null;
+
+            if ( null === $type || null === $evidence || !in_array( $weight, [ 'high', 'medium', 'low' ], true ) )
+            {
+                return null;
+            }
+
+            $indicators[] = [
+                'type'     => $type,
+                'evidence' => $evidence,
+                'weight'   => $weight,
+            ];
+        }
+
+        return $indicators;
     }
 
     /**

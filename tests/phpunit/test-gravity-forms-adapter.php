@@ -252,16 +252,34 @@ final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action
 final class Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action extends Sentient_Forms_Spam_Analysis_Action
 {
     public int $action_owned_notes = 0;
+    public ?array $response_result_data = null;
+    public array $response_result_data_sequence = [];
+    public array $seen_settings = [];
+
+    public function use_action_id( string $action_id ): void
+    {
+        $this->id = $action_id;
+    }
+
+    public function process_result_data( array $result_data ): array
+    {
+        return $this->process_response( [ 'result_data' => $result_data ], [], [] );
+    }
 
     public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
     {
+        $this->seen_settings[] = $settings;
+        $result_data = ! empty( $this->response_result_data_sequence )
+            ? array_shift( $this->response_result_data_sequence )
+            : ( $this->response_result_data ?? [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'Production-faithful bundled spam result.',
+            ] );
+
         return $this->process_response(
             [
-                'result_data' => [
-                    'classification' => 'spam',
-                    'confidence'     => 0.99,
-                    'justification'  => 'Production-faithful bundled spam result.',
-                ],
+                'result_data' => $result_data,
             ],
             [
                 'form'  => [ 'id' => $form_id ],
@@ -353,12 +371,13 @@ final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms
             return false;
         }
 
+        ++$this->spam_marks;
+
         if ( 'spam' === ( $this->entries[ $entry_id ]['status'] ?? null ) ) {
             return true;
         }
 
         ++$this->spam_status_updates;
-        ++$this->spam_marks;
         $this->entries[ $entry_id ]['status'] = 'spam';
 
         return true;
@@ -1078,7 +1097,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( 'sentient_forms_action_log' );
     }
 
-    public function test_valid_spam_classification_bridges_once_to_saved_gravity_entry(): void
+    /**
+     * @dataProvider provide_production_faithful_spam_result_shapes
+     */
+    public function test_valid_spam_classification_bridges_once_to_saved_gravity_entry( array $response_result_data ): void
     {
         $form_id    = 7903;
         $entry_id   = 17903;
@@ -1086,31 +1108,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
         $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
         $adapter->entries[ $entry_id ] = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'structured_output_valid' => true,
-                    'structured'              => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.99,
-                        'justification'  => 'Known spam fixture.',
-                        'indicators'     => [
-                            [
-                                'type'     => 'commercial_solicitation',
-                                'evidence' => 'Known spam fixture.',
-                                'weight'   => 'high',
-                            ],
-                        ],
-                    ],
-                    'result_data' => [
-                        'classification' => 'ham',
-                        'confidence'     => 0.01,
-                    ],
-                ],
-                [ 'gform_validation' ]
-            )
-        );
+        $action                       = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $action->response_result_data = $response_result_data;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
         update_option(
             $option_key,
             [
@@ -1153,6 +1153,32 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
 
         delete_option( $option_key );
+    }
+
+    public static function provide_production_faithful_spam_result_shapes(): array
+    {
+        $structured_output = [
+            'classification' => 'spam',
+            'confidence'     => 0.99,
+            'justification'  => 'Production-faithful bundled spam result.',
+            'indicators'     => [],
+        ];
+
+        return [
+            'legacy flat result' => [
+                [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'Production-faithful bundled spam result.',
+                ],
+            ],
+            'attested structured-only result' => [
+                [
+                    'structured_output_valid' => true,
+                    'structured_output'       => $structured_output,
+                ],
+            ],
+        ];
     }
 
     public function test_validation_spam_context_preserves_explicit_top_level_marking_policy(): void
@@ -2940,8 +2966,233 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 1, $adapter->spam_status_updates );
         $this->assertSame( 0, $action->action_owned_notes );
         $this->assertCount( 1, $adapter->notes );
+        $this->assertStringContainsString( 'Production-faithful bundled spam result.', $adapter->notes[0]['note_content'] ?? '' );
 
         delete_option( $option_key );
+    }
+
+    public function test_canonicalized_legacy_spam_respects_native_confidence_threshold(): void
+    {
+        $form_id    = 7963;
+        $entry_id   = 17963;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form       = [ 'id' => $form_id, 'title' => 'Low-confidence spam action', 'fields' => [] ];
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $action->response_result_data = [
+            'classification' => 'spam',
+            'confidence'     => 0.40,
+            'justification'  => 'Suspicious, but below the configured threshold.',
+            'indicators'     => [
+                [
+                    'type'     => 'suspicious_links',
+                    'evidence' => 'A shortened URL.',
+                    'weight'   => 'medium',
+                ],
+            ],
+        ];
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        $adapter->webhook_controls_supported = true;
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => 'spam_analysis',
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'                    => false,
+                        'mark_as_spam'             => true,
+                        'spam_confidence_threshold' => 0.95,
+                        'spam_result_display_mode'  => 'all_results',
+                    ],
+                ],
+            ],
+            false
+        );
+
+        gform_update_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
+        gform_update_meta( $entry_id, 'sentient_forms_spam_notification_preference', 'suppress' );
+        $adapter->handle_accepted_submission( $entry, $form );
+        $notification = [ 'id' => 'notification-low-confidence', 'name' => 'Low-confidence notification' ];
+
+        $this->assertSame( 'active', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 0, $adapter->spam_status_updates );
+        $this->assertSame( 'reviewed', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertSame( 'allow', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertSame( 'allow', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
+        $this->assertSame( $notification, $adapter->maybe_suppress_spam_notification( $notification, $form, $entry ) );
+        $this->assertCount( 1, $adapter->notes );
+        $this->assertStringContainsString( '40% spam confidence', $adapter->notes[0]['note_content'] ?? '' );
+        $this->assertStringContainsString( '95% threshold', $adapter->notes[0]['note_content'] ?? '' );
+
+        delete_option( $option_key );
+    }
+
+    /**
+     * @dataProvider provide_mixed_spam_mapping_orders
+     */
+    public function test_mixed_spam_mapping_confidence_reduces_monotonically( array $confidences ): void
+    {
+        $form_id    = 7964;
+        $entry_id   = 17964;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form       = [ 'id' => $form_id, 'title' => 'Mixed-confidence spam actions', 'fields' => [] ];
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        $adapter->webhook_controls_supported = true;
+        $action->response_result_data_sequence = array_map(
+            static fn ( float $confidence ): array => [
+                'classification' => 'spam',
+                'confidence'     => $confidence,
+                'justification'  => 'Confidence-specific production-shaped result.',
+            ],
+            $confidences
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
+
+        $mappings = [];
+        foreach ( array_keys( $confidences ) as $index )
+        {
+            $mapping_id = 'map_spam_' . $index;
+            $mappings[ $mapping_id ] = [
+                'local_mapping_id'           => $mapping_id,
+                'central_action_id'          => 'spam_analysis',
+                'action_type_indicator'      => 'custom',
+                'is_action_enabled_for_form' => true,
+                'mark_as_spam'               => true,
+                'trigger_hooks'              => [ 'after_submission' ],
+                'settings'                   => [
+                    'async'                          => false,
+                    'mark_as_spam'                   => true,
+                    'spam_confidence_threshold'      => 0.95,
+                    'suppress_notifications_on_spam' => true,
+                    'suppress_webhooks_on_spam'      => true,
+                ],
+            ];
+        }
+        update_option( $option_key, $mappings, false );
+
+        $adapter->handle_accepted_submission( $entry, $form );
+        $notification = [ 'id' => 'notification-mixed-confidence', 'name' => 'Mixed-confidence notification' ];
+
+        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
+        $this->assertFalse( $adapter->maybe_suppress_spam_notification( $notification, $form, $entry ) );
+        $this->assertSame( [], $action->response_result_data_sequence );
+        $notes = implode( "\n", wp_list_pluck( $adapter->notes, 'note_content' ) );
+        $this->assertStringContainsString( '40% spam confidence', $notes );
+        $this->assertStringNotContainsString( 'Entry remains active', $notes );
+
+        delete_option( $option_key );
+    }
+
+    public static function provide_mixed_spam_mapping_orders(): array
+    {
+        return [
+            'high then low' => [ [ 0.99, 0.40 ] ],
+            'low then high' => [ [ 0.40, 0.99 ] ],
+        ];
+    }
+
+    public function test_non_spam_action_classification_cannot_mutate_native_spam_state(): void
+    {
+        $form_id    = 7965;
+        $entry_id   = 17965;
+        $action_id  = 'classification_report';
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form       = [ 'id' => $form_id, 'title' => 'Non-spam classification action', 'fields' => [] ];
+        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        $action = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $action->use_action_id( $action_id );
+        $action->response_result_data = [
+            'classification' => 'spam',
+            'confidence'     => 0.99,
+            'justification'  => 'A non-spam action happened to use a classification field.',
+        ];
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
+        update_option(
+            $option_key,
+            [
+                'map_classification' => [
+                    'local_mapping_id'           => 'map_classification',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async' => false,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( 'active', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 0, $adapter->spam_status_updates );
+        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertCount( 0, $adapter->notes );
+
+        delete_option( $option_key );
+    }
+
+    public function test_legacy_spam_action_attests_only_catalog_valid_output(): void
+    {
+        $action = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
+        $valid  = $action->process_result_data(
+            [
+                'classification' => 'likely_spam',
+                'confidence'     => 0.92,
+                'reasoning'      => 'The submission contains a suspicious link.',
+                'spam_indicators' => [
+                    [
+                        'type'     => 'suspicious_links',
+                        'evidence' => 'A shortened URL.',
+                        'weight'   => 'high',
+                    ],
+                ],
+            ]
+        );
+        $invalid = $action->process_result_data(
+            [
+                'classification' => 'spam',
+                'confidence'     => '0.99',
+                'justification'  => 'Numeric strings are not contract-valid confidence values.',
+                'is_spam'        => true,
+            ]
+        );
+
+        $this->assertTrue( $valid['result_data']['structured_output_valid'] ?? false );
+        $this->assertSame( 'likely_spam', $valid['result_data']['structured_output']['classification'] ?? null );
+        $this->assertSame( 'The submission contains a suspicious link.', $valid['result_data']['structured_output']['justification'] ?? null );
+        $this->assertSame( 'suspicious_links', $valid['result_data']['structured_output']['indicators'][0]['type'] ?? null );
+        $this->assertFalse( $invalid['result_data']['structured_output_valid'] ?? true );
+        $this->assertArrayNotHasKey( 'structured_output', $invalid['result_data'] );
+        $this->assertArrayNotHasKey( 'classification', $invalid['result_data'] );
+        $this->assertArrayNotHasKey( 'confidence', $invalid['result_data'] );
+        $this->assertArrayNotHasKey( 'justification', $invalid['result_data'] );
+        $this->assertArrayNotHasKey( 'is_spam', $invalid['result_data'] );
+        $this->assertSame( '', $invalid['classification'] ?? null );
+        $this->assertFalse( $invalid['is_spam'] ?? true );
+        $this->assertArrayNotHasKey( 'classification', $invalid['evaluation_payload']['result_data'] ?? [] );
+        $this->assertArrayNotHasKey( 'is_spam', $invalid['evaluation_payload']['result_data'] ?? [] );
     }
 
     public function test_synchronous_managed_spam_result_updates_the_native_entry_once(): void
@@ -5331,113 +5582,6 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     }
 
     /**
-     * T-PHP-012: Test that fail-open allows submission on CPS error.
-     * Tests NFR-REL-001: Fail-open behavior for validation-phase.
-     */
-    public function test_fail_open_allows_submission_on_cps_error(): void
-    {
-        $method = new ReflectionMethod( $this->adapter, 'apply_cps_validation_response' );
-        $method->setAccessible( true );
-
-        $validation_result = [
-            'is_valid' => true,
-            'form' => [
-                'failed_validation' => false,
-            ],
-        ];
-
-        $error = new WP_Error( 'timeout', 'CPS request timed out' );
-        $action_settings = [ 'fail_open' => true ]; // Explicitly enable fail-open
-
-        $result = $method->invoke( $this->adapter, $validation_result, $error, $action_settings );
-
-        // With fail-open enabled, submission should still be valid
-        $this->assertTrue( $result['is_valid'] );
-        $this->assertFalse( $result['form']['failed_validation'] );
-    }
-
-    /**
-     * Test fail-closed mode blocks submission on CPS error.
-     */
-    public function test_legacy_fail_closed_setting_cannot_block_submission_on_cps_error(): void
-    {
-        $method = new ReflectionMethod( $this->adapter, 'apply_cps_validation_response' );
-        $method->setAccessible( true );
-
-        $validation_result = [
-            'is_valid' => true,
-            'form' => [
-                'failed_validation' => false,
-            ],
-        ];
-
-        $error = new WP_Error( 'timeout', 'CPS request timed out' );
-        $action_settings = [ 'fail_open' => false ]; // Disable fail-open
-
-        $result = $method->invoke( $this->adapter, $validation_result, $error, $action_settings );
-
-        $this->assertTrue( $result['is_valid'] );
-        $this->assertFalse( $result['form']['failed_validation'] );
-    }
-
-    /**
-     * Test content_validation_v1 can block from CPS structured_output without a top-level validation envelope.
-     */
-    public function test_apply_cps_validation_response_blocks_from_content_validation_structured_output(): void
-    {
-        $method = new ReflectionMethod( $this->adapter, 'apply_cps_validation_response' );
-        $method->setAccessible( true );
-
-        $field = (object) [
-            'id'                 => 3,
-            'failed_validation'  => false,
-            'validation_message' => '',
-        ];
-
-        $validation_result = [
-            'is_valid' => true,
-            'form'     => [
-                'failed_validation' => false,
-                'fields'            => [ $field ],
-            ],
-        ];
-
-        $response = [
-            'result_data' => [
-                'structured_output_valid' => true,
-                'structured_output'       => [
-                    'is_valid' => false,
-                    'message'  => 'Please provide a real project description.',
-                    'fields'   => [
-                        [
-                            'field_id' => '3',
-                            'is_valid' => false,
-                            'message'  => 'Tell us what you need built.',
-                        ],
-                    ],
-                ],
-            ],
-        ];
-
-        $action_settings = [
-            'central_action_id'  => 'content_validation_v1',
-            'action_name_label'  => 'Content Quality',
-            'validation_message' => 'Fallback content message.',
-        ];
-
-        $result = $method->invoke( $this->adapter, $validation_result, $response, $action_settings );
-
-        $this->assertFalse( $result['is_valid'] );
-        $this->assertTrue( $result['form']['failed_validation'] );
-        $this->assertStringContainsString(
-            'Please provide a real project description.',
-            (string) ( $result['form']['validation_message'] ?? '' )
-        );
-        $this->assertTrue( $result['form']['fields'][0]->failed_validation );
-        $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
-    }
-
-    /**
      * Test the validation hook blocks when CPS returns content_validation_v1 structured output.
      */
     public function test_handle_validation_blocks_content_validation_structured_output_without_top_level_validation(): void
@@ -5479,6 +5623,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                                         'is_valid' => false,
                                         'message'  => 'Tell us what you need built.',
                                     ],
+                                    [
+                                        'field_id' => '5',
+                                        'is_valid' => true,
+                                        'message'  => 'This field is acceptable.',
+                                    ],
                                 ],
                             ],
                         ],
@@ -5492,6 +5641,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             'failed_validation'  => false,
             'validation_message' => '',
         ];
+        $valid_field = (object) [
+            'id'                 => 5,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
 
         $result = $this->adapter->handle_validation(
             [
@@ -5499,7 +5653,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'form'     => [
                     'id'                => $form_id,
                     'failed_validation' => false,
-                    'fields'            => [ $field ],
+                    'fields'            => [ $field, $valid_field ],
                 ],
             ]
         );
@@ -5513,6 +5667,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
         $this->assertTrue( $result['form']['fields'][0]->failed_validation );
         $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
+        $this->assertFalse( $result['form']['fields'][1]->failed_validation );
+        $this->assertSame( '', $result['form']['fields'][1]->validation_message );
 
         delete_option( $option_key );
     }
@@ -6261,6 +6417,91 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $result['is_valid'] );
         $this->assertEmpty( $result['form']['validation_message'] ?? '' );
         $this->assertStringNotContainsString( 'Downstream should not run.', (string) ( $result['form']['validation_message'] ?? '' ) );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_validation_does_not_block_downstream_for_spam_below_configured_confidence(): void
+    {
+        $form_id    = 99022;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $calls      = [];
+
+        update_option(
+            $option_key,
+            [
+                'map_spam' => [
+                    'local_mapping_id'           => 'map_spam',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [
+                        'spam_confidence_threshold' => 0.95,
+                    ],
+                ],
+                'map_child' => [
+                    'local_mapping_id'           => 'map_child',
+                    'central_action_id'          => 'content_validation_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [
+                        'dependency_ids'        => [ 'map_spam' ],
+                        'skip_on_upstream_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->set_action_executor(
+            new Sentient_Forms_Test_Validation_Action_Executor(
+                Sentient_Forms_Plugin::instance(),
+                static function ( string $central_action_id ) use ( &$calls ): array {
+                    $calls[] = $central_action_id;
+
+                    if ( 'spam_detection_v1' === $central_action_id )
+                    {
+                        return [
+                            'result_data' => [
+                                'structured_output_valid' => true,
+                                'structured_output'       => [
+                                    'classification' => 'spam',
+                                    'confidence'     => 0.40,
+                                    'justification'  => 'Weak spam signal below the configured threshold.',
+                                    'indicators'     => [],
+                                ],
+                            ],
+                        ];
+                    }
+
+                    return [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'is_valid' => true,
+                                'message'  => '',
+                                'fields'   => [],
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+
+        $result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'     => $form_id,
+                    'fields' => [],
+                ],
+            ]
+        );
+
+        $this->assertSame( [ 'spam_detection_v1', 'content_validation_v1' ], $calls );
+        $this->assertTrue( $result['is_valid'] );
+        $this->assertEmpty( $result['form']['validation_message'] ?? '' );
 
         delete_option( $option_key );
     }

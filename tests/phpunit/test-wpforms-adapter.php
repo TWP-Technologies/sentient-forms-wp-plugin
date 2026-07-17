@@ -98,7 +98,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         remove_all_actions( 'wpforms_process' );
         remove_all_actions( 'wpforms_process_complete' );
 
-        foreach ( [ 44, 48, 49, 50, 7956, 7957, 7958, 7959, 7960 ] as $form_id )
+        foreach ( [ 44, 48, 49, 50, 7956, 7957, 7958, 7959, 7960, 7962 ] as $form_id )
         {
             delete_option( 'sentient_forms_actions_wpforms_' . $form_id );
         }

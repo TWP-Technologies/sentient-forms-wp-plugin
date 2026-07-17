@@ -445,9 +445,11 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                 static fn(): array => [
                     'validation' => [
                         'is_valid' => false,
+                        'message'  => 'Review the submitted fields.',
                         'fields'   => [
                             [
                                 'field_id' => 'full_name.first',
+                                'is_valid' => false,
                                 'message'  => 'Must never attach to the collapsed field.',
                             ],
                         ],
@@ -477,6 +479,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertSame( [], $handler->field_error_calls );
         $this->assertSame( [], $handler->errors );
+        $this->assertSame( [ 'Review the submitted fields.' ], $handler->form_error_calls );
     }
 
     public function test_validation_spam_blocks_only_with_safe_form_error(): void

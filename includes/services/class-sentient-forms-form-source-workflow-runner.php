@@ -257,7 +257,11 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $classification = is_array( $spam_payload )
                 ? sanitize_key( (string) ( $spam_payload['classification'] ?? '' ) )
                 : '';
-            $trusted_structure = null !== $validation || '' !== $classification;
+            if ( '' !== $classification && ! $this->spam_payload_meets_confidence_threshold( $mapping, $spam_payload ) )
+            {
+                $classification = '';
+            }
+            $trusted_structure = null !== $validation || is_array( $spam_payload );
             if ( '' !== $classification )
             {
                 $spam_classifications[ $mapping_key ] = $classification;
@@ -275,6 +279,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 foreach ( (array) ( $validation['fields'] ?? [] ) as $field_error )
                 {
                     if ( ! is_array( $field_error ) )
+                    {
+                        continue;
+                    }
+                    if ( false !== ( $field_error['is_valid'] ?? true ) )
                     {
                         continue;
                     }
@@ -2312,6 +2320,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             $spam_payload = $this->extract_trusted_spam_payload( $result );
+            if ( ! is_array( $spam_payload ) || ! $this->spam_payload_meets_confidence_threshold( $mapping, $spam_payload ) )
+            {
+                continue;
+            }
             $classification = is_array( $spam_payload )
                 ? sanitize_key( (string) ( $spam_payload['classification'] ?? '' ) )
                 : '';
@@ -2428,6 +2440,46 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $result,
             $candidates
         );
+    }
+
+    /**
+     * Apply the mapping's effective confidence policy before releasing spam
+     * classifications into validation side effects.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $spam_payload
+     */
+    private function spam_payload_meets_confidence_threshold( array $mapping, array $spam_payload ): bool
+    {
+        $classification = sanitize_key( (string) ( $spam_payload['classification'] ?? '' ) );
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return true;
+        }
+
+        $confidence = $spam_payload['confidence'] ?? null;
+        if ( ! is_numeric( $confidence ) )
+        {
+            return true;
+        }
+
+        $settings       = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        $effect_mapping = isset( $settings['effect_mapping_json'] ) && is_array( $settings['effect_mapping_json'] )
+            ? $settings['effect_mapping_json']
+            : ( isset( $mapping['effect_mapping_json'] ) && is_array( $mapping['effect_mapping_json'] )
+                ? $mapping['effect_mapping_json']
+                : [] );
+        $spam_effect = isset( $effect_mapping['spam'] ) && is_array( $effect_mapping['spam'] )
+            ? $effect_mapping['spam']
+            : [];
+
+        $threshold = $settings['spam_confidence_threshold']
+            ?? $mapping['spam_confidence_threshold']
+            ?? $spam_effect['min_confidence']
+            ?? 0.8;
+        $threshold = is_numeric( $threshold ) ? max( 0.0, min( 1.0, (float) $threshold ) ) : 0.8;
+
+        return (float) $confidence >= $threshold;
     }
 
     /**
