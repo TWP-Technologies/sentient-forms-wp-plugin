@@ -980,6 +980,8 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_support_bundle_omits_secrets_results_and_error_messages(): void
     {
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 30 );
+
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $this->wpdb );
         $credentials->create(
             [
@@ -1018,6 +1020,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'bundle-person@example.test', $json );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_result'] );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_error_message'] );
+        $this->assertSame( 30, $bundle['retention']['submission_ledger_retention_days'] );
     }
 
     /**
