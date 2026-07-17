@@ -146,6 +146,34 @@ class Tests_Action_Source_Compatibility_Manifest extends WP_UnitTestCase
         }
     }
 
+    public function test_manifest_generation_fails_closed_for_an_unhandled_unsupported_action(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $manifest   = new Sentient_Forms_Action_Source_Compatibility_Manifest( $registry );
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+        $descriptor = $registry->get_capability_descriptor( 'contact_form_7' );
+        $adapter    = $registry->get_adapter_by_id( 'contact_form_7' );
+        $method     = new ReflectionMethod( $manifest, 'build_row' );
+
+        $this->assertIsArray( $definition );
+        $this->assertIsArray( $descriptor );
+        $this->assertInstanceOf( Sentient_Forms_Adapter_Interface::class, $adapter );
+
+        $this->expectException( LogicException::class );
+        $this->expectExceptionMessage(
+            'sentient_forms_action_source_manifest_unhandled_action:future_action_v1'
+        );
+
+        $method->invoke(
+            $manifest,
+            'future_action_v1',
+            $definition,
+            'contact_form_7',
+            $descriptor,
+            $adapter
+        );
+    }
+
     public function test_public_projection_keeps_validation_requirements_and_effects_separate_from_after_submission(): void
     {
         $projection = ( new Sentient_Forms_Action_Source_Compatibility_Manifest() )->public_projection();

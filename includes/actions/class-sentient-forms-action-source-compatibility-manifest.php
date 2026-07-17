@@ -240,13 +240,15 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
         $status    = $supported
             ? 'supported'
             : ( $intentional_unsupported ? 'intentional_unsupported' : 'target_pending' );
-        $lifecycle_contracts = $supported
-            ? $this->lifecycle_contracts(
-                $action_code,
-                $supported_lifecycles,
-                $source_capabilities
-            )
-            : [];
+        $lifecycle_contracts = $this->lifecycle_contracts(
+            $action_code,
+            $supported_lifecycles,
+            $source_capabilities
+        );
+        if ( ! $supported )
+        {
+            $lifecycle_contracts = [];
+        }
 
         return [
             'action_code'              => sanitize_key( $action_code ),
@@ -374,7 +376,9 @@ final class Sentient_Forms_Action_Source_Compatibility_Manifest implements Senti
             );
         }
 
-        return [];
+        throw new LogicException(
+            'sentient_forms_action_source_manifest_unhandled_action:' . sanitize_key( $action_code )
+        );
     }
 
     /**
