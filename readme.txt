@@ -14,7 +14,7 @@ AI actions for Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms: 
 
 Sentient Forms adds AI actions to Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs.
 
-Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Sentient Forms Submission Ledger. Elementor Pro Forms requires Elementor Pro Forms APIs. Those three do not support validation blocking, realtime suggestions, native spam status, native entries, webhook suppression, or notification suppression in this release.
+Gravity Forms supports native validation and realtime actions where available. Contact Form 7, WPForms, and Elementor Pro Forms run after submission through the Submission Ledger; see the FAQ for limitations. Elementor Pro Forms requires its Forms APIs.
 
 A TWP Technologies, LLC product. Product site: https://sentientforms.com. Public development: https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 

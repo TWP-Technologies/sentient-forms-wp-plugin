@@ -23,7 +23,7 @@ This ledger covers the marketing/compliance bundle for `MKT-010`, `MKT-009`,
 | Add this ledger | MKT-010 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add 10 KB preflight to release checklist | MKT-066 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add six WordPress.org screenshot captions | MKT-013 | +339 | Terse captions preserve the `9700` byte target while matching `screenshot-1.png` through `screenshot-6.png`. |
-| Final current readme | MKT-010/MKT-013/WPORG-0.6.1 | 9675 | `25` bytes under target, `325` bytes under hard maximum. |
+| Final 0.11.0 readme | MKT-010/MKT-013/WPORG-0.6.1 | 9682 | Release reconciliation keeps the listing `18` bytes under target and `318` bytes under the hard maximum. |
 
 ## Required Checks
 
