@@ -13,15 +13,23 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party Contact Form 7 Form Source adapter.
  */
-class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
+class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'wpcf7_mail_sent';
 
+    private const NATIVE_VALIDATION_HOOK = 'wpcf7_validate';
+
     private Sentient_Forms_Plugin $plugin;
 
     private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner;
+
+    /** @var array<string, Sentient_Forms_Validation_Run_Result> */
+    private array $validation_results_by_submission = [];
+
+    /** @var array<string, array<int, mixed>> */
+    private array $validation_tags_by_submission = [];
 
     public function __construct(
         Sentient_Forms_Plugin $plugin,
@@ -73,12 +81,12 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             ],
             'lifecycles'           => [
                 'validation'       => [
-                    'supported'          => false,
+                    'supported'          => true,
                     'label'              => __( 'Validation', 'sentient-forms' ),
-                    'native_hook'        => null,
+                    'native_hook'        => self::NATIVE_VALIDATION_HOOK,
                     'execution_mode'     => 'blocking',
                     'requires_ledger'    => false,
-                    'unsupported_reason' => __( 'Contact Form 7 validation blocking is not supported in this release.', 'sentient-forms' ),
+                    'unsupported_reason' => null,
                 ],
                 'after_submission' => [
                     'supported'          => true,
@@ -110,6 +118,11 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
+            'validation_effects'   => [
+                'field_errors'    => true,
+                'form_errors'     => false,
+                'submission_spam' => true,
+            ],
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,
@@ -132,7 +145,144 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             return;
         }
 
-        add_action( 'wpcf7_mail_sent', [ $this, 'handle_mail_sent' ], 10, 1 );
+        add_filter( self::NATIVE_VALIDATION_HOOK, [ $this, 'handle_validation' ], 10, 2 );
+        add_filter( 'wpcf7_spam', [ $this, 'handle_spam' ], 10, 2 );
+        add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_mail_sent' ], 10, 1 );
+    }
+
+    public function get_validation_native_hook(): string
+    {
+        return self::NATIVE_VALIDATION_HOOK;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_validation( mixed $native_validation, mixed $native_context = null ): array | WP_Error
+    {
+        if ( ! is_object( $native_validation ) || ! method_exists( $native_validation, 'invalidate' ) )
+        {
+            return new WP_Error( 'sentient_forms_cf7_invalid_validation', __( 'Contact Form 7 validation data is unavailable.', 'sentient-forms' ) );
+        }
+
+        $submission = $this->current_submission( $native_validation );
+        $form       = $this->submission_contact_form( $submission );
+        $form_id    = $this->contact_form_id( $form );
+        if ( null === $submission || null === $form || $form_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_cf7_invalid_validation', __( 'Contact Form 7 validation is missing its submission context.', 'sentient-forms' ) );
+        }
+
+        $tags      = is_array( $native_context ) ? array_values( $native_context ) : [];
+        $cache_key = $this->validation_submission_cache_key( $submission );
+        if ( null !== $cache_key )
+        {
+            $this->validation_tags_by_submission[ $cache_key ] = $tags;
+        }
+
+        return [
+            'form_id'        => (string) $form_id,
+            'form'           => $this->form_snapshot( $form, $form_id ),
+            'entry'          => $this->logical_fields_from_submission( $submission ),
+            'native_context' => [
+                'tag_names' => array_values(
+                    array_filter(
+                        array_map( fn( mixed $tag ): string => $this->form_tag_value( $tag, 'name' ), $tags )
+                    )
+                ),
+            ],
+        ];
+    }
+
+    public function apply_validation_result(
+        mixed $native_validation,
+        Sentient_Forms_Validation_Run_Result $result
+    ): mixed
+    {
+        if ( ! is_object( $native_validation ) || ! method_exists( $native_validation, 'invalidate' ) )
+        {
+            return $native_validation;
+        }
+
+        $submission = $this->current_submission( $native_validation );
+        $cache_key  = $this->validation_submission_cache_key( $submission );
+        $tags       = null !== $cache_key ? ( $this->validation_tags_by_submission[ $cache_key ] ?? [] ) : [];
+        $tags_by_name = [];
+        foreach ( $tags as $tag )
+        {
+            $name = sanitize_key( $this->form_tag_value( $tag, 'name' ) );
+            if ( '' !== $name )
+            {
+                $tags_by_name[ $name ] = $tag;
+            }
+        }
+
+        foreach ( $result->get_field_errors() as $field_error )
+        {
+            if ( ! is_array( $field_error ) )
+            {
+                continue;
+            }
+
+            $field_name = isset( $field_error['field_id'] ) && is_scalar( $field_error['field_id'] )
+                ? sanitize_key( (string) $field_error['field_id'] )
+                : '';
+            $message = isset( $field_error['message'] ) && is_scalar( $field_error['message'] )
+                ? sanitize_text_field( (string) $field_error['message'] )
+                : '';
+            if ( '' === $field_name || ! isset( $tags_by_name[ $field_name ] ) )
+            {
+                continue;
+            }
+
+            if ( '' !== $message )
+            {
+                $native_validation->invalidate( $tags_by_name[ $field_name ], $message );
+            }
+        }
+
+        return $native_validation;
+    }
+
+    public function apply_validation_entry_effects(
+        array $entry,
+        array $form,
+        Sentient_Forms_Validation_Run_Result $result
+    ): void
+    {
+    }
+
+    public function handle_validation( mixed $validation_result, mixed $tags ): mixed
+    {
+        $result     = $this->get_workflow_runner()->run_validation( $this, $validation_result, $tags );
+        $submission = $this->current_submission( $validation_result );
+        $cache_key  = $this->validation_submission_cache_key( $submission );
+        if ( null !== $cache_key )
+        {
+            $this->validation_results_by_submission[ $cache_key ] = $result;
+        }
+
+        return $this->apply_validation_result( $validation_result, $result );
+    }
+
+    public function handle_spam( bool $spam, object $submission ): bool
+    {
+        $cache_key = $this->validation_submission_cache_key( $submission );
+        $result    = null !== $cache_key ? ( $this->validation_results_by_submission[ $cache_key ] ?? null ) : null;
+        if ( ! $result instanceof Sentient_Forms_Validation_Run_Result )
+        {
+            return $spam;
+        }
+
+        foreach ( $result->get_spam_classifications() as $classification )
+        {
+            if ( in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+            {
+                return true;
+            }
+        }
+
+        return $spam;
     }
 
     public function get_accepted_submission_native_hook(): string
@@ -351,6 +501,11 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
     {
         $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $event_name );
 
+        if ( Sentient_Forms_Form_Source_Lifecycles::VALIDATION === $lifecycle_id )
+        {
+            return self::NATIVE_VALIDATION_HOOK;
+        }
+
         return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $lifecycle_id ? self::NATIVE_AFTER_SUBMISSION_HOOK : null;
     }
 
@@ -492,6 +647,23 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         $submission = apply_filters( 'sentient_forms_contact_form_7_current_submission', $submission, $contact_form, $this );
 
         return $submission;
+    }
+
+    private function submission_contact_form( mixed $submission ): object | array | null
+    {
+        if ( is_object( $submission ) && method_exists( $submission, 'get_contact_form' ) )
+        {
+            $form = $submission->get_contact_form();
+
+            return is_object( $form ) || is_array( $form ) ? $form : null;
+        }
+
+        return null;
+    }
+
+    private function validation_submission_cache_key( mixed $submission ): ?string
+    {
+        return is_object( $submission ) ? 'submission:' . spl_object_id( $submission ) : null;
     }
 
     /**

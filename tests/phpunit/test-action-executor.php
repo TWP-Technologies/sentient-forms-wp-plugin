@@ -116,6 +116,50 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_execute_preserves_explicit_execution_request_id(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-explicit-request-id',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = compact( 'path', 'payload', 'options' );
+
+				return [
+					'result_data' => [ 'llm_output' => 'ok' ],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$executor->execute(
+			'content_validation_v1',
+			[ 'id' => 48 ],
+			[ 'message' => 'identical anonymous payload' ],
+			[
+				'hook'                 => 'validation',
+				'action_id'            => 'map_validation',
+				'execution_request_id' => 'validation-request-unique-to-http-request',
+			]
+		);
+
+		$this->assertSame(
+			'validation-request-unique-to-http-request',
+			$client->calls[0]['payload']['execution_request_id'] ?? null
+		);
+		$this->assertSame(
+			'validation-request-unique-to-http-request',
+			$client->calls[0]['payload']['action_context']['execution_request_id'] ?? null
+		);
+	}
+
 	public function test_execution_request_ids_are_stable_per_submission_uuid_and_distinct_across_submissions(): void {
 		$form    = [ 'id' => 48, 'title' => 'Accepted submission identity' ];
 		$context = [ 'hook' => 'wpforms_process_complete', 'action_id' => 'map_summary' ];
@@ -1054,5 +1098,75 @@ class ActionExecutorTest extends WP_UnitTestCase {
 			'Tell us more about your project.',
 			$result['validation']['fields'][0]['message'] ?? null
 		);
+	}
+
+	public function test_execute_rejects_untrusted_or_schema_invalid_content_validation_payloads(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-invalid-validation',
+			]
+		);
+
+		$valid_payload = [
+			'is_valid' => false,
+			'message'  => 'Please provide more detail.',
+			'fields'   => [],
+		];
+		$cases = [
+			'explicit_false_marker' => [
+				'result_data' => [
+					'structured_output_valid' => false,
+					'structured_output'       => $valid_payload,
+				],
+			],
+			'incomplete' => [
+				'result_data' => [
+					'structured_output_valid' => true,
+					'structured_output'       => [ 'is_valid' => false ],
+				],
+			],
+			'wrong_type' => [
+				'result_data' => [
+					'structured_output_valid' => true,
+					'structured_output'       => array_merge( $valid_payload, [ 'is_valid' => 'false' ] ),
+				],
+			],
+			'extra_property' => [
+				'result_data' => [
+					'structured_output_valid' => true,
+					'structured_output'       => $valid_payload + [ 'unexpected' => 'reject me' ],
+				],
+			],
+			'unattested_top_level' => [
+				'validation' => $valid_payload,
+				'result_data' => [],
+			],
+		];
+
+		foreach ( $cases as $case => $response ) {
+			$client = new class( $response ) extends Sentient_Forms_Api_Client {
+				/** @var array<string, mixed> */
+				private array $response;
+
+				/** @param array<string, mixed> $response */
+				public function __construct( array $response ) {
+					$this->response = $response;
+				}
+
+				public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+					return $this->response;
+				}
+			};
+			$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+			$result   = $executor->execute(
+				'content_validation_v1',
+				[ 'id' => 'invalid-' . $case ],
+				[ 'id' => 'entry-' . $case ],
+				[ 'hook' => 'validation', 'action_id' => 'map-' . $case ]
+			);
+
+			$this->assertIsArray( $result, $case );
+			$this->assertArrayNotHasKey( 'validation', $result, $case );
+		}
 	}
 }

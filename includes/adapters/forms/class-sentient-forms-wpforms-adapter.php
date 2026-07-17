@@ -13,9 +13,10 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * First-party WPForms Form Source adapter.
  */
-class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface
+class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface, Sentient_Forms_Historical_Entries_Adapter_Interface, Sentient_Forms_Accepted_Submission_Adapter_Interface, Sentient_Forms_Validation_Adapter_Interface, Sentient_Forms_Native_Validation_Effects_Adapter_Interface
 {
     private const NATIVE_AFTER_SUBMISSION_HOOK = 'wpforms_process_complete';
+    private const NATIVE_VALIDATION_HOOK = 'wpforms_process';
     private const FORM_POST_TYPE = 'wpforms';
     private const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
     private const NON_POSTING_FIELD_TYPES = [
@@ -86,12 +87,12 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             ],
             'lifecycles'           => [
                 'validation'       => [
-                    'supported'          => false,
+                    'supported'          => true,
                     'label'              => __( 'Validation', 'sentient-forms' ),
-                    'native_hook'        => null,
+                    'native_hook'        => self::NATIVE_VALIDATION_HOOK,
                     'execution_mode'     => 'blocking',
                     'requires_ledger'    => false,
-                    'unsupported_reason' => __( 'WPForms validation blocking is not supported in this release.', 'sentient-forms' ),
+                    'unsupported_reason' => null,
                 ],
                 'after_submission' => [
                     'supported'          => true,
@@ -123,6 +124,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                 'notification_controls' => false,
                 'webhook_controls'      => false,
             ],
+            'validation_effects'   => [
+                'field_errors'    => true,
+                'form_errors'     => true,
+                'submission_spam' => false,
+            ],
             'ledger'               => [
                 'required_for_parity' => true,
                 'enabled'             => false,
@@ -145,7 +151,153 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             return;
         }
 
+        add_action( self::NATIVE_VALIDATION_HOOK, [ $this, 'handle_validation' ], 1, 3 );
         add_action( self::NATIVE_AFTER_SUBMISSION_HOOK, [ $this, 'handle_process_complete' ], 10, 4 );
+    }
+
+    public function get_validation_native_hook(): string
+    {
+        return self::NATIVE_VALIDATION_HOOK;
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    public function normalize_validation( mixed $native_validation, mixed $native_context = null ): array | WP_Error
+    {
+        if ( ! is_array( $native_validation ) )
+        {
+            return new WP_Error( 'sentient_forms_wpforms_invalid_validation', __( 'WPForms validation data is unavailable.', 'sentient-forms' ) );
+        }
+
+        $fields    = is_array( $native_validation['fields'] ?? null ) ? $native_validation['fields'] : [];
+        $entry     = is_array( $native_validation['entry'] ?? null ) ? $native_validation['entry'] : [];
+        $form_data = is_array( $native_validation['form_data'] ?? null ) ? $native_validation['form_data'] : [];
+        $form_id   = $this->form_id( $form_data );
+        if ( $form_id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_wpforms_invalid_validation', __( 'WPForms validation is missing its form ID.', 'sentient-forms' ) );
+        }
+
+        $entry_keys = [];
+        foreach ( array_keys( $entry ) as $entry_key )
+        {
+            if ( ! is_scalar( $entry_key ) || 'fields' === (string) $entry_key )
+            {
+                continue;
+            }
+
+            $entry_key = sanitize_key( (string) $entry_key );
+            if ( '' !== $entry_key )
+            {
+                $entry_keys[] = $entry_key;
+            }
+        }
+
+        return [
+            'form_id'        => (string) $form_id,
+            'form'           => $this->form_snapshot( $form_data, $form_id ),
+            'entry'          => $this->logical_fields_from_process_fields( $fields, $form_data ),
+            'native_context' => [ 'entry_keys' => array_values( array_unique( $entry_keys ) ) ],
+        ];
+    }
+
+    public function apply_validation_result(
+        mixed $native_validation,
+        Sentient_Forms_Validation_Run_Result $result
+    ): mixed
+    {
+        if ( ! is_array( $native_validation ) )
+        {
+            return $native_validation;
+        }
+
+        $form_data = is_array( $native_validation['form_data'] ?? null ) ? $native_validation['form_data'] : [];
+        $form_id   = $this->form_id( $form_data );
+        $process   = $this->wpforms_object( 'process' );
+        if ( $form_id <= 0 || ! is_object( $process ) || ! isset( $process->errors ) || ! is_array( $process->errors ) )
+        {
+            return $native_validation;
+        }
+
+        $fields        = is_array( $native_validation['fields'] ?? null ) ? $native_validation['fields'] : [];
+        $field_ids     = [];
+        foreach ( $fields as $field_key => $field )
+        {
+            $field_id = is_array( $field ) && isset( $field['id'] ) && is_scalar( $field['id'] )
+                ? sanitize_text_field( (string) $field['id'] )
+                : sanitize_text_field( (string) $field_key );
+            if ( '' !== $field_id )
+            {
+                $field_ids[ $field_id ] = ctype_digit( $field_id ) ? (int) $field_id : $field_id;
+            }
+        }
+
+        foreach ( $result->get_field_errors() as $field_error )
+        {
+            if ( ! is_array( $field_error ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field_error['field_id'] ) && is_scalar( $field_error['field_id'] )
+                ? sanitize_text_field( (string) $field_error['field_id'] )
+                : '';
+            $message = isset( $field_error['message'] ) && is_scalar( $field_error['message'] )
+                ? sanitize_text_field( (string) $field_error['message'] )
+                : '';
+            if ( '' !== $field_id && '' !== $message && isset( $field_ids[ $field_id ] ) )
+            {
+                $process->errors[ $form_id ][ $field_ids[ $field_id ] ] = $message;
+            }
+        }
+
+        $header_messages = [];
+        $form_error      = $result->get_form_error();
+        if ( null !== $form_error && '' !== $form_error )
+        {
+            $header_messages[] = sanitize_text_field( $form_error );
+        }
+        foreach ( $result->get_spam_classifications() as $classification )
+        {
+            if ( in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+            {
+                $header_messages[] = __( 'This submission could not be processed. Please review it and try again.', 'sentient-forms' );
+                break;
+            }
+        }
+
+        if ( [] !== $header_messages )
+        {
+            $existing_header = isset( $process->errors[ $form_id ]['header'] ) && is_scalar( $process->errors[ $form_id ]['header'] )
+                ? trim( (string) $process->errors[ $form_id ]['header'] )
+                : '';
+            $new_header      = implode( '<br>', array_values( array_unique( $header_messages ) ) );
+            $process->errors[ $form_id ]['header'] = '' === $existing_header
+                ? $new_header
+                : $existing_header . '<br>' . $new_header;
+        }
+
+        return $native_validation;
+    }
+
+    public function apply_validation_entry_effects(
+        array $entry,
+        array $form,
+        Sentient_Forms_Validation_Run_Result $result
+    ): void
+    {
+    }
+
+    public function handle_validation( mixed $fields, mixed $entry, mixed $form_data ): void
+    {
+        $native_validation = [
+            'fields'    => is_array( $fields ) ? $fields : [],
+            'entry'     => is_array( $entry ) ? $entry : [],
+            'form_data' => is_array( $form_data ) ? $form_data : [],
+        ];
+        $result = $this->get_workflow_runner()->run_validation( $this, $native_validation );
+        $this->apply_validation_result( $native_validation, $result );
     }
 
     public function get_accepted_submission_native_hook(): string
@@ -436,6 +588,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     public function get_action_hook_for_event( string $event_name ): ?string
     {
         $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $event_name );
+
+        if ( Sentient_Forms_Form_Source_Lifecycles::VALIDATION === $lifecycle_id )
+        {
+            return self::NATIVE_VALIDATION_HOOK;
+        }
 
         return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $lifecycle_id ? self::NATIVE_AFTER_SUBMISSION_HOOK : null;
     }
@@ -833,18 +990,17 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
 
     private function wpforms_object( string $name ): mixed
     {
-        if ( ! function_exists( 'wpforms' ) )
+        $object = null;
+        if ( function_exists( 'wpforms' ) )
         {
-            return null;
+            $wpforms = wpforms();
+            if ( is_object( $wpforms ) && method_exists( $wpforms, 'obj' ) )
+            {
+                $object = $wpforms->obj( $name );
+            }
         }
 
-        $wpforms = wpforms();
-        if ( ! is_object( $wpforms ) || ! method_exists( $wpforms, 'obj' ) )
-        {
-            return null;
-        }
-
-        return $wpforms->obj( $name );
+        return apply_filters( 'sentient_forms_wpforms_object', $object, $name, $this );
     }
 
     private function build_native_entry_url_if_available( int $form_id, int $entry_id ): ?string

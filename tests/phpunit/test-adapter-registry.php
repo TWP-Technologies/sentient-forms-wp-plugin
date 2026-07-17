@@ -166,6 +166,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
 
         $this->assertSame( array_keys( $registry->get_all_adapters() ), $registry->get_registered_source_ids() );
         $this->assertTrue( $registry->has_registered_source( 'fake_source' ) );
+        $this->assertFalse( $registry->has_registered_source( 'FAKE_SOURCE' ) );
+        $this->assertNull( $registry->get_adapter_by_id( 'FAKE_SOURCE' ) );
 
         $registry->unregister_adapter( 'gravity_forms' );
 
@@ -315,6 +317,19 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['native_entry']['id'] );
         $this->assertTrue( $descriptor['native_enrichment']['notes'] );
         $this->assertTrue( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] );
+    }
+
+    public function test_registry_exposes_gravity_validation_through_optional_contracts(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $adapter  = $registry->get_adapter_by_id( 'gravity_forms' );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'gform_validation', $adapter->get_validation_native_hook() );
     }
 
     public function test_contact_form_7_absent_descriptor_requires_ledger_and_hides_gravity_only_capabilities(): void
@@ -332,14 +347,29 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
         $this->assertSame( 'wpcf7_mail_sent', $descriptor['lifecycles']['after_submission']['native_hook'] );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
-        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertSame( 'wpcf7_validate', $descriptor['lifecycles']['validation']['native_hook'] );
+        $this->assertSame( 'blocking', $descriptor['lifecycles']['validation']['execution_mode'] );
         $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
         $this->assertFalse( $descriptor['native_entry']['id'] );
         $this->assertFalse( $descriptor['native_entry']['link'] );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['form_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['submission_spam'] );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
         $this->assertFalse( $descriptor['ledger']['enabled'] );
+    }
+
+    public function test_registry_exposes_contact_form_7_validation_through_optional_contracts(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $adapter  = $registry->get_adapter_by_id( 'contact_form_7' );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpcf7_validate', $adapter->get_validation_native_hook() );
     }
 
     public function test_form_sources_native_entry_capability_uses_adapter_registry_descriptor(): void
@@ -395,6 +425,11 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $descriptor['forms_discovery']['supported'] );
         $this->assertFalse( $descriptor['field_manifest']['supported'] );
         $this->assertTrue( $descriptor['requirements']['requires_pro'] );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertSame( 'elementor_pro/forms/validation', $descriptor['lifecycles']['validation']['native_hook'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
     }
 
     public function test_elementor_pro_forms_pro_descriptor_exposes_after_submission_hook(): void
@@ -406,8 +441,11 @@ class AdapterRegistryTest extends WP_UnitTestCase
         {
             $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
             $descriptor = $registry->get_capability_descriptor( 'elementor_pro_forms' );
+            $adapter    = $registry->get_adapter_by_id( 'elementor_pro_forms' );
 
             $this->assertIsArray( $descriptor );
+            $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+            $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
             $this->assertTrue( $descriptor['is_active'] );
             $this->assertSame( 'available', $descriptor['availability'] );
             $this->assertTrue( $descriptor['forms_discovery']['supported'] );
@@ -416,8 +454,14 @@ class AdapterRegistryTest extends WP_UnitTestCase
             $this->assertNull( $descriptor['field_manifest']['reason'] );
             $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
             $this->assertSame( 'elementor_pro/forms/new_record', $descriptor['lifecycles']['after_submission']['native_hook'] );
-            $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertSame( 'elementor_pro/forms/validation', $descriptor['lifecycles']['validation']['native_hook'] );
             $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
+            $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+            $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+            $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
+            $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+            $this->assertSame( 'elementor_pro/forms/validation', $adapter->get_action_hook_for_event( 'validation' ) );
         }
         finally
         {
@@ -608,14 +652,28 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
         $this->assertSame( 'wpforms_process_complete', $descriptor['lifecycles']['after_submission']['native_hook'] );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
-        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertSame( 'wpforms_process', $descriptor['lifecycles']['validation']['native_hook'] );
         $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
         $this->assertFalse( $descriptor['native_entry']['id'] );
         $this->assertFalse( $descriptor['native_entry']['link'] );
         $this->assertFalse( $descriptor['native_enrichment']['notes'] );
         $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
         $this->assertFalse( $descriptor['ledger']['enabled'] );
+    }
+
+    public function test_registry_exposes_wpforms_validation_through_optional_contracts(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $adapter  = $registry->get_adapter_by_id( 'wpforms' );
+
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertSame( 'wpforms_process', $adapter->get_validation_native_hook() );
     }
 
     public function test_wpforms_active_descriptor_reports_native_entry_links_only_for_verified_paid_storage(): void
@@ -639,7 +697,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
             $this->assertTrue( $descriptor['field_manifest']['supported'] );
             $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
             $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
-            $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertSame( 'wpforms_process', $descriptor['lifecycles']['validation']['native_hook'] );
             $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
             $this->assertTrue( $descriptor['native_entry']['id'] );
             $this->assertTrue( $descriptor['native_entry']['link'] );
@@ -647,6 +706,9 @@ class AdapterRegistryTest extends WP_UnitTestCase
             $this->assertFalse( $descriptor['native_entry']['write'] );
             $this->assertFalse( $descriptor['native_enrichment']['notes'] );
             $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+            $this->assertTrue( $descriptor['validation_effects']['field_errors'] );
+            $this->assertTrue( $descriptor['validation_effects']['form_errors'] );
+            $this->assertFalse( $descriptor['validation_effects']['submission_spam'] );
             $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
         }
         finally

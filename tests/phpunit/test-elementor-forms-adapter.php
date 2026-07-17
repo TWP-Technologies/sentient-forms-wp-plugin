@@ -1,5 +1,150 @@
 <?php
 
+if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Validation_Action' ) )
+{
+    final class Sentient_Forms_Test_Elementor_Validation_Action implements Sentient_Forms_Action_Interface
+    {
+        /** @var callable */
+        private $on_execute;
+
+        public function __construct( private string $id, callable $on_execute )
+        {
+            $this->on_execute = $on_execute;
+        }
+
+        public function get_id(): string
+        {
+            return $this->id;
+        }
+
+        public function get_name(): string
+        {
+            return 'Elementor validation fixture';
+        }
+
+        public function get_description(): string
+        {
+            return 'Exercises the public Elementor Pro Forms validation hook.';
+        }
+
+        public function get_icon(): string
+        {
+            return 'dashicons-shield';
+        }
+
+        public function get_settings(): array
+        {
+            return [];
+        }
+
+        public function get_hooks(): array
+        {
+            return [ 'elementor_pro/forms/validation' ];
+        }
+
+        public function get_compatibility(): array
+        {
+            return [ 'elementor_pro_forms' ];
+        }
+
+        public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+        {
+            return call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
+        }
+
+        public function estimate_cost( array $data, array $settings ): int
+        {
+            return 0;
+        }
+
+        public function get_settings_fields(): array
+        {
+            return [];
+        }
+
+        public function validate_settings( array $settings ): array
+        {
+            return $settings;
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Ajax_Handler' ) )
+{
+    final class Sentient_Forms_Test_Elementor_Ajax_Handler
+    {
+        /** @var array<string|int, string> */
+        public array $errors;
+
+        /** @var array<string, array<int, string>> */
+        public array $messages;
+
+        /** @var array<int, array{field_id: string|int, message: string}> */
+        public array $field_error_calls = [];
+
+        /** @var array<int, string> */
+        public array $form_error_calls = [];
+
+        public function __construct( array $errors = [], array $form_errors = [] )
+        {
+            $this->errors   = $errors;
+            $this->messages = [ 'error' => $form_errors ];
+        }
+
+        public function add_error( string | int $field_id, string $message = '' ): self
+        {
+            $this->field_error_calls[] = [ 'field_id' => $field_id, 'message' => $message ];
+            $this->errors[ $field_id ] = $message;
+
+            return $this;
+        }
+
+        public function add_error_message( string $message ): self
+        {
+            $this->form_error_calls[] = $message;
+            $this->messages['error'][] = $message;
+
+            return $this;
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Validation_Adapter_Spy' ) )
+{
+    final class Sentient_Forms_Test_Elementor_Validation_Adapter_Spy extends Sentient_Forms_Elementor_Forms_Adapter
+    {
+        public int $native_mutation_calls = 0;
+
+        public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool
+        {
+            ++$this->native_mutation_calls;
+
+            return true;
+        }
+
+        public function mark_entry_as_spam( mixed $entry_id ): bool
+        {
+            ++$this->native_mutation_calls;
+
+            return true;
+        }
+
+        public function reject_submission( mixed $entry_id, string $message ): bool
+        {
+            ++$this->native_mutation_calls;
+
+            return true;
+        }
+
+        public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool
+        {
+            ++$this->native_mutation_calls;
+
+            return true;
+        }
+    }
+}
+
 class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 {
     protected function tearDown(): void
@@ -10,6 +155,8 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
         remove_all_filters( 'sentient_forms_elementor_discovery_post_limit' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
+        remove_all_actions( 'elementor_pro/forms/validation' );
+        remove_all_actions( 'elementor_pro/forms/new_record' );
 
         global $wpdb;
         foreach ( [
@@ -57,6 +204,395 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         }
 
         $this->assertSame( 2, $accepted_args );
+    }
+
+    public function test_validation_hook_translates_resolvable_compound_field_errors_and_adds_form_error(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id    = $this->create_elementor_form_page();
+        $form_id    = $page_id . ':formabc';
+        $action_id  = 'elementor_content_validation_fixture';
+        $executions = 0;
+        $seen       = [];
+        $handler    = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        $record     = $this->elementor_submission_record(
+            [
+                'native-full-name' => [
+                    'id'    => 'full_name',
+                    'title' => 'Full name',
+                    'type'  => 'text',
+                    'value' => [ 'first' => 'Ada', 'last' => 'Lovelace' ],
+                ],
+                'native-email'     => [
+                    'id'    => 'email',
+                    'title' => 'Email',
+                    'type'  => 'email',
+                    'value' => 'ada@example.test',
+                ],
+            ],
+            [ 'id' => 'formabc', 'post_id' => $page_id ]
+        );
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Elementor_Validation_Action(
+                $action_id,
+                static function ( array $form_data ) use ( &$executions, &$seen ): array {
+                    ++$executions;
+                    $seen = $form_data;
+
+                    return [
+                        'validation' => [
+                            'is_valid' => false,
+                            'message'  => 'Please review your submission.',
+                            'fields'   => [
+                                [ 'field_id' => 'full_name', 'is_valid' => false, 'message' => 'Provide your full name.' ],
+                                [ 'field_id' => 'full_name.first', 'is_valid' => false, 'message' => 'Unresolvable compound child.' ],
+                                [ 'field_id' => 'missing_field', 'is_valid' => false, 'message' => 'Unknown field.' ],
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+        $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $adapter->init();
+
+        global $wp_filter;
+        $accepted_args = null;
+        foreach ( (array) ( $wp_filter['elementor_pro/forms/validation']->callbacks[10] ?? [] ) as $callback )
+        {
+            if ( [ $adapter, 'handle_validation' ] === ( $callback['function'] ?? null ) )
+            {
+                $accepted_args = $callback['accepted_args'] ?? null;
+                break;
+            }
+        }
+
+        do_action( 'elementor_pro/forms/validation', $record, $handler );
+
+        $descriptor = $adapter->get_capability_descriptor();
+        $this->assertSame( 2, $accepted_args );
+        $this->assertSame( 1, $executions );
+        $this->assertSame( 'validation', $seen['hook'] ?? null );
+        $this->assertSame( 'elementor_pro/forms/validation', $seen['native_hook'] ?? null );
+        $this->assertSame( 'elementor_pro_forms', $seen['form_source'] ?? null );
+        $this->assertSame( [ 'first' => 'Ada', 'last' => 'Lovelace' ], $seen['entry']['full_name'] ?? null );
+        $this->assertSame( [ 'full_name', 'email' ], $seen['execution_context']['native_validation_context']['record_field_ids'] ?? null );
+        $this->assertSame(
+            [ [ 'field_id' => 'native-full-name', 'message' => 'Provide your full name.' ] ],
+            $handler->field_error_calls
+        );
+        $this->assertSame( [ 'Please review your submission.' ], $handler->form_error_calls );
+        $this->assertSame( 0, $adapter->native_mutation_calls );
+        $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $adapter );
+        $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
+        $this->assertTrue( $descriptor['lifecycles']['validation']['supported'] ?? false );
+        $this->assertSame( 'elementor_pro/forms/validation', $descriptor['lifecycles']['validation']['native_hook'] ?? null );
+        $this->assertTrue( $descriptor['validation_effects']['field_errors'] ?? false );
+        $this->assertTrue( $descriptor['validation_effects']['form_errors'] ?? false );
+        $this->assertFalse( $descriptor['validation_effects']['submission_spam'] ?? true );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] ?? true );
+        $this->assertSame( 10, has_action( 'elementor_pro/forms/new_record', [ $adapter, 'handle_new_record' ] ) );
+    }
+
+    public function test_validation_prefers_installed_form_post_id_over_embedding_and_ambient_post_ids(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $source_page_id    = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
+        $embedding_page_id = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
+        $source_form_id    = $source_page_id . ':formabc';
+        $action_id         = 'elementor_template_source_validation_fixture';
+        $executions        = 0;
+        $seen_form_id      = null;
+        $handler           = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static fn(): array => [ $source_page_id, $embedding_page_id ]
+        );
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Elementor_Validation_Action(
+                $action_id,
+                static function ( array $form_data, array $settings, int | string $entry_id, int | string $form_id ) use ( &$executions, &$seen_form_id ): array {
+                    ++$executions;
+                    $seen_form_id = (string) $form_id;
+
+                    return [
+                        'validation' => [
+                            'is_valid' => false,
+                            'message'  => 'Template-source validation ran.',
+                            'fields'   => [],
+                        ],
+                    ];
+                }
+            )
+        );
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $source_form_id, $action_id );
+        $adapter->init();
+
+        $record = $this->elementor_submission_record(
+            null,
+            [
+                'id'           => 'formabc',
+                'form_name'    => 'Shared Template Form',
+                'form_post_id' => $source_page_id,
+                'edit_post_id' => $embedding_page_id,
+            ]
+        );
+        $had_post_id      = array_key_exists( 'post_id', $_POST );
+        $previous_post_id = $_POST['post_id'] ?? null;
+        $_POST['post_id'] = (string) $embedding_page_id;
+        try
+        {
+            do_action( 'elementor_pro/forms/validation', $record, $handler );
+        }
+        finally
+        {
+            if ( $had_post_id )
+            {
+                $_POST['post_id'] = $previous_post_id;
+            }
+            else
+            {
+                unset( $_POST['post_id'] );
+            }
+        }
+
+        $this->assertSame( 1, $executions );
+        $this->assertSame( $source_form_id, $seen_form_id );
+        $this->assertSame( [ 'Template-source validation ran.' ], $handler->form_error_calls );
+    }
+
+    public function test_validation_uses_installed_edit_post_id_when_form_post_id_is_unavailable(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $edit_page_id    = $this->create_elementor_form_page( null, 'formabc', 'Global Widget Form' );
+        $ambient_page_id = $this->create_elementor_form_page( null, 'formabc', 'Global Widget Form' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        add_filter(
+            'sentient_forms_elementor_posts_with_data',
+            static fn(): array => [ $edit_page_id, $ambient_page_id ]
+        );
+
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $record  = $this->elementor_submission_record(
+            null,
+            [
+                'id'           => 'formabc',
+                'form_name'    => 'Global Widget Form',
+                'form_post_id' => 0,
+                'edit_post_id' => $edit_page_id,
+            ]
+        );
+        $had_post_id      = array_key_exists( 'post_id', $_POST );
+        $previous_post_id = $_POST['post_id'] ?? null;
+        $_POST['post_id'] = (string) $ambient_page_id;
+        try
+        {
+            $normalized = $adapter->normalize_validation(
+                [
+                    'record'  => $record,
+                    'handler' => new Sentient_Forms_Test_Elementor_Ajax_Handler(),
+                ]
+            );
+        }
+        finally
+        {
+            if ( $had_post_id )
+            {
+                $_POST['post_id'] = $previous_post_id;
+            }
+            else
+            {
+                unset( $_POST['post_id'] );
+            }
+        }
+
+        $this->assertIsArray( $normalized );
+        $this->assertSame( $edit_page_id . ':formabc', $normalized['form_id'] ?? null );
+    }
+
+    public function test_validation_rejects_compound_separator_ids_that_collapse_into_real_field_ids(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id   = $this->create_elementor_form_page(
+            [
+                [
+                    'custom_id'   => 'full_namefirst',
+                    'field_label' => 'Collapsed collision target',
+                    'field_type'  => 'text',
+                ],
+            ]
+        );
+        $form_id   = $page_id . ':formabc';
+        $action_id = 'elementor_compound_collision_validation_fixture';
+        $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Elementor_Validation_Action(
+                $action_id,
+                static fn(): array => [
+                    'validation' => [
+                        'is_valid' => false,
+                        'message'  => 'Review the submitted fields.',
+                        'fields'   => [
+                            [
+                                'field_id' => 'full_name.first',
+                                'is_valid' => false,
+                                'message'  => 'Must never attach to the collapsed field.',
+                            ],
+                        ],
+                    ],
+                ]
+            )
+        );
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $adapter->init();
+
+        do_action(
+            'elementor_pro/forms/validation',
+            $this->elementor_submission_record(
+                [
+                    'native-collapsed' => [
+                        'id'    => 'full_namefirst',
+                        'title' => 'Collapsed collision target',
+                        'type'  => 'text',
+                        'value' => 'Ada',
+                    ],
+                ],
+                [ 'id' => 'formabc', 'form_post_id' => $page_id, 'edit_post_id' => $page_id ]
+            ),
+            $handler
+        );
+
+        $this->assertSame( [], $handler->field_error_calls );
+        $this->assertSame( [], $handler->errors );
+        $this->assertSame( [ 'Review the submitted fields.' ], $handler->form_error_calls );
+    }
+
+    public function test_validation_spam_blocks_only_with_safe_form_error(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id   = $this->create_elementor_form_page();
+        $form_id   = $page_id . ':formabc';
+        $action_id = 'spam_analysis';
+        $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Elementor_Validation_Action(
+                $action_id,
+                static fn(): array => [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'Private classification details.',
+                            'indicators'     => [
+                                [
+                                    'type'     => 'commercial_solicitation',
+                                    'evidence' => 'Private classification details.',
+                                    'weight'   => 'high',
+                                ],
+                            ],
+                        ],
+                    ],
+                ]
+            )
+        );
+        $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $adapter->init();
+
+        do_action(
+            'elementor_pro/forms/validation',
+            $this->elementor_submission_record( null, [ 'id' => 'formabc', 'post_id' => $page_id ] ),
+            $handler
+        );
+
+        $this->assertSame( [], $handler->field_error_calls );
+        $this->assertSame(
+            [ 'This submission could not be processed. Please review it and try again.' ],
+            $handler->form_error_calls
+        );
+        $this->assertStringNotContainsString( 'Private classification details', implode( ' ', $handler->form_error_calls ) );
+        $this->assertSame( 0, $adapter->native_mutation_calls );
+    }
+
+    public function test_validation_provider_and_unstructured_failures_leave_ajax_handler_errors_unchanged(): void
+    {
+        $cases = [
+            'provider'     => new WP_Error( 'provider_timeout', 'Private provider timeout details.' ),
+            'unstructured' => [ 'content' => 'Unstructured provider response.' ],
+            'wrong_schema' => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Wrong schema for this custom validation Action.',
+                        'indicators'     => [],
+                    ],
+                ],
+            ],
+        ];
+
+        foreach ( $cases as $case => $action_result )
+        {
+            remove_all_actions( 'elementor_pro/forms/validation' );
+            remove_all_actions( 'elementor_pro/forms/new_record' );
+            remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+            add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+            add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+            $page_id   = $this->create_elementor_form_page( null, 'form' . $case, 'Validation ' . $case );
+            $form_id   = $page_id . ':form' . $case;
+            $action_id = 'elementor_fail_open_' . $case;
+            $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler(
+                [ 'existing-field' => 'Existing field error.' ],
+                [ 'Existing form error.' ]
+            );
+            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+                new Sentient_Forms_Test_Elementor_Validation_Action(
+                    $action_id,
+                    static fn(): WP_Error | array => $action_result
+                )
+            );
+            $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+            $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+            $adapter->init();
+            $errors_before   = $handler->errors;
+            $messages_before = $handler->messages;
+
+            do_action(
+                'elementor_pro/forms/validation',
+                $this->elementor_submission_record(
+                    null,
+                    [ 'id' => 'form' . $case, 'post_id' => $page_id, 'form_name' => 'Validation ' . $case ]
+                ),
+                $handler
+            );
+
+            $this->assertSame( $errors_before, $handler->errors );
+            $this->assertSame( $messages_before, $handler->messages );
+            $this->assertSame( [], $handler->field_error_calls );
+            $this->assertSame( [], $handler->form_error_calls );
+            $this->assertSame( 0, $adapter->native_mutation_calls );
+            $this->assertSame( 10, has_action( 'elementor_pro/forms/new_record', [ $adapter, 'handle_new_record' ] ) );
+        }
     }
 
     public function test_elementor_pro_forms_widgets_are_discoverable_from_elementor_data(): void
@@ -2103,6 +2639,28 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_posts_with_data', static fn() => [ $page_id ] );
 
         return $page_id;
+    }
+
+    private function configure_validation_mapping(
+        Sentient_Forms_Elementor_Forms_Adapter $adapter,
+        string $form_id,
+        string $action_id
+    ): void
+    {
+        $adapter->update_form_settings(
+            $form_id,
+            [
+                'map_validation' => [
+                    'local_mapping_id'           => 'map_validation',
+                    'central_action_id'          => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'action_name_label'          => 'Elementor validation',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                    'settings'                   => [ 'async' => false ],
+                ],
+            ]
+        );
     }
 
     private function elementor_submission_record( ?array $fields = null, array $settings = [] ): object

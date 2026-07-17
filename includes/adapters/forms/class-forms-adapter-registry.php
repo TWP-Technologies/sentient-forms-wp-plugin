@@ -114,7 +114,7 @@ class Sentient_Forms_Form_Adapter_Registry
      */
     public function has_registered_source( string $id ): bool
     {
-        return isset( $this->adapters[ sanitize_key( strtolower( $id ) ) ] );
+        return isset( $this->adapters[ $id ] );
     }
 
     /**
@@ -222,6 +222,10 @@ class Sentient_Forms_Form_Adapter_Registry
             'native_enrichment'    => $this->normalize_boolean_capabilities(
                 $provided['native_enrichment'] ?? [],
                 [ 'notes', 'status', 'spam', 'notification_controls', 'webhook_controls' ]
+            ),
+            'validation_effects'   => $this->normalize_boolean_capabilities(
+                $provided['validation_effects'] ?? [],
+                [ 'field_errors', 'form_errors', 'submission_spam' ]
             ),
             'ledger'               => array_merge(
                 [

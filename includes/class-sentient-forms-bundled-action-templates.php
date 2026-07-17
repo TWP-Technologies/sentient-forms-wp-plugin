@@ -78,7 +78,7 @@ PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => [
                     'type'                 => 'object',
-                    'required'             => [ 'classification', 'confidence', 'justification' ],
+                    'required'             => [ 'classification', 'confidence', 'justification', 'indicators' ],
                     'additionalProperties' => false,
                     'properties'           => [
                         'classification' => [
@@ -1439,6 +1439,21 @@ PROMPT,
         return $definitions[ $code ] ?? null;
     }
 
+    public static function is_structured_output_valid( string $code, mixed $output ): bool
+    {
+        $definition = self::get( $code );
+        $schema     = is_array( $definition ) && isset( $definition['structured_output_schema'] )
+            && is_array( $definition['structured_output_schema'] )
+            ? $definition['structured_output_schema']
+            : [];
+        if ( [] === $schema || ! self::matches_schema_types( $output, $schema ) )
+        {
+            return false;
+        }
+
+        return ! is_wp_error( rest_validate_value_from_schema( $output, $schema, sanitize_key( $code ) ) );
+    }
+
     public static function has( string $code ): bool
     {
         return null !== self::get( $code );
@@ -1488,5 +1503,80 @@ PROMPT,
         }
 
         return self::has( $code ) ? $code : '';
+    }
+
+    /**
+     * WordPress REST schema validation intentionally accepts some values that
+     * can be sanitized into the declared type. Executable Action output must
+     * already carry exact decoded JSON/PHP types before that semantic pass.
+     *
+     * @param array<string, mixed> $schema
+     */
+    private static function matches_schema_types( mixed $value, array $schema ): bool
+    {
+        $type = $schema['type'] ?? null;
+        if ( is_array( $type ) )
+        {
+            foreach ( $type as $candidate_type )
+            {
+                if ( is_string( $candidate_type ) && self::matches_schema_types( $value, [ 'type' => $candidate_type ] + $schema ) )
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if ( ! is_string( $type ) )
+        {
+            return true;
+        }
+
+        if ( 'object' === $type )
+        {
+            if ( ! is_array( $value ) )
+            {
+                return false;
+            }
+            foreach ( (array) ( $schema['properties'] ?? [] ) as $property => $property_schema )
+            {
+                if (
+                    array_key_exists( $property, $value )
+                    && is_array( $property_schema )
+                    && ! self::matches_schema_types( $value[ $property ], $property_schema )
+                )
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        if ( 'array' === $type )
+        {
+            if ( ! is_array( $value ) )
+            {
+                return false;
+            }
+            $item_schema = isset( $schema['items'] ) && is_array( $schema['items'] ) ? $schema['items'] : [];
+            foreach ( $value as $item )
+            {
+                if ( [] !== $item_schema && ! self::matches_schema_types( $item, $item_schema ) )
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return match ( $type ) {
+            'boolean' => is_bool( $value ),
+            'integer' => is_int( $value ),
+            'number'  => is_int( $value ) || is_float( $value ),
+            'string'  => is_string( $value ),
+            'null'    => null === $value,
+            default   => true,
+        };
     }
 }

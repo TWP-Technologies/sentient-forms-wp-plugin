@@ -24,7 +24,7 @@
     "e2e": "node ./scripts/run-playwright-e2e.mjs",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "svelte:guard": "node scripts/svelte-guard.mjs",
+    "svelte:guard": "bun run check && node scripts/svelte-guard.mjs",
     "qa:full": "bunx svelte-kit sync && bun run lint && bun run check && bun run svelte:guard && bun run tailwind:check && bun run test && bun run --bun e2e && bun run build:wp && bun run bundle:check",
     "qa:smoke": "bunx svelte-kit sync && bun run lint && bun run check && bun run svelte:guard && bun run tailwind:check && bun run test && bun run --bun e2e:smoke",
     "e2e:smoke": "node ./scripts/run-playwright-e2e.mjs --grep @smoke",
