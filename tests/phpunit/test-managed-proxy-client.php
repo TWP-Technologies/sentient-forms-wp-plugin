@@ -38,7 +38,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             }
         );
 
-        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v1' );
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->execute(
             'proxy-secret',
             [
@@ -88,6 +88,78 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] );
         $this->assertSame( 123, $payload['metadata']['mapping_id'] );
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
+    }
+
+    public function test_exact_v1_base_url_fails_closed_before_http_request(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v1' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-1',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @dataProvider unsupported_base_url_provider
+     */
+    public function test_request_fails_closed_for_unsupported_or_hostile_base_url( string $base_url ): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( $base_url );
+        $result = $client->health();
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public function unsupported_base_url_provider(): array
+    {
+        return [
+            'future version'     => [ 'https://staging-api.sentientforms.com/v3' ],
+            'legacy admin path'  => [ 'https://staging-api.sentientforms.com/v1/admin' ],
+            'arbitrary path'     => [ 'https://staging-api.sentientforms.com/proxy' ],
+            'embedded user info' => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'query string'       => [ 'https://staging-api.sentientforms.com/v2?target=https://evil.example' ],
+            'fragment'           => [ 'https://staging-api.sentientforms.com/v2#credentials' ],
+            'unsupported scheme' => [ 'ftp://staging-api.sentientforms.com/v2' ],
+            'relative URL'       => [ '/v2' ],
+        ];
     }
 
     public function test_execute_can_send_managed_privacy_route_policy(): void
@@ -201,7 +273,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
 
         $filter = static function (): string {
-            return 'https://staging-api.sentientforms.com/v1';
+            return 'https://staging-api.sentientforms.com/v2';
         };
 
         putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );

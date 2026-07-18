@@ -18,14 +18,25 @@ class Sentient_Forms_Managed_Service_Client
 
     private Sentient_Forms_Api_Client $client;
 
+    private ?WP_Error $configuration_error = null;
+
     public function __construct(
         ?string $base_url = null,
         int $timeout = 30,
         ?Sentient_Forms_Api_Client $client = null
     )
     {
-        $this->base_url = $this->resolve_base_url( $base_url );
-        $this->client   = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
+        try
+        {
+            $this->base_url = $this->resolve_base_url( $base_url );
+        }
+        catch ( InvalidArgumentException $exception )
+        {
+            $this->base_url            = self::DEFAULT_BASE_URL;
+            $this->configuration_error = $this->invalid_base_url_error( $exception );
+        }
+
+        $this->client = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
     }
 
     /**
@@ -37,6 +48,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function activate_site( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_activation_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
@@ -53,6 +69,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function deactivate_site( string $proxy_api_key, string $site_id ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_account_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -83,6 +104,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function get_site( string $proxy_api_key, string $site_id ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_account_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -112,6 +138,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function create_checkout_session( string $proxy_api_key, array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -142,6 +173,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function create_top_up_checkout_session( string $proxy_api_key, array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -175,6 +211,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function start_managed_checkout( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_managed_checkout_start_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
@@ -193,6 +234,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function complete_managed_checkout( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_managed_checkout_complete_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
@@ -214,6 +260,11 @@ class Sentient_Forms_Managed_Service_Client
         ?string $subscription_id = null
     ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -256,6 +307,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function get_billing_state( string $proxy_api_key ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -284,6 +340,17 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @return array<string, mixed>|WP_Error
      */
+    private function invalid_base_url_error( InvalidArgumentException $exception ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_managed_invalid_base_url',
+            __( 'The managed service URL is invalid. Configure a bare HTTP(S) origin with an optional exact /v2 path.', 'sentient-forms' ),
+            [
+                'reason' => $exception->getMessage(),
+            ]
+        );
+    }
+
     private function normalize_activation_payload( array $payload ): array | WP_Error
     {
         $normalized = [];
@@ -608,18 +675,7 @@ class Sentient_Forms_Managed_Service_Client
             $url = self::DEFAULT_BASE_URL;
         }
 
-        $url = untrailingslashit( trim( $url ) );
-        if ( str_ends_with( $url, '/v1' ) )
-        {
-            return substr( $url, 0, -3 ) . '/v2';
-        }
-
-        if ( ! str_ends_with( $url, '/v2' ) )
-        {
-            $url .= '/v2';
-        }
-
-        return $url;
+        return Sentient_Forms_Managed_Base_Url::normalize( $url );
     }
 
     private function resolve_managed_service_override(): ?string
@@ -678,8 +734,6 @@ class Sentient_Forms_Managed_Service_Client
             return $base_url;
         }
 
-        return defined( 'SENTIENT_FORMS_DEFAULT_CPS_BASE_URL' )
-            ? SENTIENT_FORMS_DEFAULT_CPS_BASE_URL
-            : 'https://api.sentientforms.com/v1';
+        return self::DEFAULT_BASE_URL;
     }
 }

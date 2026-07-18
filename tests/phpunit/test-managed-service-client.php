@@ -35,7 +35,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
             }
         );
 
-        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v1' );
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->activate_site(
             [
                 'license_key'           => 'LIC-TEST',
@@ -56,6 +56,76 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'LIC-TEST', $payload['license_key'] );
         $this->assertSame( 'https://example.test', $payload['site_url'] );
         $this->assertSame( 'example-local', $payload['local_site_identifier'] );
+    }
+
+    public function test_exact_v1_base_url_fails_closed_before_http_request(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v1' );
+        $result = $client->activate_site(
+            [
+                'license_key'           => 'LIC-TEST',
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @dataProvider unsupported_base_url_provider
+     */
+    public function test_request_fails_closed_for_unsupported_or_hostile_base_url( string $base_url ): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( $base_url );
+        $result = $client->get_billing_state( 'proxy-secret' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public function unsupported_base_url_provider(): array
+    {
+        return [
+            'future version'     => [ 'https://staging-api.sentientforms.com/v3' ],
+            'legacy admin path'  => [ 'https://staging-api.sentientforms.com/v1/admin' ],
+            'arbitrary path'     => [ 'https://staging-api.sentientforms.com/proxy' ],
+            'embedded user info' => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'query string'       => [ 'https://staging-api.sentientforms.com/v2?target=https://evil.example' ],
+            'fragment'           => [ 'https://staging-api.sentientforms.com/v2#credentials' ],
+            'unsupported scheme' => [ 'ftp://staging-api.sentientforms.com/v2' ],
+            'relative URL'       => [ '/v2' ],
+        ];
     }
 
     public function test_billing_state_uses_v2_get_without_body(): void
@@ -99,7 +169,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
     public function test_base_url_falls_back_to_cps_base_url_resolution(): void
     {
         $filter = static function (): string {
-            return 'https://staging-api.sentientforms.com/v1';
+            return 'https://staging-api.sentientforms.com/v2';
         };
 
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
