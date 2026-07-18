@@ -39,22 +39,18 @@ export interface LicenseInfoResponse {
 }
 
 export interface BillingCheckoutSessionRequest {
-	price_id?: string;
-	plan_code?: string;
+	checkout_attempt_id: string;
+	plan_code: 'starter' | 'pro' | 'business';
 	success_url: string;
 	cancel_url: string;
-	quantity?: number;
+	quantity?: 1;
 }
 
-export interface BillingCheckoutSessionResponse {
-	session_id: string;
-	checkout_url: string;
-	customer_id: string;
-	subscription_id?: string | null;
-}
+export type { BillingCheckoutSessionResponse } from '$lib/api/billing-checkout-contract';
 
 export interface TopUpCheckoutSessionRequest {
-	pack_code: string;
+	checkout_attempt_id: string;
+	pack_code: 'top_up_small' | 'top_up_medium' | 'top_up_large';
 	success_url: string;
 	cancel_url: string;
 	quantity?: number;
@@ -69,7 +65,8 @@ export interface TopUpCheckoutSessionResponse {
 }
 
 export interface ManagedCheckoutStartRequest {
-	plan_code: string;
+	checkout_attempt_id: string;
+	plan_code: 'starter' | 'pro' | 'business';
 	billing_interval?: 'monthly';
 	success_url: string;
 	cancel_url: string;
@@ -77,38 +74,7 @@ export interface ManagedCheckoutStartRequest {
 	accepted_managed_service_terms: boolean;
 }
 
-export interface ManagedCheckoutStartResponse {
-	checkout_intent_id: string;
-	checkout_session_id: string;
-	checkout_url: string;
-	plan_code?: string;
-	billing_interval?: string;
-	status?: string;
-	consent_recorded?: boolean;
-	consent_id?: number;
-	disclosure_version?: string;
-}
-
-export interface ManagedCheckoutCompleteRequest {
-	checkout_intent_id?: string | null;
-	checkout_session_id?: string | null;
-	activation_token?: string | null;
-}
-
-export interface ManagedCheckoutCompleteResponse {
-	activation_ready: boolean;
-	status?: string;
-	message?: string;
-	license_key?: string;
-	license_id?: string;
-	site_id?: string;
-	proxy_api_key?: string;
-	tier?: string | TierSummary;
-	expires_at?: string | null;
-	expiry_date?: string | null;
-	credential_id?: number;
-	managed_provider_ready?: boolean;
-}
+export type { ManagedCheckoutCompleteRequest } from '$lib/api/managed-checkout-contract';
 
 export interface BillingPortalSessionResponse {
 	session_id: string;

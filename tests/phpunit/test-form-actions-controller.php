@@ -2726,6 +2726,24 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( $credential_id, (int) ( $custom_action['model_selection_json']['credential_id'] ?? 0 ) );
         $this->assertSame( '~openai/gpt-latest', $custom_action['model_selection_json']['model'] ?? null );
 
+        $catalog_definition = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
+        $this->assertIsArray( $catalog_definition );
+        $this->assertArrayHasKey( 'action_policy', $catalog_definition );
+        $this->assertArrayHasKey( 'allowed_facets', $catalog_definition );
+        $this->assertArrayHasKey( 'enabled_facets', $catalog_definition );
+        $this->assertIsArray( $catalog_definition['allowed_facets'] );
+        $this->assertIsArray( $catalog_definition['enabled_facets'] );
+        $stored_definition = $custom_action['definition_json'] ?? null;
+        $this->assertIsArray( $stored_definition );
+        $this->assertArrayHasKey( 'action_policy', $stored_definition );
+        $this->assertArrayHasKey( 'allowed_facets', $stored_definition );
+        $this->assertArrayHasKey( 'enabled_facets', $stored_definition );
+        $this->assertIsArray( $stored_definition['allowed_facets'] );
+        $this->assertIsArray( $stored_definition['enabled_facets'] );
+        $this->assertSame( $catalog_definition['action_policy'], $stored_definition['action_policy'] );
+        $this->assertSame( $catalog_definition['allowed_facets'], $stored_definition['allowed_facets'] );
+        $this->assertSame( $catalog_definition['enabled_facets'], $stored_definition['enabled_facets'] );
+
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
         $this->assertCount( 2, $stored_mappings );
 

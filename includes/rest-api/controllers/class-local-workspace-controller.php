@@ -334,11 +334,17 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
             );
         }
 
+        $context = is_array( $context ) ? $context : [];
+        unset(
+            $context['form_source_capabilities'],
+            $context['secondary_preflight_complete']
+        );
+
         $result = $this->local_execution->execute_mapping(
             (int) $request['id'],
             $form,
             $entry,
-            is_array( $context ) ? $context : []
+            $context
         );
 
         if ( is_wp_error( $result ) )

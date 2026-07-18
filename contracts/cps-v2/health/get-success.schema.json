@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/health/get-success.schema.json",
+  "title": "Sentient Health Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "service",
+        "version"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "const": "ok"
+        },
+        "service": {
+          "type": "string",
+          "const": "sentient-minimal"
+        },
+        "version": {
+          "type": "string",
+          "const": "v2"
+        }
+      }
+    }
+  }
+}

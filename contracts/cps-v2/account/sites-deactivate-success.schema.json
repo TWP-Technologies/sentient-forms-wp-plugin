@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/sites-deactivate-success.schema.json",
+  "title": "Sentient Account Site Deactivation Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "status",
+        "license_id",
+        "site_id",
+        "message"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "const": "sentient-managed"
+        },
+        "status": {
+          "type": "string",
+          "const": "inactive"
+        },
+        "license_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "message": {
+          "type": "string",
+          "const": "Site deactivated successfully."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/top-up-checkout-session-request.schema.json",
+  "title": "Sentient Billing Top-Up Checkout Session Request",
+  "type": "object",
+  "required": [
+    "pack_code",
+    "success_url",
+    "cancel_url",
+    "checkout_attempt_id"
+  ],
+  "properties": {
+    "pack_code": {
+      "type": "string",
+      "minLength": 1,
+      "enum": [
+        "top_up_small",
+        "small",
+        "pack_1000",
+        "1000",
+        "top_up_medium",
+        "medium",
+        "pack_5000",
+        "5000",
+        "top_up_large",
+        "large",
+        "pack_10000",
+        "10000"
+      ],
+      "description": "CPS accepts canonical top-up pack codes and their documented numeric aliases."
+    },
+    "success_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "cancel_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "checkout_attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Client-generated identifier for one checkout attempt. Reuse it only when retrying that same attempt."
+    }
+  },
+  "additionalProperties": true
+}

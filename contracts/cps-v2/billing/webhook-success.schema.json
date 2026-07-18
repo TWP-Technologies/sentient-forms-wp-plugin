@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/billing/webhook-success.schema.json",
+  "title": "Sentient Stripe Webhook Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "event_id",
+        "event_type",
+        "duplicate",
+        "processed",
+        "status"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "const": "stripe"
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "duplicate": {
+          "type": "boolean"
+        },
+        "processed": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ignored",
+            "processed",
+            "failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

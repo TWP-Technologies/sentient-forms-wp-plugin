@@ -1044,6 +1044,41 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 'gform_after_submission', $service->calls[0]['context']['hook'] );
     }
 
+    public function test_execute_form_mapping_drops_caller_supplied_policy_attestations(): void
+    {
+        $service = new Sentient_Forms_Test_Local_Action_Execution_Service(
+            [
+                'execution_request_id' => 'local-request-policy-boundary',
+                'status'               => 'succeeded',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'result'               => [],
+            ]
+        );
+        $controller = new Sentient_Forms_Local_Workspace_Controller( null, null, null, null, $service );
+        $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/form-mappings/42/execute-test' );
+        $request->set_url_params( [ 'id' => 42 ] );
+        $request->set_body_params(
+            [
+                'form'    => [ 'id' => 7, 'title' => 'Contact' ],
+                'entry'   => [ 'id' => 99, '1' => 'Ada' ],
+                'context' => [
+                    'hook'                         => 'gform_after_submission',
+                    'form_source_capabilities'     => [ 'realtime_qna_storage' ],
+                    'secondary_preflight_complete' => true,
+                ],
+            ]
+        );
+
+        $response = $controller->execute_form_mapping( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertCount( 1, $service->calls );
+        $this->assertSame( 'gform_after_submission', $service->calls[0]['context']['hook'] );
+        $this->assertArrayNotHasKey( 'form_source_capabilities', $service->calls[0]['context'] );
+        $this->assertArrayNotHasKey( 'secondary_preflight_complete', $service->calls[0]['context'] );
+    }
+
     public function test_execute_form_mapping_requires_form_object(): void
     {
         $controller = new Sentient_Forms_Local_Workspace_Controller(

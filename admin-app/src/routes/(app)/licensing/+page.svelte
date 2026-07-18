@@ -1,11 +1,19 @@
 <script lang="ts">
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
+	import { createCheckoutAttemptId } from '$lib/api/checkout-attempt-id';
+	import {
+		hasManagedCheckoutSuccessMarker,
+		parseManagedCheckoutReturn,
+		removeManagedCheckoutReturnParams,
+		type ManagedCheckoutReference
+	} from '$lib/api/managed-checkout-return';
 	import type {
 		ApiErrorPayload,
 		BillingPortalSessionRequest,
 		BillingSubscriptionState,
 		BillingStateResponse,
 		CreditBalanceResponse,
+		ManagedCheckoutStartRequest,
 		TierSummary,
 		TopUpCheckoutSessionRequest
 	} from '$lib/api/types';
@@ -37,7 +45,7 @@
 	import { onMount, tick } from 'svelte';
 
 	interface CheckoutPlanOption {
-		code: string;
+		code: ManagedCheckoutStartRequest['plan_code'];
 		label: string;
 		description: string;
 		ctaLabel: string;
@@ -51,10 +59,9 @@
 		description: string;
 	}
 
-	interface ManagedCheckoutReference {
-		checkoutIntentId?: string | null;
-		checkoutSessionId?: string | null;
-		activationToken?: string | null;
+	interface CheckoutAttempt {
+		key: string;
+		id: string;
 	}
 
 	type BillingActionContext = 'billing_state' | 'checkout' | 'portal';
@@ -251,6 +258,9 @@
 	let checkoutCompletionLoading = $state(false);
 	let managedCheckoutReference = $state<ManagedCheckoutReference | null>(null);
 	let managedCheckoutCompletionMessage = $state<string | null>(null);
+	let managedCheckoutReturnIncomplete = $state(false);
+	let managedCheckoutAttempt = $state<CheckoutAttempt | null>(null);
+	let topUpCheckoutAttempt = $state<CheckoutAttempt | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
 	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing));
@@ -556,13 +566,15 @@
 			return '/wp-admin/';
 		}
 
-		const url = new URL(window.location.href);
-		url.searchParams.delete('sentient_managed_checkout');
-		url.searchParams.delete('checkout_intent_id');
-		url.searchParams.delete('checkout_session_id');
-		url.searchParams.delete('stripe_session_id');
-		url.searchParams.delete('activation_token');
-		return url.toString();
+		return removeManagedCheckoutReturnParams(window.location.href);
+	}
+
+	function hasManagedCheckoutSuccessReturn(): boolean {
+		if (typeof window === 'undefined') {
+			return false;
+		}
+
+		return hasManagedCheckoutSuccessMarker(window.location.search, window.location.hash);
 	}
 
 	function readManagedCheckoutReference(): ManagedCheckoutReference | null {
@@ -570,23 +582,7 @@
 			return null;
 		}
 
-		const params = new URLSearchParams(window.location.search);
-		const checkoutResult = params.get('sentient_managed_checkout');
-		if (checkoutResult !== 'success' && checkoutResult !== 'completed') {
-			return null;
-		}
-
-		const reference = {
-			checkoutIntentId: params.get('checkout_intent_id'),
-			checkoutSessionId: params.get('checkout_session_id') ?? params.get('stripe_session_id'),
-			activationToken: params.get('activation_token')
-		};
-
-		if (!reference.checkoutIntentId && !reference.checkoutSessionId) {
-			return null;
-		}
-
-		return reference;
+		return parseManagedCheckoutReturn(window.location.search, window.location.hash);
 	}
 
 	function clearManagedCheckoutReturnParams(): void {
@@ -594,21 +590,26 @@
 			return;
 		}
 
-		const url = new URL(window.location.href);
-		url.searchParams.delete('sentient_managed_checkout');
-		url.searchParams.delete('checkout_intent_id');
-		url.searchParams.delete('checkout_session_id');
-		url.searchParams.delete('stripe_session_id');
-		url.searchParams.delete('activation_token');
-		window.history.replaceState({}, '', url.toString());
+		window.history.replaceState(
+			{},
+			'',
+			removeManagedCheckoutReturnParams(window.location.href)
+		);
 	}
 
 	async function completeManagedCheckoutFromReturn(): Promise<void> {
 		const reference = readManagedCheckoutReference();
 		if (!reference) {
+			if (hasManagedCheckoutSuccessReturn()) {
+				managedCheckoutReference = null;
+				managedCheckoutReturnIncomplete = true;
+				managedCheckoutCompletionMessage =
+					'The secure managed-service activation link is incomplete. Restart checkout or contact support.';
+			}
 			return;
 		}
 
+		managedCheckoutReturnIncomplete = false;
 		managedCheckoutReference = reference;
 		await completeManagedCheckout(reference);
 	}
@@ -617,12 +618,13 @@
 		checkoutCompletionLoading = true;
 		billingError = null;
 		managedCheckoutCompletionMessage = null;
+		managedCheckoutReturnIncomplete = false;
 
 		try {
 			const result = await client.completeManagedCheckout(
 				{
-					checkout_intent_id: reference.checkoutIntentId,
-					checkout_session_id: reference.checkoutSessionId,
+					checkout_intent_id: reference.checkoutIntentId ?? undefined,
+					checkout_session_id: reference.checkoutSessionId ?? undefined,
 					activation_token: reference.activationToken
 				},
 				{ showNotifications: false }
@@ -638,9 +640,7 @@
 				return;
 			}
 
-			managedCheckoutCompletionMessage =
-				result.message ??
-				'Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook before activating this site.';
+			managedCheckoutCompletionMessage = result.pending_reason;
 		} catch (error) {
 			console.error('Failed to complete managed checkout', error);
 			setBillingError(error, 'checkout', async () => {
@@ -692,6 +692,14 @@
 		}
 	}
 
+	function checkoutAttemptId(current: CheckoutAttempt | null, key: string): CheckoutAttempt {
+		if (current?.key === key) {
+			return current;
+		}
+
+		return { key, id: createCheckoutAttemptId() };
+	}
+
 	async function handleCheckout(plan: CheckoutPlanOption) {
 		if (hasExistingSubscription) {
 			await handleOpenBillingPortal(
@@ -714,10 +722,15 @@
 		checkoutPlanPending = plan.code;
 		billingError = null;
 		issues = [];
+		managedCheckoutReference = null;
+		managedCheckoutReturnIncomplete = false;
+		managedCheckoutCompletionMessage = null;
 
 		try {
+			managedCheckoutAttempt = checkoutAttemptId(managedCheckoutAttempt, plan.code);
 			const session = await client.startManagedCheckout(
 				{
+					checkout_attempt_id: managedCheckoutAttempt.id,
 					plan_code: plan.code,
 					billing_interval: 'monthly',
 					success_url: managedCheckoutReturnUrl(),
@@ -745,8 +758,10 @@
 		billingError = null;
 
 		try {
+			topUpCheckoutAttempt = checkoutAttemptId(topUpCheckoutAttempt, pack.code);
 			const session = await client.createTopUpCheckoutSession(
 				{
+					checkout_attempt_id: topUpCheckoutAttempt.id,
 					pack_code: pack.code,
 					success_url: currentRouteUrl(),
 					cancel_url: currentRouteUrl(),
@@ -839,11 +854,17 @@
 					</label>
 					{#if managedCheckoutCompletionMessage}
 						<StateTemplate
-							variant="empty"
-							title={managedCheckoutReference ? 'Activation pending' : 'Managed service active'}
+							variant={managedCheckoutReturnIncomplete ? 'error' : 'empty'}
+							title={managedCheckoutReturnIncomplete
+								? 'Checkout return incomplete'
+								: managedCheckoutReference
+									? 'Activation pending'
+									: 'Managed service active'}
 							message={managedCheckoutCompletionMessage}
-							actionLabel={managedCheckoutReference ? 'Check again' : null}
-							onAction={managedCheckoutReference
+							actionLabel={!managedCheckoutReturnIncomplete && managedCheckoutReference
+								? 'Check again'
+								: null}
+							onAction={!managedCheckoutReturnIncomplete && managedCheckoutReference
 								? () => {
 										void completeManagedCheckout(managedCheckoutReference);
 									}

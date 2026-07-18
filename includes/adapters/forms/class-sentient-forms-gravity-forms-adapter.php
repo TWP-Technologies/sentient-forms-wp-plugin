@@ -169,12 +169,19 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return new WP_Error( 'sentient_forms_gravity_forms_invalid_validation', __( 'Gravity Forms validation payload is missing its form identity.', 'sentient-forms' ) );
         }
 
-        return [
+        $normalized = [
             'form_id'        => (string) $form_id,
             'form'           => $form,
             'entry'          => $this->prepare_entry_from_submission(),
             'native_context' => $native_context,
         ];
+        $native_submission_token = $this->native_submission_token();
+        if ( null !== $native_submission_token )
+        {
+            $normalized['native_submission_token'] = $native_submission_token;
+        }
+
+        return $normalized;
     }
 
     public function apply_validation_result(
@@ -1213,6 +1220,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return false;
+    }
+
+    private function native_submission_token(): ?string
+    {
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification; the adapter validates its native correlation token.
+        if ( ! isset( $_POST['gform_unique_id'] ) )
+        {
+            return null;
+        }
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Gravity Forms owns frontend submission verification; preserving the raw token lets the strict allowlist reject rather than normalize identity input.
+        $native_submission_token = wp_unslash( $_POST['gform_unique_id'] );
+        if ( ! is_string( $native_submission_token ) || 1 !== preg_match( '/\A[A-Za-z0-9]{1,128}\z/', $native_submission_token ) )
+        {
+            return null;
+        }
+
+        return $native_submission_token;
     }
 
     /**

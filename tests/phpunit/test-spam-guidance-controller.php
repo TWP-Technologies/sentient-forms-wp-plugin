@@ -1162,7 +1162,7 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
 
         $definition = ( new Sentient_Forms_Action_Facet_Catalog() )->get( 'spam_guidance_rationale_generation' );
         $this->assertIsArray( $definition );
-        $definition['required_managed_capabilities'] = [ 'file_streaming' ];
+        $definition['required_managed_capabilities'] = [ 'server_tools' ];
         $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
             [ 'spam_guidance_rationale_generation' => $definition ]
         );

@@ -35,7 +35,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
             }
         );
 
-        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v1' );
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->activate_site(
             [
                 'license_key'           => 'LIC-TEST',
@@ -45,7 +45,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'proxy-issued', $result['proxy_api_key'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertSame( 'proxy-issued', $result['data']['proxy_api_key'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2', $client->get_base_url() );
         $this->assertCount( 1, $calls );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/sites/activate', $calls[0]['url'] );
@@ -56,6 +57,78 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'LIC-TEST', $payload['license_key'] );
         $this->assertSame( 'https://example.test', $payload['site_url'] );
         $this->assertSame( 'example-local', $payload['local_site_identifier'] );
+    }
+
+    public function test_exact_v1_base_url_fails_closed_before_http_request(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v1' );
+        $result = $client->activate_site(
+            [
+                'license_key'           => 'LIC-TEST',
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @dataProvider unsupported_base_url_provider
+     */
+    public function test_request_fails_closed_for_unsupported_or_hostile_base_url( string $base_url ): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( $base_url );
+        $result = $client->get_billing_state( 'proxy-secret' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_base_url', $result->get_error_code() );
+        $this->assertSame( [], $calls );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public function unsupported_base_url_provider(): array
+    {
+        return [
+            'future version'     => [ 'https://staging-api.sentientforms.com/v3' ],
+            'legacy admin path'  => [ 'https://staging-api.sentientforms.com/v1/admin' ],
+            'arbitrary path'     => [ 'https://staging-api.sentientforms.com/proxy' ],
+            'embedded user info' => [ 'https://user@staging-api.sentientforms.com/v2' ],
+            'query string'       => [ 'https://staging-api.sentientforms.com/v2?target=https://evil.example' ],
+            'fragment'           => [ 'https://staging-api.sentientforms.com/v2#credentials' ],
+            'unsupported scheme' => [ 'ftp://staging-api.sentientforms.com/v2' ],
+            'relative URL'       => [ '/v2' ],
+        ];
     }
 
     public function test_billing_state_uses_v2_get_without_body(): void
@@ -96,22 +169,39 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
     }
 
-    public function test_base_url_falls_back_to_cps_base_url_resolution(): void
+    public function test_base_url_ignores_legacy_generic_cps_resolution(): void
     {
-        $filter = static function (): string {
-            return 'https://staging-api.sentientforms.com/v1';
+        $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        $previous_options     = get_option( 'sentient_forms_settings', null );
+
+        $filter = static function (): string
+        {
+            return 'https://staging-api.sentientforms.com/v2';
         };
 
+        putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        update_option( 'sentient_forms_settings', [] );
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
 
         try
         {
             $client = new Sentient_Forms_Managed_Service_Client();
-            $this->assertSame( 'https://staging-api.sentientforms.com/v2', $client->get_base_url() );
+            $this->assertSame( 'https://api.sentientforms.com/v2', $client->get_base_url() );
         }
         finally
         {
             remove_filter( 'sentient_forms_cps_base_url', $filter, 10 );
+            false === $previous_managed_url
+                ? putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' )
+                : putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL=' . $previous_managed_url );
+            false === $previous_proxy_url
+                ? putenv( 'SENTIENT_FORMS_PROXY_API_URL' )
+                : putenv( 'SENTIENT_FORMS_PROXY_API_URL=' . $previous_proxy_url );
+            null === $previous_options
+                ? delete_option( 'sentient_forms_settings' )
+                : update_option( 'sentient_forms_settings', $previous_options );
         }
     }
 
@@ -168,11 +258,12 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $result = $client->create_checkout_session(
             'proxy-secret',
             [
+                'checkout_attempt_id'   => '22222222-2222-4222-8222-222222222222',
                 'success_url'           => 'https://example.test/success',
                 'cancel_url'            => 'https://example.test/cancel',
-                'plan_code'             => 'starter<script>',
-                'quantity'              => '2',
-                'allow_promotion_codes' => '1',
+                'plan_code'             => 'starter',
+                'quantity'              => 1,
+                'allow_promotion_codes' => true,
             ]
         );
 
@@ -182,11 +273,188 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'Bearer proxy-secret', $calls[0]['args']['headers']['Authorization'] );
 
         $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( '22222222-2222-4222-8222-222222222222', $payload['checkout_attempt_id'] ?? null );
         $this->assertSame( 'https://example.test/success', $payload['success_url'] );
         $this->assertSame( 'https://example.test/cancel', $payload['cancel_url'] );
         $this->assertSame( 'starter', $payload['plan_code'] );
-        $this->assertSame( 2, $payload['quantity'] );
+        $this->assertSame( 1, $payload['quantity'] );
         $this->assertTrue( $payload['allow_promotion_codes'] );
+    }
+
+    public function test_checkout_rejects_non_boolean_promotion_code_flag_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->create_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id'   => '22222222-2222-4222-8222-222222222222',
+                'success_url'           => 'https://example.test/success',
+                'cancel_url'            => 'https://example.test/cancel',
+                'plan_code'             => 'starter',
+                'allow_promotion_codes' => 'false',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function test_checkout_rejects_client_owned_price_id_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->create_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id' => '33333333-3333-4333-8333-333333333333',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+                'plan_code'           => 'starter',
+                'price_id'            => 'price_client_owned',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function test_checkout_rejects_multi_quantity_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->create_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id' => '44444444-4444-4444-8444-444444444444',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+                'plan_code'           => 'starter',
+                'quantity'            => 2,
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function test_top_up_checkout_posts_attempt_identity_to_v2_route(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return self::success_response(
+                    [
+                        'session_id'   => 'cs_top_up_test',
+                        'checkout_url' => 'https://checkout.stripe.com/c/pay/cs_top_up_test',
+                    ]
+                );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->create_top_up_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id' => '55555555-5555-4555-8555-555555555555',
+                'pack_code'           => 'top_up_medium',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+                'quantity'            => 2,
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'https://minimal.sentient.test/v2/billing/checkout/top-up-session', $calls[0]['url'] );
+
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( '55555555-5555-4555-8555-555555555555', $payload['checkout_attempt_id'] ?? null );
+        $this->assertSame( 'top_up_medium', $payload['pack_code'] ?? null );
+        $this->assertSame( 2, $payload['quantity'] ?? null );
+    }
+
+    public function test_all_checkout_paths_reject_invalid_attempt_identity_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $billing_result = $client->create_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id' => 'not-a-uuid',
+                'plan_code'           => 'starter',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+            ]
+        );
+        $top_up_result = $client->create_top_up_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id' => 'not-a-uuid',
+                'pack_code'           => 'top_up_small',
+                'success_url'         => 'https://example.test/success',
+                'cancel_url'          => 'https://example.test/cancel',
+            ]
+        );
+        $managed_start_result = $client->start_managed_checkout(
+            [
+                'checkout_attempt_id'             => 'not-a-uuid',
+                'plan_code'                       => 'starter',
+                'site_url'                        => 'https://example.test',
+                'local_site_identifier'           => 'example-local',
+                'success_url'                     => 'https://example.test/success',
+                'cancel_url'                      => 'https://example.test/cancel',
+                'disclosure_version'              => 'managed-service-v1',
+                'accepted_managed_service_terms'  => true,
+            ]
+        );
+
+        $this->assertWPError( $billing_result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $billing_result->get_error_code() );
+        $this->assertWPError( $top_up_result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $top_up_result->get_error_code() );
+        $this->assertWPError( $managed_start_result );
+        $this->assertSame( 'sentient_managed_checkout_invalid_payload', $managed_start_result->get_error_code() );
+        $this->assertSame( 0, $calls );
     }
 
     public function test_managed_checkout_start_posts_consent_and_site_identity_without_proxy_auth(): void
@@ -201,7 +469,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
 
                 return self::success_response(
                     [
-                        'checkout_intent_id' => 'mci_123',
+                        'checkout_intent_id' => '66666666-6666-4666-8666-666666666666',
                         'checkout_url'       => 'https://checkout.stripe.com/c/pay/cs_test_123',
                         'checkout_session_id' => 'cs_test_123',
                     ]
@@ -212,6 +480,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
         $result = $client->start_managed_checkout(
             [
+                'checkout_attempt_id'             => '11111111-1111-4111-8111-111111111111',
                 'plan_code'                      => 'starter',
                 'site_url'                       => 'https://example.test',
                 'local_site_identifier'          => 'example-local',
@@ -226,11 +495,13 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'mci_123', $result['checkout_intent_id'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertSame( '66666666-6666-4666-8666-666666666666', $result['data']['checkout_intent_id'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/start', $calls[0]['url'] );
         $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
 
         $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( '11111111-1111-4111-8111-111111111111', $payload['checkout_attempt_id'] ?? null );
         $this->assertSame( 'starter', $payload['plan_code'] );
         $this->assertSame( 'https://example.test', $payload['site_url'] );
         $this->assertSame( 'example-local', $payload['local_site_identifier'] );
@@ -255,7 +526,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
                     [
                         'activation_ready' => true,
                         'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
-                        'site_id'          => 'site-123',
+                        'site_id'          => '77777777-7777-4777-8777-777777777777',
                         'proxy_api_key'    => 'proxy-issued',
                     ]
                 );
@@ -267,24 +538,77 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
             [
                 'site_url'              => 'https://example.test',
                 'local_site_identifier' => 'example-local',
-                'checkout_intent_id'    => 'mci_123',
+                'checkout_intent_id'    => '88888888-8888-4888-8888-888888888888',
                 'checkout_session_id'   => 'cs_test_123',
                 'activation_token'      => 'token-123',
             ]
         );
 
         $this->assertIsArray( $result );
-        $this->assertTrue( $result['activation_ready'] );
-        $this->assertSame( 'proxy-issued', $result['proxy_api_key'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertTrue( $result['data']['activation_ready'] ?? false );
+        $this->assertSame( 'proxy-issued', $result['data']['proxy_api_key'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/complete', $calls[0]['url'] );
         $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
 
         $payload = json_decode( $calls[0]['args']['body'], true );
         $this->assertSame( 'https://example.test', $payload['site_url'] );
         $this->assertSame( 'example-local', $payload['local_site_identifier'] );
-        $this->assertSame( 'mci_123', $payload['checkout_intent_id'] );
+        $this->assertSame( '88888888-8888-4888-8888-888888888888', $payload['checkout_intent_id'] );
         $this->assertSame( 'cs_test_123', $payload['checkout_session_id'] );
         $this->assertSame( 'token-123', $payload['activation_token'] );
+    }
+
+    public function test_managed_checkout_complete_rejects_missing_activation_token_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->complete_managed_checkout(
+            [
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+                'checkout_intent_id'    => '11111111-1111-4111-8111-111111111111',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_checkout_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    public function test_managed_checkout_complete_rejects_non_uuid_intent_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->complete_managed_checkout(
+            [
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+                'checkout_intent_id'    => 'mci_legacy',
+                'checkout_session_id'   => 'cs_test_123',
+                'activation_token'      => 'token-123',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_checkout_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
     }
 
     public function test_portal_session_posts_to_v2_billing_route(): void

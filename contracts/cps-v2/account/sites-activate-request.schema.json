@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/sites-activate-request.schema.json",
+  "title": "Sentient Account Site Activation Request",
+  "type": "object",
+  "required": [
+    "license_key",
+    "site_url",
+    "local_site_identifier"
+  ],
+  "properties": {
+    "license_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "site_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "local_site_identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  },
+  "additionalProperties": true
+}

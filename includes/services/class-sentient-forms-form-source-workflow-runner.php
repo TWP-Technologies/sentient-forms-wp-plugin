@@ -72,6 +72,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $form        = isset( $normalized['form'] ) && is_array( $normalized['form'] ) ? $normalized['form'] : [];
         $entry       = isset( $normalized['entry'] ) && is_array( $normalized['entry'] ) ? $normalized['entry'] : [];
         $native_hook = sanitize_text_field( $adapter->get_validation_native_hook() );
+        $native_submission_token = isset( $normalized['native_submission_token'] ) && is_scalar( $normalized['native_submission_token'] )
+            ? sanitize_text_field( (string) $normalized['native_submission_token'] )
+            : null;
         if ( '' === $form_source || '' === $form_id || [] === $form || '' === $native_hook )
         {
             return new Sentient_Forms_Validation_Run_Result();
@@ -122,17 +125,23 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $request_fingerprint = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $identity_context = [
+                'hook'        => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                'native_hook' => $native_hook,
+                'form_source' => $form_source,
+                'action_id'   => (string) $mapping_id,
+                'mapping_id'  => (string) $mapping_id,
+            ];
+            if ( null !== $native_submission_token )
+            {
+                $identity_context['native_submission_token'] = $native_submission_token;
+            }
+
+            $request_fingerprint = Sentient_Forms_Execution_Identity::generate(
                 $action_id,
                 $form,
                 $entry,
-                [
-                    'hook'        => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
-                    'native_hook' => $native_hook,
-                    'form_source' => $form_source,
-                    'action_id'   => (string) $mapping_id,
-                    'mapping_id'  => (string) $mapping_id,
-                ]
+                $identity_context
             );
             if ( ! isset( $this->validation_request_ids[ $request_fingerprint ] ) )
             {
@@ -195,6 +204,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 $mapping
             );
             $dependency_context['native_validation_context'] = $normalized['native_context'] ?? $native_context;
+            if ( null !== $native_submission_token )
+            {
+                $dependency_context['native_submission_token'] = $native_submission_token;
+            }
             $request_id = $execution_request_ids[ $mapping_key ] ?? '';
             $result     = $this->validation_execution_cache[ $request_id ] ?? null;
             if ( ! array_key_exists( $request_id, $this->validation_execution_cache ) )
@@ -994,7 +1007,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Execution_Identity::generate(
                 $central_action_id,
                 $form,
                 $entry,

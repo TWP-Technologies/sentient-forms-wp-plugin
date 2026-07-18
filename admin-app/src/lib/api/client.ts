@@ -18,6 +18,14 @@ import {
 	readResponseText
 } from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
+import {
+	managedCheckoutCompleteRequestSchema,
+	managedCheckoutCompleteResponseSchema,
+	managedCheckoutStartResponseSchema,
+	type ManagedCheckoutCompleteResponse,
+	type ManagedCheckoutStartResponse
+} from '$lib/api/managed-checkout-contract';
+import { billingCheckoutSessionResponseSchema } from '$lib/api/billing-checkout-contract';
 import type {
 	ActionDefinition,
 	ActionDefaultsBatchResponse,
@@ -88,9 +96,7 @@ import type {
 	LocalProviderCredentialDeleteResponse,
 	LocalSupportBundle,
 	ManagedCheckoutCompleteRequest,
-	ManagedCheckoutCompleteResponse,
 	ManagedCheckoutStartRequest,
-	ManagedCheckoutStartResponse,
 	OpenRouterConstantRequest,
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
@@ -176,8 +182,16 @@ const submissionLedgerActionRunSchema = z.object({
 	last_result: nullableJsonRecordSchema,
 	last_error_code: nullableScalarStringSchema,
 	last_error_message: nullableScalarStringSchema,
-	created_at: z.string().nullable().optional().transform((value) => value ?? null),
-	updated_at: z.string().nullable().optional().transform((value) => value ?? null)
+	created_at: z
+		.string()
+		.nullable()
+		.optional()
+		.transform((value) => value ?? null),
+	updated_at: z
+		.string()
+		.nullable()
+		.optional()
+		.transform((value) => value ?? null)
 });
 const nullishJsonRecordArraySchema = z
 	.array(jsonRecordSchema)
@@ -190,27 +204,6 @@ const httpsUrlSchema = z.string().refine((value) => {
 		return false;
 	}
 }, 'Expected an HTTPS URL');
-const managedCheckoutStartResponseSchema = z
-	.object({
-		checkout_intent_id: z.string(),
-		checkout_session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		plan_code: z.string().optional(),
-		billing_interval: z.string().optional(),
-		status: z.string().optional(),
-		consent_recorded: z.boolean().optional(),
-		consent_id: z.number().int().optional(),
-		disclosure_version: z.string().optional()
-	})
-	.passthrough();
-const billingCheckoutSessionResponseSchema = z
-	.object({
-		session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		customer_id: z.string(),
-		subscription_id: z.string().nullable().optional()
-	})
-	.passthrough();
 const billingPortalSessionResponseSchema = z
 	.object({
 		session_id: z.string(),
@@ -1035,7 +1028,7 @@ export class SentientFormsApiClient {
 		payload: BillingCheckoutSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingCheckoutSessionResponse> {
-		const response = await this.request<RestEnvelope<BillingCheckoutSessionResponse>>(
+		const response = await this.request<RestEnvelope<unknown>>(
 			'license/billing/checkout-session',
 			{
 				method: 'POST',
@@ -1043,41 +1036,34 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return billingCheckoutSessionResponseSchema.parse(
-			this.unwrap(response)
-		) as BillingCheckoutSessionResponse;
+		return billingCheckoutSessionResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async startManagedCheckout(
 		payload: ManagedCheckoutStartRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutStartResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutStartResponse>>(
-			'license/managed-checkout/start',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return managedCheckoutStartResponseSchema.parse(
-			this.unwrap(response)
-		) as ManagedCheckoutStartResponse;
+		const response = await this.request<RestEnvelope<unknown>>('license/managed-checkout/start', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return managedCheckoutStartResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async completeManagedCheckout(
 		payload: ManagedCheckoutCompleteRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutCompleteResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutCompleteResponse>>(
+		const response = await this.request<RestEnvelope<unknown>>(
 			'license/managed-checkout/complete',
 			{
 				method: 'POST',
-				body: payload,
+				body: managedCheckoutCompleteRequestSchema.parse(payload),
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return managedCheckoutCompleteResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async createPortalSession(

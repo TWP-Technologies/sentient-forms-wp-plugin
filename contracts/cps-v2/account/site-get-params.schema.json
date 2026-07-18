@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/account/site-get-params.schema.json",
+  "title": "Sentient Account Site Path Parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "site_id"
+  ],
+  "properties": {
+    "site_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

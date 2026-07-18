@@ -1137,7 +1137,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'prompt_template' => 'Provide a brief, human-readable summary of this form submission.',
             ],
             [
-                'code'                 => 'imported_entry_summary_json_v1',
+                'code'                 => 'imported_entry_summary_v1_json',
                 'model_selection_json' => [
                     'provider' => 'openrouter',
                     'model'    => 'openrouter/auto',
@@ -1694,6 +1694,411 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
         $this->assertSame( 'gemini-3-flash-preview', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
+        $this->assertArrayNotHasKey( 'managed_capability_policy', $payload );
+    }
+
+    public function test_managed_request_emits_definition_owned_base_and_facet_capability_policy(): void
+    {
+        $this->seed_openrouter_model_cache();
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'max_tokens'    => 256,
+                'action_policy' => [
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [ 'bounded_output' ],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [ 'managed_privacy' ],
+                'enabled_facets' => [ 'managed_privacy' ],
+            ]
+        );
+        $managed = $this->create_ready_managed_service_credential();
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [
+                'managed_privacy' => [
+                    'code'                              => 'managed_privacy',
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'managed_only',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [ 'privacy_zdr' ],
+                    'lifecycle_restrictions'            => [ 'after_submission' ],
+                    'metering_class'                    => 'standard',
+                ],
+            ]
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'managed-definition-capabilities',
+                'provider'             => 'sentient_managed',
+                'model'                => 'gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'output'               => [ 'text' => 'Managed capability run succeeded.' ],
+                'token_usage'          => [
+                    'input_tokens'  => 10,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 15,
+                ],
+                'metering'             => [
+                    'event_id'        => '77777777-7777-4777-8777-777777777777',
+                    'free_usage'      => false,
+                    'debited_credits' => 1,
+                ],
+                'privacy_route_assertion' => [
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                ],
+            ]
+        );
+        $service = $this->create_service(
+            $openrouter,
+            $managed_proxy,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog )
+        );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'managed-definition-capabilities',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $payload = $managed_proxy->execute_calls[0]['payload'];
+        $this->assertSame(
+            [
+                'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                'required_capabilities' => [ 'privacy_zdr', 'bounded_output' ],
+            ],
+            $payload['managed_capability_policy'] ?? null
+        );
+        $this->assertSame( 256, $payload['max_output_tokens'] ?? null );
+        $this->assertSame( true, $payload['privacy_route_policy']['require_zdr'] ?? null );
+    }
+
+    public function test_unsatisfied_definition_managed_capability_fails_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'action_policy' => [
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'managed_only',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [ 'server_tools' ],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+                'allowed_facets' => [],
+                'enabled_facets' => [],
+            ]
+        );
+        $managed       = $this->create_ready_managed_service_credential();
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'managed-unsatisfied-definition-capability',
+                'settings'             => [
+                    'model_selection' => [
+                        'provider'      => 'sentient_managed',
+                        'model'         => 'openai/gpt-4.1-mini',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_unsatisfied_capability', $result->get_error_code() );
+        $this->assertSame( 'server_tools', $result->get_error_data()['capability'] ?? null );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_partially_present_action_policy_definition_fails_closed_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'action_policy' => [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ],
+            ]
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_policy_invalid', $result->get_error_code() );
+        $this->assertSame( 'allowed_facets', $result->get_error_data()['field'] ?? null );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_managed_only_policy_rejects_selected_direct_route_before_provider_transport(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'site_id'        => '88888888-8888-4888-8888-888888888888',
+                'proxy_api_key'  => 'proxy-policy-route',
+            ]
+        );
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'execution_requirement' => 'managed_only' ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_managed_unavailable', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_managed_only_facet_rejects_selected_direct_route_before_provider_transport(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [ 'license_status' => 'active' ] );
+        $definition = $this->action_policy_definition();
+        $definition['allowed_facets'] = [ 'managed_runtime' ];
+        $definition['enabled_facets'] = [ 'managed_runtime' ];
+        $fixture = $this->create_local_openrouter_mapping( true, null, $definition );
+        $facet_catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [
+                'managed_runtime' => [
+                    'code'                              => 'managed_runtime',
+                    'feature_access'                    => 'active_subscription',
+                    'execution_requirement'             => 'managed_only',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'lifecycle_restrictions'            => [ 'after_submission' ],
+                    'metering_class'                    => 'standard',
+                ],
+            ]
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service(
+            $openrouter,
+            $managed_proxy,
+            new Sentient_Forms_Action_Policy_Resolver( $facet_catalog )
+        )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_managed_unavailable', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_subscription_policy_rejects_direct_route_for_inactive_account_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'feature_access' => 'active_subscription' ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_route_subscription_required', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_subscription_policy_allows_selected_direct_route_even_when_managed_credentials_are_ready(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'site_id'        => '88888888-8888-4888-8888-888888888888',
+                'proxy_api_key'  => 'proxy-ready-but-direct-selected',
+            ]
+        );
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'feature_access' => 'active_subscription' ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_policy_rejects_ineligible_runtime_lifecycle_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'eligible_lifecycles' => [ 'validation' ] ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_policy_lifecycle_ineligible', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_policy_preflight_derives_lifecycle_from_saved_mapping_when_context_omits_it(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'eligible_lifecycles' => [ 'after_submission' ] ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] ?? null );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_policy_rejects_forged_form_source_capability_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition(
+                [ 'required_form_source_capabilities' => [ 'realtime_qna_storage' ] ]
+            )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [
+                'hook'                     => 'gform_after_submission',
+                'form_source_capabilities' => [ 'realtime_qna_storage' ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_policy_form_source_capability_unavailable', $result->get_error_code() );
+        $this->assertSame( 'realtime_qna_storage', $result->get_error_data()['capability'] ?? null );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
+    public function test_secondary_preflight_policy_rejects_caller_supplied_runtime_attestation(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            $this->action_policy_definition( [ 'metering_class' => 'secondary_preflight' ] )
+        );
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace' ],
+            [
+                'hook'                         => 'gform_after_submission',
+                'secondary_preflight_complete' => true,
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_policy_secondary_preflight_required', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
     }
 
     public function test_managed_runtime_model_selection_can_require_zdr_privacy_route(): void
@@ -2212,20 +2617,14 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'managed_privacy_route_unavailable',
                 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
                 [
-                    'status'  => 503,
-                    'payload' => [
-                        'success' => false,
-                        'error'   => [
-                            'code'    => 'managed_privacy_route_unavailable',
-                            'message' => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
-                            'meta'    => [
-                                'privacy_route_failure' => $privacy_route_failure,
-                                'provider_payload'       => [
-                                    'raw_error' => 'No ZDR route is available for this model.',
-                                ],
-                            ],
-                        ],
+                    'status'                => 503,
+                    'execution_request_id'  => 'runtime-managed-zdr-route-unavailable',
+                    'privacy_route_failure' => $privacy_route_failure,
+                    'provider_payload'       => [
+                        'raw_error' => 'No ZDR route is available for this model.',
                     ],
+                    'prompt'                => 'Private prompt must not escape.',
+                    'form_data'             => [ 'name' => 'Ada Lovelace' ],
                 ]
             )
         );
@@ -2258,7 +2657,12 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'managed_privacy_route_unavailable', $result->get_error_code() );
         $error_data = $result->get_error_data();
         $this->assertSame( 503, $error_data['status'] ?? null );
-        $this->assertSame( $privacy_route_failure, $error_data['payload']['error']['meta']['privacy_route_failure'] ?? null );
+        $this->assertSame( 'runtime-managed-zdr-route-unavailable', $error_data['execution_request_id'] ?? null );
+        $this->assertSame( $privacy_route_failure, $error_data['privacy_route_failure'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $error_data );
+        $this->assertArrayNotHasKey( 'provider_payload', $error_data );
+        $this->assertArrayNotHasKey( 'prompt', $error_data );
+        $this->assertArrayNotHasKey( 'form_data', $error_data );
         $encoded_error_data = wp_json_encode( $error_data );
         $this->assertStringNotContainsString( 'provider_payload', $encoded_error_data );
         $this->assertStringNotContainsString( 'No ZDR route', $encoded_error_data );
@@ -2268,6 +2672,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'failed', $event['status'] );
         $this->assertSame( 'managed_privacy_route_unavailable', $event['error_code'] );
         $this->assertSame( $privacy_route_failure, $event['result_json']['privacy_route_failure'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'provider_payload', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'prompt', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'form_data', $event['result_json'] ?? [] );
         $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $event['result_json'] ?? [] ) );
         $this->assertStringNotContainsString( 'Ada Lovelace', wp_json_encode( $event ) );
         $this->assertStringNotContainsString( 'ada@example.test', wp_json_encode( $event ) );
@@ -2437,6 +2845,98 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringNotContainsString( $fixture['proxy_api_key'], wp_json_encode( $event ) );
     }
 
+    public function test_custom_action_code_is_not_reclassified_by_bundled_template_metadata(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [
+                'template_code'   => 'spam_detection_v1',
+                'prompt_template' => 'Run this custom webmaster-owned Action for {{name}}.',
+            ]
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'custom-row-code-stable',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'output'               => [ 'text' => 'Managed custom Action completed.' ],
+                'token_usage'          => [
+                    'input_tokens'  => 8,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 13,
+                ],
+                'metering'             => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 1,
+                ],
+            ]
+        );
+        $before = $this->custom_actions->get( $fixture['action_id'] );
+        $this->assertIsArray( $before );
+        $this->assertTrue( Sentient_Forms_Bundled_Action_Templates::has( 'spam_detection_v1' ) );
+        $this->assertSame( 'contact_spam_triage', $before['code'] );
+        $this->assertSame( 'spam_detection_v1', $before['definition_json']['template_code'] );
+        $before_mapping = $this->mappings->get( $fixture['mapping_id'] );
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'custom-row-code-stable',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( 'contact_spam_triage', $managed_proxy->execute_calls[0]['payload']['action_code'] );
+        $this->assertStringContainsString(
+            'Run this custom webmaster-owned Action for Ada Lovelace.',
+            $managed_proxy->execute_calls[0]['payload']['prompt']
+        );
+
+        $stored = $this->custom_actions->get( $fixture['action_id'] );
+        $this->assertIsArray( $stored );
+        $this->assertArrayNotHasKey( 'action_policy', $stored['definition_json'] );
+        $this->assertArrayNotHasKey( 'allowed_facets', $stored['definition_json'] );
+        $this->assertSame( $before_mapping, $this->mappings->get( $fixture['mapping_id'] ) );
+    }
+
+    public function test_conflicting_recognized_action_identities_fail_closed_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [ 'template_code' => 'spam_detection_v1' ],
+            [
+                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+            ]
+        );
+        $before_action  = $this->custom_actions->get( $fixture['action_id'] );
+        $before_mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $openrouter     = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy  = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_identity_conflict', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+        $this->assertSame( $before_action, $this->custom_actions->get( $fixture['action_id'] ) );
+        $this->assertSame( $before_mapping, $this->mappings->get( $fixture['mapping_id'] ) );
+    }
+
     public function test_bundled_action_falls_back_to_openrouter_backup_when_managed_credits_are_exhausted(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
@@ -2509,6 +3009,61 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $events[0]['result_json']['fallback']['primary_provider'] ?? null );
         $this->assertSame( 'openrouter', $events[0]['result_json']['fallback']['backup_provider'] ?? null );
         $this->assertSame( 'sentient_managed_credits_exhausted', $events[0]['result_json']['fallback']['reason'] ?? null );
+    }
+
+    public function test_managed_only_policy_does_not_fallback_to_direct_when_managed_credits_are_exhausted(): void
+    {
+        $fixture = $this->create_local_managed_mapping();
+        $backup_credential_id = $this->create_ready_openrouter_credential(
+            'Managed-only fallback guard',
+            'sk-or-managed-only-fallback-guard'
+        );
+        $consent_id = $this->consents->record( 'openrouter', '2026-04-16', get_current_user_id() );
+        $this->assertIsInt( $consent_id );
+
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $action = $this->custom_actions->get( (int) $mapping['action_id'] );
+        $this->assertIsArray( $action );
+        $updated = $this->custom_actions->update(
+            (int) $action['id'],
+            [
+                'definition_json'      => array_merge(
+                    $action['definition_json'],
+                    $this->action_policy_definition( [ 'execution_requirement' => 'managed_only' ] )
+                ),
+                'model_selection_json' => array_merge(
+                    $action['model_selection_json'],
+                    [
+                        'backup_provider'      => 'openrouter',
+                        'backup_model'         => 'openrouter/auto',
+                        'backup_credential_id' => $backup_credential_id,
+                    ]
+                ),
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_credits_exhausted',
+                'Managed service credits are exhausted.',
+                [ 'status' => 402 ]
+            )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_credits_exhausted', $result->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 0, $openrouter->chat_calls );
     }
 
     public function test_managed_credit_exhaustion_does_not_fallback_to_openrouter_when_zdr_required(): void
@@ -4137,9 +4692,16 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
     /**
      * @param array<string, mixed> $license_overrides
-     * @return array{credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
+     * @param array<string, mixed> $definition_overrides
+     * @param array<string, mixed> $action_overrides
+     * @return array{action_id: int, credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
      */
-    private function create_local_managed_mapping( bool $record_consent = true, array $license_overrides = [] ): array
+    private function create_local_managed_mapping(
+        bool $record_consent = true,
+        array $license_overrides = [],
+        array $definition_overrides = [],
+        array $action_overrides = []
+    ): array
     {
         $site_id       = '22222222-2222-4222-8222-222222222222';
         $proxy_api_key = 'proxy-local-managed-secret';
@@ -4174,21 +4736,27 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         }
 
         $action_id = $this->custom_actions->create(
-            [
+            array_merge(
+                [
                 'code'                 => 'contact_spam_triage',
                 'display_name'         => 'Contact Spam Triage',
-                'definition_json'      => [
-                    'system_prompt'   => 'Classify contact form submissions.',
-                    'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
-                    'max_tokens'      => 256,
-                    'temperature'     => 0.2,
-                ],
+                'definition_json'      => array_merge(
+                    [
+                        'system_prompt'   => 'Classify contact form submissions.',
+                        'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                        'max_tokens'      => 256,
+                        'temperature'     => 0.2,
+                    ],
+                    $definition_overrides
+                ),
                 'model_selection_json' => [
                     'provider'      => 'sentient_managed',
                     'model'         => 'openai/gpt-4.1-mini',
                     'credential_id' => $credential_id,
                 ],
-            ]
+                ],
+                $action_overrides
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -4210,6 +4778,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsInt( $mapping_id );
 
         return [
+            'action_id'      => $action_id,
             'credential_id'  => $credential_id,
             'mapping_id'     => $mapping_id,
             'proxy_api_key'  => (string) ( $license_overrides['proxy_api_key'] ?? $proxy_api_key ),
@@ -4217,9 +4786,33 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         ];
     }
 
+    /**
+     * @param array<string, mixed> $policy_overrides
+     * @return array<string, mixed>
+     */
+    private function action_policy_definition( array $policy_overrides = [] ): array
+    {
+        return [
+            'action_policy' => array_replace(
+                [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [],
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                    => 'standard',
+                ],
+                $policy_overrides
+            ),
+            'allowed_facets' => [],
+            'enabled_facets' => [],
+        ];
+    }
+
     private function create_service(
         Sentient_Forms_Test_OpenRouter_Client $client,
-        ?Sentient_Forms_Test_Managed_Proxy_Client $managed_proxy = null
+        ?Sentient_Forms_Test_Managed_Proxy_Client $managed_proxy = null,
+        ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null
     ): Sentient_Forms_Local_Action_Execution_Service
     {
         return new Sentient_Forms_Local_Action_Execution_Service(
@@ -4233,7 +4826,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             new Sentient_Forms_Local_Prompt_Renderer(),
             new Sentient_Forms_Local_Result_Applier(),
             $this->templates,
-            $managed_proxy ?? new Sentient_Forms_Test_Managed_Proxy_Client()
+            $managed_proxy ?? new Sentient_Forms_Test_Managed_Proxy_Client(),
+            null,
+            null,
+            null,
+            $policy_resolver
         );
     }
 

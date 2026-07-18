@@ -18,14 +18,32 @@ class Sentient_Forms_Managed_Service_Client
 
     private Sentient_Forms_Api_Client $client;
 
+    private ?WP_Error $configuration_error = null;
+
+    /**
+     * Create a managed account and billing client.
+     *
+     * @param string|null               $base_url Optional CPS v2 base URL.
+     * @param int                       $timeout  HTTP request timeout in seconds.
+     * @param Sentient_Forms_Api_Client|null $client Optional preconfigured API client.
+     */
     public function __construct(
         ?string $base_url = null,
         int $timeout = 30,
         ?Sentient_Forms_Api_Client $client = null
     )
     {
-        $this->base_url = $this->resolve_base_url( $base_url );
-        $this->client   = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
+        try
+        {
+            $this->base_url = $this->resolve_base_url( $base_url );
+        }
+        catch ( InvalidArgumentException $exception )
+        {
+            $this->base_url            = self::DEFAULT_BASE_URL;
+            $this->configuration_error = Sentient_Forms_Managed_Base_Url::to_wp_error( $exception );
+        }
+
+        $this->client = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
     }
 
     /**
@@ -33,17 +51,22 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Activation payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function activate_site( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_activation_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
         }
 
-        return $this->client->post( '/account/sites/activate', $payload );
+        return $this->client->post_envelope( '/account/sites/activate', $payload );
     }
 
     /**
@@ -53,6 +76,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function deactivate_site( string $proxy_api_key, string $site_id ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_account_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -83,6 +111,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function get_site( string $proxy_api_key, string $site_id ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_account_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -112,6 +145,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function create_checkout_session( string $proxy_api_key, array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -142,6 +180,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function create_top_up_checkout_session( string $proxy_api_key, array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -171,17 +214,22 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Checkout payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function start_managed_checkout( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_managed_checkout_start_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
         }
 
-        return $this->client->post( '/account/checkout/start', $payload );
+        return $this->client->post_envelope( '/account/checkout/start', $payload );
     }
 
     /**
@@ -189,17 +237,22 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Checkout completion payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function complete_managed_checkout( array $payload ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $payload = $this->normalize_managed_checkout_complete_payload( $payload );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
         }
 
-        return $this->client->post( '/account/checkout/complete', $payload );
+        return $this->client->post_envelope( '/account/checkout/complete', $payload );
     }
 
     /**
@@ -214,6 +267,11 @@ class Sentient_Forms_Managed_Service_Client
         ?string $subscription_id = null
     ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -256,6 +314,11 @@ class Sentient_Forms_Managed_Service_Client
      */
     public function get_billing_state( string $proxy_api_key ): array | WP_Error
     {
+        if ( null !== $this->configuration_error )
+        {
+            return $this->configuration_error;
+        }
+
         $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
         if ( is_wp_error( $proxy_api_key ) )
         {
@@ -279,11 +342,6 @@ class Sentient_Forms_Managed_Service_Client
         return $this->base_url;
     }
 
-    /**
-     * @param array<string, mixed> $payload
-     *
-     * @return array<string, mixed>|WP_Error
-     */
     private function normalize_activation_payload( array $payload ): array | WP_Error
     {
         $normalized = [];
@@ -325,7 +383,85 @@ class Sentient_Forms_Managed_Service_Client
      */
     private function normalize_checkout_payload( array $payload ): array | WP_Error
     {
-        $normalized = [];
+        if ( array_key_exists( 'price_id', $payload ) )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed billing checkout pricing is selected by plan_code.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = $this->normalize_checkout_base_payload( $payload );
+        if ( is_wp_error( $normalized ) )
+        {
+            return $normalized;
+        }
+
+        if ( isset( $normalized['quantity'] ) && 1 !== $normalized['quantity'] )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed subscription checkout quantity must be one.', 'sentient-forms' )
+            );
+        }
+
+        $plan_code = isset( $payload['plan_code'] ) && is_scalar( $payload['plan_code'] )
+            ? sanitize_key( (string) $payload['plan_code'] )
+            : '';
+        if ( ! in_array( $plan_code, [ 'starter', 'pro', 'business' ], true ) )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed billing checkout payload requires a valid plan_code.', 'sentient-forms' )
+            );
+        }
+        $normalized['plan_code'] = $plan_code;
+
+        foreach ( [ 'customer_email', 'customer_name' ] as $optional_text )
+        {
+            if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
+            {
+                $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
+            }
+        }
+
+        if ( isset( $payload['allow_promotion_codes'] ) )
+        {
+            if ( ! is_bool( $payload['allow_promotion_codes'] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    __( 'Managed billing checkout payload requires allow_promotion_codes to be a boolean.', 'sentient-forms' )
+                );
+            }
+
+            $normalized['allow_promotion_codes'] = $payload['allow_promotion_codes'];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function normalize_checkout_base_payload( array $payload ): array | WP_Error
+    {
+        $checkout_attempt_id = isset( $payload['checkout_attempt_id'] ) && is_scalar( $payload['checkout_attempt_id'] )
+            ? trim( (string) $payload['checkout_attempt_id'] )
+            : '';
+        if ( ! wp_is_uuid( $checkout_attempt_id ) )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed billing checkout payload requires a valid checkout_attempt_id.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [
+            'checkout_attempt_id' => strtolower( $checkout_attempt_id ),
+        ];
 
         foreach ( [ 'success_url', 'cancel_url' ] as $required_url )
         {
@@ -350,22 +486,18 @@ class Sentient_Forms_Managed_Service_Client
             $normalized[ $required_url ] = $url;
         }
 
-        foreach ( [ 'price_id', 'plan_code', 'customer_email', 'customer_name' ] as $optional_text )
-        {
-            if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
-            {
-                $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
-            }
-        }
-
         if ( isset( $payload['quantity'] ) )
         {
-            $normalized['quantity'] = max( 1, (int) $payload['quantity'] );
-        }
+            $quantity = filter_var( $payload['quantity'], FILTER_VALIDATE_INT );
+            if ( false === $quantity || $quantity < 1 )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    __( 'Managed checkout quantity must be a positive integer.', 'sentient-forms' )
+                );
+            }
 
-        if ( isset( $payload['allow_promotion_codes'] ) )
-        {
-            $normalized['allow_promotion_codes'] = (bool) $payload['allow_promotion_codes'];
+            $normalized['quantity'] = $quantity;
         }
 
         return $normalized;
@@ -378,7 +510,7 @@ class Sentient_Forms_Managed_Service_Client
      */
     private function normalize_top_up_checkout_payload( array $payload ): array | WP_Error
     {
-        $normalized = $this->normalize_checkout_payload( $payload );
+        $normalized = $this->normalize_checkout_base_payload( $payload );
         if ( is_wp_error( $normalized ) )
         {
             return $normalized;
@@ -405,6 +537,18 @@ class Sentient_Forms_Managed_Service_Client
     private function normalize_managed_checkout_start_payload( array $payload ): array | WP_Error
     {
         $normalized = [];
+
+        $checkout_attempt_id = isset( $payload['checkout_attempt_id'] ) && is_scalar( $payload['checkout_attempt_id'] )
+            ? trim( (string) $payload['checkout_attempt_id'] )
+            : '';
+        if ( ! wp_is_uuid( $checkout_attempt_id ) )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_invalid_payload',
+                __( 'Managed checkout payload requires a valid checkout_attempt_id.', 'sentient-forms' )
+            );
+        }
+        $normalized['checkout_attempt_id'] = strtolower( $checkout_attempt_id );
 
         foreach ( [ 'plan_code', 'site_url', 'local_site_identifier', 'disclosure_version' ] as $required_key )
         {
@@ -520,12 +664,40 @@ class Sentient_Forms_Managed_Service_Client
         $normalized['site_url']              = $site_url;
         $normalized['local_site_identifier'] = sanitize_text_field( (string) $payload['local_site_identifier'] );
 
-        foreach ( [ 'checkout_intent_id', 'checkout_session_id', 'activation_token' ] as $optional_text )
+        $activation_token = isset( $payload['activation_token'] ) && is_scalar( $payload['activation_token'] )
+            ? trim( (string) $payload['activation_token'] )
+            : '';
+        if ( '' === $activation_token )
         {
-            if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
+            return new WP_Error(
+                'sentient_managed_checkout_invalid_payload',
+                __( 'Managed checkout completion requires the activation_token from the secure checkout return URL.', 'sentient-forms' )
+            );
+        }
+        $normalized['activation_token'] = sanitize_text_field( $activation_token );
+
+        $checkout_intent_id = isset( $payload['checkout_intent_id'] ) && is_scalar( $payload['checkout_intent_id'] )
+            ? trim( (string) $payload['checkout_intent_id'] )
+            : '';
+        if ( '' !== $checkout_intent_id )
+        {
+            if ( ! wp_is_uuid( $checkout_intent_id ) )
             {
-                $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
+                return new WP_Error(
+                    'sentient_managed_checkout_invalid_payload',
+                    __( 'Managed checkout completion requires a valid checkout_intent_id.', 'sentient-forms' )
+                );
             }
+
+            $normalized['checkout_intent_id'] = strtolower( $checkout_intent_id );
+        }
+
+        $checkout_session_id = isset( $payload['checkout_session_id'] ) && is_scalar( $payload['checkout_session_id'] )
+            ? trim( (string) $payload['checkout_session_id'] )
+            : '';
+        if ( '' !== $checkout_session_id )
+        {
+            $normalized['checkout_session_id'] = sanitize_text_field( $checkout_session_id );
         }
 
         if ( empty( $normalized['checkout_intent_id'] ) && empty( $normalized['checkout_session_id'] ) )
@@ -600,26 +772,10 @@ class Sentient_Forms_Managed_Service_Client
 
         if ( ! is_string( $url ) || '' === trim( $url ) )
         {
-            $url = $this->resolve_cps_base_url_default();
-        }
-
-        if ( ! is_string( $url ) || '' === trim( $url ) )
-        {
             $url = self::DEFAULT_BASE_URL;
         }
 
-        $url = untrailingslashit( trim( $url ) );
-        if ( str_ends_with( $url, '/v1' ) )
-        {
-            return substr( $url, 0, -3 ) . '/v2';
-        }
-
-        if ( ! str_ends_with( $url, '/v2' ) )
-        {
-            $url .= '/v2';
-        }
-
-        return $url;
+        return Sentient_Forms_Managed_Base_Url::normalize( $url );
     }
 
     private function resolve_managed_service_override(): ?string
@@ -666,20 +822,4 @@ class Sentient_Forms_Managed_Service_Client
         return is_string( $url ) && '' !== trim( $url ) ? $url : null;
     }
 
-    private function resolve_cps_base_url_default(): string
-    {
-        $options  = get_option( 'sentient_forms_settings', [] );
-        $options  = is_array( $options ) ? $options : [];
-        $base_url = $options['cps_base_url'] ?? null;
-        $base_url = apply_filters( 'sentient_forms_cps_base_url', $base_url, $options );
-
-        if ( is_string( $base_url ) && '' !== trim( $base_url ) )
-        {
-            return $base_url;
-        }
-
-        return defined( 'SENTIENT_FORMS_DEFAULT_CPS_BASE_URL' )
-            ? SENTIENT_FORMS_DEFAULT_CPS_BASE_URL
-            : 'https://api.sentientforms.com/v1';
-    }
 }

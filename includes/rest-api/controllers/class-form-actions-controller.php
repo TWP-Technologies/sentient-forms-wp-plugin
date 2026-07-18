@@ -4676,6 +4676,14 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $action_definition['description'] = sanitize_textarea_field( (string) $definition['description'] );
         }
 
+        foreach ( [ 'action_policy', 'allowed_facets', 'enabled_facets' ] as $policy_field )
+        {
+            if ( is_array( $definition[ $policy_field ] ?? null ) )
+            {
+                $action_definition[ $policy_field ] = $definition[ $policy_field ];
+            }
+        }
+
         return $action_definition;
     }
 

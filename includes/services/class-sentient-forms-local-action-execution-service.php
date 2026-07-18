@@ -29,7 +29,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
         private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null,
-        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
+        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
+        private ?Sentient_Forms_Action_Policy_Resolver $action_policy_resolver = null,
+        private ?Sentient_Forms_Action_Policy_Preflight $action_policy_preflight = null,
+        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
     )
     {
         global $wpdb;
@@ -47,6 +50,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
         $this->lead_profiles  = $this->lead_profiles ?? new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
         $this->lead_scoring_results = $this->lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $this->action_policy_resolver = $this->action_policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
+        $this->action_policy_preflight = $this->action_policy_preflight ?? new Sentient_Forms_Action_Policy_Preflight();
+        $this->provider_route_decision = $this->provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -108,12 +114,24 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
-        $action  = $this->model_selection_service->prepare_bundled_action_for_execution( $action );
-        $mapping = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
+        $definition  = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
+        $action_code = $this->resolve_action_code( $action, $definition );
+        if ( is_wp_error( $action_code ) )
+        {
+            return $action_code;
+        }
 
-        $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
-        $action_code                = $this->resolve_action_code( $action, $definition );
-        [ $mapping, $context ]      = $this->prepare_lead_value_runtime_context( $mapping, $action, $definition, $context );
+        $action     = $this->model_selection_service->prepare_bundled_action_for_execution( $action );
+        $mapping    = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
+        $definition = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
+
+        $effective_action_policy    = $this->resolve_effective_action_policy( $definition );
+        if ( is_wp_error( $effective_action_policy ) )
+        {
+            return $effective_action_policy;
+        }
+
+        [ $mapping, $context ] = $this->prepare_lead_value_runtime_context( $mapping, $context, $action_code );
         if ( $this->requires_active_lead_profile( $action_code ) && ! is_array( $context['lead_profile'] ?? null ) )
         {
             return new WP_Error(
@@ -165,6 +183,31 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        if ( [] !== $effective_action_policy )
+        {
+            $policy_context = $context;
+            $policy_context['form_source'] = sanitize_key( (string) ( $mapping['form_source'] ?? '' ) );
+            if ( ! array_key_exists( 'lifecycle', $policy_context ) && ! array_key_exists( 'hook', $policy_context ) )
+            {
+                $policy_context['hook'] = $mapping['hook'] ?? null;
+            }
+            $policy_preflight = $this->action_policy_preflight->attest(
+                $effective_action_policy,
+                $action_code,
+                $policy_context
+            );
+            if ( is_wp_error( $policy_preflight ) )
+            {
+                return $policy_preflight;
+            }
+
+            $route_authorization = $this->authorize_selected_provider( $effective_action_policy, $provider );
+            if ( is_wp_error( $route_authorization ) )
+            {
+                return $route_authorization;
+            }
+        }
+
         if ( 'openrouter' === $provider && is_array( $structured_output_contract ) )
         {
             $model_support = $this->assert_openrouter_structured_output_model_supported( $model, $structured_output_contract );
@@ -197,7 +240,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
-        $messages = $this->build_messages( $action, $definition, $mapping, $form, $entry, $context );
+        $messages = $this->build_messages( $action, $definition, $mapping, $form, $entry, $context, $action_code );
         if ( is_wp_error( $messages ) )
         {
             return $messages;
@@ -226,8 +269,16 @@ class Sentient_Forms_Local_Action_Execution_Service
                 $context,
                 $managed_context['site_id'],
                 $execution_request_id,
-                $structured_output_contract
+                $structured_output_contract,
+                $payload,
+                is_array( $effective_action_policy['required_managed_capabilities'] ?? null )
+                    ? $effective_action_policy['required_managed_capabilities']
+                    : []
             );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
         }
 
         $payload_digest       = hash( 'sha256', (string) wp_json_encode( $payload ) );
@@ -336,7 +387,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                     $action_code,
                     $execution_request_id,
                     $submission_uuid,
-                    $payload_digest
+                    $payload_digest,
+                    $effective_action_policy
                 );
                 if ( null !== $backup_result )
                 {
@@ -494,11 +546,20 @@ class Sentient_Forms_Local_Action_Execution_Service
         string $action_code,
         string $execution_request_id,
         ?string $submission_uuid,
-        string $primary_payload_digest
+        string $primary_payload_digest,
+        array $effective_action_policy
     ): array | WP_Error | null
     {
         $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
         if ( '' === $fallback_reason )
+        {
+            return null;
+        }
+
+        if (
+            [] !== $effective_action_policy
+            && is_wp_error( $this->authorize_selected_provider( $effective_action_policy, 'openrouter' ) )
+        )
         {
             return null;
         }
@@ -917,15 +978,12 @@ class Sentient_Forms_Local_Action_Execution_Service
 
     /**
      * @param array<string, mixed> $mapping
-     * @param array<string, mixed> $action
-     * @param array<string, mixed> $definition
      * @param array<string, mixed> $context
      *
      * @return array{0: array<string, mixed>, 1: array<string, mixed>}
      */
-    private function prepare_lead_value_runtime_context( array $mapping, array $action, array $definition, array $context ): array
+    private function prepare_lead_value_runtime_context( array $mapping, array $context, string $action_code ): array
     {
-        $action_code = $this->resolve_action_code( $action, $definition );
         if ( ! $this->requires_active_lead_profile( $action_code ) )
         {
             return [ $mapping, $context ];
@@ -1463,7 +1521,15 @@ class Sentient_Forms_Local_Action_Execution_Service
         ];
     }
 
-    private function build_messages( array $action, array $definition, array $mapping, array $form, array $entry, array $context ): array | WP_Error
+    private function build_messages(
+        array $action,
+        array $definition,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $context,
+        string $action_code
+    ): array | WP_Error
     {
         $variables = $this->renderer->build_variables(
             is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
@@ -1485,10 +1551,10 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $prompt_template = $this->append_prompt_context_to_template(
             $this->resolve_prompt_template( $action, $definition ),
-            $action,
             $definition,
             $mapping,
-            $context
+            $context,
+            $action_code
         );
         if ( '' === trim( $prompt_template ) )
         {
@@ -1516,9 +1582,14 @@ class Sentient_Forms_Local_Action_Execution_Service
         return is_wp_error( $rendered ) ? $rendered : $this->inject_site_context_message( $this->inject_prompt_safety_message( $rendered ), $mapping, $context );
     }
 
-    private function append_prompt_context_to_template( string $prompt_template, array $action, array $definition, array $mapping, array $context ): string
+    private function append_prompt_context_to_template(
+        string $prompt_template,
+        array $definition,
+        array $mapping,
+        array $context,
+        string $action_code
+    ): string
     {
-        $action_code = $this->resolve_action_code( $action, $definition );
         if ( $this->is_bundled_action_code( $action_code ) )
         {
             return $this->append_bundled_prompt_context_to_template( $prompt_template, $action_code, $mapping, $context );
@@ -1609,30 +1680,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         return rtrim( $prompt_template ) . "\n\n" . implode( "\n\n", $sections );
     }
 
-    private function resolve_action_code( array $action, array $definition ): string
+    private function resolve_action_code( array $action, array $definition ): string | WP_Error
     {
-        foreach ( [ $action['code'] ?? null, $definition['code'] ?? null, $definition['action_code'] ?? null, $definition['template_code'] ?? null, $definition['action_template_code'] ?? null, $definition['central_action_id'] ?? null ] as $candidate )
-        {
-            if ( is_scalar( $candidate ) )
-            {
-                $code = sanitize_key( (string) $candidate );
-                if ( '' !== $code )
-                {
-                    if ( class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
-                    {
-                        $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $code );
-                        if ( '' !== $template_code )
-                        {
-                            return $template_code;
-                        }
-                    }
-
-                    return $code;
-                }
-            }
-        }
-
-        return '';
+        $identity = Sentient_Forms_Bundled_Action_Templates::resolve_action_identity( $action, $definition );
+        return is_wp_error( $identity ) ? $identity : $identity['action_code'];
     }
 
     private function is_bundled_action_code( string $action_code ): bool
@@ -2263,8 +2314,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $context,
         string $site_id,
         string $execution_request_id,
-        array | WP_Error | null $structured_output_contract
-    ): array
+        array | WP_Error | null $structured_output_contract,
+        array $provider_payload,
+        array $required_managed_capabilities
+    ): array | WP_Error
     {
         $payload = [
             'site_id'              => $site_id,
@@ -2322,7 +2375,108 @@ class Sentient_Forms_Local_Action_Execution_Service
             $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
         }
 
+        foreach ( [ 'tools', 'tool_choice' ] as $provider_field )
+        {
+            if ( array_key_exists( $provider_field, $provider_payload ) )
+            {
+                $payload[ $provider_field ] = $provider_payload[ $provider_field ];
+            }
+        }
+
+        $managed_capability_policy = Sentient_Forms_Managed_Capability_Policy::build_for_request(
+            $required_managed_capabilities,
+            $payload
+        );
+        if ( is_wp_error( $managed_capability_policy ) )
+        {
+            return $managed_capability_policy;
+        }
+
+        if ( null !== $managed_capability_policy )
+        {
+            $payload['managed_capability_policy'] = $managed_capability_policy;
+        }
+
         return $payload;
+    }
+
+    /**
+     * Resolve definition-owned policy while preserving policy-free legacy definitions.
+     *
+     * @param array<string, mixed> $definition
+     * @return array<string, mixed>|WP_Error
+     */
+    private function resolve_effective_action_policy( array $definition ): array | WP_Error
+    {
+        $policy_fields = [ 'action_policy', 'allowed_facets', 'enabled_facets' ];
+        $has_policy    = false;
+
+        foreach ( $policy_fields as $policy_field )
+        {
+            if ( array_key_exists( $policy_field, $definition ) )
+            {
+                $has_policy = true;
+                break;
+            }
+        }
+
+        if ( ! $has_policy )
+        {
+            return [];
+        }
+
+        return $this->action_policy_resolver->resolve_action_definition( $definition );
+    }
+
+    /**
+     * Authorize the configured provider without silently rerouting the Action.
+     *
+     * CPS performs the authoritative capacity admission for managed requests.
+     * At this boundary, managed capacity means only that the configured managed
+     * route is eligible to attempt that fail-closed CPS admission.
+     *
+     * @param array<string, mixed> $effective_policy
+     */
+    private function authorize_selected_provider( array $effective_policy, string $provider ): true | WP_Error
+    {
+        $license = class_exists( 'Sentient_Forms_Plugin' )
+            ? Sentient_Forms_Plugin::instance()->get_license_data()
+            : [];
+        $subscription_active = in_array(
+            sanitize_key( (string) ( $license['license_status'] ?? '' ) ),
+            [ 'active', 'trial', 'valid' ],
+            true
+        );
+        $managed_ready = 'sentient_managed' === $provider
+            && $subscription_active
+            && '' !== trim( (string) ( $license['proxy_api_key'] ?? '' ) )
+            && '' !== trim( (string) ( $license['site_id'] ?? '' ) );
+
+        $decision = $this->provider_route_decision->decide(
+            $effective_policy,
+            [
+                'subscription_active'       => $subscription_active,
+                'managed_ready'             => $managed_ready,
+                'managed_capacity_available' => $managed_ready,
+                'direct_ready'              => 'openrouter' === $provider,
+                'policy_preflight_complete' => true,
+            ]
+        );
+        if ( is_wp_error( $decision ) )
+        {
+            return $decision;
+        }
+
+        if ( $provider !== ( $decision['provider'] ?? '' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_selected_provider_ineligible',
+                __( 'The configured provider is not eligible for the resolved Action policy.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        return true;
     }
 
     /**
@@ -2394,10 +2548,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return null;
         }
 
-        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
-        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
-        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
-        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+        $failure = $this->normalize_managed_privacy_route_failure( $data['privacy_route_failure'] ?? null );
 
         if ( null === $failure )
         {
@@ -2426,29 +2577,21 @@ class Sentient_Forms_Local_Action_Execution_Service
             $safe_error_data['status'] = absint( $data['status'] );
         }
 
-        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
-        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
-        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
-        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+        $execution_request_id = isset( $data['execution_request_id'] ) && is_scalar( $data['execution_request_id'] )
+            ? sanitize_text_field( (string) $data['execution_request_id'] )
+            : '';
+        if ( '' !== $execution_request_id && 128 >= strlen( $execution_request_id ) )
+        {
+            $safe_error_data['execution_request_id'] = $execution_request_id;
+        }
+
+        $failure = $this->normalize_managed_privacy_route_failure( $data['privacy_route_failure'] ?? null );
         if ( null === $failure )
         {
-            if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
-            {
-                return Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data );
-            }
-
             return $safe_error_data ?: null;
         }
 
-        $safe_error_data['payload'] = [
-            'success' => false,
-            'error'   => [
-                'code' => sanitize_key( (string) ( $error_payload['code'] ?? $error->get_error_code() ) ),
-                'meta' => [
-                    'privacy_route_failure' => $failure,
-                ],
-            ],
-        ];
+        $safe_error_data['privacy_route_failure'] = $failure;
 
         return $safe_error_data;
     }
@@ -2479,8 +2622,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         if (
             self::PRIVACY_ROUTE_FAILURE_SCHEMA !== $schema
             || '' === $policy_version
-            || '' === $reason_code
+            || 'managed_zdr_route_unavailable' !== $reason_code
             || '' === $selected_model
+            || 191 < strlen( $selected_model )
         )
         {
             return null;
@@ -2629,23 +2773,18 @@ class Sentient_Forms_Local_Action_Execution_Service
         $action_code = (string) ( $action['code'] ?? 'local_action' );
         $action_id   = sprintf( 'local:%d:%s', (int) ( $mapping['id'] ?? 0 ), $action_code );
 
-        if ( class_exists( 'Sentient_Forms_Action_Executor' ) )
-        {
-            return Sentient_Forms_Action_Executor::generate_execution_request_id(
-                $action_id,
-                $form,
-                $entry,
-                array_merge(
-                    $context,
-                    [
-                        'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
-                        'action_id'  => $action_code,
-                    ]
-                )
-            );
-        }
-
-        return substr( hash( 'sha256', (string) wp_json_encode( [ $action_id, $form, $entry, $context ] ) ), 0, 32 );
+        return Sentient_Forms_Execution_Identity::generate(
+            $action_id,
+            $form,
+            $entry,
+            array_merge(
+                $context,
+                [
+                    'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
+                    'action_id'  => $action_code,
+                ]
+            )
+        );
     }
 
     private function resolve_submission_uuid( array $context ): ?string

@@ -83,13 +83,11 @@ class Sentient_Forms_Action_Executor {
 		}
 
 		$client                = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token     = self::derive_submission_token( $form, $entry );
-		$explicit_request_id  = isset( $context['execution_request_id'] ) && is_scalar( $context['execution_request_id'] )
-			? sanitize_text_field( trim( (string) $context['execution_request_id'] ) )
-			: '';
+		$submission_token     = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
+		$explicit_request_id  = $this->normalize_explicit_execution_request_id( $context );
 		$execution_request_id = '' !== $explicit_request_id
 			? $explicit_request_id
-			: self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+			: Sentient_Forms_Execution_Identity::generate( $central_action_id, $form, $entry, $context );
 		$entry_id              = isset( $entry['id'] ) ? (int) $entry['id'] : 0;
 		$cached_result         = $this->get_cached_execution_result( $execution_request_id, $entry_id, $context );
 
@@ -186,17 +184,12 @@ class Sentient_Forms_Action_Executor {
 			);
 		}
 
-		$client           = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token = self::derive_submission_token( $form, $entry );
-		$execution_request_id = isset( $context['execution_request_id'] )
-			? sanitize_text_field( (string) $context['execution_request_id'] )
-			: self::resolve_execution_request_id(
-				$central_action_id,
-				$form,
-				$entry,
-				$context,
-				$submission_token
-			);
+		$client                = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token      = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
+		$explicit_request_id   = $this->normalize_explicit_execution_request_id( $context );
+		$execution_request_id  = '' !== $explicit_request_id
+			? $explicit_request_id
+			: Sentient_Forms_Execution_Identity::generate( $central_action_id, $form, $entry, $context );
 
 		$payload_data       = $this->build_execution_payload_data( $form, $entry, $context );
 		$attachment_payload = $this->build_attachment_payload( $form, $entry, $context );
@@ -263,10 +256,11 @@ class Sentient_Forms_Action_Executor {
 			);
 		}
 
-		$client           = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token = self::derive_submission_token( $form, $entry );
-		$execution_request_id = isset( $context['execution_request_id'] )
-			? sanitize_text_field( (string) $context['execution_request_id'] )
+		$client                = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token      = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
+		$explicit_request_id   = $this->normalize_explicit_execution_request_id( $context );
+		$execution_request_id  = '' !== $explicit_request_id
+			? $explicit_request_id
 			: 'rt-' . str_replace( '-', '', wp_generate_uuid4() );
 
 		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
@@ -930,6 +924,7 @@ class Sentient_Forms_Action_Executor {
 		}
 
 		$action_context = array_merge( $defaults, $context );
+		$action_context['execution_request_id'] = $execution_request_id;
 
 		if ( isset( $action_context['form_id'] ) ) {
 			$action_context['form_id'] = (string) $action_context['form_id'];
@@ -942,125 +937,18 @@ class Sentient_Forms_Action_Executor {
 		return $action_context;
 	}
 
+	private function normalize_explicit_execution_request_id( array $context ): string
+	{
+		if ( ! isset( $context['execution_request_id'] ) || ! is_scalar( $context['execution_request_id'] ) )
+		{
+			return '';
+		}
+
+		return sanitize_text_field( trim( (string) $context['execution_request_id'] ) );
+	}
+
 	public static function generate_execution_request_id( string $central_action_id, array $form, array $entry, array $context = array() ): string {
-		$submission_token = self::derive_submission_token( $form, $entry );
-
-		return self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
-	}
-
-	private static function resolve_execution_request_id( string $central_action_id, array $form, array $entry, array $context, string $submission_token ): string {
-		$generated_request_id = self::build_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
-		$execution_request_id = $generated_request_id;
-
-		if ( self::is_local_or_development_environment() ) {
-			$forced = get_option( 'sentient_forms_forced_execution_request_id', '' );
-			if ( is_scalar( $forced ) ) {
-				$forced = sanitize_text_field( (string) $forced );
-				if ( '' !== $forced ) {
-					$execution_request_id = $forced;
-				}
-			}
-		}
-
-		$execution_request_id = apply_filters(
-			'sentient_forms_execution_request_id',
-			$execution_request_id,
-			$central_action_id,
-			$form,
-			$entry,
-			$context
-		);
-
-		if ( ! is_string( $execution_request_id ) ) {
-			return $generated_request_id;
-		}
-
-		$execution_request_id = sanitize_text_field( trim( $execution_request_id ) );
-		if ( '' === $execution_request_id ) {
-			return $generated_request_id;
-		}
-
-		return $execution_request_id;
-	}
-
-	private static function is_local_or_development_environment(): bool {
-		$environment = function_exists( 'wp_get_environment_type' )
-			? wp_get_environment_type()
-			: getenv( 'WP_ENVIRONMENT_TYPE' );
-		$environment = strtolower( trim( (string) $environment ) );
-
-		return in_array( $environment, array( 'local', 'development' ), true );
-	}
-
-	private static function derive_submission_token( array $form, array $entry ): string {
-		if ( isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) ) {
-			$submission_uuid = strtolower( sanitize_text_field( (string) $entry['submission_uuid'] ) );
-			if ( wp_is_uuid( $submission_uuid ) ) {
-				return 'submission:' . $submission_uuid;
-			}
-		}
-
-		if ( isset( $entry['id'] ) && $entry['id'] ) {
-			return 'entry:' . (string) $entry['id'];
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
-		if ( isset( $_POST['gform_unique_id'] ) ) {
-			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
-			$unique_id = sanitize_text_field( wp_unslash( (string) $_POST['gform_unique_id'] ) );
-			if ( ! empty( $unique_id ) ) {
-				return 'submission:' . $unique_id;
-			}
-		}
-
-		$form_id      = isset( $form['id'] ) ? (string) $form['id'] : '';
-		$current_user = get_current_user_id();
-		$payload_hash = hash(
-			'sha256',
-			wp_json_encode(
-				array(
-					'form_id' => $form_id,
-					'entry'   => $entry,
-					'user'    => $current_user,
-				)
-			)
-		);
-
-		return 'hash:' . $payload_hash;
-	}
-
-	private static function build_execution_request_id( string $central_action_id, array $form, array $entry, array $context, string $submission_token ): string {
-		$components = array(
-			strtolower( trim( $central_action_id ) ),
-			$submission_token,
-		);
-
-		if ( isset( $context['hook'] ) ) {
-			$components[] = (string) $context['hook'];
-		}
-
-		if ( isset( $context['action_id'] ) ) {
-			$components[] = (string) $context['action_id'];
-		}
-
-		if ( isset( $form['id'] ) ) {
-			$components[] = (string) $form['id'];
-		}
-
-		if ( ! self::submission_token_has_stable_uuid( $submission_token ) && ! empty( $entry ) ) {
-			$components[] = hash( 'sha256', wp_json_encode( $entry ) );
-		}
-
-		return substr( hash( 'sha256', implode( '|', $components ) ), 0, 32 );
-	}
-
-	private static function submission_token_has_stable_uuid( string $submission_token ): bool {
-		$prefix = 'submission:';
-		if ( ! str_starts_with( $submission_token, $prefix ) ) {
-			return false;
-		}
-
-		return wp_is_uuid( substr( $submission_token, strlen( $prefix ) ) );
+		return Sentient_Forms_Execution_Identity::generate( $central_action_id, $form, $entry, $context );
 	}
 
 	private function get_cached_execution_result( string $execution_request_id, int $entry_id, array $context ) {

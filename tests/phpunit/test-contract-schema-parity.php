@@ -1,253 +1,153 @@
 <?php
 /**
- * Regression tests for shared/CPS contract schema parity.
+ * Public-safe CPS /v2 contract snapshot tests.
  *
  * @package SentientForms\Tests
  */
 
 class ContractSchemaParityTest extends WP_UnitTestCase
 {
-    public function test_action_contract_schemas_are_in_sync_between_shared_and_cps(): void
+    private const SNAPSHOT_ROOT = __DIR__ . '/../../contracts/cps-v2';
+
+    public function test_public_snapshot_covers_every_retained_plugin_cps_route(): void
     {
-        foreach ( $this->contract_schema_filenames() as $filename ) {
-            $this->assert_single_schema_in_sync( $filename );
+        $manifest = $this->decode_required_json_file( self::SNAPSHOT_ROOT . '/manifest.json' );
+        $this->assertSame( 'v2', $manifest['contract_version'] ?? null );
+
+        $routes = [];
+        foreach ( $manifest['routes'] ?? [] as $route )
+        {
+            $this->assertIsArray( $route, 'Every CPS contract route must be an object.' );
+            $this->assertNotSame( 'internal', $route['audience'] ?? null, 'Internal CPS routes must not enter the public plugin snapshot.' );
+
+            $route_key = ( $route['method'] ?? '' ) . ' ' . ( $route['path'] ?? '' );
+            $this->assertArrayNotHasKey( $route_key, $routes, 'Duplicate CPS contract route: ' . $route_key );
+            $routes[ $route_key ] = $route;
+        }
+
+        $expected_routes = [
+            'GET /v2/health',
+            'POST /v2/account/sites/activate',
+            'POST /v2/account/sites/deactivate',
+            'GET /v2/account/sites/{site_id}',
+            'POST /v2/account/checkout/start',
+            'POST /v2/account/checkout/complete',
+            'POST /v2/billing/checkout/session',
+            'POST /v2/billing/checkout/top-up-session',
+            'POST /v2/billing/portal/session',
+            'POST /v2/billing/webhooks/stripe',
+            'GET /v2/billing/state',
+            'POST /v2/managed/execute',
+            'GET /v2/metering/summary',
+        ];
+
+        $actual_routes = array_keys( $routes );
+        sort( $actual_routes, SORT_STRING );
+        sort( $expected_routes, SORT_STRING );
+        $this->assertSame(
+            $expected_routes,
+            $actual_routes,
+            'The public CPS contract snapshot must contain exactly the retained plugin-facing routes.'
+        );
+
+        foreach ( $expected_routes as $route_key )
+        {
+            $this->assertArrayHasKey( $route_key, $routes, 'Missing retained plugin CPS contract route: ' . $route_key );
+            $schemas = $routes[ $route_key ]['schemas'] ?? null;
+            $this->assertIsArray( $schemas, 'Route schemas must be declared for ' . $route_key );
+            $this->assertArrayHasKey( 'success', $schemas, 'Success schema missing for ' . $route_key );
+            $this->assertArrayHasKey( 'error', $schemas, 'Error schema missing for ' . $route_key );
+
+            foreach ( $schemas as $schema_path )
+            {
+                $this->assertIsString( $schema_path );
+                $this->decode_required_json_file( self::SNAPSHOT_ROOT . '/' . $schema_path );
+            }
         }
     }
 
-    public function test_managed_v2_contract_schemas_are_in_sync_between_shared_and_cps(): void
+    public function test_public_snapshot_hashes_fail_closed(): void
     {
-        $workspace_root = dirname( __DIR__, 3 );
-        foreach ( $this->managed_v2_contract_schema_filenames() as $filename ) {
-            $this->assert_schema_paths_in_sync(
-                $workspace_root . '/contracts/v2/managed/' . $filename,
-                $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v2/managed/' . $filename,
-                'v2/managed/' . $filename
-            );
+        $hashes = $this->decode_required_json_file( self::SNAPSHOT_ROOT . '/snapshot-hashes.json' );
+        $this->assertNotEmpty( $hashes );
+
+        $hashed_paths = array_keys( $hashes );
+        sort( $hashed_paths, SORT_STRING );
+        $this->assertSame( $this->snapshot_paths(), $hashed_paths, 'Every public snapshot file must have exactly one hash entry.' );
+
+        foreach ( $hashes as $relative_path => $expected_hash )
+        {
+            $this->assertIsString( $relative_path );
+            $this->assertIsString( $expected_hash );
+            $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $expected_hash );
+
+            $path = self::SNAPSHOT_ROOT . '/' . $relative_path;
+            $this->assertFileExists( $path, 'Required public CPS contract snapshot is missing: ' . $path );
+            $this->assertSame( $expected_hash, hash_file( 'sha256', $path ), 'CPS contract snapshot hash drifted: ' . $relative_path );
         }
+    }
+
+    public function test_managed_capability_vocabulary_matches_the_checked_cps_request_schema(): void
+    {
+        $schema = $this->decode_required_json_file(
+            self::SNAPSHOT_ROOT . '/managed/execute-request.schema.json'
+        );
+        $policy = $schema['properties']['managed_capability_policy'] ?? null;
+        $required = is_array( $policy )
+            ? ( $policy['properties']['required_capabilities'] ?? null )
+            : null;
+
+        $this->assertIsArray( $policy );
+        $this->assertFalse( $policy['additionalProperties'] ?? true );
+        $this->assertSame( [ 'schema', 'required_capabilities' ], $policy['required'] ?? null );
+        $this->assertSame(
+            Sentient_Forms_Managed_Capability_Policy::SCHEMA,
+            $policy['properties']['schema']['const'] ?? null
+        );
+        $this->assertIsArray( $required );
+        $this->assertSame( 1, $required['minItems'] ?? null );
+        $this->assertSame( 4, $required['maxItems'] ?? null );
+        $this->assertTrue( $required['uniqueItems'] ?? false );
+        $this->assertSame(
+            Sentient_Forms_Managed_Capability_Policy::allowed_capabilities(),
+            $required['items']['enum'] ?? null
+        );
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function decode_schema_file( string $path ): array
+    private function decode_required_json_file( string $path ): array
     {
-        $raw = file_get_contents( $path );
-        $this->assertNotFalse( $raw, sprintf( 'Unable to read schema file: %s', $path ) );
-
-        try {
-            $decoded = json_decode( $raw, true, 512, JSON_THROW_ON_ERROR );
-        } catch ( JsonException $exception ) {
-            $this->fail(
-                sprintf(
-                    'Invalid JSON in schema file %s: %s',
-                    $path,
-                    $exception->getMessage()
-                )
-            );
-        }
-
-        $this->assertIsArray( $decoded, sprintf( 'Schema root must be an object array: %s', $path ) );
+        $this->assertFileExists( $path, 'Required public CPS contract snapshot is missing: ' . $path );
+        $decoded = json_decode( (string) file_get_contents( $path ), true );
+        $this->assertIsArray( $decoded, 'Required public CPS contract snapshot is invalid JSON: ' . $path );
 
         return $decoded;
     }
 
     /**
-     * @param mixed $value
-     *
-     * @return mixed
-     */
-    private function normalize_json_value( mixed $value ): mixed
-    {
-        if ( ! is_array( $value ) ) {
-            return $value;
-        }
-
-        if ( array_is_list( $value ) ) {
-            $normalized_list = [];
-            foreach ( $value as $item ) {
-                $normalized_list[] = $this->normalize_json_value( $item );
-            }
-
-            return $normalized_list;
-        }
-
-        $normalized_map = [];
-        $keys           = array_keys( $value );
-        sort( $keys, SORT_STRING );
-
-        foreach ( $keys as $key ) {
-            $normalized_map[ $key ] = $this->normalize_json_value( $value[ $key ] );
-        }
-
-        return $normalized_map;
-    }
-
-    /**
-     * @param array<string, mixed> $schema
-     *
      * @return array<int, string>
      */
-    private function extract_required_keys( array $schema ): array
+    private function snapshot_paths(): array
     {
-        $required = $schema['required'] ?? [];
-        $this->assertIsArray( $required, 'Schema required must be an array.' );
-
-        $keys = [];
-        foreach ( $required as $required_key ) {
-            $this->assertIsString( $required_key, 'Schema required keys must be strings.' );
-            $keys[] = $required_key;
-        }
-
-        sort( $keys, SORT_STRING );
-
-        return $keys;
-    }
-
-    /**
-     * @param array<string, mixed> $schema
-     *
-     * @return array<int, string>
-     */
-    private function extract_top_level_property_keys( array $schema ): array
-    {
-        $properties = $schema['properties'] ?? null;
-        $this->assertIsArray( $properties, 'Schema properties must be an object/array.' );
-
-        $keys = array_keys( $properties );
-        sort( $keys, SORT_STRING );
-
-        return $keys;
-    }
-
-    /**
-     * @param array<int, string> $keys
-     */
-    private function format_key_list( array $keys ): string
-    {
-        if ( [] === $keys ) {
-            return '(none)';
-        }
-
-        return implode( ', ', $keys );
-    }
-
-    /**
-     * @param array<string, mixed> $normalized_shared
-     * @param array<string, mixed> $normalized_cps
-     */
-    private function first_diff_snippet( array $normalized_shared, array $normalized_cps ): string
-    {
-        $shared_json = json_encode( $normalized_shared, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-        $cps_json    = json_encode( $normalized_cps, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-
-        if ( ! is_string( $shared_json ) || ! is_string( $cps_json ) ) {
-            return 'Unable to encode normalized schema JSON.';
-        }
-
-        if ( $shared_json === $cps_json ) {
-            return 'No line-level diff available (normalized JSON is identical).';
-        }
-
-        $shared_lines = explode( "\n", $shared_json );
-        $cps_lines    = explode( "\n", $cps_json );
-        $max_lines    = max( count( $shared_lines ), count( $cps_lines ) );
-
-        for ( $index = 0; $index < $max_lines; $index++ ) {
-            $shared_line = $shared_lines[ $index ] ?? '<EOF>';
-            $cps_line    = $cps_lines[ $index ] ?? '<EOF>';
-
-            if ( $shared_line !== $cps_line ) {
-                return sprintf(
-                    'line %d | shared: %s | cps: %s',
-                    $index + 1,
-                    $shared_line,
-                    $cps_line
-                );
-            }
-        }
-
-        return 'Diff detected but no differing line snippet could be determined.';
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function contract_schema_filenames(): array
-    {
-        return [
-            'custom-action-response.schema.json',
-            'custom-action-create-request.schema.json',
-            'custom-action-update-request.schema.json',
-            'execute-request.schema.json',
-            'execute-async-request.schema.json',
-            'execute-success.schema.json',
-            'execute-async-success.schema.json',
-            'suggest-request.schema.json',
-            'suggest-success.schema.json',
-        ];
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function managed_v2_contract_schema_filenames(): array
-    {
-        return [
-            'execute-request.schema.json',
-            'execute-success.schema.json',
-        ];
-    }
-
-    private function assert_single_schema_in_sync( string $filename ): void
-    {
-        $workspace_root = dirname( __DIR__, 3 );
-        $shared_path    = $workspace_root . '/contracts/v1/actions/' . $filename;
-        $cps_path       = $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v1/actions/' . $filename;
-
-        $this->assert_schema_paths_in_sync( $shared_path, $cps_path, $filename );
-    }
-
-    private function assert_schema_paths_in_sync( string $shared_path, string $cps_path, string $label ): void
-    {
-        if ( ! file_exists( $shared_path ) || ! file_exists( $cps_path ) ) {
-            $this->markTestSkipped(
-                sprintf(
-                    'Contract parity requires shared + CPS schema files. shared=%s exists=%s, cps=%s exists=%s',
-                    $shared_path,
-                    file_exists( $shared_path ) ? 'yes' : 'no',
-                    $cps_path,
-                    file_exists( $cps_path ) ? 'yes' : 'no'
-                )
-            );
-        }
-
-        $shared_schema = $this->decode_schema_file( $shared_path );
-        $cps_schema    = $this->decode_schema_file( $cps_path );
-
-        $normalized_shared = $this->normalize_json_value( $shared_schema );
-        $normalized_cps    = $this->normalize_json_value( $cps_schema );
-
-        $shared_required = $this->extract_required_keys( $shared_schema );
-        $cps_required    = $this->extract_required_keys( $cps_schema );
-
-        $shared_properties = $this->extract_top_level_property_keys( $shared_schema );
-        $cps_properties    = $this->extract_top_level_property_keys( $cps_schema );
-
-        $missing_required_in_shared = array_values( array_diff( $cps_required, $shared_required ) );
-        $missing_required_in_cps    = array_values( array_diff( $shared_required, $cps_required ) );
-        $missing_properties_in_shared = array_values( array_diff( $cps_properties, $shared_properties ) );
-        $missing_properties_in_cps    = array_values( array_diff( $shared_properties, $cps_properties ) );
-
-        $failure_message = sprintf(
-            "Schema drift detected for %s.\nMissing required in shared: %s\nMissing required in cps: %s\nMissing top-level properties in shared: %s\nMissing top-level properties in cps: %s\nFirst diff: %s",
-            $label,
-            $this->format_key_list( $missing_required_in_shared ),
-            $this->format_key_list( $missing_required_in_cps ),
-            $this->format_key_list( $missing_properties_in_shared ),
-            $this->format_key_list( $missing_properties_in_cps ),
-            $this->first_diff_snippet( $normalized_shared, $normalized_cps )
+        $paths    = [];
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator( self::SNAPSHOT_ROOT, FilesystemIterator::SKIP_DOTS )
         );
 
-        $this->assertSame( $normalized_shared, $normalized_cps, $failure_message );
+        foreach ( $iterator as $file )
+        {
+            if ( ! $file->isFile() || 'snapshot-hashes.json' === $file->getFilename() )
+            {
+                continue;
+            }
+
+            $paths[] = str_replace( '\\', '/', substr( $file->getPathname(), strlen( self::SNAPSHOT_ROOT ) + 1 ) );
+        }
+
+        sort( $paths, SORT_STRING );
+
+        return $paths;
     }
 }
