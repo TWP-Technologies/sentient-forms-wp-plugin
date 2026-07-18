@@ -121,7 +121,10 @@
               "type": "boolean"
             },
             "pricing_policy_version": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_.:/@-]+$"
             },
             "debited_credits": {
               "type": "integer",

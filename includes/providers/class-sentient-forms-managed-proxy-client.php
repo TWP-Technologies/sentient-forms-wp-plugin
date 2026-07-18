@@ -474,6 +474,7 @@ class Sentient_Forms_Managed_Proxy_Client
             && wp_is_uuid( $metering['event_id'] )
             && is_bool( $metering['free_usage'] )
             && is_string( $metering['pricing_policy_version'] )
+            && 1 === preg_match( '/^[A-Za-z0-9_.:\/@-]{1,128}$/D', $metering['pricing_policy_version'] )
             && is_int( $metering['debited_credits'] )
             && $metering['debited_credits'] >= 0;
     }
@@ -585,6 +586,7 @@ class Sentient_Forms_Managed_Proxy_Client
     {
         return Sentient_Forms_Managed_Execute_Request::normalize( $payload );
     }
+
     private function resolve_base_url( ?string $base_url ): string
     {
         $url = $base_url;

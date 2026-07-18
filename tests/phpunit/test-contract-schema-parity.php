@@ -35,10 +35,20 @@ class ContractSchemaParityTest extends WP_UnitTestCase
             'POST /v2/billing/checkout/session',
             'POST /v2/billing/checkout/top-up-session',
             'POST /v2/billing/portal/session',
+            'POST /v2/billing/webhooks/stripe',
             'GET /v2/billing/state',
             'POST /v2/managed/execute',
             'GET /v2/metering/summary',
         ];
+
+        $actual_routes = array_keys( $routes );
+        sort( $actual_routes, SORT_STRING );
+        sort( $expected_routes, SORT_STRING );
+        $this->assertSame(
+            $expected_routes,
+            $actual_routes,
+            'The public CPS contract snapshot must contain exactly the retained plugin-facing routes.'
+        );
 
         foreach ( $expected_routes as $route_key )
         {

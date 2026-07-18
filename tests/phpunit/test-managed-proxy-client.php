@@ -240,8 +240,10 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             'model must be a string' => [ [ 'model' => 123 ], 'sentient_managed_invalid_payload' ],
             'model must not contain spaces' => [ [ 'model' => 'openai / model' ], 'sentient_managed_invalid_model' ],
             'prompt must be a string' => [ [ 'prompt' => 123 ], 'sentient_managed_invalid_payload' ],
+            'prompt cannot contain only whitespace' => [ [ 'prompt' => " \t\n" ], 'sentient_managed_missing_prompt' ],
             'action code must be a string' => [ [ 'action_code' => 123 ], 'sentient_managed_invalid_action_code' ],
             'action code cannot be null' => [ [ 'action_code' => null ], 'sentient_managed_invalid_action_code' ],
+            'action code cannot contain only whitespace' => [ [ 'action_code' => " \t\n" ], 'sentient_managed_invalid_action_code' ],
             'output contract must be an object' => [ [ 'output_contract' => [ 'list-value' ] ], 'sentient_managed_invalid_output_contract' ],
             'output contract cannot be null' => [ [ 'output_contract' => null ], 'sentient_managed_invalid_output_contract' ],
             'output contract must contain finite JSON values' => [ [ 'output_contract' => [ 'limit' => INF ] ], 'sentient_managed_invalid_output_contract' ],
@@ -618,6 +620,48 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
 
         $this->assertIsArray( $result );
         $this->assertSame( 23, $result['token_usage']['total_tokens'] );
+    }
+
+    public function test_execute_accepts_schema_valid_pricing_policy_version(): void
+    {
+        $response                                                     = self::canonical_execute_envelope( 'managed-pricing-policy-version' );
+        $response['data']['metering']['pricing_policy_version']       = 'managed.v2:/@-';
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-pricing-policy-version' );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'managed.v2:/@-', $result['metering']['pricing_policy_version'] );
+    }
+
+    /**
+     * @dataProvider invalid_managed_pricing_policy_version_provider
+     */
+    public function test_execute_rejects_nonconcordant_pricing_policy_version( string $pricing_policy_version ): void
+    {
+        $response                                               = self::canonical_execute_envelope( 'managed-invalid-pricing-policy-version' );
+        $response['data']['metering']['pricing_policy_version'] = $pricing_policy_version;
+        $this->mock_execute_response( 200, $response );
+
+        $result = $this->execute_minimal_request( 'managed-invalid-pricing-policy-version' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_execute_response', $result->get_error_code() );
+        $this->assertArrayNotHasKey( 'payload', $result->get_error_data() );
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public function invalid_managed_pricing_policy_version_provider(): array
+    {
+        return [
+            'empty'                   => [ '' ],
+            'whitespace'              => [ 'managed policy' ],
+            'unsupported punctuation' => [ 'managed#policy' ],
+            'non-ASCII'               => [ 'managed-ü' ],
+            'too long'                => [ str_repeat( 'x', 129 ) ],
+        ];
     }
 
     public function test_execute_rejects_explicit_null_optional_privacy_contracts(): void
