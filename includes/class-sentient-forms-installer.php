@@ -195,7 +195,7 @@ class Sentient_Forms_Installer
                     return false;
                 }
 
-                self::invalidate_settings_option_caches();
+                self::synchronize_settings_option_caches( null );
                 return true;
             }
 
@@ -203,17 +203,18 @@ class Sentient_Forms_Installer
             $settings            = maybe_unserialize( $serialized_settings );
             if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
             {
-                self::invalidate_settings_option_caches();
+                self::synchronize_settings_option_caches( $serialized_settings );
                 return true;
             }
 
             unset( $settings['action_results'] );
+            $retired_settings = maybe_serialize( $settings );
 
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i SET option_value = %s WHERE option_name = %s AND BINARY option_value = BINARY %s',
                     $wpdb->options,
-                    maybe_serialize( $settings ),
+                    $retired_settings,
                     self::OPTION_SETTINGS,
                     $serialized_settings
                 )
@@ -226,7 +227,7 @@ class Sentient_Forms_Installer
 
             if ( 1 === $updated )
             {
-                self::invalidate_settings_option_caches();
+                self::synchronize_settings_option_caches( $retired_settings );
                 return true;
             }
         }
@@ -235,14 +236,47 @@ class Sentient_Forms_Installer
     }
 
     /**
-     * Expire every WordPress and plugin-local cache surface for the settings
-     * option after a direct compare-and-swap update or a clean readback.
+     * Reconcile WordPress and plugin-local caches with a raw database snapshot.
+     *
+     * A clean readback must not evict the global alloptions cache on every
+     * bounded upgrade pass. Only cache entries that disagree with the durable
+     * snapshot are invalidated, while the plugin singleton is always reset.
+     *
+     * @param string|null $serialized_settings Durable serialized value, or null when absent.
      */
-    private static function invalidate_settings_option_caches(): void
+    private static function synchronize_settings_option_caches( ?string $serialized_settings ): void
     {
-        wp_cache_delete( self::OPTION_SETTINGS, 'options' );
-        wp_cache_delete( 'alloptions', 'options' );
-        wp_cache_delete( 'notoptions', 'options' );
+        $alloptions_found = false;
+        $alloptions       = wp_cache_get( 'alloptions', 'options', false, $alloptions_found );
+        if (
+            $alloptions_found
+            && is_array( $alloptions )
+            && array_key_exists( self::OPTION_SETTINGS, $alloptions )
+            && ( null === $serialized_settings || (string) $alloptions[ self::OPTION_SETTINGS ] !== $serialized_settings )
+        )
+        {
+            wp_cache_delete( 'alloptions', 'options' );
+        }
+
+        $option_found = false;
+        $cached_option = wp_cache_get( self::OPTION_SETTINGS, 'options', false, $option_found );
+        if (
+            $option_found
+            && ( null === $serialized_settings || (string) $cached_option !== $serialized_settings )
+        )
+        {
+            wp_cache_delete( self::OPTION_SETTINGS, 'options' );
+        }
+
+        if ( null !== $serialized_settings )
+        {
+            $notoptions = wp_cache_get( 'notoptions', 'options' );
+            if ( is_array( $notoptions ) && isset( $notoptions[ self::OPTION_SETTINGS ] ) )
+            {
+                unset( $notoptions[ self::OPTION_SETTINGS ] );
+                wp_cache_set( 'notoptions', $notoptions, 'options' );
+            }
+        }
 
         Sentient_Forms_Plugin::invalidate_options_cache();
     }
