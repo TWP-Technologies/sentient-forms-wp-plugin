@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/metering/summary-query.schema.json",
+  "title": "Sentient Metering Summary Query",
+  "type": "object",
+  "properties": {
+    "site_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "additionalProperties": true
+}

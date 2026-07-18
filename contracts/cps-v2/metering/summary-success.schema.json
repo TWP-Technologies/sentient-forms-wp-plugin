@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sentientforms.com/contracts/v2/metering/summary-success.schema.json",
+  "title": "Sentient Metering Summary Success",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "success",
+    "data"
+  ],
+  "properties": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "site_id",
+        "execution_count",
+        "succeeded_count",
+        "failed_count",
+        "token_usage"
+      ],
+      "properties": {
+        "site_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "execution_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "All managed metering rows, including executions that are still running."
+        },
+        "succeeded_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The terminal succeeded subset of execution_count."
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The terminal failed subset of execution_count."
+        },
+        "token_usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "input_tokens",
+            "output_tokens",
+            "total_tokens"
+          ],
+          "properties": {
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Provider-reported input token component."
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Provider-reported output token component."
+            },
+            "total_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Provider-authoritative aggregate, which may include provider-specific token categories not exposed as separate components."
+            }
+          }
+        }
+      }
+    }
+  }
+}
