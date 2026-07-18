@@ -62,7 +62,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -93,7 +94,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -120,7 +122,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
             'future version'     => [ 'https://staging-api.sentientforms.com/v3' ],
             'legacy admin path'  => [ 'https://staging-api.sentientforms.com/v1/admin' ],
             'arbitrary path'     => [ 'https://staging-api.sentientforms.com/proxy' ],
-            'embedded user info' => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'embedded user info' => [ 'https://user@staging-api.sentientforms.com/v2' ],
             'query string'       => [ 'https://staging-api.sentientforms.com/v2?target=https://evil.example' ],
             'fragment'           => [ 'https://staging-api.sentientforms.com/v2#credentials' ],
             'unsupported scheme' => [ 'ftp://staging-api.sentientforms.com/v2' ],
@@ -168,10 +170,18 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
 
     public function test_base_url_ignores_legacy_generic_cps_resolution(): void
     {
-        $filter = static function (): string {
+        $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        $previous_options     = get_option( 'sentient_forms_settings', null );
+
+        $filter = static function (): string
+        {
             return 'https://staging-api.sentientforms.com/v2';
         };
 
+        putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        update_option( 'sentient_forms_settings', [] );
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
 
         try
@@ -182,6 +192,15 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         finally
         {
             remove_filter( 'sentient_forms_cps_base_url', $filter, 10 );
+            false === $previous_managed_url
+                ? putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' )
+                : putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL=' . $previous_managed_url );
+            false === $previous_proxy_url
+                ? putenv( 'SENTIENT_FORMS_PROXY_API_URL' )
+                : putenv( 'SENTIENT_FORMS_PROXY_API_URL=' . $previous_proxy_url );
+            null === $previous_options
+                ? delete_option( 'sentient_forms_settings' )
+                : update_option( 'sentient_forms_settings', $previous_options );
         }
     }
 

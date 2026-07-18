@@ -20,7 +20,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array
+            {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -143,7 +144,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args ) use ( &$calls ): array {
+            static function ( $preempt, array $args ) use ( &$calls ): array
+            {
                 $calls[] = $args;
                 return [
                     'headers'  => [],
@@ -173,7 +175,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $response = json_decode( file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ), true );
         $response['data']['execution_request_id'] = 'Az09-_.:/@';
         $this->mock_http(
-            static function ( $preempt, array $args ) use ( &$calls, $response ): array {
+            static function ( $preempt, array $args ) use ( &$calls, $response ): array
+            {
                 $calls[] = $args;
                 return [
                     'headers'  => [],
@@ -207,7 +210,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = 0;
         $this->mock_http(
-            static function () use ( &$calls ): WP_Error {
+            static function () use ( &$calls ): WP_Error
+            {
                 ++$calls;
                 return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
             }
@@ -341,7 +345,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $response['provider_debug'] = 'must-not-escape';
 
         $this->mock_http(
-            static function () use ( $response ): array {
+            static function () use ( $response ): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
@@ -377,7 +382,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $response['data']['execution_request_id']    = 'different-managed-request';
 
         $this->mock_http(
-            static function () use ( $response ): array {
+            static function () use ( $response ): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
@@ -409,7 +415,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     public function test_execute_rejects_malformed_succeeded_response(): void
     {
         $this->mock_http(
-            static function (): array {
+            static function (): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
@@ -456,7 +463,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     public function test_execute_preserves_settled_recovery_unavailable_error_without_remote_payload(): void
     {
         $this->mock_http(
-            static function (): array {
+            static function (): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
@@ -504,7 +512,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     public function test_execute_normalizes_privacy_route_failure_without_remote_payload(): void
     {
         $this->mock_http(
-            static function (): array {
+            static function (): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
@@ -1016,7 +1025,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -1049,7 +1059,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): WP_Error
+            {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -1076,7 +1087,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             'future version'     => [ 'https://staging-api.sentientforms.com/v3' ],
             'legacy admin path'  => [ 'https://staging-api.sentientforms.com/v1/admin' ],
             'arbitrary path'     => [ 'https://staging-api.sentientforms.com/proxy' ],
-            'embedded user info' => [ 'https://api.sentientforms.com@evil.example/v1' ],
+            'embedded user info' => [ 'https://user@staging-api.sentientforms.com/v2' ],
             'query string'       => [ 'https://staging-api.sentientforms.com/v2?target=https://evil.example' ],
             'fragment'           => [ 'https://staging-api.sentientforms.com/v2#credentials' ],
             'unsupported scheme' => [ 'ftp://staging-api.sentientforms.com/v2' ],
@@ -1196,13 +1207,16 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
         $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        $previous_options     = get_option( 'sentient_forms_settings', null );
 
-        $filter = static function (): string {
+        $filter = static function (): string
+        {
             return 'https://staging-api.sentientforms.com/v2';
         };
 
         putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
         putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        update_option( 'sentient_forms_settings', [] );
 
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
 
@@ -1220,6 +1234,9 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             false === $previous_proxy_url
                 ? putenv( 'SENTIENT_FORMS_PROXY_API_URL' )
                 : putenv( 'SENTIENT_FORMS_PROXY_API_URL=' . $previous_proxy_url );
+            null === $previous_options
+                ? delete_option( 'sentient_forms_settings' )
+                : update_option( 'sentient_forms_settings', $previous_options );
         }
     }
 
@@ -1452,7 +1469,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     private function mock_execute_response( int $status, array $payload ): void
     {
         $this->mock_http(
-            static function () use ( $status, $payload ): array {
+            static function () use ( $status, $payload ): array
+            {
                 return [
                     'headers'  => [],
                     'response' => [
