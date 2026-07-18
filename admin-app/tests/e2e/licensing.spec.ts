@@ -238,6 +238,7 @@ test('first-time managed checkout starts from the recommended license path with 
 		checkoutRequests += 1;
 		const body = route.request().postDataJSON() as
 			| {
+					checkout_attempt_id?: string;
 					plan_code?: string;
 					billing_interval?: string;
 					success_url?: string;
@@ -248,6 +249,9 @@ test('first-time managed checkout starts from the recommended license path with 
 		expect(body?.plan_code).toBe('starter');
 		expect(body?.billing_interval).toBe('monthly');
 		expect(body?.accepted_managed_service_terms).toBe(true);
+		expect(body?.checkout_attempt_id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+		);
 
 		for (const returnUrl of [body?.success_url, body?.cancel_url]) {
 			expect(returnUrl).toBeTruthy();
@@ -261,7 +265,7 @@ test('first-time managed checkout starts from the recommended license path with 
 			body: JSON.stringify({
 				success: true,
 				data: {
-					checkout_intent_id: 'mci_test_123',
+					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123',
 					checkout_url: managedCheckoutRedirectUrl,
 					status: 'open',
@@ -294,6 +298,86 @@ test('first-time managed checkout starts from the recommended license path with 
 
 	await expect.poll(() => checkoutRequests).toBe(1);
 	await checkoutRedirectRequest;
+});
+
+test('managed checkout retries reuse the same checkout attempt identity', async ({ page }) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	const inactiveStatus = {
+		status: 'inactive',
+		license_key_masked: '',
+		proxy_key_present: false,
+		tier: null,
+		expires_at: null,
+		last_synced: null,
+		license_id: null,
+		site_id: null,
+		site_url: 'https://example.test'
+	};
+	const checkoutAttemptIds: string[] = [];
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/start', (route) => {
+		const body = route.request().postDataJSON() as { checkout_attempt_id?: string } | undefined;
+		checkoutAttemptIds.push(body?.checkout_attempt_id ?? '');
+
+		if (checkoutAttemptIds.length === 1) {
+			return route.fulfill({
+				status: 502,
+				body: JSON.stringify({
+					code: 'billing_provider_unreachable',
+					message: 'Stripe is temporarily unavailable.',
+					data: { status: 502 }
+				}),
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					checkout_intent_id: '33333333-3333-4333-8333-333333333333',
+					checkout_session_id: 'cs_test_retry',
+					checkout_url: managedCheckoutRedirectUrl,
+					status: 'open'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto('/#/licensing');
+	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
+	await page.getByRole('button', { name: 'Choose Starter' }).click();
+	await expect(page.getByRole('button', { name: 'Retry checkout' })).toBeVisible();
+
+	const checkoutRedirectRequest = page.waitForRequest(
+		redirectRequestMatches(managedCheckoutRedirectUrl)
+	);
+	await page.getByRole('button', { name: 'Retry checkout' }).click();
+	await checkoutRedirectRequest;
+
+	expect(checkoutAttemptIds).toHaveLength(2);
+	expect(checkoutAttemptIds[0]).toMatch(
+		/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+	);
+	expect(checkoutAttemptIds[1]).toBe(checkoutAttemptIds[0]);
 });
 
 test('managed checkout return with completed status resumes activation on the licensing route', async ({
@@ -338,7 +422,7 @@ test('managed checkout return with completed status resumes activation on the li
 					activation_token?: string;
 			  }
 			| undefined;
-		expect(body?.checkout_intent_id).toBe('mci_test_123');
+		expect(body?.checkout_intent_id).toBe('11111111-1111-4111-8111-111111111111');
 		expect(body?.checkout_session_id).toBe('cs_test_123');
 		expect(body?.activation_token).toBe('activation-token');
 
@@ -349,7 +433,7 @@ test('managed checkout return with completed status resumes activation on the li
 				data: {
 					activation_ready: false,
 					status: 'pending_webhook',
-					checkout_intent_id: 'mci_test_123',
+					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123'
 				}
 			}),
@@ -358,13 +442,68 @@ test('managed checkout return with completed status resumes activation on the li
 	});
 
 	await page.goto(
-		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=mci_test_123&stripe_session_id=cs_test_123&activation_token=activation-token'
+		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=11111111-1111-4111-8111-111111111111&stripe_session_id=cs_test_123&activation_token=activation-token'
 	);
 
 	await expect.poll(() => completeRequests).toBe(1);
 	await expect(
 		page.getByText('Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook')
 	).toBeVisible();
+});
+
+test('managed checkout success without an activation token shows a recovery state without completing', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	const inactiveStatus = {
+		status: 'inactive',
+		license_key_masked: '',
+		proxy_key_present: false,
+		tier: null,
+		expires_at: null,
+		last_synced: null,
+		license_id: null,
+		site_id: null,
+		site_url: 'https://example.test'
+	};
+	let completeRequests = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/complete', (route) => {
+		completeRequests += 1;
+		return route.fulfill({
+			status: 500,
+			body: JSON.stringify({ success: false }),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto(
+		'/licensing?sentient_managed_checkout=success&checkout_intent_id=33333333-3333-4333-8333-333333333333&stripe_session_id=cs_test_missing_token'
+	);
+
+	await expect.poll(() => completeRequests).toBe(0);
+	await expect(page.getByTestId('licensing-managed-checkout-completion')).toContainText(
+		'Checkout return incomplete'
+	);
+	await expect(page.getByTestId('licensing-managed-checkout-completion')).toContainText(
+		'The secure managed-service activation link is incomplete. Restart checkout or contact support.'
+	);
 });
 
 test('managed checkout activation reloads the license before the forced billing refresh', async ({
@@ -433,7 +572,7 @@ test('managed checkout activation reloads the license before the forced billing 
 					activation_token?: string;
 			  }
 			| undefined;
-		expect(body?.checkout_intent_id).toBe('mci_test_ready');
+		expect(body?.checkout_intent_id).toBe('22222222-2222-4222-8222-222222222222');
 		expect(body?.checkout_session_id).toBe('cs_test_ready');
 		expect(body?.activation_token).toBe('activation-token-ready');
 
@@ -444,7 +583,7 @@ test('managed checkout activation reloads the license before the forced billing 
 				data: {
 					activation_ready: true,
 					status: 'active',
-					checkout_intent_id: 'mci_test_ready',
+					checkout_intent_id: '22222222-2222-4222-8222-222222222222',
 					checkout_session_id: 'cs_test_ready'
 				}
 			}),
@@ -511,7 +650,7 @@ test('managed checkout activation reloads the license before the forced billing 
 	});
 
 	await page.goto(
-		'/licensing?sentient_managed_checkout=success&checkout_intent_id=mci_test_ready&stripe_session_id=cs_test_ready&activation_token=activation-token-ready'
+		'/licensing?sentient_managed_checkout=success&checkout_intent_id=22222222-2222-4222-8222-222222222222&stripe_session_id=cs_test_ready&activation_token=activation-token-ready'
 	);
 
 	await expect.poll(() => completeRequests).toBe(1);
@@ -833,13 +972,11 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 	await expect(page.getByRole('button', { name: 'Add capacity' })).toHaveCount(0);
 });
 
-test('business subscriptions expose canonical top-up packs and send pack code', async ({
-	page
-}) => {
+test('business top-up retries preserve canonical pack and attempt identity', async ({ page }) => {
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
-	let topUpRequests = 0;
+	const topUpCheckoutAttemptIds: string[] = [];
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
@@ -911,14 +1048,35 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 		})
 	);
 	await page.route('**/wp-json/sentient-forms/v1/license/billing/top-up-session', (route) => {
-		topUpRequests += 1;
 		const body = route.request().postDataJSON() as
-			| { pack_code?: string; success_url?: string; cancel_url?: string; quantity?: number }
+			| {
+					checkout_attempt_id?: string;
+					pack_code?: string;
+					success_url?: string;
+					cancel_url?: string;
+					quantity?: number;
+			  }
 			| undefined;
+		topUpCheckoutAttemptIds.push(body?.checkout_attempt_id ?? '');
+		expect(body?.checkout_attempt_id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+		);
 		expect(body?.pack_code).toBe('top_up_medium');
 		expect(body?.quantity).toBe(1);
 		expect(typeof body?.success_url).toBe('string');
 		expect(typeof body?.cancel_url).toBe('string');
+
+		if (topUpCheckoutAttemptIds.length === 1) {
+			return route.fulfill({
+				status: 502,
+				body: JSON.stringify({
+					code: 'billing_provider_unreachable',
+					message: 'Stripe is temporarily unavailable.',
+					data: { status: 502 }
+				}),
+				headers: { 'content-type': 'application/json' }
+			});
+		}
 
 		return route.fulfill({
 			status: 200,
@@ -946,12 +1104,17 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 
 	const addCapacityButtons = page.getByRole('button', { name: 'Add capacity' });
 	await expect(addCapacityButtons).toHaveCount(3);
+	await addCapacityButtons.nth(1).click();
+	await expect(page.getByRole('button', { name: 'Retry checkout' })).toBeVisible();
+
 	const topUpRedirectRequest = page.waitForRequest(
 		redirectRequestMatches(businessTopUpRedirectUrl)
 	);
-	await addCapacityButtons.nth(1).click();
-	await expect.poll(() => topUpRequests).toBe(1);
+	await page.getByRole('button', { name: 'Retry checkout' }).click();
 	await topUpRedirectRequest;
+
+	expect(topUpCheckoutAttemptIds).toHaveLength(2);
+	expect(topUpCheckoutAttemptIds[1]).toBe(topUpCheckoutAttemptIds[0]);
 });
 
 test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {

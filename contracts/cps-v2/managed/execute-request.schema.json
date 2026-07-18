@@ -42,8 +42,7 @@
     "execution_request_id": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9_.:/@-]+$"
+      "maxLength": 128
     },
     "provider": {
       "type": "string",
@@ -59,13 +58,11 @@
     "action_code": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 191,
-      "pattern": "\\S"
+      "maxLength": 191
     },
     "prompt": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "\\S"
+      "minLength": 1
     },
     "output_contract": {
       "type": "object"

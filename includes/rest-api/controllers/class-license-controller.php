@@ -146,6 +146,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'start_managed_checkout' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
+                        'checkout_attempt_id' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => static fn ( $value ): bool => is_string( $value ) && wp_is_uuid( trim( $value ) ),
+                        ],
                         'plan_code' => [
                             'required'          => true,
                             'type'              => 'string',
@@ -189,6 +195,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'required'          => false,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => static fn ( $value ): bool => is_string( $value ) && wp_is_uuid( trim( $value ) ),
                         ],
                         'checkout_session_id' => [
                             'required'          => false,
@@ -196,9 +203,10 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'sanitize_callback' => 'sanitize_text_field',
                         ],
                         'activation_token' => [
-                            'required'          => false,
+                            'required'          => true,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => static fn ( $value ): bool => is_string( $value ) && '' !== trim( $value ),
                         ],
                     ],
                 ],
@@ -214,15 +222,17 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'create_checkout_session' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
-                        'price_id' => [
-                            'required'          => false,
+                        'checkout_attempt_id' => [
+                            'required'          => true,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => static fn ( $value ): bool => is_string( $value ) && wp_is_uuid( trim( $value ) ),
                         ],
                         'plan_code' => [
-                            'required'          => false,
+                            'required'          => true,
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_key',
+                            'enum'              => [ 'starter', 'pro', 'business' ],
                         ],
                         'success_url' => [
                             'required'          => true,
@@ -238,6 +248,8 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                             'required' => false,
                             'type'     => 'integer',
                             'default'  => 1,
+                            'minimum'  => 1,
+                            'maximum'  => 1,
                         ],
                         'trial_period_days' => [
                             'required' => false,
@@ -292,6 +304,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'callback'            => [ $this, 'create_top_up_checkout_session' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
+                        'checkout_attempt_id' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                            'validate_callback' => static fn ( $value ): bool => is_string( $value ) && wp_is_uuid( trim( $value ) ),
+                        ],
                         'pack_code' => [
                             'required'          => true,
                             'type'              => 'string',
@@ -376,7 +394,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = $this->normalize_activation_payload( $response );
-        $this->store_managed_activation_payload( $license_key, $payload );
+        $stored  = $this->store_managed_activation_payload( $license_key, $payload );
+        if ( is_wp_error( $stored ) )
+        {
+            return $stored;
+        }
 
         return $this->prepare_item_for_response(
             $this->format_license_response( $plugin->get_license_data() ),
@@ -476,7 +498,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = $this->normalize_activation_payload( $response );
-        $this->store_managed_activation_payload( $license_key, $payload );
+        $stored  = $this->store_managed_activation_payload( $license_key, $payload );
+        if ( is_wp_error( $stored ) )
+        {
+            return $stored;
+        }
 
         return $this->prepare_item_for_response(
             $this->format_license_response( $plugin->get_license_data() ),
@@ -525,6 +551,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         $client = $this->get_managed_service_client();
         $response = $client->start_managed_checkout(
             [
+                'checkout_attempt_id'             => (string) $request->get_param( 'checkout_attempt_id' ),
                 'plan_code'                      => $plan_code,
                 'billing_interval'               => sanitize_key( (string) ( $request->get_param( 'billing_interval' ) ?: 'monthly' ) ),
                 'site_url'                       => home_url(),
@@ -575,7 +602,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                 ? sanitize_text_field( (string) $payload['license_key'] )
                 : '';
 
-            $this->store_managed_activation_payload( $license_key, $payload );
+            $stored = $this->store_managed_activation_payload( $license_key, $payload );
+            if ( is_wp_error( $stored ) )
+            {
+                return $stored;
+            }
 
             $credential_id = $this->ensure_sentient_managed_provider_credential( Sentient_Forms_Plugin::instance()->get_license_data() );
             if ( is_wp_error( $credential_id ) )
@@ -654,30 +685,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = [
-            'success_url'       => (string) $request->get_param( 'success_url' ),
-            'cancel_url'        => (string) $request->get_param( 'cancel_url' ),
-            'quantity'          => max( 1, (int) $request->get_param( 'quantity' ) ),
+            'checkout_attempt_id' => (string) $request->get_param( 'checkout_attempt_id' ),
+            'plan_code'          => sanitize_key( (string) $request->get_param( 'plan_code' ) ),
+            'success_url'        => (string) $request->get_param( 'success_url' ),
+            'cancel_url'         => (string) $request->get_param( 'cancel_url' ),
+            'quantity'           => max( 1, (int) $request->get_param( 'quantity' ) ),
         ];
-        $price_id = trim( (string) $request->get_param( 'price_id' ) );
-        if ( '' !== $price_id )
-        {
-            $payload['price_id'] = $price_id;
-        }
-
-        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
-        if ( '' !== $plan_code )
-        {
-            $payload['plan_code'] = $plan_code;
-        }
-
-        if ( empty( $payload['price_id'] ) && empty( $payload['plan_code'] ) )
-        {
-            return $this->prepare_error_response(
-                'invalid_request',
-                __( 'price_id or plan_code is required.', 'sentient-forms' ),
-                400,
-            );
-        }
 
         $client   = $this->get_managed_service_client();
         $response = $client->create_checkout_session( $proxy_key, $payload );
@@ -701,10 +714,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
 
         $payload = [
-            'pack_code'   => sanitize_key( (string) $request->get_param( 'pack_code' ) ),
-            'success_url' => (string) $request->get_param( 'success_url' ),
-            'cancel_url'  => (string) $request->get_param( 'cancel_url' ),
-            'quantity'    => max( 1, (int) $request->get_param( 'quantity' ) ),
+            'checkout_attempt_id' => (string) $request->get_param( 'checkout_attempt_id' ),
+            'pack_code'           => sanitize_key( (string) $request->get_param( 'pack_code' ) ),
+            'success_url'         => (string) $request->get_param( 'success_url' ),
+            'cancel_url'          => (string) $request->get_param( 'cancel_url' ),
+            'quantity'            => max( 1, (int) $request->get_param( 'quantity' ) ),
         ];
 
         $client   = $this->get_managed_service_client();
@@ -934,20 +948,37 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         return $payload;
     }
 
-    private function store_managed_activation_payload( string $license_key, array $payload ): void
+    private function store_managed_activation_payload( string $license_key, array $payload ): true | WP_Error
     {
+        $license_id = isset( $payload['license_id'] ) && is_scalar( $payload['license_id'] )
+            ? trim( (string) $payload['license_id'] )
+            : '';
+        $site_id = isset( $payload['site_id'] ) && is_scalar( $payload['site_id'] )
+            ? trim( (string) $payload['site_id'] )
+            : '';
+        if ( ! wp_is_uuid( $license_id ) || ! wp_is_uuid( $site_id ) )
+        {
+            return new WP_Error(
+                'sentient_managed_activation_invalid_identity',
+                __( 'Managed activation returned an invalid site identity. Sentient Forms did not store the credential.', 'sentient-forms' ),
+                [ 'status' => 502 ]
+            );
+        }
+
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
                 'license_key'    => $license_key,
                 'license_status' => $payload['status'] ?? 'active',
-                'license_id'     => $payload['license_id'] ?? '',
-                'site_id'        => $payload['site_id'] ?? '',
+                'license_id'     => strtolower( $license_id ),
+                'site_id'        => strtolower( $site_id ),
                 'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
                 'tier'           => $payload['tier'] ?? '',
                 'expiry_date'    => $payload['expiry_date'] ?? $payload['expires_at'] ?? null,
                 'last_synced'    => current_time( 'mysql' ),
             ]
         );
+
+        return true;
     }
 
     private function ensure_sentient_managed_provider_credential( array $license_data ): int | WP_Error

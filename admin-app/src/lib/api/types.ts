@@ -39,11 +39,11 @@ export interface LicenseInfoResponse {
 }
 
 export interface BillingCheckoutSessionRequest {
-	price_id?: string;
-	plan_code?: string;
+	checkout_attempt_id: string;
+	plan_code: 'starter' | 'pro' | 'business';
 	success_url: string;
 	cancel_url: string;
-	quantity?: number;
+	quantity?: 1;
 }
 
 export interface BillingCheckoutSessionResponse {
@@ -54,7 +54,8 @@ export interface BillingCheckoutSessionResponse {
 }
 
 export interface TopUpCheckoutSessionRequest {
-	pack_code: string;
+	checkout_attempt_id: string;
+	pack_code: 'top_up_small' | 'top_up_medium' | 'top_up_large';
 	success_url: string;
 	cancel_url: string;
 	quantity?: number;
@@ -69,7 +70,8 @@ export interface TopUpCheckoutSessionResponse {
 }
 
 export interface ManagedCheckoutStartRequest {
-	plan_code: string;
+	checkout_attempt_id: string;
+	plan_code: 'starter' | 'pro' | 'business';
 	billing_interval?: 'monthly';
 	success_url: string;
 	cancel_url: string;
@@ -90,9 +92,9 @@ export interface ManagedCheckoutStartResponse {
 }
 
 export interface ManagedCheckoutCompleteRequest {
-	checkout_intent_id?: string | null;
-	checkout_session_id?: string | null;
-	activation_token?: string | null;
+	checkout_intent_id?: string;
+	checkout_session_id?: string;
+	activation_token: string;
 }
 
 export interface ManagedCheckoutCompleteResponse {

@@ -2121,7 +2121,7 @@ describe('SentientFormsApiClient', () => {
 				Promise.resolve({
 					success: true,
 					data: {
-						checkout_intent_id: 'mci_123',
+						checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 						checkout_session_id: 'cs_test_123',
 						checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
 						plan_code: 'starter',
@@ -2132,6 +2132,7 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.startManagedCheckout(
 			{
+				checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 				plan_code: 'starter',
 				success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 				cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
@@ -2146,6 +2147,7 @@ describe('SentientFormsApiClient', () => {
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify({
+					checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 					plan_code: 'starter',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
@@ -2155,7 +2157,7 @@ describe('SentientFormsApiClient', () => {
 			})
 		);
 		expect(result).toMatchObject({
-			checkout_intent_id: 'mci_123',
+			checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 			checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
 			consent_recorded: true
 		});
@@ -2165,7 +2167,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'missing checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				plan_code: 'starter'
 			}
@@ -2173,7 +2175,7 @@ describe('SentientFormsApiClient', () => {
 		[
 			'non-string checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				checkout_url: 42,
 				plan_code: 'starter'
@@ -2182,9 +2184,18 @@ describe('SentientFormsApiClient', () => {
 		[
 			'non-HTTPS checkout URL',
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 				checkout_session_id: 'cs_test_123',
 				checkout_url: 'http://checkout.stripe.test/c/pay/cs_test_123',
+				plan_code: 'starter'
+			}
+		],
+		[
+			'non-UUID checkout intent',
+			{
+				checkout_intent_id: 'mci_123',
+				checkout_session_id: 'cs_test_123',
+				checkout_url: 'https://checkout.stripe.test/c/pay/cs_test_123',
 				plan_code: 'starter'
 			}
 		]
@@ -2203,6 +2214,7 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.startManagedCheckout(
 				{
+					checkout_attempt_id: '22222222-2222-4222-8222-222222222222',
 					plan_code: 'starter',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
@@ -2234,6 +2246,7 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.createCheckoutSession(
 				{
+					checkout_attempt_id: '33333333-3333-4333-8333-333333333333',
 					plan_code: 'starter',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
@@ -2290,6 +2303,7 @@ describe('SentientFormsApiClient', () => {
 		await expect(
 			client.createTopUpCheckoutSession(
 				{
+					checkout_attempt_id: '44444444-4444-4444-8444-444444444444',
 					pack_code: 'top_up_small',
 					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
 					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
@@ -2320,7 +2334,7 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.completeManagedCheckout(
 			{
-				checkout_intent_id: 'mci_123',
+				checkout_intent_id: '55555555-5555-4555-8555-555555555555',
 				checkout_session_id: 'cs_test_123',
 				activation_token: 'token-123'
 			},
@@ -2332,7 +2346,7 @@ describe('SentientFormsApiClient', () => {
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify({
-					checkout_intent_id: 'mci_123',
+					checkout_intent_id: '55555555-5555-4555-8555-555555555555',
 					checkout_session_id: 'cs_test_123',
 					activation_token: 'token-123'
 				})

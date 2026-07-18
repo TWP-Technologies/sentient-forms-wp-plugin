@@ -176,8 +176,16 @@ const submissionLedgerActionRunSchema = z.object({
 	last_result: nullableJsonRecordSchema,
 	last_error_code: nullableScalarStringSchema,
 	last_error_message: nullableScalarStringSchema,
-	created_at: z.string().nullable().optional().transform((value) => value ?? null),
-	updated_at: z.string().nullable().optional().transform((value) => value ?? null)
+	created_at: z
+		.string()
+		.nullable()
+		.optional()
+		.transform((value) => value ?? null),
+	updated_at: z
+		.string()
+		.nullable()
+		.optional()
+		.transform((value) => value ?? null)
 });
 const nullishJsonRecordArraySchema = z
 	.array(jsonRecordSchema)
@@ -192,7 +200,7 @@ const httpsUrlSchema = z.string().refine((value) => {
 }, 'Expected an HTTPS URL');
 const managedCheckoutStartResponseSchema = z
 	.object({
-		checkout_intent_id: z.string(),
+		checkout_intent_id: z.uuid(),
 		checkout_session_id: z.string(),
 		checkout_url: httpsUrlSchema,
 		plan_code: z.string().optional(),

@@ -130,8 +130,8 @@ class LicenseControllerTest extends WP_UnitTestCase
                 'success' => true,
                 'data'    => [
                     'service'       => 'sentient-managed',
-                    'license_id'    => 'lic-uuid-123',
-                    'site_id'       => 'site-uuid-456',
+                    'license_id'    => '11111111-1111-4111-8111-111111111111',
+                    'site_id'       => '22222222-2222-4222-8222-222222222222',
                     'proxy_api_key' => 'new-proxy-key-789',
                     'status'        => 'active',
                     'tier'          => [
@@ -178,7 +178,7 @@ class LicenseControllerTest extends WP_UnitTestCase
             [
                 'success' => true,
                 'data'    => [
-                    'checkout_intent_id'  => 'mci_123',
+                    'checkout_intent_id'  => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
                     'checkout_session_id' => 'cs_test_123',
                     'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_123',
                     'plan_code'           => 'starter',
@@ -190,6 +190,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
+                $this->assertSame( '44444444-4444-4444-8444-444444444444', $body['checkout_attempt_id'] ?? null );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
                 $this->assertSame( 'monthly', $body['billing_interval'] ?? null );
                 $this->assertSame( home_url(), $body['site_url'] ?? null );
@@ -206,6 +207,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id'             => '44444444-4444-4444-8444-444444444444',
             'plan_code'                      => 'starter',
             'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
             'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
@@ -216,7 +218,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'mci_123', $data['checkout_intent_id'] );
+        $this->assertSame( 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', $data['checkout_intent_id'] );
         $this->assertTrue( $data['consent_recorded'] );
         $this->assertNotEmpty( $data['consent_id'] );
     }
@@ -235,7 +237,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'body'     => wp_json_encode( [
                         'success' => true,
                         'data'    => [
-                            'checkout_intent_id'  => 'mci_stable_local',
+                            'checkout_intent_id'  => '33333333-3333-4333-8333-333333333333',
                             'checkout_session_id' => 'cs_test_stable_local',
                             'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_stable_local',
                             'plan_code'           => 'starter',
@@ -276,6 +278,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $start_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $start_request->add_header( 'Content-Type', 'application/json' );
         $start_request->set_body( wp_json_encode( [
+            'checkout_attempt_id'             => '44444444-4444-4444-8444-444444444444',
             'plan_code'                      => 'starter',
             'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
             'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
@@ -288,7 +291,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $complete_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $complete_request->add_header( 'Content-Type', 'application/json' );
         $complete_request->set_body( wp_json_encode( [
-            'checkout_intent_id'  => 'mci_stable_local',
+            'checkout_intent_id'  => '33333333-3333-4333-8333-333333333333',
             'checkout_session_id' => 'cs_test_stable_local',
             'activation_token'    => 'token-stable-local',
         ] ) );
@@ -324,6 +327,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id'             => '55555555-5555-4555-8555-555555555555',
             'plan_code'                      => 'starter',
             'success_url'                    => 'https://example.test/success',
             'cancel_url'                     => 'https://example.test/cancel',
@@ -352,6 +356,7 @@ class LicenseControllerTest extends WP_UnitTestCase
             $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
             $request->add_header( 'Content-Type', 'application/json' );
             $request->set_body( wp_json_encode( [
+                'checkout_attempt_id'             => '66666666-6666-4666-8666-666666666666',
                 'plan_code'                      => 'starter',
                 'billing_interval'               => 'annual',
                 'success_url'                    => 'https://example.test/success',
@@ -371,6 +376,71 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed_checkout_invalid_interval', $data['code'] ?? null );
     }
 
+    public function test_checkout_routes_reject_invalid_attempt_identity_before_remote_call(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+        ] );
+
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Invalid checkout attempts must not call the remote service: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
+
+        try
+        {
+            $requests = [
+                [
+                    'route' => '/sentient-forms/v1/license/managed-checkout/start',
+                    'body'  => [
+                        'checkout_attempt_id'             => 'not-a-uuid',
+                        'plan_code'                       => 'starter',
+                        'success_url'                     => 'https://example.test/success',
+                        'cancel_url'                      => 'https://example.test/cancel',
+                        'disclosure_version'              => 'managed-service-v1',
+                        'accepted_managed_service_terms'  => true,
+                    ],
+                ],
+                [
+                    'route' => '/sentient-forms/v1/license/billing/checkout-session',
+                    'body'  => [
+                        'checkout_attempt_id' => 'not-a-uuid',
+                        'plan_code'           => 'starter',
+                        'success_url'         => 'https://example.test/success',
+                        'cancel_url'          => 'https://example.test/cancel',
+                    ],
+                ],
+                [
+                    'route' => '/sentient-forms/v1/license/billing/top-up-session',
+                    'body'  => [
+                        'checkout_attempt_id' => 'not-a-uuid',
+                        'pack_code'           => 'top_up_small',
+                        'success_url'         => 'https://example.test/success',
+                        'cancel_url'          => 'https://example.test/cancel',
+                    ],
+                ],
+            ];
+
+            foreach ( $requests as $request_fixture )
+            {
+                $request = new WP_REST_Request( 'POST', $request_fixture['route'] );
+                $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+                $request->add_header( 'Content-Type', 'application/json' );
+                $request->set_body( wp_json_encode( $request_fixture['body'] ) );
+                $response = rest_get_server()->dispatch( $request );
+
+                $this->assertSame( 400, $response->get_status(), $request_fixture['route'] );
+                $this->assertSame( 'rest_invalid_param', $response->get_data()['code'] ?? null, $request_fixture['route'] );
+            }
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $guard, 1 );
+        }
+    }
+
     public function test_complete_managed_checkout_stores_license_and_enables_managed_provider(): void
     {
         $this->mock_http_response(
@@ -381,8 +451,8 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'activation_ready' => true,
                     'service'          => 'sentient-managed',
                     'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
-                    'license_id'       => 'lic-managed-123',
-                    'site_id'          => 'site-managed-456',
+                    'license_id'       => '77777777-7777-4777-8777-777777777777',
+                    'site_id'          => '88888888-8888-4888-8888-888888888888',
                     'proxy_api_key'    => 'managed-proxy-key',
                     'status'           => 'active',
                     'tier'             => [
@@ -402,7 +472,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 $this->assertIsArray( $body );
                 $this->assertSame( home_url(), $body['site_url'] ?? null );
                 $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
-                $this->assertSame( 'mci_123', $body['checkout_intent_id'] ?? null );
+                $this->assertSame( '99999999-9999-4999-8999-999999999999', $body['checkout_intent_id'] ?? null );
                 $this->assertSame( 'cs_test_123', $body['checkout_session_id'] ?? null );
                 $this->assertSame( 'token-123', $body['activation_token'] ?? null );
             }
@@ -412,7 +482,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
-            'checkout_intent_id'  => 'mci_123',
+            'checkout_intent_id'  => '99999999-9999-4999-8999-999999999999',
             'checkout_session_id' => 'cs_test_123',
             'activation_token'    => 'token-123',
         ] ) );
@@ -427,8 +497,8 @@ class LicenseControllerTest extends WP_UnitTestCase
         $license = Sentient_Forms_Plugin::instance()->get_license_data();
         $this->assertSame( 'active', $license['license_status'] );
         $this->assertSame( 'managed-proxy-key', $license['proxy_api_key'] );
-        $this->assertSame( 'lic-managed-123', $license['license_id'] );
-        $this->assertSame( 'site-managed-456', $license['site_id'] );
+        $this->assertSame( '77777777-7777-4777-8777-777777777777', $license['license_id'] );
+        $this->assertSame( '88888888-8888-4888-8888-888888888888', $license['site_id'] );
 
         global $wpdb;
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
@@ -436,6 +506,70 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertIsArray( $credential );
         $this->assertSame( 'valid', $credential['status'] );
         $this->assertTrue( $credential['status_json']['proxy_key_present'] ?? false );
+    }
+
+    public function test_complete_managed_checkout_requires_activation_token_before_remote_call(): void
+    {
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Managed checkout completion must not call CPS without an activation token: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
+
+        try
+        {
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $request->add_header( 'Content-Type', 'application/json' );
+            $request->set_body( wp_json_encode( [
+                'checkout_intent_id' => '77777777-7777-4777-8777-777777777777',
+            ] ) );
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $guard, 1 );
+        }
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'rest_missing_callback_param', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_complete_managed_checkout_rejects_non_uuid_site_identity_without_mutation(): void
+    {
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->mock_http_response(
+            '/v2/account/checkout/complete',
+            [
+                'success' => true,
+                'data'    => [
+                    'activation_ready' => true,
+                    'service'          => 'sentient-managed',
+                    'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
+                    'license_id'       => '88888888-8888-4888-8888-888888888888',
+                    'site_id'          => 'legacy-site-id',
+                    'proxy_api_key'    => 'must-not-be-stored',
+                    'status'           => 'active',
+                    'tier'             => [ 'code' => 'starter' ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_intent_id' => '99999999-9999-4999-8999-999999999999',
+            'activation_token'   => 'token-invalid-identity',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_identity', $response->get_data()['code'] ?? null );
+
+        $license = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->assertSame( $before['proxy_api_key'] ?? '', $license['proxy_api_key'] ?? '' );
+        $this->assertSame( $before['site_id'] ?? '', $license['site_id'] ?? '' );
     }
 
     public function test_activate_license_invalid_format_is_rejected(): void
@@ -523,8 +657,8 @@ class LicenseControllerTest extends WP_UnitTestCase
                 'success' => true,
                 'data'    => [
                     'service'       => 'sentient-managed',
-                    'license_id'    => 'lic-free-123',
-                    'site_id'       => 'site-free-456',
+                    'license_id'    => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                    'site_id'       => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
                     'proxy_api_key' => 'bootstrap-proxy-key',
                     'status'        => 'active',
                     'tier'          => [
@@ -855,6 +989,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
+                $this->assertSame( '55555555-5555-4555-8555-555555555555', $body['checkout_attempt_id'] ?? null );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
                 $this->assertArrayNotHasKey( 'trial_period_days', $body );
             }
@@ -864,6 +999,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '55555555-5555-4555-8555-555555555555',
             'plan_code'         => 'starter',
             'success_url'       => 'https://example.test/success',
             'cancel_url'        => 'https://example.test/cancel',
@@ -876,7 +1012,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'cs_test_123', $data['session_id'] );
     }
 
-    public function test_create_checkout_session_requires_price_or_plan(): void
+    public function test_create_checkout_session_requires_plan(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data( [
@@ -890,14 +1026,15 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
-            'success_url' => 'https://example.test/success',
-            'cancel_url'  => 'https://example.test/cancel',
+            'checkout_attempt_id' => 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            'success_url'         => 'https://example.test/success',
+            'cancel_url'          => 'https://example.test/cancel',
         ] ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 400, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'invalid_request', $data['code'] ?? null );
+        $this->assertSame( 'rest_missing_callback_param', $data['code'] ?? null );
     }
 
     public function test_change_subscription_returns_portal_required_error(): void
@@ -1064,6 +1201,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
+                $this->assertSame( '66666666-6666-4666-8666-666666666666', $body['checkout_attempt_id'] ?? null );
                 $this->assertSame( 'top_up_small', $body['pack_code'] ?? null );
                 $this->assertSame( 'https://example.test/success', $body['success_url'] ?? null );
                 $this->assertSame( 'https://example.test/cancel', $body['cancel_url'] ?? null );
@@ -1075,6 +1213,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
+            'checkout_attempt_id' => '66666666-6666-4666-8666-666666666666',
             'pack_code'   => 'top_up_small',
             'success_url' => 'https://example.test/success',
             'cancel_url'  => 'https://example.test/cancel',
@@ -1134,10 +1273,11 @@ class LicenseControllerTest extends WP_UnitTestCase
             $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
             $request->add_header( 'Content-Type', 'application/json' );
             $request->set_body( wp_json_encode( [
-                'pack_code'   => 'top_up_small',
-                'success_url' => 'https://example.test/success',
-                'cancel_url'  => 'https://example.test/cancel',
-                'quantity'    => 1,
+                'checkout_attempt_id' => 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+                'pack_code'            => 'top_up_small',
+                'success_url'          => 'https://example.test/success',
+                'cancel_url'           => 'https://example.test/cancel',
+                'quantity'             => 1,
             ] ) );
             $response = rest_get_server()->dispatch( $request );
         }

@@ -2548,10 +2548,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return null;
         }
 
-        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
-        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
-        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
-        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+        $failure = $this->normalize_managed_privacy_route_failure( $data['privacy_route_failure'] ?? null );
 
         if ( null === $failure )
         {
@@ -2580,29 +2577,21 @@ class Sentient_Forms_Local_Action_Execution_Service
             $safe_error_data['status'] = absint( $data['status'] );
         }
 
-        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
-        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
-        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
-        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+        $execution_request_id = isset( $data['execution_request_id'] ) && is_scalar( $data['execution_request_id'] )
+            ? sanitize_text_field( (string) $data['execution_request_id'] )
+            : '';
+        if ( '' !== $execution_request_id && 128 >= strlen( $execution_request_id ) )
+        {
+            $safe_error_data['execution_request_id'] = $execution_request_id;
+        }
+
+        $failure = $this->normalize_managed_privacy_route_failure( $data['privacy_route_failure'] ?? null );
         if ( null === $failure )
         {
-            if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
-            {
-                return Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data );
-            }
-
             return $safe_error_data ?: null;
         }
 
-        $safe_error_data['payload'] = [
-            'success' => false,
-            'error'   => [
-                'code' => sanitize_key( (string) ( $error_payload['code'] ?? $error->get_error_code() ) ),
-                'meta' => [
-                    'privacy_route_failure' => $failure,
-                ],
-            ],
-        ];
+        $safe_error_data['privacy_route_failure'] = $failure;
 
         return $safe_error_data;
     }
@@ -2633,8 +2622,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         if (
             self::PRIVACY_ROUTE_FAILURE_SCHEMA !== $schema
             || '' === $policy_version
-            || '' === $reason_code
+            || 'managed_zdr_route_unavailable' !== $reason_code
             || '' === $selected_model
+            || 191 < strlen( $selected_model )
         )
         {
             return null;

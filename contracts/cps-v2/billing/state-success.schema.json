@@ -116,15 +116,13 @@
               "type": "integer"
             },
             "tier_quota": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "ledger_delta": {
               "type": "integer"
             },
             "top_up_available": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             }
           }
         },
@@ -143,20 +141,16 @@
           ],
           "properties": {
             "seat_quantity": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "tier_site_limit": {
-              "type": "integer",
-              "minimum": 1
+              "type": "integer"
             },
             "allowed_sites": {
-              "type": "integer",
-              "minimum": 1
+              "type": "integer"
             },
             "active_sites": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "over_limit": {
               "type": "boolean"
@@ -188,16 +182,13 @@
           ],
           "properties": {
             "execution_count": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "succeeded_count": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "failed_count": {
-              "type": "integer",
-              "minimum": 0
+              "type": "integer"
             },
             "token_usage": {
               "type": "object",
@@ -209,16 +200,13 @@
               ],
               "properties": {
                 "input_tokens": {
-                  "type": "integer",
-                  "minimum": 0
+                  "type": "integer"
                 },
                 "output_tokens": {
-                  "type": "integer",
-                  "minimum": 0
+                  "type": "integer"
                 },
                 "total_tokens": {
-                  "type": "integer",
-                  "minimum": 0
+                  "type": "integer"
                 }
               }
             }
@@ -262,51 +250,7 @@
               "maxItems": 3,
               "items": {
                 "$ref": "#/$defs/catalog_plan"
-              },
-              "allOf": [
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "starter"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                },
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "pro"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                },
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "business"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                }
-              ]
+              }
             },
             "top_up_policy": {
               "type": "object",
@@ -337,51 +281,7 @@
               "maxItems": 3,
               "items": {
                 "$ref": "#/$defs/catalog_pack"
-              },
-              "allOf": [
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "top_up_small"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                },
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "top_up_medium"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                },
-                {
-                  "contains": {
-                    "required": [
-                      "code"
-                    ],
-                    "properties": {
-                      "code": {
-                        "const": "top_up_large"
-                      }
-                    }
-                  },
-                  "minContains": 1,
-                  "maxContains": 1
-                }
-              ]
+              }
             }
           }
         }
@@ -408,12 +308,10 @@
           "minLength": 1
         },
         "site_limit": {
-          "type": "integer",
-          "minimum": 1
+          "type": "integer"
         },
         "monthly_credit_quota": {
-          "type": "integer",
-          "minimum": 0
+          "type": "integer"
         }
       }
     },

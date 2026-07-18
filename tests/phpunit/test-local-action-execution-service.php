@@ -2617,20 +2617,14 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'managed_privacy_route_unavailable',
                 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
                 [
-                    'status'  => 503,
-                    'payload' => [
-                        'success' => false,
-                        'error'   => [
-                            'code'    => 'managed_privacy_route_unavailable',
-                            'message' => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
-                            'meta'    => [
-                                'privacy_route_failure' => $privacy_route_failure,
-                                'provider_payload'       => [
-                                    'raw_error' => 'No ZDR route is available for this model.',
-                                ],
-                            ],
-                        ],
+                    'status'                => 503,
+                    'execution_request_id'  => 'runtime-managed-zdr-route-unavailable',
+                    'privacy_route_failure' => $privacy_route_failure,
+                    'provider_payload'       => [
+                        'raw_error' => 'No ZDR route is available for this model.',
                     ],
+                    'prompt'                => 'Private prompt must not escape.',
+                    'form_data'             => [ 'name' => 'Ada Lovelace' ],
                 ]
             )
         );
@@ -2663,7 +2657,12 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'managed_privacy_route_unavailable', $result->get_error_code() );
         $error_data = $result->get_error_data();
         $this->assertSame( 503, $error_data['status'] ?? null );
-        $this->assertSame( $privacy_route_failure, $error_data['payload']['error']['meta']['privacy_route_failure'] ?? null );
+        $this->assertSame( 'runtime-managed-zdr-route-unavailable', $error_data['execution_request_id'] ?? null );
+        $this->assertSame( $privacy_route_failure, $error_data['privacy_route_failure'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $error_data );
+        $this->assertArrayNotHasKey( 'provider_payload', $error_data );
+        $this->assertArrayNotHasKey( 'prompt', $error_data );
+        $this->assertArrayNotHasKey( 'form_data', $error_data );
         $encoded_error_data = wp_json_encode( $error_data );
         $this->assertStringNotContainsString( 'provider_payload', $encoded_error_data );
         $this->assertStringNotContainsString( 'No ZDR route', $encoded_error_data );
@@ -2673,6 +2672,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'failed', $event['status'] );
         $this->assertSame( 'managed_privacy_route_unavailable', $event['error_code'] );
         $this->assertSame( $privacy_route_failure, $event['result_json']['privacy_route_failure'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'provider_payload', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'prompt', $event['result_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'form_data', $event['result_json'] ?? [] );
         $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $event['result_json'] ?? [] ) );
         $this->assertStringNotContainsString( 'Ada Lovelace', wp_json_encode( $event ) );
         $this->assertStringNotContainsString( 'ada@example.test', wp_json_encode( $event ) );
