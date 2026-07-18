@@ -93,7 +93,7 @@ final class Sentient_Forms_Action_Policy_Preflight
             );
         }
 
-        if ( ! in_array( $metering_class, [ 'standard', 'secondary_preflight' ], true ) )
+        if ( 'standard' !== $metering_class )
         {
             return $this->error(
                 'sentient_forms_action_policy_preflight_invalid',

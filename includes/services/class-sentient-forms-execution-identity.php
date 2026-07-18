@@ -99,12 +99,12 @@ final class Sentient_Forms_Execution_Identity
             return 'entry:' . (string) $entry['id'];
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Form Source verification runs before identity generation.
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns submission verification; this boundary still validates the token shape.
         if ( isset( $_POST['gform_unique_id'] ) )
         {
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Form Source verification runs before identity generation.
-            $unique_id = sanitize_text_field( wp_unslash( (string) $_POST['gform_unique_id'] ) );
-            if ( ! empty( $unique_id ) )
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns submission verification; this boundary still validates the token shape.
+            $unique_id = wp_unslash( $_POST['gform_unique_id'] );
+            if ( is_string( $unique_id ) && 1 === preg_match( '/\A[A-Za-z0-9]+\z/', $unique_id ) )
             {
                 return 'submission:' . $unique_id;
             }

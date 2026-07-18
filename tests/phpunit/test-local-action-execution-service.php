@@ -1137,7 +1137,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'prompt_template' => 'Provide a brief, human-readable summary of this form submission.',
             ],
             [
-                'code'                 => 'imported_entry_summary_json_v1',
+                'code'                 => 'imported_entry_summary_v1_json',
                 'model_selection_json' => [
                     'provider' => 'openrouter',
                     'model'    => 'openrouter/auto',
@@ -2840,6 +2840,98 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
         $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
         $this->assertStringNotContainsString( $fixture['proxy_api_key'], wp_json_encode( $event ) );
+    }
+
+    public function test_custom_action_code_is_not_reclassified_by_bundled_template_metadata(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [
+                'template_code'   => 'spam_detection_v1',
+                'prompt_template' => 'Run this custom webmaster-owned Action for {{name}}.',
+            ]
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'custom-row-code-stable',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'output'               => [ 'text' => 'Managed custom Action completed.' ],
+                'token_usage'          => [
+                    'input_tokens'  => 8,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 13,
+                ],
+                'metering'             => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 1,
+                ],
+            ]
+        );
+        $before = $this->custom_actions->get( $fixture['action_id'] );
+        $this->assertIsArray( $before );
+        $this->assertTrue( Sentient_Forms_Bundled_Action_Templates::has( 'spam_detection_v1' ) );
+        $this->assertSame( 'contact_spam_triage', $before['code'] );
+        $this->assertSame( 'spam_detection_v1', $before['definition_json']['template_code'] );
+        $before_mapping = $this->mappings->get( $fixture['mapping_id'] );
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'custom-row-code-stable',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( 'contact_spam_triage', $managed_proxy->execute_calls[0]['payload']['action_code'] );
+        $this->assertStringContainsString(
+            'Run this custom webmaster-owned Action for Ada Lovelace.',
+            $managed_proxy->execute_calls[0]['payload']['prompt']
+        );
+
+        $stored = $this->custom_actions->get( $fixture['action_id'] );
+        $this->assertIsArray( $stored );
+        $this->assertArrayNotHasKey( 'action_policy', $stored['definition_json'] );
+        $this->assertArrayNotHasKey( 'allowed_facets', $stored['definition_json'] );
+        $this->assertSame( $before_mapping, $this->mappings->get( $fixture['mapping_id'] ) );
+    }
+
+    public function test_conflicting_recognized_action_identities_fail_closed_before_provider_transport(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [ 'template_code' => 'spam_detection_v1' ],
+            [
+                'code' => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+            ]
+        );
+        $before_action  = $this->custom_actions->get( $fixture['action_id'] );
+        $before_mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $openrouter     = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy  = new Sentient_Forms_Test_Managed_Proxy_Client();
+
+        $result = $this->create_service( $openrouter, $managed_proxy )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_action_identity_conflict', $result->get_error_code() );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+        $this->assertSame( $before_action, $this->custom_actions->get( $fixture['action_id'] ) );
+        $this->assertSame( $before_mapping, $this->mappings->get( $fixture['mapping_id'] ) );
     }
 
     public function test_bundled_action_falls_back_to_openrouter_backup_when_managed_credits_are_exhausted(): void
@@ -4597,9 +4689,16 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
     /**
      * @param array<string, mixed> $license_overrides
-     * @return array{credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
+     * @param array<string, mixed> $definition_overrides
+     * @param array<string, mixed> $action_overrides
+     * @return array{action_id: int, credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
      */
-    private function create_local_managed_mapping( bool $record_consent = true, array $license_overrides = [] ): array
+    private function create_local_managed_mapping(
+        bool $record_consent = true,
+        array $license_overrides = [],
+        array $definition_overrides = [],
+        array $action_overrides = []
+    ): array
     {
         $site_id       = '22222222-2222-4222-8222-222222222222';
         $proxy_api_key = 'proxy-local-managed-secret';
@@ -4634,21 +4733,27 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         }
 
         $action_id = $this->custom_actions->create(
-            [
+            array_merge(
+                [
                 'code'                 => 'contact_spam_triage',
                 'display_name'         => 'Contact Spam Triage',
-                'definition_json'      => [
-                    'system_prompt'   => 'Classify contact form submissions.',
-                    'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
-                    'max_tokens'      => 256,
-                    'temperature'     => 0.2,
-                ],
+                'definition_json'      => array_merge(
+                    [
+                        'system_prompt'   => 'Classify contact form submissions.',
+                        'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                        'max_tokens'      => 256,
+                        'temperature'     => 0.2,
+                    ],
+                    $definition_overrides
+                ),
                 'model_selection_json' => [
                     'provider'      => 'sentient_managed',
                     'model'         => 'openai/gpt-4.1-mini',
                     'credential_id' => $credential_id,
                 ],
-            ]
+                ],
+                $action_overrides
+            )
         );
         $this->assertIsInt( $action_id );
 
@@ -4670,6 +4775,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsInt( $mapping_id );
 
         return [
+            'action_id'      => $action_id,
             'credential_id'  => $credential_id,
             'mapping_id'     => $mapping_id,
             'proxy_api_key'  => (string) ( $license_overrides['proxy_api_key'] ?? $proxy_api_key ),

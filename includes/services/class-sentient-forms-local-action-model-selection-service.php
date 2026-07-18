@@ -745,26 +745,8 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
      */
     private function resolve_bundled_template_code_for_action( array $action, array $definition ): string
     {
-        foreach ( [ 'template_code', 'action_template_code', 'central_action_id' ] as $key )
-        {
-            if ( isset( $definition[ $key ] ) && is_scalar( $definition[ $key ] ) )
-            {
-                $template_code = sanitize_key( (string) $definition[ $key ] );
-                if ( Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
-                {
-                    return $template_code;
-                }
-            }
-        }
-
-        if ( isset( $action['code'] ) && is_scalar( $action['code'] ) )
-        {
-            return Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
-                (string) $action['code']
-            );
-        }
-
-        return '';
+        $identity = Sentient_Forms_Bundled_Action_Templates::resolve_action_identity( $action, $definition );
+        return is_wp_error( $identity ) ? '' : $identity['template_code'];
     }
 
     /**

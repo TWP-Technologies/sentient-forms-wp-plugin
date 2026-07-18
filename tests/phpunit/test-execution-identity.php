@@ -11,6 +11,13 @@ final class Tests_Execution_Identity extends WP_UnitTestCase
     {
         parent::setUp();
         delete_option( 'sentient_forms_forced_execution_request_id' );
+        unset( $_POST['gform_unique_id'] );
+    }
+
+    protected function tearDown(): void
+    {
+        unset( $_POST['gform_unique_id'] );
+        parent::tearDown();
     }
 
     public function test_same_submission_and_action_generate_same_identity(): void
@@ -109,5 +116,27 @@ final class Tests_Execution_Identity extends WP_UnitTestCase
             Sentient_Forms_Execution_Identity::generate( 'entry_summary_v1', $form, $first, $context ),
             Sentient_Forms_Execution_Identity::generate( 'entry_summary_v1', $form, $mutated, $context )
         );
+    }
+
+    public function test_gravity_forms_unique_id_accepts_only_alphanumeric_tokens(): void
+    {
+        $form    = [ 'id' => 48, 'title' => 'Gravity validation identity' ];
+        $entry   = [ 'message' => 'same pre-save submission' ];
+        $context = [ 'hook' => 'validation', 'action_id' => 'map_validation' ];
+
+        $_POST['gform_unique_id'] = '64f75e1a2b3c4';
+        $valid_first = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+
+        $_POST['gform_unique_id'] = '64f75e1a2b3c5';
+        $valid_second = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+
+        $_POST['gform_unique_id'] = 'attacker-controlled!';
+        $invalid_punctuation = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+
+        unset( $_POST['gform_unique_id'] );
+        $missing_token = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+
+        $this->assertNotSame( $valid_first, $valid_second );
+        $this->assertSame( $missing_token, $invalid_punctuation );
     }
 }

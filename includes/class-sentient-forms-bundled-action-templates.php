@@ -1506,6 +1506,94 @@ PROMPT,
     }
 
     /**
+     * Resolve the persisted Action identity without allowing definition
+     * metadata to reclassify a custom Action row.
+     *
+     * @param array<string, mixed> $action
+     * @param array<string, mixed> $definition
+     * @return array{action_code:string,template_code:string}|WP_Error
+     */
+    public static function resolve_action_identity( array $action, array $definition ): array | WP_Error
+    {
+        $stored_code          = is_scalar( $action['code'] ?? null )
+            ? sanitize_key( (string) $action['code'] )
+            : '';
+        $stored_template_code = '' === $stored_code
+            ? ''
+            : self::extract_template_code_from_custom_action_code( $stored_code );
+
+        $definition_template_codes = [];
+        foreach ( [ 'code', 'action_code', 'template_code', 'action_template_code', 'central_action_id' ] as $key )
+        {
+            if ( ! is_scalar( $definition[ $key ] ?? null ) )
+            {
+                continue;
+            }
+
+            $candidate = self::extract_template_code_from_custom_action_code( (string) $definition[ $key ] );
+            if ( '' !== $candidate )
+            {
+                $definition_template_codes[ $key ] = $candidate;
+            }
+        }
+
+        $distinct_definition_codes = array_values( array_unique( array_values( $definition_template_codes ) ) );
+        if (
+            count( $distinct_definition_codes ) > 1
+            || (
+                '' !== $stored_template_code
+                && [] !== $distinct_definition_codes
+                && $stored_template_code !== $distinct_definition_codes[0]
+            )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_action_identity_conflict',
+                __( 'The saved Action contains conflicting executable identities.', 'sentient-forms' ),
+                [
+                    'status'                    => 409,
+                    'stored_action_code'        => $stored_code,
+                    'stored_template_code'      => $stored_template_code,
+                    'definition_template_codes' => $definition_template_codes,
+                ]
+            );
+        }
+
+        if ( '' !== $stored_code )
+        {
+            return [
+                'action_code'   => '' !== $stored_template_code ? $stored_template_code : $stored_code,
+                'template_code' => $stored_template_code,
+            ];
+        }
+
+        foreach ( [ 'code', 'action_code', 'template_code', 'action_template_code', 'central_action_id' ] as $key )
+        {
+            if ( ! is_scalar( $definition[ $key ] ?? null ) )
+            {
+                continue;
+            }
+
+            $code = sanitize_key( (string) $definition[ $key ] );
+            if ( '' === $code )
+            {
+                continue;
+            }
+
+            $template_code = self::extract_template_code_from_custom_action_code( $code );
+            return [
+                'action_code'   => '' !== $template_code ? $template_code : $code,
+                'template_code' => $template_code,
+            ];
+        }
+
+        return [
+            'action_code'   => '',
+            'template_code' => '',
+        ];
+    }
+
+    /**
      * WordPress REST schema validation intentionally accepts some values that
      * can be sanitized into the declared type. Executable Action output must
      * already carry exact decoded JSON/PHP types before that semantic pass.
