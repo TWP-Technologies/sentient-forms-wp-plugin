@@ -21,6 +21,10 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
     protected function tearDown(): void
     {
         delete_option( 'sentient_forms_execution_event_retention_days' );
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' );
         delete_option( 'sentient_forms_delete_data_on_uninstall' );
         delete_option( 'sentient_forms_store_full_ai_outputs' );
         delete_option( 'sentient_forms_privacy_setup_profile' );
@@ -125,6 +129,333 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertGreaterThanOrEqual( 1, $deleted );
         $this->assertNull( $this->submission_ledger->get_by_submission_uuid( '11111111-1111-4111-8111-111111111111' ) );
         $this->assertNotNull( $this->submission_ledger->get_by_submission_uuid( '22222222-2222-4222-8222-222222222222' ) );
+    }
+
+    public function test_new_submission_ledger_retention_inherits_existing_execution_policy(): void
+    {
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
+        Sentient_Forms_Local_Data_Governance::update_execution_event_retention_days( 30 );
+
+        $this->assertSame( 30, Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days() );
+    }
+
+    public function test_upgrade_backfills_ledger_expiry_with_migration_floor(): void
+    {
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 90 );
+        $migration_time = '2026-07-10 12:00:00';
+        $filter = static fn (): string => $migration_time;
+        add_filter( 'sentient_forms_submission_ledger_retention_migration_time', $filter );
+
+        try
+        {
+            $old_uuid    = wp_generate_uuid4();
+            $recent_uuid = wp_generate_uuid4();
+            $this->assertIsInt(
+                $this->submission_ledger->create(
+                    [
+                        'submission_uuid'     => $old_uuid,
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => 'backfill',
+                        'captured_at'         => '2025-01-01 00:00:00',
+                        'logical_fields_json' => [ 'email' => 'old@example.test' ],
+                    ]
+                )
+            );
+            $this->assertIsInt(
+                $this->submission_ledger->create(
+                    [
+                        'submission_uuid'     => $recent_uuid,
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => 'backfill',
+                        'captured_at'         => '2026-07-01 00:00:00',
+                        'logical_fields_json' => [ 'email' => 'recent@example.test' ],
+                    ]
+                )
+            );
+
+            delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+            update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier' );
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( '2026-08-09 12:00:00', $this->submission_ledger->get_by_submission_uuid( $old_uuid )['expires_at'] );
+            $this->assertSame( '2026-09-29 00:00:00', $this->submission_ledger->get_by_submission_uuid( $recent_uuid )['expires_at'] );
+            $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+            $this->assertSame( '2026.07.10.v1', get_option( 'sentient_forms_submission_ledger_retention_backfill_version' ) );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_submission_ledger_retention_migration_time', $filter );
+        }
+    }
+
+    public function test_upgrade_leaves_existing_ledger_rows_unexpired_for_manual_retention(): void
+    {
+        $uuid = wp_generate_uuid4();
+        $this->assertIsInt(
+            $this->submission_ledger->create(
+                [
+                    'submission_uuid'     => $uuid,
+                    'form_source'         => 'contact_form_7',
+                    'form_id'             => 'manual-backfill',
+                    'captured_at'         => '2026-07-01 00:00:00',
+                    'logical_fields_json' => [ 'email' => 'manual-backfill@example.test' ],
+                    'expires_at'          => '2026-07-20 00:00:00',
+                ]
+            )
+        );
+
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 0 );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+        update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier' );
+
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $this->assertNull( $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'] );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+    }
+
+    public function test_upgrade_does_not_advance_version_when_ledger_backfill_fails_and_can_retry(): void
+    {
+        $uuid = wp_generate_uuid4();
+        $this->assertIsInt(
+            $this->submission_ledger->create(
+                [
+                    'submission_uuid'     => $uuid,
+                    'form_source'         => 'wpforms',
+                    'form_id'             => 'retry-backfill',
+                    'captured_at'         => '2026-07-01 00:00:00',
+                    'logical_fields_json' => [ 'email' => 'retry@example.test' ],
+                ]
+            )
+        );
+
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 90 );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+        $previous_version = '2026.07.10.elementor_pro_forms_identifier';
+        update_option( 'sentient_forms_db_version', $previous_version );
+
+        $fail_backfill = static function ( string $query ): string {
+            if ( str_contains( $query, 'sentient_submission_ledger' ) && str_contains( $query, 'SET expires_at' ) )
+            {
+                return 'UPDATE sentient_forms_missing_backfill_table SET expires_at = NULL';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_backfill );
+        $suppress_errors = $this->wpdb->suppress_errors( true );
+
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( $previous_version, get_option( 'sentient_forms_db_version' ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+            $this->assertNull( $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'] );
+        }
+        finally
+        {
+            remove_filter( 'query', $fail_backfill );
+            $this->wpdb->suppress_errors( $suppress_errors );
+        }
+
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertNotNull( $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'] );
+        $this->assertSame( '2026.07.10.v1', get_option( 'sentient_forms_submission_ledger_retention_backfill_version' ) );
+    }
+
+    public function test_upgrade_resumes_bounded_keyset_batches_across_requests(): void
+    {
+        $this->reset_submission_ledger_backfill_state();
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 90 );
+
+        $ids = [];
+        foreach ( [ 'first', 'second', 'third' ] as $label )
+        {
+            $ids[] = $this->submission_ledger->create(
+                [
+                    'submission_uuid'     => wp_generate_uuid4(),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'bounded-backfill',
+                    'captured_at'         => '2026-07-01 00:00:00',
+                    'logical_fields_json' => [ 'label' => $label ],
+                ]
+            );
+        }
+        $this->assertContainsOnly( 'integer', $ids );
+
+        $batch_size = static fn (): int => 1;
+        $max_batches = static fn (): int => 1;
+        $bounded_updates = [];
+        $capture_updates = static function ( string $query ) use ( &$bounded_updates ): string {
+            if ( str_contains( $query, 'sentient_submission_ledger' ) && str_contains( $query, 'SET expires_at' ) )
+            {
+                $bounded_updates[] = $query;
+            }
+
+            return $query;
+        };
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_batch_size', $batch_size );
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_max_batches', $max_batches );
+        add_filter( 'query', $capture_updates );
+
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+            $this->assertSame( '2026.07.10.elementor_pro_forms_identifier', get_option( 'sentient_forms_db_version' ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+            $this->assertSame( $ids[0], (int) get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' ) );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+            $this->assertSame( '2026.07.10.elementor_pro_forms_identifier', get_option( 'sentient_forms_db_version' ) );
+            $this->assertSame( $ids[1], (int) get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' ) );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+            $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+            $this->assertSame( '2026.07.10.v1', get_option( 'sentient_forms_submission_ledger_retention_backfill_version' ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
+        }
+        finally
+        {
+            remove_filter( 'query', $capture_updates );
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_batch_size', $batch_size );
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_max_batches', $max_batches );
+        }
+
+        $this->assertCount( 3, $bounded_updates );
+        foreach ( $bounded_updates as $query )
+        {
+            $this->assertMatchesRegularExpression( '/WHERE id > \d+\s+AND id <= \d+\s+AND id <= \d+/', $query );
+        }
+    }
+
+    public function test_upgrade_freezes_backfill_policy_and_horizon_until_completion(): void
+    {
+        $this->reset_submission_ledger_backfill_state();
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 7 );
+
+        $old_uuid    = wp_generate_uuid4();
+        $future_uuid = wp_generate_uuid4();
+        $this->submission_ledger->create(
+            [
+                'submission_uuid'     => $old_uuid,
+                'form_source'         => 'wpforms',
+                'form_id'             => 'frozen-backfill',
+                'captured_at'         => '2025-01-01 00:00:00',
+                'logical_fields_json' => [ 'label' => 'old' ],
+            ]
+        );
+        $this->submission_ledger->create(
+            [
+                'submission_uuid'     => $future_uuid,
+                'form_source'         => 'wpforms',
+                'form_id'             => 'frozen-backfill',
+                'captured_at'         => '2026-08-15 00:00:00',
+                'logical_fields_json' => [ 'label' => 'future' ],
+            ]
+        );
+
+        $batch_size = static fn (): int => 1;
+        $max_batches = static fn (): int => 1;
+        $first_time = static fn (): string => '2026-07-10 12:00:00';
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_batch_size', $batch_size );
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_max_batches', $max_batches );
+        add_filter( 'sentient_forms_submission_ledger_retention_migration_time', $first_time );
+
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+            $snapshot = get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+            $this->assertSame( 7, $snapshot['retention_days'] );
+            $this->assertSame( '2026-08-09 12:00:00', $snapshot['migration_floor'] );
+
+            $late_uuid = wp_generate_uuid4();
+            $this->assertIsInt(
+                $this->submission_ledger->create(
+                    [
+                        'submission_uuid'     => $late_uuid,
+                        'form_source'         => 'wpforms',
+                        'form_id'             => 'frozen-backfill',
+                        'captured_at'         => '2026-07-11 00:00:00',
+                        'logical_fields_json' => [ 'label' => 'late' ],
+                        'expires_at'          => '2099-01-01 00:00:00',
+                    ]
+                )
+            );
+
+            Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 180 );
+            remove_filter( 'sentient_forms_submission_ledger_retention_migration_time', $first_time );
+            $second_time = static fn (): string => '2027-01-01 00:00:00';
+            add_filter( 'sentient_forms_submission_ledger_retention_migration_time', $second_time );
+
+            try
+            {
+                Sentient_Forms_Installer::maybe_upgrade();
+            }
+            finally
+            {
+                remove_filter( 'sentient_forms_submission_ledger_retention_migration_time', $second_time );
+            }
+
+            $this->assertSame( '2026-08-09 12:00:00', $this->submission_ledger->get_by_submission_uuid( $old_uuid )['expires_at'] );
+            $this->assertSame( '2026-08-22 00:00:00', $this->submission_ledger->get_by_submission_uuid( $future_uuid )['expires_at'] );
+            $this->assertSame( '2099-01-01 00:00:00', $this->submission_ledger->get_by_submission_uuid( $late_uuid )['expires_at'] );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_submission_ledger_retention_migration_time', $first_time );
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_batch_size', $batch_size );
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_max_batches', $max_batches );
+        }
+    }
+
+    public function test_upgrade_retries_an_idempotent_batch_when_cursor_persistence_fails(): void
+    {
+        $this->reset_submission_ledger_backfill_state();
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 90 );
+        $uuid = wp_generate_uuid4();
+        $this->submission_ledger->create(
+            [
+                'submission_uuid'     => $uuid,
+                'form_source'         => 'elementor_pro_forms',
+                'form_id'             => 'cursor-retry',
+                'captured_at'         => '2026-07-01 00:00:00',
+                'logical_fields_json' => [ 'label' => 'retry' ],
+            ]
+        );
+
+        $deny_cursor_persist = static fn (): bool => false;
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+            $first_expiry = $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'];
+            $snapshot     = get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+            $expected     = gmdate(
+                'Y-m-d H:i:s',
+                max(
+                    strtotime( '2026-09-29 00:00:00 UTC' ),
+                    strtotime( $snapshot['migration_floor'] . ' UTC' )
+                )
+            );
+            $this->assertSame( $expected, $first_expiry );
+            $this->assertSame( 0, (int) get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 0 ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+            $this->assertSame( '2026.07.10.elementor_pro_forms_identifier', get_option( 'sentient_forms_db_version' ) );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        }
+
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $this->assertSame( $first_expiry, $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'] );
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertSame( '2026.07.10.v1', get_option( 'sentient_forms_submission_ledger_retention_backfill_version' ) );
     }
 
     public function test_privacy_exporter_and_eraser_handle_submission_ledger_content(): void
@@ -264,13 +595,27 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_maybe_upgrade_scrubs_existing_managed_currency_fields(): void
     {
-        $table = $this->wpdb->prefix . 'sentient_execution_events';
-        $now   = current_time( 'mysql' );
+        $table      = $this->wpdb->prefix . 'sentient_execution_events';
+        $now        = current_time( 'mysql' );
+        $request_id = 'managed-repair-' . wp_generate_uuid4();
+
+        $this->reset_submission_ledger_backfill_state();
+        $this->assertIsInt(
+            $this->submission_ledger->create(
+                [
+                    'submission_uuid'     => wp_generate_uuid4(),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'partial-retention-upgrade',
+                    'captured_at'         => '2026-07-01 00:00:00',
+                    'logical_fields_json' => [ 'label' => 'partial' ],
+                ]
+            )
+        );
 
         $inserted = $this->wpdb->insert(
             $table,
             [
-                'execution_request_id' => 'managed-repair-1',
+                'execution_request_id' => $request_id,
                 'provider'             => 'sentient_managed',
                 'model'                => 'openai/gpt-4.1-mini',
                 'status'               => 'succeeded',
@@ -325,9 +670,21 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         );
 
         update_option( 'sentient_forms_db_version', '2026.05.10.lead_value_workflows' );
-        Sentient_Forms_Installer::maybe_upgrade();
+        $deny_cursor_persist = static fn (): bool => false;
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        }
 
-        $event = $this->events->get_by_request_id( 'managed-repair-1' );
+        $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+        $this->assertSame( '2026.05.10.lead_value_workflows', get_option( 'sentient_forms_db_version' ) );
+
+        $event = $this->events->get_by_request_id( $request_id );
         $this->assertSame( 3, $event['cost_json']['debited_credits'] );
         $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
         $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
@@ -426,6 +783,10 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             ]
         );
         update_option( 'sentient_forms_plugin_settings', [ 'enable_logging' => true ] );
+        update_option( 'sentient_forms_submission_ledger_retention_days', 30 );
+        update_option( 'sentient_forms_submission_ledger_retention_backfill_version', '2026.07.10.v1' );
+        update_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', [ 'pending' => true ] );
+        update_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 42 );
         set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
         update_option( 'sentient_forms_delete_data_on_uninstall', true );
         remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
@@ -463,6 +824,10 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertNull( $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) );
             $this->assertFalse( get_option( 'sentient_forms_settings', false ) );
             $this->assertFalse( get_option( 'sentient_forms_plugin_settings', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_days', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
             $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
             $this->assertSame(
                 '0',
@@ -638,8 +1003,28 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertNotNull( $applied['privacy_setup_completed_at'] );
     }
 
+    public function test_privacy_presets_initialize_both_retention_windows(): void
+    {
+        $expected_retention = [
+            'balanced'          => 90,
+            'privacy_focused'   => 30,
+            'maximum_privacy'   => 7,
+            'maximum_visibility' => 180,
+        ];
+
+        foreach ( $expected_retention as $profile => $days )
+        {
+            $applied = Sentient_Forms_Local_Data_Governance::apply_privacy_preset( $profile );
+
+            $this->assertSame( $days, $applied['execution_event_retention_days'], $profile );
+            $this->assertSame( $days, $applied['submission_ledger_retention_days'], $profile );
+        }
+    }
+
     public function test_support_bundle_omits_secrets_results_and_error_messages(): void
     {
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 30 );
+
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $this->wpdb );
         $credentials->create(
             [
@@ -678,6 +1063,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'bundle-person@example.test', $json );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_result'] );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_error_message'] );
+        $this->assertSame( 30, $bundle['retention']['submission_ledger_retention_days'] );
     }
 
     /**
@@ -693,6 +1079,20 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         }
 
         return array_values( array_map( static fn ( array $row ): string => (string) $row['Field'], $rows ) );
+    }
+
+    private function reset_submission_ledger_backfill_state(): void
+    {
+        $this->wpdb->query(
+            $this->wpdb->prepare(
+                'DELETE FROM %i',
+                $this->wpdb->prefix . 'sentient_submission_ledger'
+            )
+        );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_version' );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+        delete_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' );
+        update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier' );
     }
 
     /**

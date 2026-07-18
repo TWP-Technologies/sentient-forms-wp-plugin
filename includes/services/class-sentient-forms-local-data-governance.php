@@ -14,6 +14,7 @@ class Sentient_Forms_Local_Data_Governance
     public const RETENTION_HOOK = 'sentient_forms_local_retention_cleanup';
 
     private const OPTION_RETENTION_DAYS = 'sentient_forms_execution_event_retention_days';
+    private const OPTION_SUBMISSION_LEDGER_RETENTION_DAYS = 'sentient_forms_submission_ledger_retention_days';
     private const OPTION_DELETE_ON_UNINSTALL = 'sentient_forms_delete_data_on_uninstall';
     private const OPTION_STORE_FULL_AI_OUTPUTS = 'sentient_forms_store_full_ai_outputs';
     private const OPTION_PRIVACY_SETUP_PROFILE = 'sentient_forms_privacy_setup_profile';
@@ -138,6 +139,85 @@ class Sentient_Forms_Local_Data_Governance
         update_option( self::OPTION_RETENTION_DAYS, $days );
 
         return $days;
+    }
+
+    /**
+     * Return the supported Submission Ledger retention choices for the admin UI.
+     *
+     * @return array<int, int>
+     */
+    public static function submission_ledger_retention_choices(): array
+    {
+        return self::ALLOWED_RETENTION_DAYS;
+    }
+
+    /**
+     * Normalize administrator-configurable Submission Ledger retention days.
+     */
+    public static function sanitize_submission_ledger_retention_days( mixed $value ): int
+    {
+        if ( ! is_numeric( $value ) )
+        {
+            return self::DEFAULT_RETENTION_DAYS;
+        }
+
+        $days = (int) $value;
+
+        return in_array( $days, self::ALLOWED_RETENTION_DAYS, true )
+            ? $days
+            : self::DEFAULT_RETENTION_DAYS;
+    }
+
+    /**
+     * Read the current Submission Ledger retention setting.
+     */
+    public static function current_submission_ledger_retention_days(): int
+    {
+        return self::sanitize_submission_ledger_retention_days(
+            get_option(
+                self::OPTION_SUBMISSION_LEDGER_RETENTION_DAYS,
+                self::current_execution_event_retention_days()
+            )
+        );
+    }
+
+    /**
+     * Persist the Submission Ledger retention setting.
+     */
+    public static function update_submission_ledger_retention_days( mixed $value ): int
+    {
+        $days = self::sanitize_submission_ledger_retention_days( $value );
+        update_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_DAYS, $days );
+
+        return $days;
+    }
+
+    /**
+     * Calculate the expiry for a newly captured Submission Ledger record.
+     *
+     * The filter is intentionally capture-time only. Upgrade backfills freeze the persisted
+     * administrator setting so a resumable batch cannot change policy between requests.
+     *
+     * @param string|null $captured_at UTC MySQL datetime assigned by the capture service.
+     */
+    public static function default_submission_ledger_expires_at( ?string $captured_at = null ): ?string
+    {
+        $days = self::current_submission_ledger_retention_days();
+        $days = (int) apply_filters( 'sentient_forms_submission_ledger_retention_days', $days );
+
+        if ( $days <= 0 )
+        {
+            return null;
+        }
+
+        $captured_at = $captured_at ?: current_time( 'mysql', true );
+        $timestamp   = strtotime( $captured_at . ' UTC' );
+        if ( false === $timestamp )
+        {
+            $timestamp = time();
+        }
+
+        return gmdate( 'Y-m-d H:i:s', $timestamp + ( $days * DAY_IN_SECONDS ) );
     }
 
     /**
@@ -269,6 +349,7 @@ class Sentient_Forms_Local_Data_Governance
                 'label'                     => __( 'Balanced', 'sentient-forms' ),
                 'description'               => __( 'Keeps practical troubleshooting without storing full AI responses by default.', 'sentient-forms' ),
                 'execution_event_retention_days' => 90,
+                'submission_ledger_retention_days' => 90,
                 'delete_data_on_uninstall'  => true,
                 'store_full_ai_outputs'     => false,
                 'enable_logging'            => false,
@@ -277,6 +358,7 @@ class Sentient_Forms_Local_Data_Governance
                 'label'                     => __( 'Privacy focused', 'sentient-forms' ),
                 'description'               => __( 'Shorter retention and reduced local visibility for routine production sites.', 'sentient-forms' ),
                 'execution_event_retention_days' => 30,
+                'submission_ledger_retention_days' => 30,
                 'delete_data_on_uninstall'  => true,
                 'store_full_ai_outputs'     => false,
                 'enable_logging'            => false,
@@ -285,6 +367,7 @@ class Sentient_Forms_Local_Data_Governance
                 'label'                     => __( 'Maximum privacy', 'sentient-forms' ),
                 'description'               => __( 'Minimizes what Sentient Forms keeps locally after an action runs.', 'sentient-forms' ),
                 'execution_event_retention_days' => 7,
+                'submission_ledger_retention_days' => 7,
                 'delete_data_on_uninstall'  => true,
                 'store_full_ai_outputs'     => false,
                 'enable_logging'            => false,
@@ -293,6 +376,7 @@ class Sentient_Forms_Local_Data_Governance
                 'label'                     => __( 'Maximum visibility', 'sentient-forms' ),
                 'description'               => __( 'Keeps more local diagnostics for setup, tuning, and troubleshooting.', 'sentient-forms' ),
                 'execution_event_retention_days' => 180,
+                'submission_ledger_retention_days' => 180,
                 'delete_data_on_uninstall'  => true,
                 'store_full_ai_outputs'     => true,
                 'enable_logging'            => true,
@@ -312,6 +396,7 @@ class Sentient_Forms_Local_Data_Governance
 
         self::update_privacy_setup_profile( $profile );
         self::update_execution_event_retention_days( $preset['execution_event_retention_days'] );
+        self::update_submission_ledger_retention_days( $preset['submission_ledger_retention_days'] );
         self::update_delete_data_on_uninstall( $preset['delete_data_on_uninstall'] );
         self::update_store_full_ai_outputs( $preset['store_full_ai_outputs'] );
         self::update_privacy_setup_completed_at();
@@ -320,6 +405,7 @@ class Sentient_Forms_Local_Data_Governance
             'privacy_setup_profile'      => $profile,
             'privacy_setup_completed_at' => self::privacy_setup_completed_at(),
             'execution_event_retention_days' => self::current_execution_event_retention_days(),
+            'submission_ledger_retention_days' => self::current_submission_ledger_retention_days(),
             'delete_data_on_uninstall'   => self::delete_data_on_uninstall_enabled(),
             'store_full_ai_outputs'      => self::store_full_ai_outputs_enabled(),
             'enable_logging'             => rest_sanitize_boolean( $preset['enable_logging'] ),
@@ -799,6 +885,10 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_forms_license_status',
             'sentient_forms_proxy_api_key',
             self::OPTION_RETENTION_DAYS,
+            self::OPTION_SUBMISSION_LEDGER_RETENTION_DAYS,
+            'sentient_forms_submission_ledger_retention_backfill_version',
+            'sentient_forms_submission_ledger_retention_backfill_snapshot_v1',
+            'sentient_forms_submission_ledger_retention_backfill_cursor_v1',
             self::OPTION_DELETE_ON_UNINSTALL,
             self::OPTION_STORE_FULL_AI_OUTPUTS,
             self::OPTION_PRIVACY_SETUP_PROFILE,

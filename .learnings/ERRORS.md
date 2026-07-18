@@ -63,6 +63,38 @@ For regex filters on Windows, invoke `php vendor\\phpunit\\phpunit\\phpunit --fi
 
 ---
 
+## [ERR-20260710-008] powershell-rg-wildcard-path
+
+**Logged**: 2026-07-10T13:04:56-05:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+An unquoted wildcard path passed directly to `rg` was treated as an invalid Windows filename.
+
+### Error
+```text
+rg: phpcs.xml*: The filename, directory name, or volume label syntax is incorrect. (os error 123)
+```
+
+### Context
+- A validation discovery command passed `phpcs.xml*` as a path argument under PowerShell.
+- Other read-only discovery output succeeded, but `rg` returned a nonzero status.
+
+### Suggested Fix
+Resolve wildcard paths with PowerShell first or pass explicit filenames/directories to `rg` on Windows.
+
+### Metadata
+- Reproducible: yes
+- Related Files: composer.json, phpcs-rulesets/SentientForms.xml
+
+### Resolution
+- **Resolved**: 2026-07-10T13:04:56-05:00
+- **Notes**: Subsequent validation uses explicit paths.
+
+---
+
 ## [ERR-20260710-006] opaque_parallel_read_failure
 
 **Logged**: 2026-07-10T10:20:06-05:00

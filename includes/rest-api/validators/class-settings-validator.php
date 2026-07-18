@@ -201,6 +201,22 @@ class Sentient_Forms_Settings_Validator
     }
 
     /**
+     * Validate the local Submission Ledger retention window.
+     */
+    public function validate_submission_ledger_retention_days_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( ! is_numeric( $value ) || ! in_array( (int) $value, Sentient_Forms_Local_Data_Governance::submission_ledger_retention_choices(), true ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be 7, 30, 90, 180, or 0 for manual cleanup only.', 'sentient-forms' )
+            );
+        }
+
+        return true;
+    }
+
+    /**
      * Validate the recorded privacy/visibility setup profile.
      *
      * @param mixed           $value   The value of the parameter.

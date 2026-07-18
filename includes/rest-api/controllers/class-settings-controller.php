@@ -162,6 +162,7 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
                 $params['enable_logging'] = rest_sanitize_boolean( $applied_preset['enable_logging'] ?? false );
             }
             $params['execution_event_retention_days'] = $applied_preset['execution_event_retention_days'] ?? Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days();
+            $params['submission_ledger_retention_days'] = $applied_preset['submission_ledger_retention_days'] ?? Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days();
             $params['delete_data_on_uninstall']       = $applied_preset['delete_data_on_uninstall'] ?? Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled();
             $params['store_full_ai_outputs']          = $applied_preset['store_full_ai_outputs'] ?? Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled();
         }
@@ -204,6 +205,11 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
         if ( array_key_exists( 'execution_event_retention_days', $params ) )
         {
             Sentient_Forms_Local_Data_Governance::update_execution_event_retention_days( $params['execution_event_retention_days'] );
+        }
+
+        if ( array_key_exists( 'submission_ledger_retention_days', $params ) )
+        {
+            Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( $params['submission_ledger_retention_days'] );
         }
 
         if ( array_key_exists( 'delete_data_on_uninstall', $params ) )
@@ -328,6 +334,15 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
                 'validate_callback' => [ $this->validator, 'validate_execution_event_retention_days_param' ],
                 'enum'              => Sentient_Forms_Local_Data_Governance::execution_event_retention_choices(),
                 'default'           => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
+            ];
+            $args[ 'submission_ledger_retention_days' ] = [
+                'description'       => __( 'Submission Ledger retention window in days. Use 0 for manual cleanup only.', 'sentient-forms' ),
+                'type'              => 'integer',
+                'required'          => false,
+                'sanitize_callback' => [ Sentient_Forms_Local_Data_Governance::class, 'sanitize_submission_ledger_retention_days' ],
+                'validate_callback' => [ $this->validator, 'validate_submission_ledger_retention_days_param' ],
+                'enum'              => Sentient_Forms_Local_Data_Governance::submission_ledger_retention_choices(),
+                'default'           => Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days(),
             ];
             $args[ 'delete_data_on_uninstall' ] = [
                 'description'       => __( 'Delete all plugin-owned local data when Sentient Forms is uninstalled.', 'sentient-forms' ),
@@ -470,6 +485,7 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
             $settings,
             [
                 'execution_event_retention_days' => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
+                'submission_ledger_retention_days' => Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days(),
                 'delete_data_on_uninstall'       => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
                 'store_full_ai_outputs'          => Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled(),
                 'privacy_setup_profile'          => Sentient_Forms_Local_Data_Governance::current_privacy_setup_profile(),
@@ -503,6 +519,7 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
     {
         return [
             'execution_event_retention_days',
+            'submission_ledger_retention_days',
             'delete_data_on_uninstall',
             'store_full_ai_outputs',
             'privacy_setup_profile',

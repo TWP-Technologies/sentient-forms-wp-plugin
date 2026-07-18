@@ -12,6 +12,14 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->wpdb = $wpdb;
 
         Sentient_Forms_Installer::maybe_upgrade();
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
+    }
+
+    protected function tearDown(): void
+    {
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
+
+        parent::tearDown();
     }
 
     public function test_capture_refuses_to_store_logical_snapshot_when_ledger_is_disabled(): void
@@ -288,5 +296,93 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->assertSame( '100 Future Adapter Way', $stored['logical_fields_json']['address']['street'] ?? null );
         $this->assertSame( 'Austin', $stored['logical_fields_json']['address']['city'] ?? null );
         $this->assertSame( '[redacted]', $stored['logical_fields_json']['address']['csrf_token'] ?? null );
+    }
+
+    public function test_capture_assigns_expiry_from_the_current_ledger_retention_policy(): void
+    {
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service  = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+
+        $settings->set_enabled( 'gravity_forms', 'retained-entry', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 7 );
+
+        $result = $service->capture(
+            [
+                'form_source'     => 'gravity_forms',
+                'form_id'         => 'retained-entry',
+                'native_entry_id' => 'retained-1',
+                'logical_fields'  => [ 'email' => 'retained@example.test' ],
+                'expires_at'      => '2099-01-01 00:00:00',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $captured_at = strtotime( (string) ( $result['captured_at'] ?? '' ) . ' UTC' );
+        $expires_at  = strtotime( (string) ( $result['expires_at'] ?? '' ) . ' UTC' );
+        $this->assertSame( 7 * DAY_IN_SECONDS, $expires_at - $captured_at );
+        $this->assertNotSame( '2099-01-01 00:00:00', $result['expires_at'] );
+    }
+
+    public function test_manual_ledger_retention_leaves_new_captures_unexpired(): void
+    {
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service  = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+
+        $settings->set_enabled( 'contact_form_7', 'manual-retention', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 0 );
+
+        $result = $service->capture(
+            [
+                'form_source'     => 'contact_form_7',
+                'form_id'         => 'manual-retention',
+                'native_entry_id' => 'manual-1',
+                'logical_fields'  => [ 'email' => 'manual@example.test' ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertNull( $result['expires_at'] );
+    }
+
+    public function test_retention_setting_changes_only_affect_future_captures(): void
+    {
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service  = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+
+        $settings->set_enabled( 'wpforms', 'future-only', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 7 );
+        $first = $service->capture(
+            [
+                'form_source'     => 'wpforms',
+                'form_id'         => 'future-only',
+                'native_entry_id' => 'future-only-1',
+                'logical_fields'  => [ 'email' => 'first@example.test' ],
+            ]
+        );
+
+        Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 30 );
+        $second = $service->capture(
+            [
+                'form_source'     => 'wpforms',
+                'form_id'         => 'future-only',
+                'native_entry_id' => 'future-only-2',
+                'logical_fields'  => [ 'email' => 'second@example.test' ],
+            ]
+        );
+
+        $this->assertIsArray( $first );
+        $this->assertIsArray( $second );
+        $this->assertSame(
+            7 * DAY_IN_SECONDS,
+            strtotime( $first['expires_at'] . ' UTC' ) - strtotime( $first['captured_at'] . ' UTC' )
+        );
+        $this->assertSame(
+            30 * DAY_IN_SECONDS,
+            strtotime( $second['expires_at'] . ' UTC' ) - strtotime( $second['captured_at'] . ' UTC' )
+        );
+
+        $stored_first = ( new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb ) )
+            ->get_by_submission_uuid( $first['submission_uuid'] );
+        $this->assertSame( $first['expires_at'], $stored_first['expires_at'] );
     }
 }
