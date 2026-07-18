@@ -737,6 +737,8 @@ final class Sentient_Forms_Plugin
 
     private function save_options( array $options ): void
     {
+        unset( $options['action_results'] );
+
         $this->options = $options;
         update_option( self::OPTION_KEY, $options );
     }

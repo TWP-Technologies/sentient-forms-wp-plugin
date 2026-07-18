@@ -11,6 +11,8 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
+    private const OPTION_SETTINGS = 'sentient_forms_settings';
+    private const ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS = 5;
     private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
     private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
     private const NATIVE_CORRELATION_BACKFILL_VERSION = 'v1';
@@ -120,10 +122,7 @@ class Sentient_Forms_Installer
 
         $submission_ledger_retention_backfill_complete = self::backfill_submission_ledger_retention();
 
-        if ( ! self::retire_option_backed_action_results() )
-        {
-            return;
-        }
+        $action_results_retirement_complete = self::retire_option_backed_action_results();
 
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
@@ -160,6 +159,7 @@ class Sentient_Forms_Installer
 
         if (
             $needs_db_version_update
+            && $action_results_retirement_complete
             && $submission_ledger_retention_backfill_complete
             && $form_source_config_migration_complete
             && $native_correlation_schema_ready
@@ -175,22 +175,76 @@ class Sentient_Forms_Installer
      */
     private static function retire_option_backed_action_results(): bool
     {
-        $settings = get_option( 'sentient_forms_settings', null );
-        if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
+        global $wpdb;
+
+        for ( $attempt = 0; $attempt < self::ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS; $attempt++ )
         {
-            Sentient_Forms_Plugin::invalidate_options_cache();
-            return true;
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT option_value FROM %i WHERE option_name = %s LIMIT 1',
+                    $wpdb->options,
+                    self::OPTION_SETTINGS
+                ),
+                ARRAY_A
+            );
+
+            if ( null === $row )
+            {
+                if ( '' !== $wpdb->last_error )
+                {
+                    return false;
+                }
+
+                self::invalidate_settings_option_caches();
+                return true;
+            }
+
+            $serialized_settings = (string) ( $row['option_value'] ?? '' );
+            $settings            = maybe_unserialize( $serialized_settings );
+            if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
+            {
+                self::invalidate_settings_option_caches();
+                return true;
+            }
+
+            unset( $settings['action_results'] );
+
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET option_value = %s WHERE option_name = %s AND BINARY option_value = BINARY %s',
+                    $wpdb->options,
+                    maybe_serialize( $settings ),
+                    self::OPTION_SETTINGS,
+                    $serialized_settings
+                )
+            );
+
+            if ( false === $updated )
+            {
+                return false;
+            }
+
+            if ( 1 === $updated )
+            {
+                self::invalidate_settings_option_caches();
+                return true;
+            }
         }
 
-        unset( $settings['action_results'] );
+        return false;
+    }
 
-        if ( ! update_option( 'sentient_forms_settings', $settings, false ) )
-        {
-            return false;
-        }
+    /**
+     * Expire every WordPress and plugin-local cache surface for the settings
+     * option after a direct compare-and-swap update or a clean readback.
+     */
+    private static function invalidate_settings_option_caches(): void
+    {
+        wp_cache_delete( self::OPTION_SETTINGS, 'options' );
+        wp_cache_delete( 'alloptions', 'options' );
+        wp_cache_delete( 'notoptions', 'options' );
 
         Sentient_Forms_Plugin::invalidate_options_cache();
-        return true;
     }
 
     /**
