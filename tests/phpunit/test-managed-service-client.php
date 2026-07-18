@@ -45,7 +45,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'proxy-issued', $result['proxy_api_key'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertSame( 'proxy-issued', $result['data']['proxy_api_key'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2', $client->get_base_url() );
         $this->assertCount( 1, $calls );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/sites/activate', $calls[0]['url'] );
@@ -466,7 +467,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( '66666666-6666-4666-8666-666666666666', $result['checkout_intent_id'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertSame( '66666666-6666-4666-8666-666666666666', $result['data']['checkout_intent_id'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/start', $calls[0]['url'] );
         $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
 
@@ -515,8 +517,9 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertTrue( $result['activation_ready'] );
-        $this->assertSame( 'proxy-issued', $result['proxy_api_key'] );
+        $this->assertTrue( $result['success'] ?? false );
+        $this->assertTrue( $result['data']['activation_ready'] ?? false );
+        $this->assertSame( 'proxy-issued', $result['data']['proxy_api_key'] ?? null );
         $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/complete', $calls[0]['url'] );
         $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
 

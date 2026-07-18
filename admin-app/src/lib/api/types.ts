@@ -79,37 +79,10 @@ export interface ManagedCheckoutStartRequest {
 	accepted_managed_service_terms: boolean;
 }
 
-export interface ManagedCheckoutStartResponse {
-	checkout_intent_id: string;
-	checkout_session_id: string;
-	checkout_url: string;
-	plan_code?: string;
-	billing_interval?: string;
-	status?: string;
-	consent_recorded?: boolean;
-	consent_id?: number;
-	disclosure_version?: string;
-}
-
 export interface ManagedCheckoutCompleteRequest {
 	checkout_intent_id?: string;
 	checkout_session_id?: string;
 	activation_token: string;
-}
-
-export interface ManagedCheckoutCompleteResponse {
-	activation_ready: boolean;
-	status?: string;
-	message?: string;
-	license_key?: string;
-	license_id?: string;
-	site_id?: string;
-	proxy_api_key?: string;
-	tier?: string | TierSummary;
-	expires_at?: string | null;
-	expiry_date?: string | null;
-	credential_id?: number;
-	managed_provider_ready?: boolean;
 }
 
 export interface BillingPortalSessionResponse {

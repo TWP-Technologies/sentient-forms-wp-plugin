@@ -134,13 +134,19 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'site_id'       => '22222222-2222-4222-8222-222222222222',
                     'proxy_api_key' => 'new-proxy-key-789',
                     'status'        => 'active',
+                    'site_url'      => home_url(),
+                    'local_site_identifier' => 'example-local',
                     'tier'          => [
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
                         'monthly_credit_quota' => 1000,
                     ],
-                    'expiry_date'   => '2025-12-31T23:59:59Z',
+                    'expiry_date'   => '2025-12-31',
+                    'billing_boundary' => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
+                    ],
                 ],
             ],
             function ( array $args ): void {
@@ -171,6 +177,99 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'starter', $data['tier']['code'] ?? null );
     }
 
+    public function test_activate_license_rejects_noncanonical_expiry_before_mutation(): void
+    {
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->mock_http_response(
+            '/v2/account/sites/activate',
+            [
+                'success' => true,
+                'data'    => [
+                    'service'       => 'sentient-managed',
+                    'license_id'    => '11111111-1111-4111-8111-111111111111',
+                    'site_id'       => '22222222-2222-4222-8222-222222222222',
+                    'proxy_api_key' => 'must-not-be-stored',
+                    'status'        => 'active',
+                    'site_url'      => home_url(),
+                    'local_site_identifier' => 'example-local',
+                    'tier'          => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1000,
+                    ],
+                    'expiry_date'   => '2025-12-31T23:59:59Z',
+                    'billing_boundary' => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/activate' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'license_key' => '0abcdefghjkmnpqrstvwxyz123',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_expiry', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
+    }
+
+    public function test_activate_license_rejects_unsuccessful_envelope_before_mutation(): void
+    {
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->mock_http_response(
+            '/v2/account/sites/activate',
+            [
+                'success' => false,
+                'data'    => $this->managed_activation_payload(),
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/activate' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'license_key' => '0abcdefghjkmnpqrstvwxyz123',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
+    }
+
+    public function test_activate_license_rejects_noncanonical_status_before_mutation(): void
+    {
+        $before  = Sentient_Forms_Plugin::instance()->get_license_data();
+        $payload = $this->managed_activation_payload();
+        $payload['status'] = 'provisioning';
+        $this->mock_http_response(
+            '/v2/account/sites/activate',
+            [
+                'success' => true,
+                'data'    => $payload,
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/activate' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'license_key' => '0abcdefghjkmnpqrstvwxyz123',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
+    }
+
     public function test_start_managed_checkout_records_consent_and_does_not_require_proxy_key(): void
     {
         $this->mock_http_response(
@@ -178,10 +277,17 @@ class LicenseControllerTest extends WP_UnitTestCase
             [
                 'success' => true,
                 'data'    => [
+                    'service'             => 'sentient-managed',
+                    'status'              => 'open',
                     'checkout_intent_id'  => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
                     'checkout_session_id' => 'cs_test_123',
                     'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_123',
                     'plan_code'           => 'starter',
+                    'billing_interval'    => 'monthly',
+                    'billing_boundary'    => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
+                    ],
                 ],
             ],
             function ( array $args ): void {
@@ -237,10 +343,17 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'body'     => wp_json_encode( [
                         'success' => true,
                         'data'    => [
+                            'service'             => 'sentient-managed',
+                            'status'              => 'open',
                             'checkout_intent_id'  => '33333333-3333-4333-8333-333333333333',
                             'checkout_session_id' => 'cs_test_stable_local',
                             'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_stable_local',
                             'plan_code'           => 'starter',
+                            'billing_interval'    => 'monthly',
+                            'billing_boundary'    => [
+                                'direct_openrouter_billed_by_sentient' => false,
+                                'managed_proxy_billed_by_sentient'     => true,
+                            ],
                         ],
                     ] ),
                     'response' => [
@@ -258,9 +371,16 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'body'     => wp_json_encode( [
                         'success' => true,
                         'data'    => [
+                            'service'          => 'sentient-managed',
                             'activation_ready' => false,
-                            'status'           => 'fulfilled',
-                            'message'          => 'Waiting for the Stripe webhook.',
+                            'status'           => 'pending',
+                            'pending_reason'   => 'Stripe has not finished provisioning this checkout yet. Retry shortly.',
+                            'site_url'         => $requests['complete']['site_url'],
+                            'local_site_identifier' => $requests['complete']['local_site_identifier'],
+                            'billing_boundary' => [
+                                'direct_openrouter_billed_by_sentient' => false,
+                                'managed_proxy_billed_by_sentient'     => true,
+                            ],
                         ],
                     ] ),
                     'response' => [
@@ -313,6 +433,122 @@ class LicenseControllerTest extends WP_UnitTestCase
             $options['license']['local_site_identifier'] ?? null,
             'The generated local site identifier must be persisted before returning from checkout start.'
         );
+    }
+
+    public function test_start_managed_checkout_rejects_noncanonical_response(): void
+    {
+        $this->mock_http_response(
+            '/v2/account/checkout/start',
+            [
+                'success' => true,
+                'data'    => [
+                    'checkout_intent_id'  => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+                    'checkout_session_id' => 'cs_test_missing_contract_fields',
+                    'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_missing_contract_fields',
+                    'plan_code'           => 'starter',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_attempt_id'             => '44444444-4444-4444-8444-444444444444',
+            'plan_code'                      => 'starter',
+            'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'disclosure_version'             => 'managed-service-v1',
+            'accepted_managed_service_terms' => true,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_checkout_invalid_response', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_start_managed_checkout_rejects_missing_success_envelope(): void
+    {
+        $this->mock_http_response(
+            '/v2/account/checkout/start',
+            [
+                'data' => $this->managed_checkout_start_payload(),
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_attempt_id'             => '44444444-4444-4444-8444-444444444444',
+            'plan_code'                      => 'starter',
+            'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'disclosure_version'             => 'managed-service-v1',
+            'accepted_managed_service_terms' => true,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_checkout_invalid_response', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_complete_managed_checkout_rejects_noncanonical_pending_response(): void
+    {
+        $this->mock_http_response(
+            '/v2/account/checkout/complete',
+            [
+                'success' => true,
+                'data'    => [
+                    'activation_ready' => false,
+                    'status'           => 'pending',
+                    'message'          => 'Waiting for Stripe.',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_intent_id' => '33333333-3333-4333-8333-333333333333',
+            'activation_token'   => 'token-noncanonical-pending',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_checkout_invalid_response', $response->get_data()['code'] ?? null );
+    }
+
+    public function test_complete_managed_checkout_rejects_unsuccessful_envelope_before_mutation(): void
+    {
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->mock_http_response(
+            '/v2/account/checkout/complete',
+            [
+                'success' => false,
+                'data'    => array_merge(
+                    $this->managed_activation_payload(),
+                    [
+                        'activation_ready' => true,
+                        'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
+                    ]
+                ),
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_intent_id' => '33333333-3333-4333-8333-333333333333',
+            'activation_token'   => 'token-unsuccessful-envelope',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_checkout_invalid_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
     }
 
     public function test_start_managed_checkout_requires_disclosure_consent_before_remote_call(): void
@@ -455,13 +691,18 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'site_id'          => '88888888-8888-4888-8888-888888888888',
                     'proxy_api_key'    => 'managed-proxy-key',
                     'status'           => 'active',
+                    'site_url'         => home_url(),
+                    'local_site_identifier' => 'example-local',
                     'tier'             => [
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
                         'monthly_credit_quota' => 1000,
                     ],
-                    'expires_at'       => null,
+                    'billing_boundary' => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
+                    ],
                 ],
             ],
             function ( array $args ): void {
@@ -661,13 +902,18 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'site_id'       => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
                     'proxy_api_key' => 'bootstrap-proxy-key',
                     'status'        => 'active',
+                    'site_url'      => home_url(),
+                    'local_site_identifier' => 'example-local',
                     'tier'          => [
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
                         'monthly_credit_quota' => 1000,
                     ],
-                    'expiry_date'   => null,
+                    'billing_boundary' => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
+                    ],
                 ],
             ],
             function ( array $args ): void {
@@ -689,6 +935,57 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'active', $data['status'] );
         $this->assertTrue( $data['proxy_key_present'] );
         $this->assertSame( 'starter', $data['tier']['code'] ?? null );
+    }
+
+    public function test_bootstrap_license_rejects_missing_success_envelope_before_mutation(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_key'    => '0abcdefghjkmnpqrstvwxyz123',
+            'license_status' => 'inactive',
+            'proxy_api_key'  => '',
+        ] );
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->mock_http_response(
+            '/v2/account/sites/activate',
+            [
+                'data' => $this->managed_activation_payload(),
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
+    }
+
+    public function test_bootstrap_license_rejects_noncanonical_status_before_mutation(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_key'    => '0abcdefghjkmnpqrstvwxyz123',
+            'license_status' => 'inactive',
+            'proxy_api_key'  => '',
+        ] );
+        $before  = Sentient_Forms_Plugin::instance()->get_license_data();
+        $payload = $this->managed_activation_payload();
+        $payload['status'] = 'provisioning';
+        $this->mock_http_response(
+            '/v2/account/sites/activate',
+            [
+                'success' => true,
+                'data'    => $payload,
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'sentient_managed_activation_invalid_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
     }
 
     public function test_get_billing_state_success(): void
@@ -1347,6 +1644,36 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'inactive', $data['status'] );
     }
 
+    public function test_deactivate_license_maps_malformed_success_to_gateway_error_without_mutation(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_key'    => '0abcdefghjkmnpqrstvwxyz123',
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-to-preserve',
+            'license_id'     => '11111111-1111-4111-8111-111111111111',
+            'site_id'        => '22222222-2222-4222-8222-222222222222',
+        ] );
+        $before = Sentient_Forms_Plugin::instance()->get_license_data();
+
+        $this->mock_http_response(
+            '/v2/account/sites/deactivate',
+            [
+                'success' => false,
+                'data'    => [
+                    'status' => 'inactive',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/deactivate' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'cps_unexpected_response', $response->get_data()['code'] ?? null );
+        $this->assertSame( $before, Sentient_Forms_Plugin::instance()->get_license_data() );
+    }
+
     public function test_deactivate_without_site_id_returns_error(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data( [
@@ -1374,6 +1701,46 @@ class LicenseControllerTest extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 400, $response->get_status() );
+    }
+
+    private function managed_activation_payload(): array
+    {
+        return [
+            'service'               => 'sentient-managed',
+            'license_id'            => '11111111-1111-4111-8111-111111111111',
+            'site_id'               => '22222222-2222-4222-8222-222222222222',
+            'proxy_api_key'         => 'must-not-be-stored',
+            'status'                => 'active',
+            'site_url'              => home_url(),
+            'local_site_identifier' => 'example-local',
+            'tier'                  => [
+                'code'                 => 'starter',
+                'display_name'         => 'Starter',
+                'site_limit'           => 1,
+                'monthly_credit_quota' => 1000,
+            ],
+            'billing_boundary'      => [
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'     => true,
+            ],
+        ];
+    }
+
+    private function managed_checkout_start_payload(): array
+    {
+        return [
+            'service'             => 'sentient-managed',
+            'status'              => 'open',
+            'checkout_intent_id'  => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            'checkout_session_id' => 'cs_test_123',
+            'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_123',
+            'plan_code'           => 'starter',
+            'billing_interval'    => 'monthly',
+            'billing_boundary'    => [
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'     => true,
+            ],
+        ];
     }
 
     private function mock_http_response( string $path_suffix, array | string $body, ?callable $assert_request = null, int $status_code = 200 ): void

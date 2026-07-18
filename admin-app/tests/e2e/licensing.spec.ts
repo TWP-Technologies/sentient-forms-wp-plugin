@@ -265,11 +265,17 @@ test('first-time managed checkout starts from the recommended license path with 
 			body: JSON.stringify({
 				success: true,
 				data: {
+					service: 'sentient-managed',
 					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
 					checkout_session_id: 'cs_test_123',
 					checkout_url: managedCheckoutRedirectUrl,
 					status: 'open',
-					provider: 'stripe'
+					plan_code: 'starter',
+					billing_interval: 'monthly',
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					}
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -352,10 +358,17 @@ test('managed checkout retries reuse the same checkout attempt identity', async 
 			body: JSON.stringify({
 				success: true,
 				data: {
+					service: 'sentient-managed',
 					checkout_intent_id: '33333333-3333-4333-8333-333333333333',
 					checkout_session_id: 'cs_test_retry',
 					checkout_url: managedCheckoutRedirectUrl,
-					status: 'open'
+					status: 'open',
+					plan_code: 'starter',
+					billing_interval: 'monthly',
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					}
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -431,10 +444,16 @@ test('managed checkout return with completed status resumes activation on the li
 			body: JSON.stringify({
 				success: true,
 				data: {
+					service: 'sentient-managed',
 					activation_ready: false,
-					status: 'pending_webhook',
-					checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-					checkout_session_id: 'cs_test_123'
+					status: 'pending',
+					pending_reason: 'Managed execution setup is still synchronizing. Retry shortly.',
+					site_url: 'https://example.test',
+					local_site_identifier: 'example-local',
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					}
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -447,7 +466,7 @@ test('managed checkout return with completed status resumes activation on the li
 
 	await expect.poll(() => completeRequests).toBe(1);
 	await expect(
-		page.getByText('Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook')
+		page.getByText('Managed execution setup is still synchronizing. Retry shortly.')
 	).toBeVisible();
 });
 
@@ -581,10 +600,28 @@ test('managed checkout activation reloads the license before the forced billing 
 			body: JSON.stringify({
 				success: true,
 				data: {
+					service: 'sentient-managed',
 					activation_ready: true,
 					status: 'active',
-					checkout_intent_id: '22222222-2222-4222-8222-222222222222',
-					checkout_session_id: 'cs_test_ready'
+					license_key: '0abcdefghjkmnpqrstvwxyz123',
+					license_id: '77777777-7777-4777-8777-777777777777',
+					site_id: '88888888-8888-4888-8888-888888888888',
+					proxy_api_key: 'managed-proxy-key',
+					site_url: 'https://example.test',
+					local_site_identifier: 'example-local',
+					tier: {
+						code: 'starter',
+						display_name: 'Starter',
+						site_limit: 1,
+						monthly_credit_quota: 1000
+					},
+					expiry_date: '2030-01-01',
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					},
+					credential_id: 77,
+					managed_provider_ready: true
 				}
 			}),
 			headers: { 'content-type': 'application/json' }

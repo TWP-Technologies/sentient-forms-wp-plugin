@@ -17,6 +17,56 @@ import { notifications } from '$lib/stores/notifications';
 
 const baseUrl = 'https://example.test/wp-json/sentient-forms/v1/';
 
+const managedBillingBoundary = {
+	direct_openrouter_billed_by_sentient: false,
+	managed_proxy_billed_by_sentient: true
+} as const;
+
+const managedTier = {
+	code: 'starter',
+	display_name: 'Starter',
+	site_limit: 1,
+	monthly_credit_quota: 1000
+};
+
+const managedCheckoutStartData = {
+	service: 'sentient-managed',
+	status: 'open',
+	checkout_intent_id: '11111111-1111-4111-8111-111111111111',
+	checkout_session_id: 'cs_test_123',
+	checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+	plan_code: 'starter',
+	billing_interval: 'monthly',
+	billing_boundary: managedBillingBoundary
+};
+
+const managedCheckoutPendingData = {
+	service: 'sentient-managed',
+	status: 'pending',
+	activation_ready: false,
+	pending_reason: 'Managed execution setup is still synchronizing. Retry shortly.',
+	site_url: 'https://example.test',
+	local_site_identifier: 'example-local',
+	billing_boundary: managedBillingBoundary
+};
+
+const managedCheckoutReadyData = {
+	service: 'sentient-managed',
+	status: 'active',
+	activation_ready: true,
+	license_key: '0abcdefghjkmnpqrstvwxyz123',
+	license_id: '77777777-7777-4777-8777-777777777777',
+	site_id: '88888888-8888-4888-8888-888888888888',
+	proxy_api_key: 'proxy-issued',
+	site_url: 'https://example.test',
+	local_site_identifier: 'example-local',
+	tier: managedTier,
+	expiry_date: '2030-01-01',
+	billing_boundary: managedBillingBoundary,
+	credential_id: 88,
+	managed_provider_ready: true
+};
+
 const mockFetch = vi.fn();
 const client = new SentientFormsApiClient({
 	baseUrl,
@@ -2121,10 +2171,7 @@ describe('SentientFormsApiClient', () => {
 				Promise.resolve({
 					success: true,
 					data: {
-						checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-						checkout_session_id: 'cs_test_123',
-						checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
-						plan_code: 'starter',
+						...managedCheckoutStartData,
 						consent_recorded: true
 					}
 				})
@@ -2167,36 +2214,37 @@ describe('SentientFormsApiClient', () => {
 		[
 			'missing checkout URL',
 			{
-				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-				checkout_session_id: 'cs_test_123',
-				plan_code: 'starter'
+				...managedCheckoutStartData,
+				checkout_url: undefined
 			}
 		],
 		[
 			'non-string checkout URL',
 			{
-				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-				checkout_session_id: 'cs_test_123',
-				checkout_url: 42,
-				plan_code: 'starter'
+				...managedCheckoutStartData,
+				checkout_url: 42
 			}
 		],
 		[
 			'non-HTTPS checkout URL',
 			{
-				checkout_intent_id: '11111111-1111-4111-8111-111111111111',
-				checkout_session_id: 'cs_test_123',
-				checkout_url: 'http://checkout.stripe.test/c/pay/cs_test_123',
-				plan_code: 'starter'
+				...managedCheckoutStartData,
+				checkout_url: 'http://checkout.stripe.test/c/pay/cs_test_123'
 			}
 		],
 		[
 			'non-UUID checkout intent',
 			{
+				...managedCheckoutStartData,
 				checkout_intent_id: 'mci_123',
-				checkout_session_id: 'cs_test_123',
-				checkout_url: 'https://checkout.stripe.test/c/pay/cs_test_123',
-				plan_code: 'starter'
+				checkout_url: 'https://checkout.stripe.test/c/pay/cs_test_123'
+			}
+		],
+		[
+			'wrong service identity',
+			{
+				...managedCheckoutStartData,
+				service: 'legacy-managed'
 			}
 		]
 	])('rejects managed checkout response with %s', async (_label, data) => {
@@ -2321,14 +2369,7 @@ describe('SentientFormsApiClient', () => {
 			json: () =>
 				Promise.resolve({
 					success: true,
-					data: {
-						activation_ready: true,
-						license_id: 'lic-managed-123',
-						site_id: 'site-managed-456',
-						proxy_api_key: 'proxy-issued',
-						credential_id: 88,
-						managed_provider_ready: true
-					}
+					data: managedCheckoutReadyData
 				})
 		});
 
@@ -2358,6 +2399,43 @@ describe('SentientFormsApiClient', () => {
 			credential_id: 88,
 			managed_provider_ready: true
 		});
+	});
+
+	it('parses the canonical managed checkout pending response', async () => {
+		mockFetch.mockResolvedValue(jsonResponse({ success: true, data: managedCheckoutPendingData }));
+
+		const result = await client.completeManagedCheckout(
+			{
+				checkout_intent_id: '55555555-5555-4555-8555-555555555555',
+				activation_token: 'token-123'
+			},
+			{ showNotifications: false }
+		);
+
+		expect(result).toEqual(managedCheckoutPendingData);
+	});
+
+	it('rejects an identity-less managed checkout pending response', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					activation_ready: false,
+					status: 'pending',
+					message: 'Waiting for Stripe.'
+				}
+			})
+		);
+
+		await expect(
+			client.completeManagedCheckout(
+				{
+					checkout_intent_id: '55555555-5555-4555-8555-555555555555',
+					activation_token: 'token-123'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
 	});
 
 	it('reads cached OpenRouter model metadata from the local provider endpoint', async () => {

@@ -18,6 +18,12 @@ import {
 	readResponseText
 } from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
+import {
+	managedCheckoutCompleteResponseSchema,
+	managedCheckoutStartResponseSchema,
+	type ManagedCheckoutCompleteResponse,
+	type ManagedCheckoutStartResponse
+} from '$lib/api/managed-checkout-contract';
 import type {
 	ActionDefinition,
 	ActionDefaultsBatchResponse,
@@ -88,9 +94,7 @@ import type {
 	LocalProviderCredentialDeleteResponse,
 	LocalSupportBundle,
 	ManagedCheckoutCompleteRequest,
-	ManagedCheckoutCompleteResponse,
 	ManagedCheckoutStartRequest,
-	ManagedCheckoutStartResponse,
 	OpenRouterConstantRequest,
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
@@ -198,19 +202,6 @@ const httpsUrlSchema = z.string().refine((value) => {
 		return false;
 	}
 }, 'Expected an HTTPS URL');
-const managedCheckoutStartResponseSchema = z
-	.object({
-		checkout_intent_id: z.uuid(),
-		checkout_session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		plan_code: z.string().optional(),
-		billing_interval: z.string().optional(),
-		status: z.string().optional(),
-		consent_recorded: z.boolean().optional(),
-		consent_id: z.number().int().optional(),
-		disclosure_version: z.string().optional()
-	})
-	.passthrough();
 const billingCheckoutSessionResponseSchema = z
 	.object({
 		session_id: z.string(),
@@ -1060,24 +1051,19 @@ export class SentientFormsApiClient {
 		payload: ManagedCheckoutStartRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutStartResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutStartResponse>>(
-			'license/managed-checkout/start',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return managedCheckoutStartResponseSchema.parse(
-			this.unwrap(response)
-		) as ManagedCheckoutStartResponse;
+		const response = await this.request<RestEnvelope<unknown>>('license/managed-checkout/start', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+		return managedCheckoutStartResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async completeManagedCheckout(
 		payload: ManagedCheckoutCompleteRequest,
 		options: RequestOptions = {}
 	): Promise<ManagedCheckoutCompleteResponse> {
-		const response = await this.request<RestEnvelope<ManagedCheckoutCompleteResponse>>(
+		const response = await this.request<RestEnvelope<unknown>>(
 			'license/managed-checkout/complete',
 			{
 				method: 'POST',
@@ -1085,7 +1071,7 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return managedCheckoutCompleteResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async createPortalSession(

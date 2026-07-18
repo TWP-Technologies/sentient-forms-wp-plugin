@@ -51,7 +51,7 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Activation payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function activate_site( array $payload ): array | WP_Error
     {
@@ -66,7 +66,7 @@ class Sentient_Forms_Managed_Service_Client
             return $payload;
         }
 
-        return $this->client->post( '/account/sites/activate', $payload );
+        return $this->client->post_envelope( '/account/sites/activate', $payload );
     }
 
     /**
@@ -214,7 +214,7 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Checkout payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function start_managed_checkout( array $payload ): array | WP_Error
     {
@@ -229,7 +229,7 @@ class Sentient_Forms_Managed_Service_Client
             return $payload;
         }
 
-        return $this->client->post( '/account/checkout/start', $payload );
+        return $this->client->post_envelope( '/account/checkout/start', $payload );
     }
 
     /**
@@ -237,7 +237,7 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @param array<string, mixed> $payload Checkout completion payload.
      *
-     * @return array<string, mixed>|WP_Error
+     * @return array<string, mixed>|WP_Error Successful CPS envelope or an error.
      */
     public function complete_managed_checkout( array $payload ): array | WP_Error
     {
@@ -252,7 +252,7 @@ class Sentient_Forms_Managed_Service_Client
             return $payload;
         }
 
-        return $this->client->post( '/account/checkout/complete', $payload );
+        return $this->client->post_envelope( '/account/checkout/complete', $payload );
     }
 
     /**

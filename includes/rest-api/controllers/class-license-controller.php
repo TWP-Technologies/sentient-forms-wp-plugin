@@ -390,10 +390,29 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
         if ( is_wp_error( $response ) )
         {
-            return $this->prepare_cps_error( $response );
+            return $this->prepare_managed_contract_error(
+                $response,
+                'sentient_managed_activation_invalid_response',
+                __( 'Managed activation returned an invalid response. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
         }
 
-        $payload = $this->normalize_activation_payload( $response );
+        $payload = $this->require_managed_success_payload(
+            $response,
+            'sentient_managed_activation_invalid_response',
+            __( 'Managed activation returned an invalid response. Sentient Forms did not store the credential.', 'sentient-forms' )
+        );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        $payload = $this->validate_managed_activation_response( $payload, false, true );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
         $stored  = $this->store_managed_activation_payload( $license_key, $payload );
         if ( is_wp_error( $stored ) )
         {
@@ -494,10 +513,29 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
         if ( is_wp_error( $response ) )
         {
-            return $this->prepare_cps_error( $response );
+            return $this->prepare_managed_contract_error(
+                $response,
+                'sentient_managed_activation_invalid_response',
+                __( 'Managed activation returned an invalid response. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
         }
 
-        $payload = $this->normalize_activation_payload( $response );
+        $payload = $this->require_managed_success_payload(
+            $response,
+            'sentient_managed_activation_invalid_response',
+            __( 'Managed activation returned an invalid response. Sentient Forms did not store the credential.', 'sentient-forms' )
+        );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        $payload = $this->validate_managed_activation_response( $payload, false, true );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
         $stored  = $this->store_managed_activation_payload( $license_key, $payload );
         if ( is_wp_error( $stored ) )
         {
@@ -566,10 +604,29 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
         if ( is_wp_error( $response ) )
         {
-            return $this->prepare_cps_error( $response );
+            return $this->prepare_managed_contract_error(
+                $response,
+                'sentient_managed_checkout_invalid_response',
+                __( 'Managed checkout returned an invalid start response.', 'sentient-forms' )
+            );
         }
 
-        $payload                      = $this->normalize_activation_payload( $response );
+        $payload = $this->require_managed_success_payload(
+            $response,
+            'sentient_managed_checkout_invalid_response',
+            __( 'Managed checkout returned an invalid start response.', 'sentient-forms' )
+        );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        $payload = $this->validate_managed_checkout_start_response( $payload );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
         $payload['consent_recorded']  = true;
         $payload['consent_id']        = $consent_id;
         $payload['disclosure_version'] = $disclosure_version;
@@ -592,15 +649,48 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
         if ( is_wp_error( $response ) )
         {
-            return $this->prepare_cps_error( $response );
+            return $this->prepare_managed_contract_error(
+                $response,
+                'sentient_managed_checkout_invalid_response',
+                __( 'Managed checkout returned an invalid completion response.', 'sentient-forms' )
+            );
         }
 
-        $payload = $this->normalize_activation_payload( $response );
-        if ( ! empty( $payload['activation_ready'] ) && ! empty( $payload['proxy_api_key'] ) )
+        $payload = $this->require_managed_success_payload(
+            $response,
+            'sentient_managed_checkout_invalid_response',
+            __( 'Managed checkout returned an invalid completion response.', 'sentient-forms' )
+        );
+        if ( is_wp_error( $payload ) )
         {
-            $license_key = isset( $payload['license_key'] ) && is_scalar( $payload['license_key'] )
-                ? sanitize_text_field( (string) $payload['license_key'] )
-                : '';
+            return $payload;
+        }
+
+        if ( ! array_key_exists( 'activation_ready', $payload ) || ! is_bool( $payload['activation_ready'] ) )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_checkout_invalid_response',
+                __( 'Managed checkout returned an invalid activation state.', 'sentient-forms' )
+            );
+        }
+
+        if ( true === $payload['activation_ready'] )
+        {
+            if ( array_key_exists( 'pending_reason', $payload ) )
+            {
+                return $this->managed_response_error(
+                    'sentient_managed_checkout_invalid_response',
+                    __( 'Managed checkout returned conflicting ready and pending fields.', 'sentient-forms' )
+                );
+            }
+
+            $payload = $this->validate_managed_activation_response( $payload, true );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
+
+            $license_key = $payload['license_key'];
 
             $stored = $this->store_managed_activation_payload( $license_key, $payload );
             if ( is_wp_error( $stored ) )
@@ -616,6 +706,14 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
             $payload['credential_id']          = $credential_id;
             $payload['managed_provider_ready'] = true;
+        }
+        else
+        {
+            $payload = $this->validate_managed_checkout_pending_response( $payload );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
         }
 
         return $this->prepare_item_for_response( $payload, 200 );
@@ -866,9 +964,9 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                     'readonly'    => true,
                 ],
                 'expires_at'         => [
-                    'description' => __( 'License expiry timestamp.', 'sentient-forms' ),
+                    'description' => __( 'License expiry date.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
-                    'format'      => 'date-time',
+                    'format'      => 'date',
                     'readonly'    => true,
                 ],
                 'last_synced'        => [
@@ -948,6 +1046,313 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         return $payload;
     }
 
+    private function require_managed_success_payload( array $response, string $error_code, string $message ): array | WP_Error
+    {
+        if (
+            ! array_key_exists( 'success', $response )
+            || true !== $response['success']
+            || ! isset( $response['data'] )
+            || ! is_array( $response['data'] )
+        )
+        {
+            return $this->managed_response_error( $error_code, $message );
+        }
+
+        return $response['data'];
+    }
+
+    private function validate_managed_checkout_start_response( array $payload ): array | WP_Error
+    {
+        $checkout_intent_id = isset( $payload['checkout_intent_id'] ) && is_scalar( $payload['checkout_intent_id'] )
+            ? trim( (string) $payload['checkout_intent_id'] )
+            : '';
+        $checkout_session_id = isset( $payload['checkout_session_id'] ) && is_scalar( $payload['checkout_session_id'] )
+            ? trim( (string) $payload['checkout_session_id'] )
+            : '';
+        $checkout_url = $this->normalize_managed_response_url( $payload['checkout_url'] ?? null, true );
+        $plan_code = isset( $payload['plan_code'] ) && is_scalar( $payload['plan_code'] )
+            ? sanitize_key( (string) $payload['plan_code'] )
+            : '';
+
+        if (
+            'sentient-managed' !== ( $payload['service'] ?? null )
+            || 'open' !== ( $payload['status'] ?? null )
+            || ! wp_is_uuid( $checkout_intent_id )
+            || '' === $checkout_session_id
+            || null === $checkout_url
+            || ! in_array( $plan_code, [ 'starter', 'pro', 'business' ], true )
+            || 'monthly' !== ( $payload['billing_interval'] ?? null )
+            || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
+        )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_checkout_invalid_response',
+                __( 'Managed checkout returned an invalid start response.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'service'             => 'sentient-managed',
+            'status'              => 'open',
+            'checkout_intent_id'  => strtolower( $checkout_intent_id ),
+            'checkout_session_id' => sanitize_text_field( $checkout_session_id ),
+            'checkout_url'        => $checkout_url,
+            'plan_code'           => $plan_code,
+            'billing_interval'    => 'monthly',
+            'billing_boundary'    => $this->managed_billing_boundary(),
+        ];
+    }
+
+    private function validate_managed_checkout_pending_response( array $payload ): array | WP_Error
+    {
+        foreach ( [ 'license_key', 'proxy_api_key', 'license_id', 'site_id', 'tier', 'expiry_date' ] as $ready_only_field )
+        {
+            if ( array_key_exists( $ready_only_field, $payload ) )
+            {
+                return $this->managed_response_error(
+                    'sentient_managed_checkout_invalid_response',
+                    __( 'Managed checkout returned conflicting pending and activation fields.', 'sentient-forms' )
+                );
+            }
+        }
+
+        $status = isset( $payload['status'] ) && is_scalar( $payload['status'] )
+            ? trim( (string) $payload['status'] )
+            : '';
+        $pending_reason = isset( $payload['pending_reason'] ) && is_scalar( $payload['pending_reason'] )
+            ? trim( (string) $payload['pending_reason'] )
+            : '';
+        $site_url = $this->normalize_managed_response_url( $payload['site_url'] ?? null );
+        $local_site_identifier = $this->normalize_managed_local_site_identifier( $payload['local_site_identifier'] ?? null );
+
+        if (
+            'sentient-managed' !== ( $payload['service'] ?? null )
+            || '' === $status
+            || '' === $pending_reason
+            || null === $site_url
+            || null === $local_site_identifier
+            || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
+        )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_checkout_invalid_response',
+                __( 'Managed checkout returned an invalid pending response.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'service'               => 'sentient-managed',
+            'status'                => sanitize_text_field( $status ),
+            'activation_ready'      => false,
+            'pending_reason'        => sanitize_text_field( $pending_reason ),
+            'site_url'              => $site_url,
+            'local_site_identifier' => $local_site_identifier,
+            'billing_boundary'      => $this->managed_billing_boundary(),
+        ];
+    }
+
+    private function validate_managed_activation_response(
+        array $payload,
+        bool $requires_license_key,
+        bool $requires_canonical_status = false
+    ): array | WP_Error
+    {
+        $license_id = isset( $payload['license_id'] ) && is_scalar( $payload['license_id'] )
+            ? trim( (string) $payload['license_id'] )
+            : '';
+        $site_id = isset( $payload['site_id'] ) && is_scalar( $payload['site_id'] )
+            ? trim( (string) $payload['site_id'] )
+            : '';
+        if ( ! wp_is_uuid( $license_id ) || ! wp_is_uuid( $site_id ) )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_activation_invalid_identity',
+                __( 'Managed activation returned an invalid site identity. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
+        }
+
+        if ( array_key_exists( 'expires_at', $payload ) )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_activation_invalid_expiry',
+                __( 'Managed activation returned an invalid expiry date. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
+        }
+
+        $expiry_date = null;
+        if ( array_key_exists( 'expiry_date', $payload ) )
+        {
+            $expiry_date = $this->normalize_managed_expiry_date( $payload['expiry_date'] );
+            if ( null === $expiry_date )
+            {
+                return $this->managed_response_error(
+                    'sentient_managed_activation_invalid_expiry',
+                    __( 'Managed activation returned an invalid expiry date. Sentient Forms did not store the credential.', 'sentient-forms' )
+                );
+            }
+        }
+
+        $status = isset( $payload['status'] ) && is_scalar( $payload['status'] )
+            ? trim( (string) $payload['status'] )
+            : '';
+        $proxy_api_key = isset( $payload['proxy_api_key'] ) && is_scalar( $payload['proxy_api_key'] )
+            ? trim( (string) $payload['proxy_api_key'] )
+            : '';
+        $site_url = $this->normalize_managed_response_url( $payload['site_url'] ?? null );
+        $local_site_identifier = $this->normalize_managed_local_site_identifier( $payload['local_site_identifier'] ?? null );
+        $tier = $this->normalize_managed_tier( $payload['tier'] ?? null );
+        $license_key = isset( $payload['license_key'] ) && is_scalar( $payload['license_key'] )
+            ? sanitize_text_field( (string) $payload['license_key'] )
+            : '';
+
+        if (
+            'sentient-managed' !== ( $payload['service'] ?? null )
+            || '' === $status
+            || ( $requires_canonical_status && ! in_array( $status, [ 'active', 'trial', 'suspended', 'revoked', 'expired' ], true ) )
+            || '' === $proxy_api_key
+            || null === $site_url
+            || null === $local_site_identifier
+            || null === $tier
+            || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
+            || ( $requires_license_key && ! $this->has_managed_license_key_format( $license_key ) )
+        )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_activation_invalid_response',
+                __( 'Managed activation returned an invalid response. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [
+            'service'               => 'sentient-managed',
+            'status'                => sanitize_text_field( $status ),
+            'proxy_api_key'         => $proxy_api_key,
+            'license_id'            => strtolower( $license_id ),
+            'site_id'               => strtolower( $site_id ),
+            'site_url'              => $site_url,
+            'local_site_identifier' => $local_site_identifier,
+            'tier'                  => $tier,
+            'billing_boundary'      => $this->managed_billing_boundary(),
+        ];
+        if ( $requires_license_key )
+        {
+            $normalized['activation_ready'] = true;
+            $normalized['license_key']      = $license_key;
+        }
+        if ( null !== $expiry_date )
+        {
+            $normalized['expiry_date'] = $expiry_date;
+        }
+
+        return $normalized;
+    }
+
+    private function normalize_managed_response_url( mixed $value, bool $https_only = false ): ?string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return null;
+        }
+
+        $url   = trim( (string) $value );
+        $parts = wp_parse_url( $url );
+        if ( ! is_array( $parts ) || empty( $parts['host'] ) || empty( $parts['scheme'] ) )
+        {
+            return null;
+        }
+
+        $scheme = strtolower( (string) $parts['scheme'] );
+        if ( ( $https_only && 'https' !== $scheme ) || ( ! $https_only && ! in_array( $scheme, [ 'http', 'https' ], true ) ) )
+        {
+            return null;
+        }
+        if ( isset( $parts['user'] ) || isset( $parts['pass'] ) )
+        {
+            return null;
+        }
+
+        $normalized = esc_url_raw( $url, [ 'http', 'https' ] );
+        return '' !== $normalized ? $normalized : null;
+    }
+
+    private function normalize_managed_local_site_identifier( mixed $value ): ?string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return null;
+        }
+
+        $identifier = trim( (string) $value );
+        if ( '' === $identifier || 128 < strlen( $identifier ) || 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $identifier ) )
+        {
+            return null;
+        }
+
+        return $identifier;
+    }
+
+    private function normalize_managed_expiry_date( mixed $value ): ?string
+    {
+        if ( ! is_string( $value ) || 1 !== preg_match( '/^(\d{4})-(\d{2})-(\d{2})$/', $value, $matches ) )
+        {
+            return null;
+        }
+
+        return checkdate( (int) $matches[2], (int) $matches[3], (int) $matches[1] ) ? $value : null;
+    }
+
+    private function normalize_managed_tier( mixed $value ): ?array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return null;
+        }
+
+        $code = isset( $value['code'] ) && is_scalar( $value['code'] ) ? trim( (string) $value['code'] ) : '';
+        $display_name = isset( $value['display_name'] ) && is_scalar( $value['display_name'] )
+            ? trim( (string) $value['display_name'] )
+            : '';
+        if (
+            '' === $code
+            || '' === $display_name
+            || ! isset( $value['site_limit'], $value['monthly_credit_quota'] )
+            || ! is_int( $value['site_limit'] )
+            || ! is_int( $value['monthly_credit_quota'] )
+        )
+        {
+            return null;
+        }
+
+        return [
+            'code'                 => sanitize_text_field( $code ),
+            'display_name'         => sanitize_text_field( $display_name ),
+            'site_limit'           => $value['site_limit'],
+            'monthly_credit_quota' => $value['monthly_credit_quota'],
+        ];
+    }
+
+    private function has_managed_billing_boundary( mixed $value ): bool
+    {
+        return is_array( $value )
+            && array_key_exists( 'direct_openrouter_billed_by_sentient', $value )
+            && false === $value['direct_openrouter_billed_by_sentient']
+            && array_key_exists( 'managed_proxy_billed_by_sentient', $value )
+            && true === $value['managed_proxy_billed_by_sentient'];
+    }
+
+    private function managed_billing_boundary(): array
+    {
+        return [
+            'direct_openrouter_billed_by_sentient' => false,
+            'managed_proxy_billed_by_sentient'     => true,
+        ];
+    }
+
+    private function managed_response_error( string $code, string $message ): WP_Error
+    {
+        return new WP_Error( $code, $message, [ 'status' => 502 ] );
+    }
+
     private function store_managed_activation_payload( string $license_key, array $payload ): true | WP_Error
     {
         $license_id = isset( $payload['license_id'] ) && is_scalar( $payload['license_id'] )
@@ -973,7 +1378,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                 'site_id'        => strtolower( $site_id ),
                 'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
                 'tier'           => $payload['tier'] ?? '',
-                'expiry_date'    => $payload['expiry_date'] ?? $payload['expires_at'] ?? null,
+                'expiry_date'    => $payload['expiry_date'] ?? null,
                 'last_synced'    => current_time( 'mysql' ),
             ]
         );
@@ -1220,7 +1625,25 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         $message = $error->get_error_message() ?: __( 'Licensing request failed.', 'sentient-forms' );
         $data    = $error->get_error_data();
         $status  = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 400;
+        if ( 200 <= $status && 300 > $status )
+        {
+            $status = 502;
+        }
+        if ( is_array( $data ) )
+        {
+            $data['status'] = $status;
+        }
 
         return $this->prepare_error_response( $code, $message, $status, is_array( $data ) ? $data : [] );
+    }
+
+    private function prepare_managed_contract_error( WP_Error $error, string $contract_code, string $contract_message ): WP_Error
+    {
+        if ( in_array( $error->get_error_code(), [ 'cps_unexpected_response', 'cps_invalid_payload', 'cps_invalid_json' ], true ) )
+        {
+            return $this->managed_response_error( $contract_code, $contract_message );
+        }
+
+        return $this->prepare_cps_error( $error );
     }
 }

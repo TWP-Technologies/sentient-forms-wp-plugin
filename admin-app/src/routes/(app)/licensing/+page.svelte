@@ -646,9 +646,7 @@
 				return;
 			}
 
-			managedCheckoutCompletionMessage =
-				result.message ??
-				'Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook before activating this site.';
+			managedCheckoutCompletionMessage = result.pending_reason;
 		} catch (error) {
 			console.error('Failed to complete managed checkout', error);
 			setBillingError(error, 'checkout', async () => {

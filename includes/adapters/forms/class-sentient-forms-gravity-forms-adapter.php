@@ -1230,7 +1230,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return null;
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification; the adapter validates its native correlation token.
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Gravity Forms owns frontend submission verification; preserving the raw token lets the strict allowlist reject rather than normalize identity input.
         $native_submission_token = wp_unslash( $_POST['gform_unique_id'] );
         if ( ! is_string( $native_submission_token ) || 1 !== preg_match( '/\A[A-Za-z0-9]{1,128}\z/', $native_submission_token ) )
         {
