@@ -937,8 +937,10 @@ class Sentient_Forms_Action_Executor {
 		return $action_context;
 	}
 
-	private function normalize_explicit_execution_request_id( array $context ): string {
-		if ( ! isset( $context['execution_request_id'] ) || ! is_scalar( $context['execution_request_id'] ) ) {
+	private function normalize_explicit_execution_request_id( array $context ): string
+	{
+		if ( ! isset( $context['execution_request_id'] ) || ! is_scalar( $context['execution_request_id'] ) )
+		{
 			return '';
 		}
 
