@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
+	import { createCheckoutAttemptId } from '$lib/api/checkout-attempt-id';
 	import {
 		hasManagedCheckoutSuccessMarker,
 		parseManagedCheckoutReturn,
@@ -696,11 +697,7 @@
 			return current;
 		}
 
-		if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
-			throw new Error('Secure checkout identity is unavailable in this browser.');
-		}
-
-		return { key, id: crypto.randomUUID() };
+		return { key, id: createCheckoutAttemptId() };
 	}
 
 	async function handleCheckout(plan: CheckoutPlanOption) {

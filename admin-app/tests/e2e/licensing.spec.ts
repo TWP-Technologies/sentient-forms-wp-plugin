@@ -201,9 +201,16 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await expect(page.getByRole('button', { name: 'Deactivate site license' })).toBeVisible();
 });
 
-test('first-time managed checkout starts from the recommended license path with hash-safe return urls', async ({
+test('first-time managed checkout uses secure random bytes when randomUUID is unavailable', async ({
 	page
 }) => {
+	await page.addInitScript(() => {
+		Object.defineProperty(Crypto.prototype, 'randomUUID', {
+			configurable: true,
+			value: undefined
+		});
+	});
+
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
