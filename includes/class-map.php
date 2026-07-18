@@ -57,6 +57,7 @@ return [
 	'Sentient_Forms_Error_Type' => __DIR__ . '/utilities/errors.php',
 	'Sentient_Forms_Error_Utils' => __DIR__ . '/utilities/errors.php',
 	'Sentient_Forms_Execution_Events_Repository' => __DIR__ . '/repositories/class-sentient-forms-execution-events-repository.php',
+	'Sentient_Forms_Execution_Identity' => __DIR__ . '/services/class-sentient-forms-execution-identity.php',
 	'Sentient_Forms_Execution_Status_Controller' => __DIR__ . '/rest-api/controllers/class-execution-status-controller.php',
 	'Sentient_Forms_External_Service_Consent_Repository' => __DIR__ . '/repositories/class-sentient-forms-external-service-consent-repository.php',
 	'Sentient_Forms_Files_Controller' => __DIR__ . '/rest-api/controllers/class-files-controller.php',

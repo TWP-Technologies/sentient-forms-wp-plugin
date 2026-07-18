@@ -2629,23 +2629,18 @@ class Sentient_Forms_Local_Action_Execution_Service
         $action_code = (string) ( $action['code'] ?? 'local_action' );
         $action_id   = sprintf( 'local:%d:%s', (int) ( $mapping['id'] ?? 0 ), $action_code );
 
-        if ( class_exists( 'Sentient_Forms_Action_Executor' ) )
-        {
-            return Sentient_Forms_Action_Executor::generate_execution_request_id(
-                $action_id,
-                $form,
-                $entry,
-                array_merge(
-                    $context,
-                    [
-                        'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
-                        'action_id'  => $action_code,
-                    ]
-                )
-            );
-        }
-
-        return substr( hash( 'sha256', (string) wp_json_encode( [ $action_id, $form, $entry, $context ] ) ), 0, 32 );
+        return Sentient_Forms_Execution_Identity::generate(
+            $action_id,
+            $form,
+            $entry,
+            array_merge(
+                $context,
+                [
+                    'mapping_id' => (string) ( $mapping['id'] ?? 0 ),
+                    'action_id'  => $action_code,
+                ]
+            )
+        );
     }
 
     private function resolve_submission_uuid( array $context ): ?string

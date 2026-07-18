@@ -122,7 +122,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $request_fingerprint = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $request_fingerprint = Sentient_Forms_Execution_Identity::generate(
                 $action_id,
                 $form,
                 $entry,
@@ -994,7 +994,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Execution_Identity::generate(
                 $central_action_id,
                 $form,
                 $entry,
