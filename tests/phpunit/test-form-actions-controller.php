@@ -2726,6 +2726,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( $credential_id, (int) ( $custom_action['model_selection_json']['credential_id'] ?? 0 ) );
         $this->assertSame( '~openai/gpt-latest', $custom_action['model_selection_json']['model'] ?? null );
 
+        $catalog_definition = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
+        $this->assertIsArray( $catalog_definition );
+        $this->assertSame( $catalog_definition['action_policy'], $custom_action['definition_json']['action_policy'] ?? null );
+        $this->assertSame( $catalog_definition['allowed_facets'], $custom_action['definition_json']['allowed_facets'] ?? null );
+        $this->assertSame( $catalog_definition['enabled_facets'], $custom_action['definition_json']['enabled_facets'] ?? null );
+
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
         $this->assertCount( 2, $stored_mappings );
 

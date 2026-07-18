@@ -238,7 +238,7 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
                     'feature_access'                    => 'active_subscription',
                     'execution_requirement'             => 'provider_flexible',
                     'required_form_source_capabilities' => [ 'field_errors' ],
-                    'required_managed_capabilities'     => [ 'tool_budget' ],
+                    'required_managed_capabilities'     => [ 'server_tools' ],
                     'lifecycle_restrictions'            => [ 'validation', 'real_time' ],
                     'metering_class'                    => 'standard',
                 ],
@@ -247,7 +247,7 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
                     'feature_access'                    => 'unrestricted',
                     'execution_requirement'             => 'managed_only',
                     'required_form_source_capabilities' => [ 'accepted_submission' ],
-                    'required_managed_capabilities'     => [ 'base_limit' ],
+                    'required_managed_capabilities'     => [ 'bounded_output' ],
                     'lifecycle_restrictions'            => [ 'validation', 'after_submission' ],
                     'metering_class'                    => 'secondary_preflight',
                 ],
@@ -255,29 +255,96 @@ class Tests_Action_Facet_Catalog extends WP_UnitTestCase
         );
         $resolver = new Sentient_Forms_Action_Policy_Resolver( $catalog );
 
+        $base_policy = [
+            'feature_access'                    => 'unrestricted',
+            'execution_requirement'             => 'provider_flexible',
+            'required_form_source_capabilities' => [ 'accepted_submission' ],
+            'required_managed_capabilities'     => [ 'bounded_output' ],
+            'eligible_lifecycles'                => [ 'validation', 'after_submission' ],
+            'metering_class'                    => 'standard',
+        ];
         $resolved = $resolver->resolve(
+            $base_policy,
+            [ 'test_managed_validation', 'test_managed_capacity' ]
+        );
+        $permuted = $resolver->resolve(
+            $base_policy,
+            [ 'test_managed_capacity', 'test_managed_validation' ]
+        );
+
+        $expected = [
+            'feature_access'                    => 'active_subscription',
+            'execution_requirement'             => 'managed_only',
+            'required_form_source_capabilities' => [ 'accepted_submission', 'field_errors' ],
+            'required_managed_capabilities'     => [ 'server_tools', 'bounded_output' ],
+            'eligible_lifecycles'                => [ 'validation' ],
+            'metering_class'                    => 'secondary_preflight',
+        ];
+        $this->assertSame( $expected, $resolved );
+        $this->assertSame( $expected, $permuted, 'Equivalent facet sets must resolve to one canonical request policy.' );
+    }
+
+    public function test_base_policy_fails_closed_for_invalid_managed_capability_vocabulary(): void
+    {
+        $cases = [
+            'unknown'    => [ 'unknown_capability' ],
+            'duplicate'  => [ 'server_tools', 'server_tools' ],
+            'whitespace' => [ ' server_tools' ],
+            'over limit' => [ 'server_tools', 'web_search', 'privacy_zdr', 'bounded_output', 'another' ],
+        ];
+
+        foreach ( $cases as $label => $required_capabilities )
+        {
+            $resolved = ( new Sentient_Forms_Action_Policy_Resolver() )->resolve(
+                [
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => $required_capabilities,
+                    'eligible_lifecycles'                => [ 'after_submission' ],
+                    'metering_class'                     => 'standard',
+                ]
+            );
+
+            $this->assertWPError( $resolved, $label );
+            $this->assertSame( 'sentient_forms_action_policy_invalid', $resolved->get_error_code(), $label );
+            $this->assertSame( 'base', $resolved->get_error_data()['policy_source'] ?? null, $label );
+            $this->assertSame( 'required_managed_capabilities', $resolved->get_error_data()['field'] ?? null, $label );
+        }
+    }
+
+    public function test_facet_policy_fails_closed_for_invalid_managed_capability_vocabulary(): void
+    {
+        $catalog = new Sentient_Forms_Action_Facet_Catalog(
+            [
+                'invalid_capability' => [
+                    'code'                              => 'invalid_capability',
+                    'feature_access'                    => 'unrestricted',
+                    'execution_requirement'             => 'provider_flexible',
+                    'required_form_source_capabilities' => [],
+                    'required_managed_capabilities'     => [ 'unknown_capability' ],
+                    'lifecycle_restrictions'            => [],
+                    'metering_class'                    => 'standard',
+                ],
+            ]
+        );
+        $resolved = ( new Sentient_Forms_Action_Policy_Resolver( $catalog ) )->resolve(
             [
                 'feature_access'                    => 'unrestricted',
                 'execution_requirement'             => 'provider_flexible',
-                'required_form_source_capabilities' => [ 'accepted_submission' ],
-                'required_managed_capabilities'     => [ 'base_limit' ],
-                'eligible_lifecycles'                => [ 'validation', 'after_submission' ],
-                'metering_class'                    => 'standard',
+                'required_form_source_capabilities' => [],
+                'required_managed_capabilities'     => [],
+                'eligible_lifecycles'                => [ 'after_submission' ],
+                'metering_class'                     => 'standard',
             ],
-            [ 'test_managed_validation', 'test_managed_capacity' ]
+            [ 'invalid_capability' ]
         );
 
-        $this->assertSame(
-            [
-                'feature_access'                    => 'active_subscription',
-                'execution_requirement'             => 'managed_only',
-                'required_form_source_capabilities' => [ 'accepted_submission', 'field_errors' ],
-                'required_managed_capabilities'     => [ 'base_limit', 'tool_budget' ],
-                'eligible_lifecycles'                => [ 'validation' ],
-                'metering_class'                    => 'secondary_preflight',
-            ],
-            $resolved
-        );
+        $this->assertWPError( $resolved );
+        $this->assertSame( 'sentient_forms_action_policy_invalid', $resolved->get_error_code() );
+        $this->assertSame( 'facet', $resolved->get_error_data()['policy_source'] ?? null );
+        $this->assertSame( 'required_managed_capabilities', $resolved->get_error_data()['field'] ?? null );
+        $this->assertSame( 'invalid_capability', $resolved->get_error_data()['facet_code'] ?? null );
     }
 
     public function test_effective_policy_fails_closed_for_unknown_facet(): void

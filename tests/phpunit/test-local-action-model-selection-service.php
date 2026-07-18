@@ -49,10 +49,11 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
 
         $action_id = $custom_actions->create(
             [
-                'code'                 => 'bundled__clarification_assistant_v1',
+                'code'                 => 'imported_clarification_assistant_v1_policy_fixture',
                 'display_name'         => 'Realtime Clarification Assistant',
                 'definition_json'      => [
                     'template_code' => 'clarification_assistant_v1',
+                    'source'        => 'cps_template_mapping_import',
                 ],
                 'model_selection_json' => [
                     'provider'      => 'openrouter',
@@ -74,6 +75,14 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $this->assertSame( 'gemini-3-flash-preview', $selection['model'] ?? null );
         $this->assertSame( 'sf_realtime', $selection['selection']['primary'] ?? null );
         $this->assertTrue( $selection['selection']['is_preset'] ?? false );
+
+        $prepared_action = $service->prepare_bundled_action_for_execution( $custom_actions->get( $action_id ) );
+        $definition      = $prepared_action['definition_json'] ?? [];
+        $catalog_definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+        $this->assertIsArray( $catalog_definition );
+        $this->assertSame( $catalog_definition['action_policy'], $definition['action_policy'] ?? null );
+        $this->assertSame( $catalog_definition['allowed_facets'], $definition['allowed_facets'] ?? null );
+        $this->assertSame( $catalog_definition['enabled_facets'], $definition['enabled_facets'] ?? null );
     }
 
     public function test_realtime_bundled_nested_openrouter_preset_repairs_to_managed_when_direct_provider_missing(): void

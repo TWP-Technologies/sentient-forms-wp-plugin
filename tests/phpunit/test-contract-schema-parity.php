@@ -77,6 +77,33 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         }
     }
 
+    public function test_managed_capability_vocabulary_matches_the_checked_cps_request_schema(): void
+    {
+        $schema = $this->decode_required_json_file(
+            self::SNAPSHOT_ROOT . '/managed/execute-request.schema.json'
+        );
+        $policy = $schema['properties']['managed_capability_policy'] ?? null;
+        $required = is_array( $policy )
+            ? ( $policy['properties']['required_capabilities'] ?? null )
+            : null;
+
+        $this->assertIsArray( $policy );
+        $this->assertFalse( $policy['additionalProperties'] ?? true );
+        $this->assertSame( [ 'schema', 'required_capabilities' ], $policy['required'] ?? null );
+        $this->assertSame(
+            Sentient_Forms_Managed_Capability_Policy::SCHEMA,
+            $policy['properties']['schema']['const'] ?? null
+        );
+        $this->assertIsArray( $required );
+        $this->assertSame( 1, $required['minItems'] ?? null );
+        $this->assertSame( 4, $required['maxItems'] ?? null );
+        $this->assertTrue( $required['uniqueItems'] ?? false );
+        $this->assertSame(
+            Sentient_Forms_Managed_Capability_Policy::allowed_capabilities(),
+            $required['items']['enum'] ?? null
+        );
+    }
+
     /**
      * @return array<string, mixed>
      */

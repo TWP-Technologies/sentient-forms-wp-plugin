@@ -39,6 +39,7 @@ final class Sentient_Forms_Action_Source_Compatibility_Snapshot_Verifier
             'includes/services/class-sentient-forms-action-facet-catalog.php',
             'includes/services/class-sentient-forms-action-policy-resolver.php',
             'includes/services/class-sentient-forms-form-source-lifecycles.php',
+            'includes/services/class-sentient-forms-managed-capability-policy.php',
             'scripts/check-action-source-compatibility-snapshot.php',
         ];
         sort( $paths, SORT_STRING );

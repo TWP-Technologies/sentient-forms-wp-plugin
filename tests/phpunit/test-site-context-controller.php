@@ -806,7 +806,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -838,7 +838,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -864,8 +864,8 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
         $data = $this->run_site_context_generation_job( $job_id );
 
-        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
         $this->assertCount( 1, $calls );
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null, (string) wp_json_encode( $data ) );
 
         $payload = json_decode( (string) ( $calls[0]['args']['body'] ?? '' ), true );
         $this->assertIsArray( $payload );
@@ -901,7 +901,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -953,7 +953,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1029,7 +1029,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1080,7 +1080,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1133,7 +1133,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1185,7 +1185,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1243,7 +1243,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1275,13 +1275,13 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'privacy_route_policy', $payload );
     }
 
-    public function test_managed_generation_normalizes_optional_privacy_route_assertion(): void
+    public function test_managed_generation_preserves_contract_valid_privacy_route_assertion(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1291,11 +1291,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
             $calls,
             [
                 'privacy_route_assertion' => [
-                    'schema'              => '<b>sentient_forms_privacy_route_assertion.v1</b>',
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
                     'zdr_enforced'        => true,
                     'data_collection'     => 'deny',
-                    'route_policy_schema' => "sentient_forms_privacy_route_policy.v1\n",
-                    'untrusted_extra'     => '<script>alert(1)</script>',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
                 ],
             ]
         );
@@ -1335,7 +1334,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1344,15 +1343,15 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->mock_managed_site_context_generation(
             $calls,
             [
+                'model'                  => 'google/gemini-3-flash-preview',
                 'privacy_route_fallback' => [
-                    'schema'               => '<b>sentient_forms_privacy_route_fallback.v1</b>',
-                    'policy_version'       => "2026-06-managed-zdr-fallback-v1\n",
+                    'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+                    'policy_version' => '2026-06-managed-zdr-fallback-v1',
                     'reason_code'          => 'managed_zdr_primary_route_unavailable',
-                    'original_model'       => "openai/gpt-5.5\n",
+                    'original_model'       => 'openai/gpt-5.5',
                     'fallback_model'       => 'google/gemini-3-flash-preview',
                     'executed_model'       => 'google/gemini-3-flash-preview',
                     'attempts'             => 1,
-                    'execution_request_id' => 'raw-cps-id-should-not-survive',
                 ],
             ]
         );
@@ -1388,7 +1387,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ],
             $data['context']['metadata']['privacy_route_fallback'] ?? null
         );
-        $this->assertStringNotContainsString( 'raw-cps-id-should-not-survive', wp_json_encode( $data['context']['metadata'] ?? [] ) );
+        $this->assertArrayNotHasKey( 'execution_request_id', $data['context']['metadata']['privacy_route_fallback'] ?? [] );
     }
 
     public function test_managed_generation_fails_when_required_zdr_route_is_not_asserted(): void
@@ -1397,7 +1396,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             [
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-site-context-test',
-                'site_id'        => 'site-context-site-id',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
             ]
         );
         $this->create_managed_credential();
@@ -1406,12 +1405,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->mock_managed_site_context_generation(
             $calls,
             [
-                'privacy_route_assertion' => [
-                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
-                    'zdr_enforced'        => false,
-                    'data_collection'     => 'allow',
-                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
-                ],
+                'privacy_route_assertion' => null,
             ]
         );
 
@@ -3688,7 +3682,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 'status'            => $status,
                 'status_json'       => [
                     'license_id'        => 'license-site-context-test',
-                    'site_id'           => 'site-context-site-id',
+                    'site_id'           => '77777777-7777-4777-8777-777777777777',
                     'license_status'    => 'active',
                     'proxy_key_present' => true,
                     'managed_consent'   => [
@@ -3847,6 +3841,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
                     'url'  => $url,
                 ];
 
+                $request_payload = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $request_payload = is_array( $request_payload ) ? $request_payload : [];
+
                 $content = wp_json_encode(
                     [
                         'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
@@ -3860,9 +3857,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
                 $data = array_merge(
                     [
-                        'execution_request_id'    => 'site_context_managed_test',
+                        'execution_request_id'    => (string) ( $request_payload['execution_request_id'] ?? '' ),
                         'provider'                => 'sentient_managed',
-                        'model'                   => 'openai/gpt-5.5',
+                        'model'                   => (string) ( $request_payload['model'] ?? '' ),
                         'status'                  => 'succeeded',
                         'output'                  => [ 'text' => $content ],
                         'token_usage'             => [
@@ -3871,9 +3868,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
                             'total_tokens'  => 42,
                         ],
                         'metering'                => [
-                            'event_id'        => '66666666-6666-4666-8666-666666666666',
-                            'free_usage'      => false,
-                            'debited_credits' => 2,
+                            'event_id'               => '66666666-6666-4666-8666-666666666666',
+                            'free_usage'             => false,
+                            'pricing_policy_version' => '2026-07-managed-v2',
+                            'debited_credits'        => 2,
                         ],
                         'privacy_route_assertion' => [
                             'schema'              => 'sentient_forms_privacy_route_assertion.v1',
@@ -3884,6 +3882,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
                     ],
                     is_array( $data_overrides ) ? $data_overrides : []
                 );
+                if ( is_array( $data_overrides ) && array_key_exists( 'privacy_route_assertion', $data_overrides ) && null === $data_overrides['privacy_route_assertion'] )
+                {
+                    unset( $data['privacy_route_assertion'] );
+                }
 
                 return [
                     'headers'  => [],

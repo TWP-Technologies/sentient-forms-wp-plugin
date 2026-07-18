@@ -667,11 +667,6 @@ class Sentient_Forms_Managed_Service_Client
 
         if ( ! is_string( $url ) || '' === trim( $url ) )
         {
-            $url = $this->resolve_cps_base_url_default();
-        }
-
-        if ( ! is_string( $url ) || '' === trim( $url ) )
-        {
             $url = self::DEFAULT_BASE_URL;
         }
 
@@ -722,18 +717,4 @@ class Sentient_Forms_Managed_Service_Client
         return is_string( $url ) && '' !== trim( $url ) ? $url : null;
     }
 
-    private function resolve_cps_base_url_default(): string
-    {
-        $options  = get_option( 'sentient_forms_settings', [] );
-        $options  = is_array( $options ) ? $options : [];
-        $base_url = $options['cps_base_url'] ?? null;
-        $base_url = apply_filters( 'sentient_forms_cps_base_url', $base_url, $options );
-
-        if ( is_string( $base_url ) && '' !== trim( $base_url ) )
-        {
-            return $base_url;
-        }
-
-        return self::DEFAULT_BASE_URL;
-    }
 }

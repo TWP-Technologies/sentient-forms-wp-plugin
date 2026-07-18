@@ -166,7 +166,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
     }
 
-    public function test_base_url_falls_back_to_cps_base_url_resolution(): void
+    public function test_base_url_ignores_legacy_generic_cps_resolution(): void
     {
         $filter = static function (): string {
             return 'https://staging-api.sentientforms.com/v2';
@@ -177,7 +177,7 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         try
         {
             $client = new Sentient_Forms_Managed_Service_Client();
-            $this->assertSame( 'https://staging-api.sentientforms.com/v2', $client->get_base_url() );
+            $this->assertSame( 'https://api.sentientforms.com/v2', $client->get_base_url() );
         }
         finally
         {

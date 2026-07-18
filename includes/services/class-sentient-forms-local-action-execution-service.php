@@ -29,7 +29,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
         private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null,
-        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
+        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
+        private ?Sentient_Forms_Action_Policy_Resolver $action_policy_resolver = null,
+        private ?Sentient_Forms_Action_Policy_Preflight $action_policy_preflight = null,
+        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
     )
     {
         global $wpdb;
@@ -47,6 +50,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
         $this->lead_profiles  = $this->lead_profiles ?? new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
         $this->lead_scoring_results = $this->lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $this->action_policy_resolver = $this->action_policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
+        $this->action_policy_preflight = $this->action_policy_preflight ?? new Sentient_Forms_Action_Policy_Preflight();
+        $this->provider_route_decision = $this->provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -113,6 +119,12 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
         $action_code                = $this->resolve_action_code( $action, $definition );
+        $effective_action_policy    = $this->resolve_effective_action_policy( $definition );
+        if ( is_wp_error( $effective_action_policy ) )
+        {
+            return $effective_action_policy;
+        }
+
         [ $mapping, $context ]      = $this->prepare_lead_value_runtime_context( $mapping, $action, $definition, $context );
         if ( $this->requires_active_lead_profile( $action_code ) && ! is_array( $context['lead_profile'] ?? null ) )
         {
@@ -163,6 +175,31 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'sentient_forms_provider_not_supported_locally',
                 __( 'This provider is not supported by local execution yet.', 'sentient-forms' )
             );
+        }
+
+        if ( [] !== $effective_action_policy )
+        {
+            $policy_context = $context;
+            $policy_context['form_source'] = sanitize_key( (string) ( $mapping['form_source'] ?? '' ) );
+            if ( ! array_key_exists( 'lifecycle', $policy_context ) && ! array_key_exists( 'hook', $policy_context ) )
+            {
+                $policy_context['hook'] = $mapping['hook'] ?? null;
+            }
+            $policy_preflight = $this->action_policy_preflight->attest(
+                $effective_action_policy,
+                $action_code,
+                $policy_context
+            );
+            if ( is_wp_error( $policy_preflight ) )
+            {
+                return $policy_preflight;
+            }
+
+            $route_authorization = $this->authorize_selected_provider( $effective_action_policy, $provider );
+            if ( is_wp_error( $route_authorization ) )
+            {
+                return $route_authorization;
+            }
         }
 
         if ( 'openrouter' === $provider && is_array( $structured_output_contract ) )
@@ -226,8 +263,16 @@ class Sentient_Forms_Local_Action_Execution_Service
                 $context,
                 $managed_context['site_id'],
                 $execution_request_id,
-                $structured_output_contract
+                $structured_output_contract,
+                $payload,
+                is_array( $effective_action_policy['required_managed_capabilities'] ?? null )
+                    ? $effective_action_policy['required_managed_capabilities']
+                    : []
             );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
         }
 
         $payload_digest       = hash( 'sha256', (string) wp_json_encode( $payload ) );
@@ -336,7 +381,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                     $action_code,
                     $execution_request_id,
                     $submission_uuid,
-                    $payload_digest
+                    $payload_digest,
+                    $effective_action_policy
                 );
                 if ( null !== $backup_result )
                 {
@@ -494,11 +540,20 @@ class Sentient_Forms_Local_Action_Execution_Service
         string $action_code,
         string $execution_request_id,
         ?string $submission_uuid,
-        string $primary_payload_digest
+        string $primary_payload_digest,
+        array $effective_action_policy
     ): array | WP_Error | null
     {
         $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
         if ( '' === $fallback_reason )
+        {
+            return null;
+        }
+
+        if (
+            [] !== $effective_action_policy
+            && is_wp_error( $this->authorize_selected_provider( $effective_action_policy, 'openrouter' ) )
+        )
         {
             return null;
         }
@@ -1611,6 +1666,24 @@ class Sentient_Forms_Local_Action_Execution_Service
 
     private function resolve_action_code( array $action, array $definition ): string
     {
+        foreach ( [ 'template_code', 'action_template_code', 'central_action_id' ] as $template_key )
+        {
+            if ( ! isset( $definition[ $template_key ] ) || ! is_scalar( $definition[ $template_key ] ) )
+            {
+                continue;
+            }
+
+            $template_code = sanitize_key( (string) $definition[ $template_key ] );
+            if (
+                '' !== $template_code
+                && class_exists( 'Sentient_Forms_Bundled_Action_Templates' )
+                && Sentient_Forms_Bundled_Action_Templates::has( $template_code )
+            )
+            {
+                return $template_code;
+            }
+        }
+
         foreach ( [ $action['code'] ?? null, $definition['code'] ?? null, $definition['action_code'] ?? null, $definition['template_code'] ?? null, $definition['action_template_code'] ?? null, $definition['central_action_id'] ?? null ] as $candidate )
         {
             if ( is_scalar( $candidate ) )
@@ -2263,8 +2336,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $context,
         string $site_id,
         string $execution_request_id,
-        array | WP_Error | null $structured_output_contract
-    ): array
+        array | WP_Error | null $structured_output_contract,
+        array $provider_payload,
+        array $required_managed_capabilities
+    ): array | WP_Error
     {
         $payload = [
             'site_id'              => $site_id,
@@ -2322,7 +2397,108 @@ class Sentient_Forms_Local_Action_Execution_Service
             $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
         }
 
+        foreach ( [ 'tools', 'tool_choice' ] as $provider_field )
+        {
+            if ( array_key_exists( $provider_field, $provider_payload ) )
+            {
+                $payload[ $provider_field ] = $provider_payload[ $provider_field ];
+            }
+        }
+
+        $managed_capability_policy = Sentient_Forms_Managed_Capability_Policy::build_for_request(
+            $required_managed_capabilities,
+            $payload
+        );
+        if ( is_wp_error( $managed_capability_policy ) )
+        {
+            return $managed_capability_policy;
+        }
+
+        if ( null !== $managed_capability_policy )
+        {
+            $payload['managed_capability_policy'] = $managed_capability_policy;
+        }
+
         return $payload;
+    }
+
+    /**
+     * Resolve definition-owned policy while preserving policy-free legacy definitions.
+     *
+     * @param array<string, mixed> $definition
+     * @return array<string, mixed>|WP_Error
+     */
+    private function resolve_effective_action_policy( array $definition ): array | WP_Error
+    {
+        $policy_fields = [ 'action_policy', 'allowed_facets', 'enabled_facets' ];
+        $has_policy    = false;
+
+        foreach ( $policy_fields as $policy_field )
+        {
+            if ( array_key_exists( $policy_field, $definition ) )
+            {
+                $has_policy = true;
+                break;
+            }
+        }
+
+        if ( ! $has_policy )
+        {
+            return [];
+        }
+
+        return $this->action_policy_resolver->resolve_action_definition( $definition );
+    }
+
+    /**
+     * Authorize the configured provider without silently rerouting the Action.
+     *
+     * CPS performs the authoritative capacity admission for managed requests.
+     * At this boundary, managed capacity means only that the configured managed
+     * route is eligible to attempt that fail-closed CPS admission.
+     *
+     * @param array<string, mixed> $effective_policy
+     */
+    private function authorize_selected_provider( array $effective_policy, string $provider ): true | WP_Error
+    {
+        $license = class_exists( 'Sentient_Forms_Plugin' )
+            ? Sentient_Forms_Plugin::instance()->get_license_data()
+            : [];
+        $subscription_active = in_array(
+            sanitize_key( (string) ( $license['license_status'] ?? '' ) ),
+            [ 'active', 'trial', 'valid' ],
+            true
+        );
+        $managed_ready = 'sentient_managed' === $provider
+            && $subscription_active
+            && '' !== trim( (string) ( $license['proxy_api_key'] ?? '' ) )
+            && '' !== trim( (string) ( $license['site_id'] ?? '' ) );
+
+        $decision = $this->provider_route_decision->decide(
+            $effective_policy,
+            [
+                'subscription_active'       => $subscription_active,
+                'managed_ready'             => $managed_ready,
+                'managed_capacity_available' => $managed_ready,
+                'direct_ready'              => 'openrouter' === $provider,
+                'policy_preflight_complete' => true,
+            ]
+        );
+        if ( is_wp_error( $decision ) )
+        {
+            return $decision;
+        }
+
+        if ( $provider !== ( $decision['provider'] ?? '' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_route_selected_provider_ineligible',
+                __( 'The configured provider is not eligible for the resolved Action policy.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        return true;
     }
 
     /**

@@ -57,11 +57,12 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                     'entry_id'       => '99',
                     'plugin_version' => '0.1.0-test',
                 ],
-                'temperature'          => '0.2',
-                'max_output_tokens'    => '512',
+                'temperature'          => 0.2,
+                'max_output_tokens'    => 512,
+                'timeout_seconds'      => 30,
                 'reasoning'            => [
                     'effort'  => 'high',
-                    'exclude' => false,
+                    'exclude' => true,
                 ],
             ]
         );
@@ -88,6 +89,247 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] );
         $this->assertSame( 123, $payload['metadata']['mapping_id'] );
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
+    }
+
+    public function test_execute_sends_only_a_satisfied_nonempty_managed_capability_policy(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [ 'args' => $args, 'url' => $url ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [ 'code' => 200, 'message' => 'OK' ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $payload = $this->valid_execute_payload();
+        $payload['max_output_tokens'] = 512;
+        $payload['tools'] = [
+            [
+                'type'       => 'openrouter:web_search',
+                'parameters' => [
+                    'search_context_size' => 'medium',
+                    'sources'             => [ 'web' ],
+                ],
+            ],
+        ];
+        $payload['tool_choice'] = 'required';
+        $payload['privacy_route_policy'] = [
+            'schema'          => 'sentient_forms_privacy_route_policy.v1',
+            'require_zdr'     => true,
+            'data_collection' => 'deny',
+        ];
+        $payload['managed_capability_policy'] = [
+            'schema'                => 'sentient_forms_managed_capability_policy.v1',
+            'required_capabilities' => [ 'server_tools', 'web_search', 'privacy_zdr', 'bounded_output' ],
+        ];
+
+        $result = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )
+            ->execute( 'proxy-secret', $payload );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+        $sent = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( $payload['managed_capability_policy'], $sent['managed_capability_policy'] ?? null );
+        $this->assertSame( $payload['tools'], $sent['tools'] ?? null );
+    }
+
+    public function test_execute_preserves_explicit_empty_json_object_identity(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args ) use ( &$calls ): array {
+                $calls[] = $args;
+                return [
+                    'headers'  => [],
+                    'response' => [ 'code' => 200, 'message' => 'OK' ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $payload = $this->valid_execute_payload();
+        $payload['output_contract'] = new stdClass();
+        $payload['metadata'] = new stdClass();
+
+        $result = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )
+            ->execute( 'proxy-secret', $payload );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+        $this->assertMatchesRegularExpression( '/"output_contract"\s*:\s*\{\}/', $calls[0]['body'] );
+        $this->assertMatchesRegularExpression( '/"metadata"\s*:\s*\{\}/', $calls[0]['body'] );
+    }
+
+    public function test_execute_accepts_cps_application_execution_request_id_grammar(): void
+    {
+        $calls    = [];
+        $response = json_decode( file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ), true );
+        $response['data']['execution_request_id'] = 'Az09-_.:/@';
+        $this->mock_http(
+            static function ( $preempt, array $args ) use ( &$calls, $response ): array {
+                $calls[] = $args;
+                return [
+                    'headers'  => [],
+                    'response' => [ 'code' => 200, 'message' => 'OK' ],
+                    'body'     => wp_json_encode( $response ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $payload                         = $this->valid_execute_payload();
+        $payload['execution_request_id'] = 'Az09-_.:/@';
+        $result                          = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )
+            ->execute( 'proxy-secret', $payload );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+        $sent = json_decode( $calls[0]['body'], true );
+        $this->assertSame( 'Az09-_.:/@', $sent['execution_request_id'] ?? null );
+    }
+
+    /**
+     * @dataProvider nonconcordant_v2_request_field_provider
+     *
+     * @param array<string, mixed> $overrides
+     */
+    public function test_execute_rejects_nonconcordant_v2_request_field_before_http(
+        array $overrides,
+        string $expected_error
+    ): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function () use ( &$calls ): WP_Error {
+                ++$calls;
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $result = ( new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' ) )->execute(
+            'proxy-secret',
+            array_replace( $this->valid_execute_payload(), $overrides )
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( $expected_error, $result->get_error_code() );
+        $this->assertSame( 0, $calls );
+    }
+
+    /**
+     * @return array<string, array{0:array<string, mixed>,1:string}>
+     */
+    public static function nonconcordant_v2_request_field_provider(): array
+    {
+        return [
+            'site id must be a UUID string' => [ [ 'site_id' => 123 ], 'sentient_managed_invalid_payload' ],
+            'site id must be a UUID' => [ [ 'site_id' => 'not-a-uuid' ], 'sentient_managed_invalid_site_id' ],
+            'request id must be a string' => [ [ 'execution_request_id' => 123 ], 'sentient_managed_invalid_payload' ],
+            'request id cannot be empty' => [ [ 'execution_request_id' => '' ], 'sentient_managed_invalid_execution_request_id' ],
+            'request id cannot exceed the schema maximum' => [ [ 'execution_request_id' => str_repeat( 'x', 129 ) ], 'sentient_managed_invalid_execution_request_id' ],
+            'request id cannot contain spaces' => [ [ 'execution_request_id' => 'managed request' ], 'sentient_managed_invalid_execution_request_id' ],
+            'request id cannot contain unsupported punctuation' => [ [ 'execution_request_id' => 'managed+request' ], 'sentient_managed_invalid_execution_request_id' ],
+            'request id cannot contain non-ASCII characters' => [ [ 'execution_request_id' => 'managed-ü' ], 'sentient_managed_invalid_execution_request_id' ],
+            'model must be a string' => [ [ 'model' => 123 ], 'sentient_managed_invalid_payload' ],
+            'model must not contain spaces' => [ [ 'model' => 'openai / model' ], 'sentient_managed_invalid_model' ],
+            'prompt must be a string' => [ [ 'prompt' => 123 ], 'sentient_managed_invalid_payload' ],
+            'action code must be a string' => [ [ 'action_code' => 123 ], 'sentient_managed_invalid_action_code' ],
+            'action code cannot be null' => [ [ 'action_code' => null ], 'sentient_managed_invalid_action_code' ],
+            'output contract must be an object' => [ [ 'output_contract' => [ 'list-value' ] ], 'sentient_managed_invalid_output_contract' ],
+            'output contract cannot be null' => [ [ 'output_contract' => null ], 'sentient_managed_invalid_output_contract' ],
+            'output contract must contain finite JSON values' => [ [ 'output_contract' => [ 'limit' => INF ] ], 'sentient_managed_invalid_output_contract' ],
+            'temperature must be a number' => [ [ 'temperature' => '0.2' ], 'sentient_managed_invalid_temperature' ],
+            'temperature cannot be null' => [ [ 'temperature' => null ], 'sentient_managed_invalid_temperature' ],
+            'temperature must be finite' => [ [ 'temperature' => INF ], 'sentient_managed_invalid_temperature' ],
+            'maximum output tokens must be an integer' => [ [ 'max_output_tokens' => '512' ], 'sentient_managed_invalid_max_output_tokens' ],
+            'maximum output tokens cannot be null' => [ [ 'max_output_tokens' => null ], 'sentient_managed_invalid_max_output_tokens' ],
+            'timeout must be an integer' => [ [ 'timeout_seconds' => 30.0 ], 'sentient_managed_invalid_timeout_seconds' ],
+            'timeout cannot be null' => [ [ 'timeout_seconds' => null ], 'sentient_managed_invalid_timeout_seconds' ],
+            'metadata must be an object' => [ [ 'metadata' => [] ], 'sentient_managed_metadata_not_identifier_only' ],
+            'metadata cannot be null' => [ [ 'metadata' => null ], 'sentient_managed_metadata_not_identifier_only' ],
+            'metadata numbers must be finite' => [ [ 'metadata' => [ 'score' => INF ] ], 'sentient_managed_metadata_not_identifier_only' ],
+            'metadata keys require a Unicode non-whitespace character' => [ [ 'metadata' => [ "\u{2003}" => 'value' ] ], 'sentient_managed_invalid_metadata_key' ],
+            'metadata keys cannot exceed the CPS byte limit' => [ [ 'metadata' => [ str_repeat( 'ü', 33 ) => 'value' ] ], 'sentient_managed_invalid_metadata_key' ],
+            'reasoning rejects unknown fields' => [ [ 'reasoning' => [ 'effort' => 'low', 'unknown' => true ] ], 'sentient_managed_invalid_reasoning' ],
+            'reasoning cannot be null' => [ [ 'reasoning' => null ], 'sentient_managed_invalid_reasoning' ],
+            'reasoning exclusion must be true' => [ [ 'reasoning' => [ 'effort' => 'low', 'exclude' => false ] ], 'sentient_managed_invalid_reasoning' ],
+            'privacy policy rejects unknown fields' => [
+                [
+                    'privacy_route_policy' => [
+                        'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                        'require_zdr'     => true,
+                        'data_collection' => 'deny',
+                        'unknown'         => true,
+                    ],
+                ],
+                'sentient_managed_invalid_privacy_route_policy',
+            ],
+            'privacy policy cannot be null' => [ [ 'privacy_route_policy' => null ], 'sentient_managed_invalid_privacy_route_policy' ],
+            'tools are capped at four' => [
+                [
+                    'tools' => array_fill( 0, 5, [ 'type' => 'openrouter:web_search' ] ),
+                ],
+                'sentient_managed_invalid_tools',
+            ],
+            'tools cannot be null' => [ [ 'tools' => null ], 'sentient_managed_invalid_tools' ],
+            'tool choice must be exact' => [ [ 'tool_choice' => 'off' ], 'sentient_managed_invalid_tool_choice' ],
+            'tool choice cannot be null' => [ [ 'tool_choice' => null ], 'sentient_managed_invalid_tool_choice' ],
+            'required tool choice requires tools' => [ [ 'tool_choice' => 'required' ], 'sentient_managed_invalid_tool_choice' ],
+            'capability policy cannot be empty' => [
+                [
+                    'managed_capability_policy' => [
+                        'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                        'required_capabilities' => [],
+                    ],
+                ],
+                'sentient_managed_invalid_capability_policy',
+            ],
+            'capability policy cannot be null' => [ [ 'managed_capability_policy' => null ], 'sentient_managed_invalid_capability_policy' ],
+            'capability must be from canonical vocabulary' => [
+                [
+                    'managed_capability_policy' => [
+                        'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                        'required_capabilities' => [ 'wordpress_action_semantics' ],
+                    ],
+                ],
+                'sentient_managed_unknown_capability',
+            ],
+            'capability policy rejects duplicate requirements' => [
+                [
+                    'managed_capability_policy' => [
+                        'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                        'required_capabilities' => [ 'server_tools', 'server_tools' ],
+                    ],
+                ],
+                'sentient_managed_invalid_capability_policy',
+            ],
+            'capability policy rejects unknown keys' => [
+                [
+                    'managed_capability_policy' => [
+                        'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                        'required_capabilities' => [ 'bounded_output' ],
+                        'unknown'               => true,
+                    ],
+                ],
+                'sentient_managed_invalid_capability_policy',
+            ],
+            'capability must be satisfied by request evidence' => [
+                [
+                    'managed_capability_policy' => [
+                        'schema'                => 'sentient_forms_managed_capability_policy.v1',
+                        'required_capabilities' => [ 'bounded_output' ],
+                    ],
+                ],
+                'sentient_managed_unsatisfied_capability',
+            ],
+        ];
     }
 
     public function test_execute_rejects_unknown_success_envelope_fields_before_unwrapping(): void
@@ -905,7 +1147,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'input' ], $result->get_error_data()['unsupported_fields'] );
     }
 
-    public function test_base_url_falls_back_to_cps_base_url_resolution(): void
+    public function test_base_url_ignores_legacy_generic_cps_resolution(): void
     {
         $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
         $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
@@ -922,7 +1164,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         try
         {
             $client = new Sentient_Forms_Managed_Proxy_Client();
-            $this->assertSame( 'https://staging-api.sentientforms.com/v2', $client->get_base_url() );
+            $this->assertSame( 'https://api.sentientforms.com/v2', $client->get_base_url() );
         }
         finally
         {
@@ -1144,6 +1386,19 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $this->http_mock = $callback;
         add_filter( 'pre_http_request', $this->http_mock, 10, 3 );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function valid_execute_payload(): array
+    {
+        return [
+            'site_id'              => '22222222-2222-4222-8222-222222222222',
+            'execution_request_id' => 'managed-req-1',
+            'model'                => 'openai/gpt-4.1-mini',
+            'prompt'               => 'Summarize this entry.',
+        ];
     }
 
     /**

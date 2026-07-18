@@ -43,8 +43,10 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 			$method->setAccessible( true );
 
 			$upload_url = trailingslashit( $uploads['baseurl'] ) . 'sentient-forms-upload-path-test.txt';
+			$canonical_upload_path = realpath( $upload_path );
+			$this->assertNotFalse( $canonical_upload_path );
 			$this->assertSame(
-				wp_normalize_path( $upload_path ),
+				wp_normalize_path( $canonical_upload_path ),
 				wp_normalize_path( (string) $method->invoke( $builder, $upload_url ) )
 			);
 
@@ -54,7 +56,7 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 				'https' === $upload_scheme ? 'http' : 'https'
 			);
 			$this->assertSame(
-				wp_normalize_path( $upload_path ),
+				wp_normalize_path( $canonical_upload_path ),
 				wp_normalize_path( (string) $method->invoke( $builder, $swapped_scheme_upload_url ) )
 			);
 
@@ -67,7 +69,7 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 				(string) ( $upload_parts['path'] ?? '' )
 			);
 			$this->assertSame(
-				wp_normalize_path( $upload_path ),
+				wp_normalize_path( $canonical_upload_path ),
 				wp_normalize_path( (string) $method->invoke( $builder, $migrated_host_upload_url ) )
 			);
 
@@ -84,7 +86,7 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 					(string) ( $swapped_parts['path'] ?? '' )
 				);
 				$this->assertSame(
-					wp_normalize_path( $upload_path ),
+				wp_normalize_path( $canonical_upload_path ),
 					wp_normalize_path( (string) $method->invoke( $builder, $explicit_default_port_upload_url ) )
 				);
 			}

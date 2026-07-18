@@ -798,6 +798,18 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             }
         }
 
+        foreach ( [ 'action_policy', 'allowed_facets' ] as $policy_field )
+        {
+            if ( is_array( $template[ $policy_field ] ?? null ) )
+            {
+                $prepared[ $policy_field ] = $template[ $policy_field ];
+            }
+        }
+        if ( ! array_key_exists( 'enabled_facets', $prepared ) && is_array( $template['enabled_facets'] ?? null ) )
+        {
+            $prepared['enabled_facets'] = $template['enabled_facets'];
+        }
+
         $prepared['template_code'] = $template_code;
         return $prepared;
     }
