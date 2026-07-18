@@ -697,6 +697,368 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'currency', $context['metadata']['metering'] );
     }
 
+    public function test_maybe_upgrade_retires_legacy_option_backed_action_results(): void
+    {
+        $plugin   = Sentient_Forms_Plugin::instance();
+        $original = $plugin->get_options();
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'enforce_nonce_verification' => false,
+                    'action_results'             => [
+                        'entry_summary_v1' => [
+                            [
+                                'timestamp' => time() - DAY_IN_SECONDS,
+                                'result'    => [ 'cost' => 0.001 ],
+                            ],
+                        ],
+                    ],
+                ],
+                false
+            );
+            Sentient_Forms_Plugin::invalidate_options_cache();
+            $stale_settings = $plugin->get_options();
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $settings = $plugin->get_options();
+            $this->assertIsArray( $settings );
+            $this->assertArrayNotHasKey( 'action_results', $settings );
+            $this->assertFalse( $settings['enforce_nonce_verification'] );
+
+            $stale_settings['cps_base_url'] = 'https://cache-coherency.example.test/v2';
+            $plugin->update_options( $stale_settings );
+
+            $persisted = get_option( 'sentient_forms_settings', [] );
+            $this->assertIsArray( $persisted );
+            $this->assertArrayNotHasKey( 'action_results', $persisted );
+            $this->assertSame( 'https://cache-coherency.example.test/v2', $persisted['cps_base_url'] );
+        }
+        finally
+        {
+            $plugin->update_options( $original );
+        }
+    }
+
+    public function test_maybe_upgrade_preserves_a_concurrent_settings_write_while_retiring_results(): void
+    {
+        $plugin      = Sentient_Forms_Plugin::instance();
+        $original    = $plugin->get_options();
+        $intercepted = false;
+        $filter      = null;
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'enforce_nonce_verification' => false,
+                    'action_results'             => [ 'entry_summary_v1' => [ [ 'result' => [ 'cost' => 1 ] ] ] ],
+                ],
+                false
+            );
+            Sentient_Forms_Plugin::invalidate_options_cache();
+            $plugin->get_options();
+
+            $filter = function ( string $query ) use ( &$filter, &$intercepted ): string {
+                if ( $intercepted || ! $this->is_sentient_forms_settings_update_query( $query ) )
+                {
+                    return $query;
+                }
+
+                $intercepted = true;
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+                $concurrent = get_option( 'sentient_forms_settings', [] );
+                $concurrent['concurrent_setting'] = 'preserved';
+                update_option( 'sentient_forms_settings', $concurrent, false );
+                add_filter( 'query', $filter, PHP_INT_MAX );
+
+                return $query;
+            };
+            add_filter( 'query', $filter, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $settings = get_option( 'sentient_forms_settings', [] );
+            $this->assertTrue( $intercepted );
+            $this->assertIsArray( $settings );
+            $this->assertArrayNotHasKey( 'action_results', $settings );
+            $this->assertSame( 'preserved', $settings['concurrent_setting'] ?? null );
+        }
+        finally
+        {
+            if ( is_callable( $filter ) )
+            {
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+            }
+            $plugin->update_options( $original );
+        }
+    }
+
+    public function test_maybe_upgrade_compares_concurrent_settings_snapshots_byte_exactly(): void
+    {
+        $plugin      = Sentient_Forms_Plugin::instance();
+        $original    = $plugin->get_options();
+        $intercepted = false;
+        $filter      = null;
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'concurrent_setting' => 'Before',
+                    'action_results'     => [ 'entry_summary_v1' => [ [ 'result' => [ 'cost' => 1 ] ] ] ],
+                ],
+                false
+            );
+            Sentient_Forms_Plugin::invalidate_options_cache();
+
+            $filter = function ( string $query ) use ( &$filter, &$intercepted ): string {
+                if ( $intercepted || ! $this->is_sentient_forms_settings_update_query( $query ) )
+                {
+                    return $query;
+                }
+
+                $intercepted = true;
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+                $concurrent = get_option( 'sentient_forms_settings', [] );
+                $concurrent['concurrent_setting'] = 'before';
+                update_option( 'sentient_forms_settings', $concurrent, false );
+                add_filter( 'query', $filter, PHP_INT_MAX );
+
+                return $query;
+            };
+            add_filter( 'query', $filter, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $settings = get_option( 'sentient_forms_settings', [] );
+            $this->assertTrue( $intercepted );
+            $this->assertIsArray( $settings );
+            $this->assertArrayNotHasKey( 'action_results', $settings );
+            $this->assertSame( 'before', $settings['concurrent_setting'] ?? null );
+        }
+        finally
+        {
+            if ( is_callable( $filter ) )
+            {
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+            }
+            $plugin->update_options( $original );
+        }
+    }
+
+    public function test_maybe_upgrade_accepts_a_concurrent_retirement_winner(): void
+    {
+        $plugin      = Sentient_Forms_Plugin::instance();
+        $original    = $plugin->get_options();
+        $intercepted = false;
+        $filter      = null;
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'enforce_nonce_verification' => false,
+                    'action_results'             => [ 'entry_summary_v1' => [ [ 'result' => [ 'cost' => 1 ] ] ] ],
+                ],
+                false
+            );
+            Sentient_Forms_Plugin::invalidate_options_cache();
+            $plugin->get_options();
+
+            $filter = function ( string $query ) use ( &$filter, &$intercepted ): string {
+                if ( $intercepted || ! $this->is_sentient_forms_settings_update_query( $query ) )
+                {
+                    return $query;
+                }
+
+                $intercepted = true;
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+                $winner = get_option( 'sentient_forms_settings', [] );
+                unset( $winner['action_results'] );
+                update_option( 'sentient_forms_settings', $winner, false );
+                add_filter( 'query', $filter, PHP_INT_MAX );
+
+                return $query;
+            };
+            add_filter( 'query', $filter, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertTrue( $intercepted );
+            $this->assertArrayNotHasKey( 'action_results', $plugin->get_options() );
+        }
+        finally
+        {
+            if ( is_callable( $filter ) )
+            {
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+            }
+            $plugin->update_options( $original );
+        }
+    }
+
+    public function test_maybe_upgrade_continues_privacy_scrubbing_when_result_retirement_conflicts(): void
+    {
+        $plugin              = Sentient_Forms_Plugin::instance();
+        $original            = $plugin->get_options();
+        $original_db_version = get_option( 'sentient_forms_db_version', false );
+        $pending_db_version  = '2026.07.10.elementor_pro_forms_identifier';
+        $filter              = null;
+        $request_id          = 'managed-retirement-conflict-' . wp_generate_uuid4();
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            update_option(
+                'sentient_forms_settings',
+                [
+                    'enforce_nonce_verification' => false,
+                    'action_results'             => [ 'entry_summary_v1' => [ [ 'result' => [ 'cost' => 1 ] ] ] ],
+                ],
+                false
+            );
+            Sentient_Forms_Plugin::invalidate_options_cache();
+            update_option( 'sentient_forms_db_version', $pending_db_version );
+
+            $now = current_time( 'mysql' );
+            $this->assertNotFalse(
+                $this->wpdb->insert(
+                    $this->wpdb->prefix . 'sentient_execution_events',
+                    [
+                        'execution_request_id' => $request_id,
+                        'provider'             => 'sentient_managed',
+                        'status'               => 'succeeded',
+                        'cost_json'            => wp_json_encode(
+                            [
+                                'debited_credits'        => 2,
+                                'currency'               => 'USD',
+                                'billed_amount_microusd' => 2000,
+                            ]
+                        ),
+                        'result_json'          => wp_json_encode(
+                            [
+                                'metering' => [
+                                    'debited_credits'        => 2,
+                                    'currency'               => 'USD',
+                                    'billed_amount_microusd' => 2000,
+                                ],
+                            ]
+                        ),
+                        'created_at'           => $now,
+                        'updated_at'           => $now,
+                    ],
+                    [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+                )
+            );
+
+            $filter = function ( string $query ): string {
+                if ( ! $this->is_sentient_forms_settings_update_query( $query ) )
+                {
+                    return $query;
+                }
+
+                return 'UPDATE `' . esc_sql( $this->wpdb->options ) . '` SET `option_value` = `option_value` WHERE `option_id` = -1';
+            };
+            add_filter( 'query', $filter, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $event = $this->events->get_by_request_id( $request_id );
+            $this->assertIsArray( $event );
+            $this->assertSame( 2, $event['cost_json']['debited_credits'] ?? null );
+            $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
+            $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
+            $this->assertArrayHasKey( 'action_results', get_option( 'sentient_forms_settings', [] ) );
+            $this->assertSame( $pending_db_version, get_option( 'sentient_forms_db_version' ) );
+
+            remove_filter( 'query', $filter, PHP_INT_MAX );
+            $filter = null;
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+            $this->assertArrayNotHasKey( 'action_results', get_option( 'sentient_forms_settings', [] ) );
+        }
+        finally
+        {
+            if ( is_callable( $filter ) )
+            {
+                remove_filter( 'query', $filter, PHP_INT_MAX );
+            }
+            $plugin->update_options( $original );
+            if ( false === $original_db_version )
+            {
+                delete_option( 'sentient_forms_db_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_db_version', $original_db_version );
+            }
+        }
+    }
+
+    public function test_maybe_upgrade_skips_the_durable_result_scan_after_retirement_completes(): void
+    {
+        $plugin          = Sentient_Forms_Plugin::instance();
+        $original        = $plugin->get_options();
+        $original_marker = get_option( 'sentient_forms_action_results_retirement_version', false );
+        $settings_reads  = 0;
+        $capture_reads   = function ( string $query ) use ( &$settings_reads ): string {
+            if (
+                str_contains( $query, 'SELECT option_value FROM' )
+                && str_contains( $query, "option_name = 'sentient_forms_settings'" )
+            )
+            {
+                $settings_reads++;
+            }
+
+            return $query;
+        };
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            $plugin->update_options( $original );
+            add_filter( 'query', $capture_reads, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( 1, $settings_reads );
+            $this->assertSame(
+                '2026.07.18.v1',
+                get_option( 'sentient_forms_action_results_retirement_version' )
+            );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( 1, $settings_reads );
+        }
+        finally
+        {
+            remove_filter( 'query', $capture_reads, PHP_INT_MAX );
+            $plugin->update_options( $original );
+            if ( false === $original_marker )
+            {
+                delete_option( 'sentient_forms_action_results_retirement_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_action_results_retirement_version', $original_marker, false );
+            }
+        }
+    }
+
     public function test_managed_usage_scrub_selects_rows_with_provider_payload_only(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';
@@ -787,6 +1149,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         update_option( 'sentient_forms_submission_ledger_retention_backfill_version', '2026.07.10.v1' );
         update_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', [ 'pending' => true ] );
         update_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 42 );
+        update_option( 'sentient_forms_action_results_retirement_version', '2026.07.18.v1', false );
         set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
         update_option( 'sentient_forms_delete_data_on_uninstall', true );
         remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
@@ -828,6 +1191,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', false ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_action_results_retirement_version', false ) );
             $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
             $this->assertSame(
                 '0',
@@ -1093,6 +1457,13 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         delete_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
         delete_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1' );
         update_option( 'sentient_forms_db_version', '2026.07.10.elementor_pro_forms_identifier' );
+    }
+
+    private function is_sentient_forms_settings_update_query( string $query ): bool
+    {
+        return str_contains( $query, 'UPDATE `' . $this->wpdb->options . '`' )
+            && str_contains( $query, 'option_name' )
+            && str_contains( $query, "'sentient_forms_settings'" );
     }
 
     /**

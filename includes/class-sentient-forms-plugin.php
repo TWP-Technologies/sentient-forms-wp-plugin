@@ -723,8 +723,22 @@ final class Sentient_Forms_Plugin
         return is_array( $this->options ) ? $this->options : [];
     }
 
+    /**
+     * Invalidate the singleton's settings snapshot after an out-of-band option
+     * migration changes the canonical WordPress value.
+     */
+    public static function invalidate_options_cache(): void
+    {
+        if ( null !== self::$_instance )
+        {
+            self::$_instance->options = null;
+        }
+    }
+
     private function save_options( array $options ): void
     {
+        unset( $options['action_results'] );
+
         $this->options = $options;
         update_option( self::OPTION_KEY, $options );
     }

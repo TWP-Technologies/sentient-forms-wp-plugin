@@ -11,6 +11,10 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
+    private const OPTION_SETTINGS = 'sentient_forms_settings';
+    private const OPTION_ACTION_RESULTS_RETIREMENT_VERSION = 'sentient_forms_action_results_retirement_version';
+    private const ACTION_RESULTS_RETIREMENT_VERSION = '2026.07.18.v1';
+    private const ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS = 5;
     private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
     private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
     private const NATIVE_CORRELATION_BACKFILL_VERSION = 'v1';
@@ -120,6 +124,8 @@ class Sentient_Forms_Installer
 
         $submission_ledger_retention_backfill_complete = self::backfill_submission_ledger_retention();
 
+        $action_results_retirement_complete = self::retire_option_backed_action_results();
+
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
         {
@@ -155,6 +161,7 @@ class Sentient_Forms_Installer
 
         if (
             $needs_db_version_update
+            && $action_results_retirement_complete
             && $submission_ledger_retention_backfill_complete
             && $form_source_config_migration_complete
             && $native_correlation_schema_ready
@@ -162,6 +169,137 @@ class Sentient_Forms_Installer
         {
             update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
         }
+    }
+
+    /**
+     * Remove the superseded rolling result cache after canonical execution
+     * events became the only runtime result history.
+     */
+    private static function retire_option_backed_action_results(): bool
+    {
+        global $wpdb;
+
+        if ( self::ACTION_RESULTS_RETIREMENT_VERSION === get_option( self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION, '' ) )
+        {
+            return true;
+        }
+
+        for ( $attempt = 0; $attempt < self::ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS; $attempt++ )
+        {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Retirement must read durable option bytes outside potentially stale option caches so the subsequent byte-exact compare-and-swap cannot overwrite concurrent settings changes.
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT option_value FROM %i WHERE option_name = %s LIMIT 1',
+                    $wpdb->options,
+                    self::OPTION_SETTINGS
+                ),
+                ARRAY_A
+            );
+
+            if ( null === $row )
+            {
+                if ( '' !== $wpdb->last_error )
+                {
+                    return false;
+                }
+
+                self::synchronize_settings_option_caches( null );
+                return self::record_action_results_retirement_complete();
+            }
+
+            $serialized_settings = (string) ( $row['option_value'] ?? '' );
+            $settings            = maybe_unserialize( $serialized_settings );
+            if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
+            {
+                self::synchronize_settings_option_caches( $serialized_settings );
+                return self::record_action_results_retirement_complete();
+            }
+
+            unset( $settings['action_results'] );
+            $retired_settings = maybe_serialize( $settings );
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Retirement uses an atomic byte-exact compare-and-swap on the plugin-owned settings row, then reconciles WordPress option caches immediately after success.
+            $updated = $wpdb->query(
+                $wpdb->prepare(
+                    'UPDATE %i SET option_value = %s WHERE option_name = %s AND BINARY option_value = BINARY %s',
+                    $wpdb->options,
+                    $retired_settings,
+                    self::OPTION_SETTINGS,
+                    $serialized_settings
+                )
+            );
+
+            if ( false === $updated )
+            {
+                return false;
+            }
+
+            if ( 1 === $updated )
+            {
+                self::synchronize_settings_option_caches( $retired_settings );
+                return self::record_action_results_retirement_complete();
+            }
+        }
+
+        return false;
+    }
+
+    private static function record_action_results_retirement_complete(): bool
+    {
+        $updated = update_option(
+            self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION,
+            self::ACTION_RESULTS_RETIREMENT_VERSION,
+            false
+        );
+
+        return $updated
+            || self::ACTION_RESULTS_RETIREMENT_VERSION === get_option( self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION, '' );
+    }
+
+    /**
+     * Reconcile WordPress and plugin-local caches with a raw database snapshot.
+     *
+     * A clean readback must not evict the global alloptions cache on every
+     * bounded upgrade pass. Only cache entries that disagree with the durable
+     * snapshot are invalidated, while the plugin singleton is always reset.
+     *
+     * @param string|null $serialized_settings Durable serialized value, or null when absent.
+     */
+    private static function synchronize_settings_option_caches( ?string $serialized_settings ): void
+    {
+        $alloptions_found = false;
+        $alloptions       = wp_cache_get( 'alloptions', 'options', false, $alloptions_found );
+        if (
+            $alloptions_found
+            && is_array( $alloptions )
+            && array_key_exists( self::OPTION_SETTINGS, $alloptions )
+            && ( null === $serialized_settings || (string) $alloptions[ self::OPTION_SETTINGS ] !== $serialized_settings )
+        )
+        {
+            wp_cache_delete( 'alloptions', 'options' );
+        }
+
+        $option_found = false;
+        $cached_option = wp_cache_get( self::OPTION_SETTINGS, 'options', false, $option_found );
+        if (
+            $option_found
+            && ( null === $serialized_settings || (string) $cached_option !== $serialized_settings )
+        )
+        {
+            wp_cache_delete( self::OPTION_SETTINGS, 'options' );
+        }
+
+        if ( null !== $serialized_settings )
+        {
+            $notoptions = wp_cache_get( 'notoptions', 'options' );
+            if ( is_array( $notoptions ) && isset( $notoptions[ self::OPTION_SETTINGS ] ) )
+            {
+                unset( $notoptions[ self::OPTION_SETTINGS ] );
+                wp_cache_set( 'notoptions', $notoptions, 'options' );
+            }
+        }
+
+        Sentient_Forms_Plugin::invalidate_options_cache();
     }
 
     /**
