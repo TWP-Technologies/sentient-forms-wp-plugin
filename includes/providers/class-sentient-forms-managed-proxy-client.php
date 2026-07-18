@@ -21,6 +21,13 @@ class Sentient_Forms_Managed_Proxy_Client
 
     private ?WP_Error $configuration_error = null;
 
+    /**
+     * Create a managed execution client.
+     *
+     * @param string|null               $base_url Optional CPS v2 base URL.
+     * @param int                       $timeout  HTTP request timeout in seconds.
+     * @param Sentient_Forms_Api_Client|null $client Optional preconfigured API client.
+     */
     public function __construct(
         ?string $base_url = null,
         int $timeout = 30,
@@ -159,6 +166,9 @@ class Sentient_Forms_Managed_Proxy_Client
         return $this->client->get( '/health' );
     }
 
+    /**
+     * Return the canonical CPS v2 base URL used by this client.
+     */
     public function get_base_url(): string
     {
         return $this->base_url;

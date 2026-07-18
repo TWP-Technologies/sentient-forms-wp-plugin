@@ -20,6 +20,13 @@ class Sentient_Forms_Managed_Service_Client
 
     private ?WP_Error $configuration_error = null;
 
+    /**
+     * Create a managed account and billing client.
+     *
+     * @param string|null               $base_url Optional CPS v2 base URL.
+     * @param int                       $timeout  HTTP request timeout in seconds.
+     * @param Sentient_Forms_Api_Client|null $client Optional preconfigured API client.
+     */
     public function __construct(
         ?string $base_url = null,
         int $timeout = 30,
