@@ -164,7 +164,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 			[
 				'hook'                 => 'validation',
 				'action_id'            => 'map_validation',
-				'execution_request_id' => 'validation-request-unique-to-http-request',
+				'execution_request_id' => '  validation-request-unique-to-http-request  ',
 			]
 		);
 
@@ -421,6 +421,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$context = [
 			'hook' => 'real_time',
 			'action_id' => 'map_rt_1',
+			'execution_request_id' => '',
 			'settings' => [
 				'execution_mode' => 'real_time',
 			],
@@ -451,7 +452,11 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( 'proxy-suggest', $call['options']['bearer_token'] );
 		$this->assertSame( 'central-rt-1', $call['payload']['central_action_id'] );
 		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
-		$this->assertNotSame( '', $call['payload']['execution_request_id'] );
+		$this->assertMatchesRegularExpression( '/^rt-[a-f0-9]{32}$/', $call['payload']['execution_request_id'] );
+		$this->assertSame(
+			$call['payload']['execution_request_id'],
+			$call['payload']['action_context']['execution_request_id']
+		);
 		$this->assertSame( [ '1', '2' ], $call['payload']['suggestion_context']['visible_field_ids'] ?? [] );
 		$this->assertSame( '55', $call['payload']['suggestion_context']['form_id'] ?? null );
 		$this->assertSame( 'gravity_forms', $call['payload']['suggestion_context']['source'] ?? null );
@@ -539,9 +544,10 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$form     = [ 'id' => 21, 'title' => 'Async Form' ];
 		$entry    = [ 'id' => 707, 'field_1' => 'Hello async' ];
 		$context  = [
-			'hook'       => 'gform_after_submission',
-			'action_id'  => 'entry_evaluation',
-			'settings'   => [
+			'hook'                 => 'gform_after_submission',
+			'action_id'            => 'entry_evaluation',
+			'execution_request_id' => [ 'invalid-non-scalar-id' ],
+			'settings'             => [
 				'batch_settings' => [
 					'enabled'       => true,
 					'delay_seconds' => 120,
@@ -578,6 +584,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( 10, $call['payload']['async_options']['delay_seconds'] );
 		$this->assertSame( 43200, $call['payload']['async_options']['max_wait_seconds'] );
 		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{32}$/', $call['payload']['execution_request_id'] );
 		$this->assertSame(
 			$call['payload']['execution_request_id'],
 			$call['payload']['action_context']['execution_request_id']

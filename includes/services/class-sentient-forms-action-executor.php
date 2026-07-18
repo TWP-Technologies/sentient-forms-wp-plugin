@@ -84,9 +84,7 @@ class Sentient_Forms_Action_Executor {
 
 		$client                = $this->client ?? $this->plugin->get_cps_api_client();
 		$submission_token     = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
-		$explicit_request_id  = isset( $context['execution_request_id'] ) && is_scalar( $context['execution_request_id'] )
-			? sanitize_text_field( trim( (string) $context['execution_request_id'] ) )
-			: '';
+		$explicit_request_id  = $this->normalize_explicit_execution_request_id( $context );
 		$execution_request_id = '' !== $explicit_request_id
 			? $explicit_request_id
 			: Sentient_Forms_Execution_Identity::generate( $central_action_id, $form, $entry, $context );
@@ -186,10 +184,11 @@ class Sentient_Forms_Action_Executor {
 			);
 		}
 
-		$client           = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
-		$execution_request_id = isset( $context['execution_request_id'] )
-			? sanitize_text_field( (string) $context['execution_request_id'] )
+		$client                = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token      = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
+		$explicit_request_id   = $this->normalize_explicit_execution_request_id( $context );
+		$execution_request_id  = '' !== $explicit_request_id
+			? $explicit_request_id
 			: Sentient_Forms_Execution_Identity::generate( $central_action_id, $form, $entry, $context );
 
 		$payload_data       = $this->build_execution_payload_data( $form, $entry, $context );
@@ -257,10 +256,11 @@ class Sentient_Forms_Action_Executor {
 			);
 		}
 
-		$client           = $this->client ?? $this->plugin->get_cps_api_client();
-		$submission_token = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
-		$execution_request_id = isset( $context['execution_request_id'] )
-			? sanitize_text_field( (string) $context['execution_request_id'] )
+		$client                = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token      = Sentient_Forms_Execution_Identity::submission_token( $form, $entry, $context );
+		$explicit_request_id   = $this->normalize_explicit_execution_request_id( $context );
+		$execution_request_id  = '' !== $explicit_request_id
+			? $explicit_request_id
 			: 'rt-' . str_replace( '-', '', wp_generate_uuid4() );
 
 		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
@@ -924,6 +924,7 @@ class Sentient_Forms_Action_Executor {
 		}
 
 		$action_context = array_merge( $defaults, $context );
+		$action_context['execution_request_id'] = $execution_request_id;
 
 		if ( isset( $action_context['form_id'] ) ) {
 			$action_context['form_id'] = (string) $action_context['form_id'];
@@ -934,6 +935,14 @@ class Sentient_Forms_Action_Executor {
 		}
 
 		return $action_context;
+	}
+
+	private function normalize_explicit_execution_request_id( array $context ): string {
+		if ( ! isset( $context['execution_request_id'] ) || ! is_scalar( $context['execution_request_id'] ) ) {
+			return '';
+		}
+
+		return sanitize_text_field( trim( (string) $context['execution_request_id'] ) );
 	}
 
 	public static function generate_execution_request_id( string $central_action_id, array $form, array $entry, array $context = array() ): string {
