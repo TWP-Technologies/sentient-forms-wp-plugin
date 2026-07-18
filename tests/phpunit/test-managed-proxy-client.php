@@ -96,7 +96,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
     {
         $calls = [];
         $this->mock_http(
-            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array
+            {
                 $calls[] = [ 'args' => $args, 'url' => $url ];
 
                 return [
