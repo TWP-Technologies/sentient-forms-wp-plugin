@@ -699,12 +699,12 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_maybe_upgrade_retires_legacy_option_backed_action_results(): void
     {
-        $original = get_option( 'sentient_forms_settings', null );
+        $plugin   = Sentient_Forms_Plugin::instance();
+        $original = $plugin->get_options();
 
         try
         {
-            update_option(
-                'sentient_forms_settings',
+            $plugin->update_options(
                 [
                     'enforce_nonce_verification' => false,
                     'action_results'             => [
@@ -715,27 +715,27 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
                             ],
                         ],
                     ],
-                ],
-                false
+                ]
             );
 
             Sentient_Forms_Installer::maybe_upgrade();
 
-            $settings = get_option( 'sentient_forms_settings', [] );
+            $settings = $plugin->get_options();
             $this->assertIsArray( $settings );
             $this->assertArrayNotHasKey( 'action_results', $settings );
             $this->assertFalse( $settings['enforce_nonce_verification'] );
+
+            $settings['cps_base_url'] = 'https://cache-coherency.example.test/v2';
+            $plugin->update_options( $settings );
+
+            $persisted = get_option( 'sentient_forms_settings', [] );
+            $this->assertIsArray( $persisted );
+            $this->assertArrayNotHasKey( 'action_results', $persisted );
+            $this->assertSame( 'https://cache-coherency.example.test/v2', $persisted['cps_base_url'] );
         }
         finally
         {
-            if ( null === $original )
-            {
-                delete_option( 'sentient_forms_settings' );
-            }
-            else
-            {
-                update_option( 'sentient_forms_settings', $original, false );
-            }
+            $plugin->update_options( $original );
         }
     }
 

@@ -178,12 +178,19 @@ class Sentient_Forms_Installer
         $settings = get_option( 'sentient_forms_settings', null );
         if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
         {
+            Sentient_Forms_Plugin::invalidate_options_cache();
             return true;
         }
 
         unset( $settings['action_results'] );
 
-        return update_option( 'sentient_forms_settings', $settings, false );
+        if ( ! update_option( 'sentient_forms_settings', $settings, false ) )
+        {
+            return false;
+        }
+
+        Sentient_Forms_Plugin::invalidate_options_cache();
+        return true;
     }
 
     /**
