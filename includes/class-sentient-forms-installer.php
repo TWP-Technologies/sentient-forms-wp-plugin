@@ -118,10 +118,7 @@ class Sentient_Forms_Installer
             return;
         }
 
-        if ( ! self::backfill_submission_ledger_retention() )
-        {
-            return;
-        }
+        $submission_ledger_retention_backfill_complete = self::backfill_submission_ledger_retention();
 
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
@@ -156,7 +153,12 @@ class Sentient_Forms_Installer
         self::repair_local_first_action_integrity();
         Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
 
-        if ( $needs_db_version_update && $form_source_config_migration_complete && $native_correlation_schema_ready )
+        if (
+            $needs_db_version_update
+            && $submission_ledger_retention_backfill_complete
+            && $form_source_config_migration_complete
+            && $native_correlation_schema_ready
+        )
         {
             update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
         }
@@ -247,6 +249,7 @@ class Sentient_Forms_Installer
         global $wpdb;
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned upgrade snapshot must read the live maximum ID from the plugin-owned ledger table; caching migration boundaries would be unsafe.
         $max_id = $wpdb->get_var(
             $wpdb->prepare(
                 'SELECT COALESCE(MAX(id), 0) FROM %i',
@@ -271,6 +274,8 @@ class Sentient_Forms_Installer
         $snapshot = [
             'migration_time'  => gmdate( 'Y-m-d H:i:s', $migration_timestamp ),
             'migration_floor' => gmdate( 'Y-m-d H:i:s', $migration_timestamp + ( 30 * DAY_IN_SECONDS ) ),
+            // Upgrade batches freeze the persisted administrator setting. The capture-time
+            // filter may be request-specific and therefore cannot govern a resumable migration.
             'retention_days'  => Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days(),
             'max_id'          => max( 0, (int) $max_id ),
         ];
@@ -347,6 +352,7 @@ class Sentient_Forms_Installer
         global $wpdb;
 
         $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The bounded upgrade worker must read the next live batch of plugin-owned ledger IDs and cannot reuse cached migration state.
         $ids = $wpdb->get_col(
             $wpdb->prepare(
                 'SELECT id FROM %i WHERE id > %d AND id <= %d ORDER BY id ASC LIMIT %d',
@@ -373,6 +379,9 @@ class Sentient_Forms_Installer
 
         if ( 0 === $snapshot['retention_days'] )
         {
+            // Zero means manual deletion only. Clear legacy caller-assigned expiries so every
+            // pre-existing row follows the selected no-automatic-expiry policy.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned upgrade must update the bounded plugin-owned ledger batch directly; WordPress has no CRUD or cache API for this table.
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i SET expires_at = NULL WHERE id > %d AND id <= %d AND id <= %d',
@@ -385,6 +394,9 @@ class Sentient_Forms_Installer
         }
         else
         {
+            // The versioned migration intentionally normalizes every snapshotted legacy row to
+            // max(captured_at + selected retention, migration + 30 days).
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned upgrade must update the bounded plugin-owned ledger batch directly; WordPress has no CRUD or cache API for this table.
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i

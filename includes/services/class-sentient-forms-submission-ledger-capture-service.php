@@ -123,6 +123,7 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
                     'redacted_fields' => array_values( array_unique( $redacted_fields ) ),
                     'file_ref_count'  => is_array( $file_refs ) ? count( $file_refs ) : 0,
                 ],
+                // Expiry is policy-owned; legacy caller-supplied values are intentionally ignored.
                 'expires_at'             => Sentient_Forms_Local_Data_Governance::default_submission_ledger_expires_at( $captured_at ),
             ]
         );

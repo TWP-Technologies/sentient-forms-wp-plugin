@@ -317,9 +317,9 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $expires_at = strtotime( (string) ( $result['expires_at'] ?? '' ) );
-        $this->assertGreaterThanOrEqual( time() + ( 7 * DAY_IN_SECONDS ) - 5, $expires_at );
-        $this->assertLessThanOrEqual( time() + ( 7 * DAY_IN_SECONDS ) + 5, $expires_at );
+        $captured_at = strtotime( (string) ( $result['captured_at'] ?? '' ) . ' UTC' );
+        $expires_at  = strtotime( (string) ( $result['expires_at'] ?? '' ) . ' UTC' );
+        $this->assertSame( 7 * DAY_IN_SECONDS, $expires_at - $captured_at );
         $this->assertNotSame( '2099-01-01 00:00:00', $result['expires_at'] );
     }
 

@@ -131,6 +131,14 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertNotNull( $this->submission_ledger->get_by_submission_uuid( '22222222-2222-4222-8222-222222222222' ) );
     }
 
+    public function test_new_submission_ledger_retention_inherits_existing_execution_policy(): void
+    {
+        delete_option( 'sentient_forms_submission_ledger_retention_days' );
+        Sentient_Forms_Local_Data_Governance::update_execution_event_retention_days( 30 );
+
+        $this->assertSame( 30, Sentient_Forms_Local_Data_Governance::current_submission_ledger_retention_days() );
+    }
+
     public function test_upgrade_backfills_ledger_expiry_with_migration_floor(): void
     {
         Sentient_Forms_Local_Data_Governance::update_submission_ledger_retention_days( 90 );
@@ -425,6 +433,15 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         {
             Sentient_Forms_Installer::maybe_upgrade();
             $first_expiry = $this->submission_ledger->get_by_submission_uuid( $uuid )['expires_at'];
+            $snapshot     = get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1' );
+            $expected     = gmdate(
+                'Y-m-d H:i:s',
+                max(
+                    strtotime( '2026-09-29 00:00:00 UTC' ),
+                    strtotime( $snapshot['migration_floor'] . ' UTC' )
+                )
+            );
+            $this->assertSame( $expected, $first_expiry );
             $this->assertSame( 0, (int) get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 0 ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
             $this->assertSame( '2026.07.10.elementor_pro_forms_identifier', get_option( 'sentient_forms_db_version' ) );
@@ -578,13 +595,27 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_maybe_upgrade_scrubs_existing_managed_currency_fields(): void
     {
-        $table = $this->wpdb->prefix . 'sentient_execution_events';
-        $now   = current_time( 'mysql' );
+        $table      = $this->wpdb->prefix . 'sentient_execution_events';
+        $now        = current_time( 'mysql' );
+        $request_id = 'managed-repair-' . wp_generate_uuid4();
+
+        $this->reset_submission_ledger_backfill_state();
+        $this->assertIsInt(
+            $this->submission_ledger->create(
+                [
+                    'submission_uuid'     => wp_generate_uuid4(),
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'partial-retention-upgrade',
+                    'captured_at'         => '2026-07-01 00:00:00',
+                    'logical_fields_json' => [ 'label' => 'partial' ],
+                ]
+            )
+        );
 
         $inserted = $this->wpdb->insert(
             $table,
             [
-                'execution_request_id' => 'managed-repair-1',
+                'execution_request_id' => $request_id,
                 'provider'             => 'sentient_managed',
                 'model'                => 'openai/gpt-4.1-mini',
                 'status'               => 'succeeded',
@@ -639,9 +670,21 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         );
 
         update_option( 'sentient_forms_db_version', '2026.05.10.lead_value_workflows' );
-        Sentient_Forms_Installer::maybe_upgrade();
+        $deny_cursor_persist = static fn (): bool => false;
+        add_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        try
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
+        }
 
-        $event = $this->events->get_by_request_id( 'managed-repair-1' );
+        $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
+        $this->assertSame( '2026.05.10.lead_value_workflows', get_option( 'sentient_forms_db_version' ) );
+
+        $event = $this->events->get_by_request_id( $request_id );
         $this->assertSame( 3, $event['cost_json']['debited_credits'] );
         $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
         $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );

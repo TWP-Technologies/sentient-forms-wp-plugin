@@ -174,7 +174,10 @@ class Sentient_Forms_Local_Data_Governance
     public static function current_submission_ledger_retention_days(): int
     {
         return self::sanitize_submission_ledger_retention_days(
-            get_option( self::OPTION_SUBMISSION_LEDGER_RETENTION_DAYS, self::DEFAULT_RETENTION_DAYS )
+            get_option(
+                self::OPTION_SUBMISSION_LEDGER_RETENTION_DAYS,
+                self::current_execution_event_retention_days()
+            )
         );
     }
 
@@ -191,6 +194,9 @@ class Sentient_Forms_Local_Data_Governance
 
     /**
      * Calculate the expiry for a newly captured Submission Ledger record.
+     *
+     * The filter is intentionally capture-time only. Upgrade backfills freeze the persisted
+     * administrator setting so a resumable batch cannot change policy between requests.
      *
      * @param string|null $captured_at UTC MySQL datetime assigned by the capture service.
      */
