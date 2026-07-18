@@ -889,6 +889,7 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_forms_submission_ledger_retention_backfill_version',
             'sentient_forms_submission_ledger_retention_backfill_snapshot_v1',
             'sentient_forms_submission_ledger_retention_backfill_cursor_v1',
+            'sentient_forms_action_results_retirement_version',
             self::OPTION_DELETE_ON_UNINSTALL,
             self::OPTION_STORE_FULL_AI_OUTPUTS,
             self::OPTION_PRIVACY_SETUP_PROFILE,

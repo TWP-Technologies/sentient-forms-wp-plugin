@@ -12,6 +12,8 @@ class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
     private const OPTION_SETTINGS = 'sentient_forms_settings';
+    private const OPTION_ACTION_RESULTS_RETIREMENT_VERSION = 'sentient_forms_action_results_retirement_version';
+    private const ACTION_RESULTS_RETIREMENT_VERSION = '2026.07.18.v1';
     private const ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS = 5;
     private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
     private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
@@ -177,6 +179,11 @@ class Sentient_Forms_Installer
     {
         global $wpdb;
 
+        if ( self::ACTION_RESULTS_RETIREMENT_VERSION === get_option( self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION, '' ) )
+        {
+            return true;
+        }
+
         for ( $attempt = 0; $attempt < self::ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS; $attempt++ )
         {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Retirement must read durable option bytes outside potentially stale option caches so the subsequent byte-exact compare-and-swap cannot overwrite concurrent settings changes.
@@ -197,7 +204,7 @@ class Sentient_Forms_Installer
                 }
 
                 self::synchronize_settings_option_caches( null );
-                return true;
+                return self::record_action_results_retirement_complete();
             }
 
             $serialized_settings = (string) ( $row['option_value'] ?? '' );
@@ -205,7 +212,7 @@ class Sentient_Forms_Installer
             if ( ! is_array( $settings ) || ! array_key_exists( 'action_results', $settings ) )
             {
                 self::synchronize_settings_option_caches( $serialized_settings );
-                return true;
+                return self::record_action_results_retirement_complete();
             }
 
             unset( $settings['action_results'] );
@@ -230,11 +237,23 @@ class Sentient_Forms_Installer
             if ( 1 === $updated )
             {
                 self::synchronize_settings_option_caches( $retired_settings );
-                return true;
+                return self::record_action_results_retirement_complete();
             }
         }
 
         return false;
+    }
+
+    private static function record_action_results_retirement_complete(): bool
+    {
+        $updated = update_option(
+            self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION,
+            self::ACTION_RESULTS_RETIREMENT_VERSION,
+            false
+        );
+
+        return $updated
+            || self::ACTION_RESULTS_RETIREMENT_VERSION === get_option( self::OPTION_ACTION_RESULTS_RETIREMENT_VERSION, '' );
     }
 
     /**

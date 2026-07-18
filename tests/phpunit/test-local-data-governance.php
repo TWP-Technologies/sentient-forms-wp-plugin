@@ -704,6 +704,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         try
         {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
             update_option(
                 'sentient_forms_settings',
                 [
@@ -752,6 +753,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         try
         {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
             update_option(
                 'sentient_forms_settings',
                 [
@@ -807,6 +809,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         try
         {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
             update_option(
                 'sentient_forms_settings',
                 [
@@ -861,6 +864,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         try
         {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
             update_option(
                 'sentient_forms_settings',
                 [
@@ -915,6 +919,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         try
         {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
             update_option(
                 'sentient_forms_settings',
                 [
@@ -999,6 +1004,57 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             else
             {
                 update_option( 'sentient_forms_db_version', $original_db_version );
+            }
+        }
+    }
+
+    public function test_maybe_upgrade_skips_the_durable_result_scan_after_retirement_completes(): void
+    {
+        $plugin          = Sentient_Forms_Plugin::instance();
+        $original        = $plugin->get_options();
+        $original_marker = get_option( 'sentient_forms_action_results_retirement_version', false );
+        $settings_reads  = 0;
+        $capture_reads   = function ( string $query ) use ( &$settings_reads ): string {
+            if (
+                str_contains( $query, 'SELECT option_value FROM' )
+                && str_contains( $query, "option_name = 'sentient_forms_settings'" )
+            )
+            {
+                $settings_reads++;
+            }
+
+            return $query;
+        };
+
+        try
+        {
+            delete_option( 'sentient_forms_action_results_retirement_version' );
+            $plugin->update_options( $original );
+            add_filter( 'query', $capture_reads, PHP_INT_MAX );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( 1, $settings_reads );
+            $this->assertSame(
+                '2026.07.18.v1',
+                get_option( 'sentient_forms_action_results_retirement_version' )
+            );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( 1, $settings_reads );
+        }
+        finally
+        {
+            remove_filter( 'query', $capture_reads, PHP_INT_MAX );
+            $plugin->update_options( $original );
+            if ( false === $original_marker )
+            {
+                delete_option( 'sentient_forms_action_results_retirement_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_action_results_retirement_version', $original_marker, false );
             }
         }
     }
@@ -1093,6 +1149,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         update_option( 'sentient_forms_submission_ledger_retention_backfill_version', '2026.07.10.v1' );
         update_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', [ 'pending' => true ] );
         update_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 42 );
+        update_option( 'sentient_forms_action_results_retirement_version', '2026.07.18.v1', false );
         set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
         update_option( 'sentient_forms_delete_data_on_uninstall', true );
         remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
@@ -1134,6 +1191,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_version', false ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', false ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_action_results_retirement_version', false ) );
             $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
             $this->assertSame(
                 '0',
