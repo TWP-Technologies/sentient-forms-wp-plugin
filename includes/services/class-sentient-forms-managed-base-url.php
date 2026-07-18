@@ -55,4 +55,18 @@ final class Sentient_Forms_Managed_Base_Url
         $port = isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '';
         return $scheme . '://' . $host . $port . $path;
     }
+
+    /**
+     * Convert a normalization failure to the stable plugin error contract.
+     */
+    public static function to_wp_error( InvalidArgumentException $exception ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_managed_invalid_base_url',
+            __( 'The managed service URL is invalid. Configure a bare HTTP(S) origin with an optional exact /v2 path.', 'sentient-forms' ),
+            [
+                'reason' => $exception->getMessage(),
+            ]
+        );
+    }
 }

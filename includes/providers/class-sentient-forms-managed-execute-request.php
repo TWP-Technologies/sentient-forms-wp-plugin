@@ -115,10 +115,14 @@ final class Sentient_Forms_Managed_Execute_Request
 
         if ( array_key_exists( 'action_code', $payload ) )
         {
+            $action_code_length = is_string( $payload['action_code'] )
+                ? self::utf8_length( $payload['action_code'] )
+                : null;
             if (
                 ! is_string( $payload['action_code'] )
                 || '' === trim( $payload['action_code'] )
-                || mb_strlen( $payload['action_code'], 'UTF-8' ) > 191
+                || null === $action_code_length
+                || $action_code_length > 191
             )
             {
                 return self::error(
@@ -406,6 +410,12 @@ final class Sentient_Forms_Managed_Execute_Request
     private static function is_finite_number( mixed $value ): bool
     {
         return is_int( $value ) || ( is_float( $value ) && is_finite( $value ) );
+    }
+
+    private static function utf8_length( string $value ): ?int
+    {
+        $matched = preg_match_all( '/./us', $value, $characters );
+        return false === $matched ? null : count( $characters[0] ?? [] );
     }
 
     /**

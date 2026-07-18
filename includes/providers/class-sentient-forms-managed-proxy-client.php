@@ -34,7 +34,7 @@ class Sentient_Forms_Managed_Proxy_Client
         catch ( InvalidArgumentException $exception )
         {
             $this->base_url            = self::DEFAULT_BASE_URL;
-            $this->configuration_error = $this->invalid_base_url_error( $exception );
+            $this->configuration_error = Sentient_Forms_Managed_Base_Url::to_wp_error( $exception );
         }
 
         $this->client = $client ?? new Sentient_Forms_Api_Client( $this->base_url, $timeout );
@@ -162,22 +162,6 @@ class Sentient_Forms_Managed_Proxy_Client
     public function get_base_url(): string
     {
         return $this->base_url;
-    }
-
-    /**
-     * @param array<string, mixed> $payload
-     *
-     * @return array<string, mixed>|WP_Error
-     */
-    private function invalid_base_url_error( InvalidArgumentException $exception ): WP_Error
-    {
-        return new WP_Error(
-            'sentient_managed_invalid_base_url',
-            __( 'The managed service URL is invalid. Configure a bare HTTP(S) origin with an optional exact /v2 path.', 'sentient-forms' ),
-            [
-                'reason' => $exception->getMessage(),
-            ]
-        );
     }
 
     /**

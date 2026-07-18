@@ -244,6 +244,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
             'action code must be a string' => [ [ 'action_code' => 123 ], 'sentient_managed_invalid_action_code' ],
             'action code cannot be null' => [ [ 'action_code' => null ], 'sentient_managed_invalid_action_code' ],
             'action code cannot contain only whitespace' => [ [ 'action_code' => " \t\n" ], 'sentient_managed_invalid_action_code' ],
+            'action code must be valid UTF-8' => [ [ 'action_code' => "\xFF" ], 'sentient_managed_invalid_action_code' ],
             'output contract must be an object' => [ [ 'output_contract' => [ 'list-value' ] ], 'sentient_managed_invalid_output_contract' ],
             'output contract cannot be null' => [ [ 'output_contract' => null ], 'sentient_managed_invalid_output_contract' ],
             'output contract must contain finite JSON values' => [ [ 'output_contract' => [ 'limit' => INF ] ], 'sentient_managed_invalid_output_contract' ],
