@@ -179,6 +179,7 @@ class Sentient_Forms_Installer
 
         for ( $attempt = 0; $attempt < self::ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS; $attempt++ )
         {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Retirement must read durable option bytes outside potentially stale option caches so the subsequent byte-exact compare-and-swap cannot overwrite concurrent settings changes.
             $row = $wpdb->get_row(
                 $wpdb->prepare(
                     'SELECT option_value FROM %i WHERE option_name = %s LIMIT 1',
@@ -210,6 +211,7 @@ class Sentient_Forms_Installer
             unset( $settings['action_results'] );
             $retired_settings = maybe_serialize( $settings );
 
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Retirement uses an atomic byte-exact compare-and-swap on the plugin-owned settings row, then reconciles WordPress option caches immediately after success.
             $updated = $wpdb->query(
                 $wpdb->prepare(
                     'UPDATE %i SET option_value = %s WHERE option_name = %s AND BINARY option_value = BINARY %s',
