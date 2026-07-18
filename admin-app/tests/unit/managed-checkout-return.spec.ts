@@ -1,6 +1,7 @@
 import {
 	hasManagedCheckoutSuccessMarker,
-	parseManagedCheckoutReturn
+	parseManagedCheckoutReturn,
+	removeManagedCheckoutReturnParams
 } from '$lib/api/managed-checkout-return';
 import { describe, expect, it } from 'vitest';
 
@@ -27,6 +28,29 @@ describe('managed checkout browser return parsing', () => {
 			checkoutSessionId: 'cs_test_123',
 			activationToken: 'signed-token'
 		});
+	});
+
+	it('parses a completed return from the WordPress hash route query', () => {
+		const search = '?page=sentient-forms';
+		const hash =
+			'#/licensing?sentient_managed_checkout=completed&checkout_intent_id=11111111-1111-4111-8111-111111111111&activation_token=signed-token';
+
+		expect(hasManagedCheckoutSuccessMarker(search, hash)).toBe(true);
+		expect(parseManagedCheckoutReturn(search, hash)).toEqual({
+			checkoutIntentId: '11111111-1111-4111-8111-111111111111',
+			checkoutSessionId: undefined,
+			activationToken: 'signed-token'
+		});
+	});
+
+	it('removes managed checkout secrets from both WordPress and hash-route queries', () => {
+		expect(
+			removeManagedCheckoutReturnParams(
+				'https://example.test/wp-admin/admin.php?page=sentient-forms&activation_token=stale#/licensing?sentient_managed_checkout=completed&checkout_intent_id=11111111-1111-4111-8111-111111111111&activation_token=signed-token&tab=billing'
+			)
+		).toBe(
+			'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing?tab=billing'
+		);
 	});
 
 	it.each([

@@ -30,6 +30,28 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         parent::tearDown();
     }
 
+    public function test_existing_bundled_action_inherits_catalog_policy_before_execution(): void
+    {
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $action  = [
+            'code'            => 'sentient_managed_spam_detection_v1',
+            'definition_json' => [
+                'template_code'  => 'spam_detection_v1',
+                'prompt_template' => 'Keep this saved prompt.',
+            ],
+        ];
+
+        $prepared = $service->prepare_bundled_action_for_execution( $action );
+        $definition = $prepared['definition_json'] ?? [];
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
+
+        $this->assertIsArray( $catalog );
+        $this->assertSame( $catalog['action_policy'], $definition['action_policy'] ?? null );
+        $this->assertSame( $catalog['allowed_facets'], $definition['allowed_facets'] ?? null );
+        $this->assertSame( $catalog['enabled_facets'], $definition['enabled_facets'] ?? null );
+        $this->assertSame( 'Keep this saved prompt.', $definition['prompt_template'] ?? null );
+    }
+
     public function test_realtime_bundled_auto_default_repairs_to_fast_managed_preset(): void
     {
         $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $this->wpdb );

@@ -460,8 +460,10 @@ test('managed checkout return with completed status resumes activation on the li
 		});
 	});
 
+	const returnPath =
+		process.env.SENTIENT_FORMS_ROUTER === 'hash' ? '/#/licensing' : '/licensing';
 	await page.goto(
-		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=11111111-1111-4111-8111-111111111111&stripe_session_id=cs_test_123&activation_token=activation-token'
+		`${returnPath}?sentient_managed_checkout=completed&checkout_intent_id=11111111-1111-4111-8111-111111111111&stripe_session_id=cs_test_123&activation_token=activation-token`
 	);
 
 	await expect.poll(() => completeRequests).toBe(1);

@@ -3,6 +3,7 @@
 	import {
 		hasManagedCheckoutSuccessMarker,
 		parseManagedCheckoutReturn,
+		removeManagedCheckoutReturnParams,
 		type ManagedCheckoutReference
 	} from '$lib/api/managed-checkout-return';
 	import type {
@@ -564,13 +565,7 @@
 			return '/wp-admin/';
 		}
 
-		const url = new URL(window.location.href);
-		url.searchParams.delete('sentient_managed_checkout');
-		url.searchParams.delete('checkout_intent_id');
-		url.searchParams.delete('checkout_session_id');
-		url.searchParams.delete('stripe_session_id');
-		url.searchParams.delete('activation_token');
-		return url.toString();
+		return removeManagedCheckoutReturnParams(window.location.href);
 	}
 
 	function hasManagedCheckoutSuccessReturn(): boolean {
@@ -578,7 +573,7 @@
 			return false;
 		}
 
-		return hasManagedCheckoutSuccessMarker(window.location.search);
+		return hasManagedCheckoutSuccessMarker(window.location.search, window.location.hash);
 	}
 
 	function readManagedCheckoutReference(): ManagedCheckoutReference | null {
@@ -586,7 +581,7 @@
 			return null;
 		}
 
-		return parseManagedCheckoutReturn(window.location.search);
+		return parseManagedCheckoutReturn(window.location.search, window.location.hash);
 	}
 
 	function clearManagedCheckoutReturnParams(): void {
@@ -594,13 +589,11 @@
 			return;
 		}
 
-		const url = new URL(window.location.href);
-		url.searchParams.delete('sentient_managed_checkout');
-		url.searchParams.delete('checkout_intent_id');
-		url.searchParams.delete('checkout_session_id');
-		url.searchParams.delete('stripe_session_id');
-		url.searchParams.delete('activation_token');
-		window.history.replaceState({}, '', url.toString());
+		window.history.replaceState(
+			{},
+			'',
+			removeManagedCheckoutReturnParams(window.location.href)
+		);
 	}
 
 	async function completeManagedCheckoutFromReturn(): Promise<void> {

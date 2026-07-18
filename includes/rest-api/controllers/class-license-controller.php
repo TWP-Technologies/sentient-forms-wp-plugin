@@ -378,13 +378,14 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         $license_key = $request->get_param( 'license_key' );
         $site_url    = $request->get_param( 'site_url' );
         $site_url    = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
+        $local_site_identifier = $plugin->get_local_site_identifier();
 
         $client   = $this->get_managed_service_client();
         $response = $client->activate_site(
             [
                 'license_key'           => $license_key,
                 'site_url'              => $site_url,
-                'local_site_identifier' => $plugin->get_local_site_identifier(),
+                'local_site_identifier' => $local_site_identifier,
             ]
         );
 
@@ -407,7 +408,13 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             return $payload;
         }
 
-        $payload = $this->validate_managed_activation_response( $payload, false, true );
+        $payload = $this->validate_managed_activation_response(
+            $payload,
+            $site_url,
+            $local_site_identifier,
+            false,
+            true
+        );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
@@ -501,13 +508,14 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
         $site_url = $request->get_param( 'site_url' );
         $site_url = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
+        $local_site_identifier = $plugin->get_local_site_identifier();
 
         $client   = $this->get_managed_service_client();
         $response = $client->activate_site(
             [
                 'license_key'           => $license_key,
                 'site_url'              => $site_url,
-                'local_site_identifier' => $plugin->get_local_site_identifier(),
+                'local_site_identifier' => $local_site_identifier,
             ]
         );
 
@@ -530,7 +538,13 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             return $payload;
         }
 
-        $payload = $this->validate_managed_activation_response( $payload, false, true );
+        $payload = $this->validate_managed_activation_response(
+            $payload,
+            $site_url,
+            $local_site_identifier,
+            false,
+            true
+        );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
@@ -621,7 +635,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             return $payload;
         }
 
-        $payload = $this->validate_managed_checkout_start_response( $payload );
+        $payload = $this->validate_managed_checkout_start_response( $payload, $plan_code );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
@@ -636,11 +650,13 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
     public function complete_managed_checkout( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        $site_url = home_url();
+        $local_site_identifier = Sentient_Forms_Plugin::instance()->get_local_site_identifier();
         $client = $this->get_managed_service_client();
         $response = $client->complete_managed_checkout(
             [
-                'site_url'              => home_url(),
-                'local_site_identifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+                'site_url'              => $site_url,
+                'local_site_identifier' => $local_site_identifier,
                 'checkout_intent_id'    => (string) $request->get_param( 'checkout_intent_id' ),
                 'checkout_session_id'   => (string) $request->get_param( 'checkout_session_id' ),
                 'activation_token'      => (string) $request->get_param( 'activation_token' ),
@@ -684,7 +700,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
                 );
             }
 
-            $payload = $this->validate_managed_activation_response( $payload, true );
+            $payload = $this->validate_managed_activation_response(
+                $payload,
+                $site_url,
+                $local_site_identifier,
+                true
+            );
             if ( is_wp_error( $payload ) )
             {
                 return $payload;
@@ -709,7 +730,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         }
         else
         {
-            $payload = $this->validate_managed_checkout_pending_response( $payload );
+            $payload = $this->validate_managed_checkout_pending_response(
+                $payload,
+                $site_url,
+                $local_site_identifier
+            );
             if ( is_wp_error( $payload ) )
             {
                 return $payload;
@@ -1061,17 +1086,17 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         return $response['data'];
     }
 
-    private function validate_managed_checkout_start_response( array $payload ): array | WP_Error
+    private function validate_managed_checkout_start_response( array $payload, string $expected_plan_code ): array | WP_Error
     {
-        $checkout_intent_id = isset( $payload['checkout_intent_id'] ) && is_scalar( $payload['checkout_intent_id'] )
-            ? trim( (string) $payload['checkout_intent_id'] )
+        $checkout_intent_id = isset( $payload['checkout_intent_id'] ) && is_string( $payload['checkout_intent_id'] )
+            ? trim( $payload['checkout_intent_id'] )
             : '';
-        $checkout_session_id = isset( $payload['checkout_session_id'] ) && is_scalar( $payload['checkout_session_id'] )
-            ? trim( (string) $payload['checkout_session_id'] )
+        $checkout_session_id = isset( $payload['checkout_session_id'] ) && is_string( $payload['checkout_session_id'] )
+            ? trim( $payload['checkout_session_id'] )
             : '';
         $checkout_url = $this->normalize_managed_response_url( $payload['checkout_url'] ?? null, true );
-        $plan_code = isset( $payload['plan_code'] ) && is_scalar( $payload['plan_code'] )
-            ? sanitize_key( (string) $payload['plan_code'] )
+        $plan_code = isset( $payload['plan_code'] ) && is_string( $payload['plan_code'] )
+            ? trim( $payload['plan_code'] )
             : '';
 
         if (
@@ -1081,6 +1106,7 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             || '' === $checkout_session_id
             || null === $checkout_url
             || ! in_array( $plan_code, [ 'starter', 'pro', 'business' ], true )
+            || $expected_plan_code !== $plan_code
             || 'monthly' !== ( $payload['billing_interval'] ?? null )
             || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
         )
@@ -1103,7 +1129,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         ];
     }
 
-    private function validate_managed_checkout_pending_response( array $payload ): array | WP_Error
+    private function validate_managed_checkout_pending_response(
+        array $payload,
+        string $expected_site_url,
+        string $expected_local_site_identifier
+    ): array | WP_Error
     {
         foreach ( [ 'license_key', 'proxy_api_key', 'license_id', 'site_id', 'tier', 'expiry_date' ] as $ready_only_field )
         {
@@ -1116,14 +1146,16 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             }
         }
 
-        $status = isset( $payload['status'] ) && is_scalar( $payload['status'] )
-            ? trim( (string) $payload['status'] )
+        $status = isset( $payload['status'] ) && is_string( $payload['status'] )
+            ? trim( $payload['status'] )
             : '';
-        $pending_reason = isset( $payload['pending_reason'] ) && is_scalar( $payload['pending_reason'] )
-            ? trim( (string) $payload['pending_reason'] )
+        $pending_reason = isset( $payload['pending_reason'] ) && is_string( $payload['pending_reason'] )
+            ? trim( $payload['pending_reason'] )
             : '';
-        $site_url = $this->normalize_managed_response_url( $payload['site_url'] ?? null );
+        $site_url = $this->normalize_managed_site_url( $payload['site_url'] ?? null );
         $local_site_identifier = $this->normalize_managed_local_site_identifier( $payload['local_site_identifier'] ?? null );
+        $expected_site_url = $this->normalize_managed_site_url( $expected_site_url );
+        $expected_local_site_identifier = $this->normalize_managed_local_site_identifier( $expected_local_site_identifier );
 
         if (
             'sentient-managed' !== ( $payload['service'] ?? null )
@@ -1131,6 +1163,10 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             || '' === $pending_reason
             || null === $site_url
             || null === $local_site_identifier
+            || null === $expected_site_url
+            || null === $expected_local_site_identifier
+            || $expected_site_url !== $site_url
+            || $expected_local_site_identifier !== $local_site_identifier
             || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
         )
         {
@@ -1153,15 +1189,17 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
     private function validate_managed_activation_response(
         array $payload,
+        string $expected_site_url,
+        string $expected_local_site_identifier,
         bool $requires_license_key,
         bool $requires_canonical_status = false
     ): array | WP_Error
     {
-        $license_id = isset( $payload['license_id'] ) && is_scalar( $payload['license_id'] )
-            ? trim( (string) $payload['license_id'] )
+        $license_id = isset( $payload['license_id'] ) && is_string( $payload['license_id'] )
+            ? trim( $payload['license_id'] )
             : '';
-        $site_id = isset( $payload['site_id'] ) && is_scalar( $payload['site_id'] )
-            ? trim( (string) $payload['site_id'] )
+        $site_id = isset( $payload['site_id'] ) && is_string( $payload['site_id'] )
+            ? trim( $payload['site_id'] )
             : '';
         if ( ! wp_is_uuid( $license_id ) || ! wp_is_uuid( $site_id ) )
         {
@@ -1192,26 +1230,41 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             }
         }
 
-        $status = isset( $payload['status'] ) && is_scalar( $payload['status'] )
-            ? trim( (string) $payload['status'] )
+        $status = isset( $payload['status'] ) && is_string( $payload['status'] )
+            ? trim( $payload['status'] )
             : '';
-        $proxy_api_key = isset( $payload['proxy_api_key'] ) && is_scalar( $payload['proxy_api_key'] )
-            ? trim( (string) $payload['proxy_api_key'] )
+        $proxy_api_key = isset( $payload['proxy_api_key'] ) && is_string( $payload['proxy_api_key'] )
+            ? trim( $payload['proxy_api_key'] )
             : '';
-        $site_url = $this->normalize_managed_response_url( $payload['site_url'] ?? null );
+        $site_url = $this->normalize_managed_site_url( $payload['site_url'] ?? null );
         $local_site_identifier = $this->normalize_managed_local_site_identifier( $payload['local_site_identifier'] ?? null );
+        $expected_site_url = $this->normalize_managed_site_url( $expected_site_url );
+        $expected_local_site_identifier = $this->normalize_managed_local_site_identifier( $expected_local_site_identifier );
         $tier = $this->normalize_managed_tier( $payload['tier'] ?? null );
-        $license_key = isset( $payload['license_key'] ) && is_scalar( $payload['license_key'] )
-            ? sanitize_text_field( (string) $payload['license_key'] )
+        $license_key = isset( $payload['license_key'] ) && is_string( $payload['license_key'] )
+            ? sanitize_text_field( $payload['license_key'] )
             : '';
+
+        if (
+            null === $site_url
+            || null === $local_site_identifier
+            || null === $expected_site_url
+            || null === $expected_local_site_identifier
+            || $expected_site_url !== $site_url
+            || $expected_local_site_identifier !== $local_site_identifier
+        )
+        {
+            return $this->managed_response_error(
+                'sentient_managed_activation_invalid_identity',
+                __( 'Managed activation returned a mismatched site identity. Sentient Forms did not store the credential.', 'sentient-forms' )
+            );
+        }
 
         if (
             'sentient-managed' !== ( $payload['service'] ?? null )
             || '' === $status
             || ( $requires_canonical_status && ! in_array( $status, [ 'active', 'trial', 'suspended', 'revoked', 'expired' ], true ) )
             || '' === $proxy_api_key
-            || null === $site_url
-            || null === $local_site_identifier
             || null === $tier
             || ! $this->has_managed_billing_boundary( $payload['billing_boundary'] ?? null )
             || ( $requires_license_key && ! $this->has_managed_license_key_format( $license_key ) )
@@ -1249,12 +1302,12 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
     private function normalize_managed_response_url( mixed $value, bool $https_only = false ): ?string
     {
-        if ( ! is_scalar( $value ) )
+        if ( ! is_string( $value ) )
         {
             return null;
         }
 
-        $url   = trim( (string) $value );
+        $url   = trim( $value );
         $parts = wp_parse_url( $url );
         if ( ! is_array( $parts ) || empty( $parts['host'] ) || empty( $parts['scheme'] ) )
         {
@@ -1275,14 +1328,57 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
         return '' !== $normalized ? $normalized : null;
     }
 
-    private function normalize_managed_local_site_identifier( mixed $value ): ?string
+    private function normalize_managed_site_url( mixed $value ): ?string
     {
-        if ( ! is_scalar( $value ) )
+        $validated = $this->normalize_managed_response_url( $value );
+        if ( null === $validated )
         {
             return null;
         }
 
-        $identifier = trim( (string) $value );
+        $parts = wp_parse_url( $validated );
+        if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) )
+        {
+            return null;
+        }
+
+        $scheme = strtolower( (string) $parts['scheme'] );
+        $host = strtolower( (string) $parts['host'] );
+        $port = isset( $parts['port'] ) && is_int( $parts['port'] ) ? $parts['port'] : null;
+        $is_default_port = ( 'http' === $scheme && 80 === $port ) || ( 'https' === $scheme && 443 === $port );
+        $authority_host = str_contains( $host, ':' ) && ! str_starts_with( $host, '[' ) ? '[' . $host . ']' : $host;
+
+        $normalized = $scheme . '://' . $authority_host;
+        if ( null !== $port && ! $is_default_port )
+        {
+            $normalized .= ':' . $port;
+        }
+
+        $path = isset( $parts['path'] ) && is_string( $parts['path'] ) ? $parts['path'] : '';
+        if ( '/' !== $path )
+        {
+            $normalized .= $path;
+        }
+        if ( isset( $parts['query'] ) && is_string( $parts['query'] ) )
+        {
+            $normalized .= '?' . $parts['query'];
+        }
+        if ( isset( $parts['fragment'] ) && is_string( $parts['fragment'] ) )
+        {
+            $normalized .= '#' . $parts['fragment'];
+        }
+
+        return $normalized;
+    }
+
+    private function normalize_managed_local_site_identifier( mixed $value ): ?string
+    {
+        if ( ! is_string( $value ) )
+        {
+            return null;
+        }
+
+        $identifier = trim( $value );
         if ( '' === $identifier || 128 < strlen( $identifier ) || 1 !== preg_match( '/^[A-Za-z0-9_-]+$/', $identifier ) )
         {
             return null;
@@ -1308,9 +1404,9 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
             return null;
         }
 
-        $code = isset( $value['code'] ) && is_scalar( $value['code'] ) ? trim( (string) $value['code'] ) : '';
-        $display_name = isset( $value['display_name'] ) && is_scalar( $value['display_name'] )
-            ? trim( (string) $value['display_name'] )
+        $code = isset( $value['code'] ) && is_string( $value['code'] ) ? trim( $value['code'] ) : '';
+        $display_name = isset( $value['display_name'] ) && is_string( $value['display_name'] )
+            ? trim( $value['display_name'] )
             : '';
         if (
             '' === $code
@@ -1355,11 +1451,11 @@ class Sentient_Forms_License_Controller extends Sentient_Forms_Abstract_Base_Con
 
     private function store_managed_activation_payload( string $license_key, array $payload ): true | WP_Error
     {
-        $license_id = isset( $payload['license_id'] ) && is_scalar( $payload['license_id'] )
-            ? trim( (string) $payload['license_id'] )
+        $license_id = isset( $payload['license_id'] ) && is_string( $payload['license_id'] )
+            ? trim( $payload['license_id'] )
             : '';
-        $site_id = isset( $payload['site_id'] ) && is_scalar( $payload['site_id'] )
-            ? trim( (string) $payload['site_id'] )
+        $site_id = isset( $payload['site_id'] ) && is_string( $payload['site_id'] )
+            ? trim( $payload['site_id'] )
             : '';
         if ( ! wp_is_uuid( $license_id ) || ! wp_is_uuid( $site_id ) )
         {

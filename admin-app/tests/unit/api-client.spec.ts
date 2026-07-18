@@ -2304,6 +2304,36 @@ describe('SentientFormsApiClient', () => {
 		).rejects.toThrow();
 	});
 
+	it('rejects billing checkout responses with a nullable subscription identifier', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						session_id: 'cs_legacy_123',
+						checkout_url: 'https://checkout.stripe.test/c/pay/cs_legacy_123',
+						customer_id: 'cus_123',
+						subscription_id: null
+					}
+				})
+		});
+
+		await expect(
+			client.createCheckoutSession(
+				{
+					checkout_attempt_id: '33333333-3333-4333-8333-333333333333',
+					plan_code: 'starter',
+					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing'
+				},
+				{ showNotifications: false }
+			)
+		).rejects.toThrow();
+	});
+
 	it('rejects billing portal responses with non-HTTPS redirect URLs', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
@@ -2382,17 +2412,18 @@ describe('SentientFormsApiClient', () => {
 			{ showNotifications: false }
 		);
 
-		expect(mockFetch).toHaveBeenCalledWith(
-			`${baseUrl}license/managed-checkout/complete`,
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					checkout_intent_id: '55555555-5555-4555-8555-555555555555',
-					checkout_session_id: 'cs_test_123',
-					activation_token: 'token-123'
-				})
-			})
-		);
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+		const [requestUrl, requestInit] = mockFetch.mock.calls[0] ?? [];
+		expect(requestUrl).toBe(`${baseUrl}license/managed-checkout/complete`);
+		expect(requestInit).toEqual(expect.objectContaining({ method: 'POST' }));
+		if (typeof requestInit?.body !== 'string') {
+			throw new Error('Expected managed checkout request body to be serialized JSON.');
+		}
+		expect(JSON.parse(requestInit.body)).toEqual({
+			activation_token: 'token-123',
+			checkout_intent_id: '55555555-5555-4555-8555-555555555555',
+			checkout_session_id: 'cs_test_123'
+		});
 		expect(result).toMatchObject({
 			activation_ready: true,
 			proxy_api_key: 'proxy-issued',

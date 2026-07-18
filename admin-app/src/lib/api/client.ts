@@ -19,11 +19,13 @@ import {
 } from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
 import {
+	managedCheckoutCompleteRequestSchema,
 	managedCheckoutCompleteResponseSchema,
 	managedCheckoutStartResponseSchema,
 	type ManagedCheckoutCompleteResponse,
 	type ManagedCheckoutStartResponse
 } from '$lib/api/managed-checkout-contract';
+import { billingCheckoutSessionResponseSchema } from '$lib/api/billing-checkout-contract';
 import type {
 	ActionDefinition,
 	ActionDefaultsBatchResponse,
@@ -202,14 +204,6 @@ const httpsUrlSchema = z.string().refine((value) => {
 		return false;
 	}
 }, 'Expected an HTTPS URL');
-const billingCheckoutSessionResponseSchema = z
-	.object({
-		session_id: z.string(),
-		checkout_url: httpsUrlSchema,
-		customer_id: z.string(),
-		subscription_id: z.string().nullable().optional()
-	})
-	.passthrough();
 const billingPortalSessionResponseSchema = z
 	.object({
 		session_id: z.string(),
@@ -1034,7 +1028,7 @@ export class SentientFormsApiClient {
 		payload: BillingCheckoutSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingCheckoutSessionResponse> {
-		const response = await this.request<RestEnvelope<BillingCheckoutSessionResponse>>(
+		const response = await this.request<RestEnvelope<unknown>>(
 			'license/billing/checkout-session',
 			{
 				method: 'POST',
@@ -1042,9 +1036,7 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return billingCheckoutSessionResponseSchema.parse(
-			this.unwrap(response)
-		) as BillingCheckoutSessionResponse;
+		return billingCheckoutSessionResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async startManagedCheckout(
@@ -1067,7 +1059,7 @@ export class SentientFormsApiClient {
 			'license/managed-checkout/complete',
 			{
 				method: 'POST',
-				body: payload,
+				body: managedCheckoutCompleteRequestSchema.parse(payload),
 				...options
 			}
 		);

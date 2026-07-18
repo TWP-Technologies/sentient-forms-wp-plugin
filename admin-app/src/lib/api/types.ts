@@ -46,12 +46,7 @@ export interface BillingCheckoutSessionRequest {
 	quantity?: 1;
 }
 
-export interface BillingCheckoutSessionResponse {
-	session_id: string;
-	checkout_url: string;
-	customer_id: string;
-	subscription_id?: string | null;
-}
+export type { BillingCheckoutSessionResponse } from '$lib/api/billing-checkout-contract';
 
 export interface TopUpCheckoutSessionRequest {
 	checkout_attempt_id: string;
@@ -79,11 +74,7 @@ export interface ManagedCheckoutStartRequest {
 	accepted_managed_service_terms: boolean;
 }
 
-export interface ManagedCheckoutCompleteRequest {
-	checkout_intent_id?: string;
-	checkout_session_id?: string;
-	activation_token: string;
-}
+export type { ManagedCheckoutCompleteRequest } from '$lib/api/managed-checkout-contract';
 
 export interface BillingPortalSessionResponse {
 	session_id: string;

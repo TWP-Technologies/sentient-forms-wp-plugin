@@ -760,6 +760,18 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $prepared                  = $definition;
         $prepared['template_code'] = $template_code;
 
+        foreach ( [ 'action_policy', 'allowed_facets' ] as $policy_field )
+        {
+            if ( is_array( $template[ $policy_field ] ?? null ) )
+            {
+                $prepared[ $policy_field ] = $template[ $policy_field ];
+            }
+        }
+        if ( ! array_key_exists( 'enabled_facets', $prepared ) && is_array( $template['enabled_facets'] ?? null ) )
+        {
+            $prepared['enabled_facets'] = $template['enabled_facets'];
+        }
+
         if ( ! $this->is_imported_bundled_action( $action, $definition ) )
         {
             return $prepared;
@@ -778,18 +790,6 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             {
                 $prepared['prompt_template'] = $template_prompt;
             }
-        }
-
-        foreach ( [ 'action_policy', 'allowed_facets' ] as $policy_field )
-        {
-            if ( is_array( $template[ $policy_field ] ?? null ) )
-            {
-                $prepared[ $policy_field ] = $template[ $policy_field ];
-            }
-        }
-        if ( ! array_key_exists( 'enabled_facets', $prepared ) && is_array( $template['enabled_facets'] ?? null ) )
-        {
-            $prepared['enabled_facets'] = $template['enabled_facets'];
         }
 
         $prepared['template_code'] = $template_code;

@@ -427,7 +427,15 @@ class Sentient_Forms_Managed_Service_Client
 
         if ( isset( $payload['allow_promotion_codes'] ) )
         {
-            $normalized['allow_promotion_codes'] = (bool) $payload['allow_promotion_codes'];
+            if ( ! is_bool( $payload['allow_promotion_codes'] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_billing_invalid_payload',
+                    __( 'Managed billing checkout payload requires allow_promotion_codes to be a boolean.', 'sentient-forms' )
+                );
+            }
+
+            $normalized['allow_promotion_codes'] = $payload['allow_promotion_codes'];
         }
 
         return $normalized;

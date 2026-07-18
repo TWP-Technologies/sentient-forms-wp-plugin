@@ -24,14 +24,40 @@ export type ManagedCheckoutReference = Pick<
 	activationToken: string;
 };
 
-export function hasManagedCheckoutSuccessMarker(search: string): boolean {
-	const params = new URLSearchParams(search);
+const managedCheckoutReturnParamNames = [
+	'sentient_managed_checkout',
+	'checkout_intent_id',
+	'checkout_session_id',
+	'stripe_session_id',
+	'activation_token'
+] as const;
+
+function removeManagedCheckoutParams(params: URLSearchParams): void {
+	for (const name of managedCheckoutReturnParamNames) {
+		params.delete(name);
+	}
+}
+
+function managedCheckoutReturnParams(search: string, hash = ''): URLSearchParams {
+	const hashQueryIndex = hash.indexOf('?');
+	if (hashQueryIndex >= 0) {
+		const hashParams = new URLSearchParams(hash.slice(hashQueryIndex + 1));
+		if (hashParams.has('sentient_managed_checkout')) {
+			return hashParams;
+		}
+	}
+
+	return new URLSearchParams(search);
+}
+
+export function hasManagedCheckoutSuccessMarker(search: string, hash = ''): boolean {
+	const params = managedCheckoutReturnParams(search, hash);
 	return managedCheckoutSuccessMarkerSchema.safeParse(params.get('sentient_managed_checkout'))
 		.success;
 }
 
-export function parseManagedCheckoutReturn(search: string): ManagedCheckoutReference | null {
-	const params = new URLSearchParams(search);
+export function parseManagedCheckoutReturn(search: string, hash = ''): ManagedCheckoutReference | null {
+	const params = managedCheckoutReturnParams(search, hash);
 	const parsed = managedCheckoutReturnSchema.safeParse({
 		checkoutResult: params.get('sentient_managed_checkout'),
 		checkoutIntentId: params.get('checkout_intent_id')?.trim() || undefined,
@@ -51,4 +77,20 @@ export function parseManagedCheckoutReturn(search: string): ManagedCheckoutRefer
 		checkoutSessionId: parsed.data.checkoutSessionId,
 		activationToken: parsed.data.activationToken
 	};
+}
+
+export function removeManagedCheckoutReturnParams(href: string): string {
+	const url = new URL(href);
+	removeManagedCheckoutParams(url.searchParams);
+
+	const hashQueryIndex = url.hash.indexOf('?');
+	if (hashQueryIndex >= 0) {
+		const hashPath = url.hash.slice(0, hashQueryIndex);
+		const hashParams = new URLSearchParams(url.hash.slice(hashQueryIndex + 1));
+		removeManagedCheckoutParams(hashParams);
+		const remainingQuery = hashParams.toString();
+		url.hash = remainingQuery ? `${hashPath}?${remainingQuery}` : hashPath;
+	}
+
+	return url.toString();
 }

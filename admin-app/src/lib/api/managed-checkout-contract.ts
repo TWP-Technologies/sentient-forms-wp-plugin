@@ -15,6 +15,19 @@ const managedTierSchema = z.object({
 	monthly_credit_quota: z.number().int()
 });
 
+export const managedCheckoutCompleteRequestSchema = z.union([
+	z.strictObject({
+		activation_token: z.string().min(1),
+		checkout_intent_id: z.uuid(),
+		checkout_session_id: z.string().min(1).optional()
+	}),
+	z.strictObject({
+		activation_token: z.string().min(1),
+		checkout_intent_id: z.never().optional(),
+		checkout_session_id: z.string().min(1)
+	})
+]);
+
 export const managedCheckoutStartResponseSchema = z.object({
 	service: z.literal('sentient-managed'),
 	status: z.literal('open'),
@@ -70,3 +83,4 @@ export const managedCheckoutCompleteResponseSchema = z.discriminatedUnion('activ
 
 export type ManagedCheckoutStartResponse = z.infer<typeof managedCheckoutStartResponseSchema>;
 export type ManagedCheckoutCompleteResponse = z.infer<typeof managedCheckoutCompleteResponseSchema>;
+export type ManagedCheckoutCompleteRequest = z.infer<typeof managedCheckoutCompleteRequestSchema>;

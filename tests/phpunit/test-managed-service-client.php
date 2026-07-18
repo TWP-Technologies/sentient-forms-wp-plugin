@@ -262,8 +262,8 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
                 'success_url'           => 'https://example.test/success',
                 'cancel_url'            => 'https://example.test/cancel',
                 'plan_code'             => 'starter',
-                'quantity'              => '1',
-                'allow_promotion_codes' => '1',
+                'quantity'              => 1,
+                'allow_promotion_codes' => true,
             ]
         );
 
@@ -279,6 +279,34 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertSame( 'starter', $payload['plan_code'] );
         $this->assertSame( 1, $payload['quantity'] );
         $this->assertTrue( $payload['allow_promotion_codes'] );
+    }
+
+    public function test_checkout_rejects_non_boolean_promotion_code_flag_before_http(): void
+    {
+        $calls = 0;
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                ++$calls;
+
+                return self::success_response( [] );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->create_checkout_session(
+            'proxy-secret',
+            [
+                'checkout_attempt_id'   => '22222222-2222-4222-8222-222222222222',
+                'success_url'           => 'https://example.test/success',
+                'cancel_url'            => 'https://example.test/cancel',
+                'plan_code'             => 'starter',
+                'allow_promotion_codes' => 'false',
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_billing_invalid_payload', $result->get_error_code() );
+        $this->assertSame( 0, $calls );
     }
 
     public function test_checkout_rejects_client_owned_price_id_before_http(): void
