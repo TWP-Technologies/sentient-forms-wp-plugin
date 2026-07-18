@@ -906,10 +906,12 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_maybe_upgrade_continues_privacy_scrubbing_when_result_retirement_conflicts(): void
     {
-        $plugin   = Sentient_Forms_Plugin::instance();
-        $original = $plugin->get_options();
-        $filter   = null;
-        $request_id = 'managed-retirement-conflict-' . wp_generate_uuid4();
+        $plugin              = Sentient_Forms_Plugin::instance();
+        $original            = $plugin->get_options();
+        $original_db_version = get_option( 'sentient_forms_db_version', false );
+        $pending_db_version  = '2026.07.10.elementor_pro_forms_identifier';
+        $filter              = null;
+        $request_id          = 'managed-retirement-conflict-' . wp_generate_uuid4();
 
         try
         {
@@ -922,6 +924,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
                 false
             );
             Sentient_Forms_Plugin::invalidate_options_cache();
+            update_option( 'sentient_forms_db_version', $pending_db_version );
 
             $now = current_time( 'mysql' );
             $this->assertNotFalse(
@@ -972,6 +975,15 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
             $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
             $this->assertArrayHasKey( 'action_results', get_option( 'sentient_forms_settings', [] ) );
+            $this->assertSame( $pending_db_version, get_option( 'sentient_forms_db_version' ) );
+
+            remove_filter( 'query', $filter, PHP_INT_MAX );
+            $filter = null;
+
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+            $this->assertArrayNotHasKey( 'action_results', get_option( 'sentient_forms_settings', [] ) );
         }
         finally
         {
@@ -980,6 +992,14 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
                 remove_filter( 'query', $filter, PHP_INT_MAX );
             }
             $plugin->update_options( $original );
+            if ( false === $original_db_version )
+            {
+                delete_option( 'sentient_forms_db_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_db_version', $original_db_version );
+            }
         }
     }
 
