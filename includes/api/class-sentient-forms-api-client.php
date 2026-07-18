@@ -51,6 +51,31 @@ class Sentient_Forms_Api_Client
     }
 
     /**
+     * Perform a POST request while preserving the complete successful CPS envelope.
+     *
+     * Endpoint owners use this when envelope-level contract rules must be validated before
+     * trusting or unwrapping the data payload.
+     *
+     * @param string $path    Relative CPS path.
+     * @param array  $payload JSON serialisable payload.
+     * @param array  $options Optional bearer token / headers.
+     *
+     * @return array|WP_Error Decoded CPS success envelope or WP_Error.
+     */
+    public function post_envelope( string $path, array $payload, array $options = [] ): WP_Error | array
+    {
+        $args = [
+            'method'      => 'POST',
+            'timeout'     => $this->timeout,
+            'redirection' => 3,
+            'headers'     => $this->build_headers( $options ),
+            'body'        => wp_json_encode( $payload ),
+        ];
+
+        return $this->request( $path, $args, true );
+    }
+
+    /**
      * Perform a PUT request.
      *
      * @param string $path    Relative CPS path.
@@ -152,15 +177,22 @@ class Sentient_Forms_Api_Client
         return $headers;
     }
 
-    private function request( string $path, array $args ): WP_Error | array
+    private function request(
+        string $path,
+        array $args,
+        bool $preserve_success_envelope = false
+    ): WP_Error | array
     {
         $url = $this->base_url . '/' . ltrim( $path, '/' );
         $response = Sentient_Forms_Url_Policy::remote_request( $url, $args, 'service' );
 
-        return $this->parse_response( $response );
+        return $this->parse_response( $response, $preserve_success_envelope );
     }
 
-    private function parse_response( WP_Error | array $response ): WP_Error | array
+    private function parse_response(
+        WP_Error | array $response,
+        bool $preserve_success_envelope = false
+    ): WP_Error | array
     {
         if ( is_wp_error( $response ) )
         {
@@ -188,10 +220,17 @@ class Sentient_Forms_Api_Client
             );
         }
 
+        $decoded_object = $preserve_success_envelope ? json_decode( $body ) : null;
+
         if ( $status_code >= 200 && $status_code < 300 )
         {
             if ( isset( $decoded['success'] ) && $decoded['success'] === true )
             {
+                if ( $preserve_success_envelope )
+                {
+                    return $decoded;
+                }
+
                 $data = $decoded['data'] ?? $decoded;
 
                 if ( ! is_array( $data ) )
@@ -209,28 +248,44 @@ class Sentient_Forms_Api_Client
                 return $data;
             }
 
+            $error_data = [
+                'status'  => $status_code,
+                'payload' => $decoded,
+            ];
+            if ( $preserve_success_envelope )
+            {
+                $error_data['payload_object'] = $decoded_object;
+            }
+
             return new WP_Error(
                 'cps_unexpected_response',
                 __( 'Unexpected CPS response format.', 'sentient-forms' ),
-                [
-                    'status'  => $status_code,
-                    'payload' => $decoded,
-                ]
+                $error_data
             );
         }
 
         $error = isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? $decoded['error'] : [];
 
-        $error_code = $error['code'] ?? 'cps_request_failed';
-        $message    = $error['message'] ?? __( 'CPS request failed.', 'sentient-forms' );
+        $error_code = isset( $error['code'] ) && is_string( $error['code'] ) && '' !== $error['code']
+            ? $error['code']
+            : 'cps_request_failed';
+        $message    = isset( $error['message'] ) && is_string( $error['message'] ) && '' !== $error['message']
+            ? $error['message']
+            : __( 'CPS request failed.', 'sentient-forms' );
+
+        $error_data = [
+            'status'  => $status_code,
+            'payload' => $decoded,
+        ];
+        if ( $preserve_success_envelope )
+        {
+            $error_data['payload_object'] = $decoded_object;
+        }
 
         return new WP_Error(
             $error_code,
             $message,
-            [
-                'status'  => $status_code,
-                'payload' => $decoded,
-            ]
+            $error_data
         );
     }
 }
