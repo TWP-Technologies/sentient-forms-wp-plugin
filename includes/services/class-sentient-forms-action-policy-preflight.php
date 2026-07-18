@@ -12,6 +12,9 @@ if ( ! defined( 'ABSPATH' ) )
 
 final class Sentient_Forms_Action_Policy_Preflight
 {
+    /**
+     * @param Sentient_Forms_Action_Source_Compatibility_Manifest_Interface|null $compatibility_manifest Executable Form Source compatibility authority.
+     */
     public function __construct(
         private ?Sentient_Forms_Action_Source_Compatibility_Manifest_Interface $compatibility_manifest = null
     )
@@ -82,7 +85,7 @@ final class Sentient_Forms_Action_Policy_Preflight
         }
 
         $metering_class = sanitize_key( (string) ( $effective_policy['metering_class'] ?? '' ) );
-        if ( 'secondary_preflight' === $metering_class && true !== ( $context['secondary_preflight_complete'] ?? null ) )
+        if ( 'secondary_preflight' === $metering_class )
         {
             return $this->error(
                 'sentient_forms_action_policy_secondary_preflight_required',
@@ -109,37 +112,6 @@ final class Sentient_Forms_Action_Policy_Preflight
      */
     private function available_capabilities( string $action_code, array $context ): array | WP_Error
     {
-        if ( array_key_exists( 'form_source_capabilities', $context ) )
-        {
-            if ( ! is_array( $context['form_source_capabilities'] ) )
-            {
-                return $this->error(
-                    'sentient_forms_action_policy_preflight_invalid',
-                    __( 'The Form Source capability attestation is invalid.', 'sentient-forms' ),
-                    [ 'field' => 'form_source_capabilities' ],
-                    500
-                );
-            }
-
-            $capabilities = [];
-            foreach ( $context['form_source_capabilities'] as $capability )
-            {
-                if ( ! is_string( $capability ) || '' === sanitize_key( $capability ) )
-                {
-                    return $this->error(
-                        'sentient_forms_action_policy_preflight_invalid',
-                        __( 'The Form Source capability attestation is invalid.', 'sentient-forms' ),
-                        [ 'field' => 'form_source_capabilities' ],
-                        500
-                    );
-                }
-
-                $capabilities[] = sanitize_key( $capability );
-            }
-
-            return array_values( array_unique( $capabilities ) );
-        }
-
         $form_source = sanitize_key( (string) ( $context['form_source'] ?? '' ) );
         if ( '' === $form_source || '' === sanitize_key( $action_code ) )
         {

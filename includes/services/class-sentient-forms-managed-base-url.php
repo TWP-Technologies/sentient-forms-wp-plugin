@@ -12,6 +12,11 @@ if ( ! defined( 'ABSPATH' ) )
 
 final class Sentient_Forms_Managed_Base_Url
 {
+    /**
+     * Normalize a managed-service origin to the canonical CPS v2 base URL.
+     *
+     * @throws InvalidArgumentException When the URL is not a safe bare origin or exact `/v2` base.
+     */
     public static function normalize( string $url ): string
     {
         $url   = trim( $url );

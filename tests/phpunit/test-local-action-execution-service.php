@@ -1727,7 +1727,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'required_form_source_capabilities' => [],
                     'required_managed_capabilities'     => [ 'privacy_zdr' ],
                     'lifecycle_restrictions'            => [ 'after_submission' ],
-                    'metering_class'                    => 'secondary_preflight',
+                    'metering_class'                    => 'standard',
                 ],
             ]
         );
@@ -1770,7 +1770,6 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             [
                 'hook'                 => 'gform_after_submission',
                 'execution_request_id' => 'managed-definition-capabilities',
-                'secondary_preflight_complete' => true,
                 'settings'             => [
                     'model_selection' => [
                         'primary'       => 'sf_default',
@@ -2047,7 +2046,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 0, $managed_proxy->execute_calls );
     }
 
-    public function test_policy_rejects_missing_form_source_capability_before_provider_transport(): void
+    public function test_policy_rejects_forged_form_source_capability_before_provider_transport(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
             true,
@@ -2065,7 +2064,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             [ 'id' => 99, '1' => 'Ada Lovelace' ],
             [
                 'hook'                     => 'gform_after_submission',
-                'form_source_capabilities' => [ 'accepted_submission' ],
+                'form_source_capabilities' => [ 'realtime_qna_storage' ],
             ]
         );
 
@@ -2076,7 +2075,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 0, $managed_proxy->execute_calls );
     }
 
-    public function test_secondary_preflight_policy_requires_explicit_runtime_attestation(): void
+    public function test_secondary_preflight_policy_rejects_caller_supplied_runtime_attestation(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
             true,
@@ -2090,7 +2089,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             $fixture['mapping_id'],
             [ 'id' => 7, 'title' => 'Contact Form' ],
             [ 'id' => 99, '1' => 'Ada Lovelace' ],
-            [ 'hook' => 'gform_after_submission' ]
+            [
+                'hook'                         => 'gform_after_submission',
+                'secondary_preflight_complete' => true,
+            ]
         );
 
         $this->assertWPError( $result );
