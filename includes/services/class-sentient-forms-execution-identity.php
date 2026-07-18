@@ -19,9 +19,61 @@ final class Sentient_Forms_Execution_Identity
      */
     public static function generate( string $action_code, array $form, array $entry, array $context = [] ): string
     {
-        $submission_token = self::derive_submission_token( $form, $entry );
+        $submission_token = self::submission_token( $form, $entry, $context );
 
         return self::resolve_execution_request_id( $action_code, $form, $entry, $context, $submission_token );
+    }
+
+    /**
+     * Resolve a provider-neutral token for one native submission.
+     *
+     * Form Source adapters may supply a source-specific correlation value through
+     * the normalized native_submission_token context key. This service never
+     * reads provider globals directly.
+     *
+     * @param array<string, mixed> $form    Normalized form data.
+     * @param array<string, mixed> $entry   Normalized entry data.
+     * @param array<string, mixed> $context Execution context.
+     */
+    public static function submission_token( array $form, array $entry, array $context = [] ): string
+    {
+        if ( isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) )
+        {
+            $submission_uuid = strtolower( sanitize_text_field( (string) $entry['submission_uuid'] ) );
+            if ( wp_is_uuid( $submission_uuid ) )
+            {
+                return 'submission:' . $submission_uuid;
+            }
+        }
+
+        if ( isset( $entry['id'] ) && $entry['id'] )
+        {
+            return 'entry:' . (string) $entry['id'];
+        }
+
+        if ( isset( $context['native_submission_token'] ) && is_scalar( $context['native_submission_token'] ) )
+        {
+            $native_submission_token = sanitize_text_field( (string) $context['native_submission_token'] );
+            if ( 1 === preg_match( '/\A[A-Za-z0-9]{1,128}\z/', $native_submission_token ) )
+            {
+                return 'submission:' . $native_submission_token;
+            }
+        }
+
+        $form_id      = isset( $form['id'] ) ? (string) $form['id'] : '';
+        $current_user = get_current_user_id();
+        $payload_hash = hash(
+            'sha256',
+            wp_json_encode(
+                [
+                    'form_id' => $form_id,
+                    'entry'   => $entry,
+                    'user'    => $current_user,
+                ]
+            )
+        );
+
+        return 'hash:' . $payload_hash;
     }
 
     private static function resolve_execution_request_id(
@@ -81,49 +133,6 @@ final class Sentient_Forms_Execution_Identity
         $environment = strtolower( trim( (string) $environment ) );
 
         return in_array( $environment, [ 'local', 'development' ], true );
-    }
-
-    private static function derive_submission_token( array $form, array $entry ): string
-    {
-        if ( isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] ) )
-        {
-            $submission_uuid = strtolower( sanitize_text_field( (string) $entry['submission_uuid'] ) );
-            if ( wp_is_uuid( $submission_uuid ) )
-            {
-                return 'submission:' . $submission_uuid;
-            }
-        }
-
-        if ( isset( $entry['id'] ) && $entry['id'] )
-        {
-            return 'entry:' . (string) $entry['id'];
-        }
-
-        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns submission verification; this boundary still validates the token shape.
-        if ( isset( $_POST['gform_unique_id'] ) )
-        {
-            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns submission verification; this boundary still validates the token shape.
-            $unique_id = wp_unslash( $_POST['gform_unique_id'] );
-            if ( is_string( $unique_id ) && 1 === preg_match( '/\A[A-Za-z0-9]+\z/', $unique_id ) )
-            {
-                return 'submission:' . $unique_id;
-            }
-        }
-
-        $form_id      = isset( $form['id'] ) ? (string) $form['id'] : '';
-        $current_user = get_current_user_id();
-        $payload_hash = hash(
-            'sha256',
-            wp_json_encode(
-                [
-                    'form_id' => $form_id,
-                    'entry'   => $entry,
-                    'user'    => $current_user,
-                ]
-            )
-        );
-
-        return 'hash:' . $payload_hash;
     }
 
     private static function build_execution_request_id(

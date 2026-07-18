@@ -76,6 +76,24 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( 'filtered-request-id-42', $request_id );
 	}
 
+	public function test_generate_execution_request_id_delegates_to_provider_neutral_identity(): void {
+		$form    = [ 'id' => 48, 'title' => 'Legacy execution identity' ];
+		$entry   = [ 'message' => 'same pre-save submission' ];
+		$context = [ 'hook' => 'validation', 'action_id' => 'map_validation' ];
+
+		$_POST['gform_unique_id'] = 'attacker-controlled!';
+		$canonical = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+		$legacy    = Sentient_Forms_Action_Executor::generate_execution_request_id(
+			'content_validation_v1',
+			$form,
+			$entry,
+			$context
+		);
+		unset( $_POST['gform_unique_id'] );
+
+		$this->assertSame( $canonical, $legacy );
+	}
+
 	public function test_execute_prioritizes_explicit_submission_uuid_token(): void {
 		$this->plugin->set_license_data(
 			[

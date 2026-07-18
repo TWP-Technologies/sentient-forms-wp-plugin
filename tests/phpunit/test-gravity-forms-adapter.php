@@ -513,6 +513,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        unset( $_POST['gform_unique_id'] );
         Sentient_Forms_Test_Gf_Meta_Store::reset();
         if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'entries' ) )
         {
@@ -543,6 +544,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
+        unset( $_POST['gform_unique_id'] );
         $this->set_action_executor( null );
         $this->set_async_handler( null );
         Sentient_Forms_Plugin::instance()->clear_license_data();
@@ -667,6 +669,25 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
 
         $this->assertSame( 2, $accepted_args );
+    }
+
+    public function test_validation_normalization_exposes_only_valid_native_submission_tokens(): void
+    {
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => 42, 'fields' => [] ],
+        ];
+
+        $_POST['gform_unique_id'] = '64f75e1a2b3c4';
+        $valid = $this->adapter->normalize_validation( $validation );
+
+        $_POST['gform_unique_id'] = 'attacker-controlled!';
+        $invalid = $this->adapter->normalize_validation( $validation );
+
+        $this->assertIsArray( $valid );
+        $this->assertSame( '64f75e1a2b3c4', $valid['native_submission_token'] ?? null );
+        $this->assertIsArray( $invalid );
+        $this->assertArrayNotHasKey( 'native_submission_token', $invalid );
     }
 
     public function test_gravity_forms_validation_hook_uses_shared_runner_with_actual_context_and_native_content_errors(): void

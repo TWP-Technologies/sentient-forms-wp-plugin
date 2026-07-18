@@ -118,24 +118,28 @@ final class Tests_Execution_Identity extends WP_UnitTestCase
         );
     }
 
-    public function test_gravity_forms_unique_id_accepts_only_alphanumeric_tokens(): void
+    public function test_native_submission_token_comes_from_source_neutral_context(): void
     {
         $form    = [ 'id' => 48, 'title' => 'Gravity validation identity' ];
         $entry   = [ 'message' => 'same pre-save submission' ];
         $context = [ 'hook' => 'validation', 'action_id' => 'map_validation' ];
 
         $_POST['gform_unique_id'] = '64f75e1a2b3c4';
-        $valid_first = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
-
-        $_POST['gform_unique_id'] = '64f75e1a2b3c5';
-        $valid_second = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
-
-        $_POST['gform_unique_id'] = 'attacker-controlled!';
-        $invalid_punctuation = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
+        $raw_post_token = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
 
         unset( $_POST['gform_unique_id'] );
         $missing_token = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $context );
 
+        $first_context = array_merge( $context, [ 'native_submission_token' => '64f75e1a2b3c4' ] );
+        $valid_first   = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $first_context );
+
+        $second_context = array_merge( $context, [ 'native_submission_token' => '64f75e1a2b3c5' ] );
+        $valid_second   = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $second_context );
+
+        $invalid_context     = array_merge( $context, [ 'native_submission_token' => 'attacker-controlled!' ] );
+        $invalid_punctuation = Sentient_Forms_Execution_Identity::generate( 'content_validation_v1', $form, $entry, $invalid_context );
+
+        $this->assertSame( $missing_token, $raw_post_token, 'The shared identity service must not read a Form Source superglobal.' );
         $this->assertNotSame( $valid_first, $valid_second );
         $this->assertSame( $missing_token, $invalid_punctuation );
     }
