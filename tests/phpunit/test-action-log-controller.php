@@ -1077,6 +1077,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'req-managed-cf7-summary', $entry['execution_request_id'] );
     }
 
+    public function test_get_log_entries_prefers_durable_managed_action_identity_after_mapping_is_deleted(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-durable-action-identity',
+                'mapping_id'           => 987654,
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'summary' => 'Durable managed result.',
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'req-managed-durable-action-identity', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+    }
+
     public function test_get_log_entries_surfaces_managed_zdr_fallback_and_failure_messages(): void
     {
         global $wpdb;

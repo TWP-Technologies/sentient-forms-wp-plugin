@@ -92,6 +92,14 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $existing = $this->get_by_request_id( $execution_request_id );
         if ( $existing )
         {
+            foreach ( [ 'mapping_key', 'action_code', 'action_label' ] as $identity_field )
+            {
+                if ( null === $row[ $identity_field ] || '' === $row[ $identity_field ] )
+                {
+                    $row[ $identity_field ] = $existing[ $identity_field ] ?? null;
+                }
+            }
+
             unset( $row['created_at'] );
             $updated = $this->wpdb->update(
                 $this->table_name(),

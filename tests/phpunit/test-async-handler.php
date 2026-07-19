@@ -2504,11 +2504,21 @@ class AsyncHandlerTest extends WP_UnitTestCase
 				'form_id'              => 321,
 				'entry_id'             => 654,
 				'action_id'            => 'local_first_' . $mapping_id,
+				'mapping_id'           => $stable_mapping_id,
+				'local_mapping_id'     => $stable_mapping_id,
+				'central_action_id'    => 'local_async_summary',
+				'action_name_label'    => 'Local Async Summary',
 				'execution_request_id' => 'local-async-request-success',
 				'submission_uuid'      => $submission_uuid,
 			]
 		);
 		$this->assertTrue( $scheduled );
+
+		$queued_event = $events->get_by_request_id( 'local-async-request-success' );
+		$this->assertSame( 'queued', $queued_event['status'] ?? null );
+		$this->assertSame( $stable_mapping_id, $queued_event['mapping_key'] ?? null );
+		$this->assertSame( 'local_async_summary', $queued_event['action_code'] ?? null );
+		$this->assertSame( 'Local Async Summary', $queued_event['action_label'] ?? null );
 
         $this->evaluation_filter = static function ( array $jobs, array $job ): array {
                 $jobs[] = [
@@ -2552,6 +2562,9 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertIsArray( $event );
 		$this->assertSame( 'succeeded', $event['status'] ?? null );
 		$this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+		$this->assertSame( $stable_mapping_id, $event['mapping_key'] ?? null );
+		$this->assertSame( 'local_async_summary', $event['action_code'] ?? null );
+		$this->assertSame( 'Local Async Summary', $event['action_label'] ?? null );
 		$this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
 		$this->assertSame( 'Async local execution completed.', $event['result_json']['structured']['summary'] ?? null );
 

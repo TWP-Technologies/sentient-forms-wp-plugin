@@ -1683,6 +1683,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $result_json = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
         $code        = $this->first_sanitized_key(
             [
+                $event['action_code'] ?? null,
                 $result_json['central_action_id'] ?? null,
                 $result_json['action_id'] ?? null,
                 $result_json['action_code'] ?? null,
@@ -1692,6 +1693,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         );
         $label       = $this->first_sanitized_text(
             [
+                $event['action_label'] ?? null,
                 $result_json['action_name_label'] ?? null,
                 $result_json['action_label'] ?? null,
                 $result_json['display_name'] ?? null,

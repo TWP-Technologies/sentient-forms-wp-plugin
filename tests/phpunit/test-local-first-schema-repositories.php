@@ -615,6 +615,48 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertNull( $events->get_by_request_id( 'req-ledger-legacy' )['submission_uuid'] ?? null );
     }
 
+    public function test_execution_events_repository_preserves_action_identity_across_lifecycle_updates(): void
+    {
+        $events = new Sentient_Forms_Execution_Events_Repository( $this->wpdb );
+
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'req-preserve-action-identity',
+                'mapping_id'           => 112,
+                'mapping_key'          => 'entry-summary-mapping',
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'status'               => 'queued',
+            ]
+        );
+
+        $updated_event_id = $events->record(
+            [
+                'execution_request_id' => 'req-preserve-action-identity',
+                'mapping_id'           => 112,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'result_json'          => [ 'summary' => 'Qualified browser result.' ],
+            ]
+        );
+
+        $event = $events->get_by_request_id( 'req-preserve-action-identity' );
+
+        $this->assertSame( $event_id, $updated_event_id );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertSame( 'entry-summary-mapping', $event['mapping_key'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $event['action_code'] ?? null );
+        $this->assertSame( 'Entry Summary', $event['action_label'] ?? null );
+    }
+
     public function test_template_custom_action_mapping_and_execution_event_repositories_round_trip(): void
     {
         $templates = new Sentient_Forms_Action_Templates_Repository( $this->wpdb );
