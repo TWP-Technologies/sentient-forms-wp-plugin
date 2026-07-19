@@ -47,6 +47,29 @@ add_filter(
             return $preempt;
         }
 
+        $decoded_body = is_string( $args['body'] ?? null )
+            ? json_decode( (string) $args['body'], true )
+            : ( $args['body'] ?? null );
+        $safe_body    = [];
+        if ( is_array( $decoded_body ) )
+        {
+            foreach ( [ 'model', 'messages', 'response_format', 'tools', 'tool_choice', 'plugins' ] as $key )
+            {
+                if ( array_key_exists( $key, $decoded_body ) )
+                {
+                    $safe_body[ $key ] = $decoded_body[ $key ];
+                }
+            }
+        }
+
+        $requests = get_option( 'sentient_forms_local_openrouter_smoke_requests', [] );
+        if ( ! is_array( $requests ) )
+        {
+            $requests = [];
+        }
+        $requests[] = [ 'body' => $safe_body ];
+        update_option( 'sentient_forms_local_openrouter_smoke_requests', array_slice( $requests, -100 ), false );
+
         $mode = (string) get_option( 'sentient_forms_local_openrouter_smoke_mode', 'success' );
 
         if ( 'missing_auth_wp_error' === $mode )

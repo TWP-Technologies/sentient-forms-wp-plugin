@@ -2,143 +2,87 @@
 
 ## Quick Start
 
-```bash
-# From wp-plugin/admin-app
-SENTIENT_RUN_WP_E2E=1 bunx playwright test --grep "@realtime-suggestions|@wp-smoke" --reporter=list
+Run from `wp-plugin/admin-app`:
 
-# Historical CPS-first tests require an additional explicit flag.
-SENTIENT_RUN_WP_E2E=1 SENTIENT_RUN_LEGACY_CPS_E2E=1 bunx playwright test --grep "@spam-e2e|@summary-e2e" --reporter=list
+```bash
+SENTIENT_RUN_WP_E2E=1 bunx playwright test --grep "@realtime-suggestions|@wp-smoke" --reporter=list
+SENTIENT_RUN_WP_E2E=1 SENTIENT_RUN_LOCAL_OPENROUTER_BROWSER_SMOKE=1 bunx playwright test tests/e2e/wp-local-openrouter-browser-submission.spec.ts --reporter=list
 ```
 
 ## Prerequisites
 
-1. **Docker stack running** — use the root `docker-compose.yml`:
-   ```bash
-   docker compose --profile dev up -d
-   ```
-   Current local-first WP tests require `wordpress` and `db`. Legacy CPS-first specs additionally require `cps-api` and `cps-db`; legacy telemetry specs require `telemetry-db`.
+1. Start the root WordPress and MariaDB services with the repository Compose configuration.
+2. Install the Chromium runtime with `bunx playwright install chromium`.
+3. Set `SENTIENT_RUN_WP_E2E=1` for tests that use the real WordPress runtime.
+4. Set only the narrow additional flag named by a smoke test. The Direct OpenRouter browser assignment uses `SENTIENT_RUN_LOCAL_OPENROUTER_BROWSER_SMOKE=1`.
 
-2. **Playwright browsers installed**:
-   ```bash
-   bunx playwright install chromium
-   ```
+Managed-service billing and lifecycle assertions belong to CPS repository tests and cross-repository certification. Admin-browser tests do not seed CPS `/v1` tables, mutate customer credit balances, or treat billing-database queries as user-path evidence.
 
-3. **Environment variable**: `SENTIENT_RUN_WP_E2E=1` gates WordPress tests. Without it, WP tests are skipped.
+## Preview Host and Port
 
-4. **Legacy CPS variable**: `SENTIENT_RUN_LEGACY_CPS_E2E=1` is also required for historical CPS-first tests that seed the CPS database, configure proxy keys, assert credit-ledger debits, or post to `/v1` telemetry. These tests are retained for internal comparison only and are not WordPress.org package evidence.
+- `bun run e2e` resolves a local preview origin automatically.
+- If `PREVIEW_PORT` is unset, the runner tries `4175` and then selects an available fallback.
+- Set `PREVIEW_PORT=<port>` to pin the port or `PREVIEW_HOST=<host>` to override the default `127.0.0.1` host.
 
-## Preview Host/Port for Non-WP E2E
+## Current WordPress Runtime Assignments
 
-- `bun run e2e` now resolves a local preview origin automatically.
-- If `PREVIEW_PORT` is unset, the runner first tries `4175`; if unavailable, it auto-selects a free fallback port.
-- Set `PREVIEW_PORT=<port>` to pin a specific port. The runner fails fast when the port is invalid or cannot bind.
-- Optional override: `PREVIEW_HOST=<host>` (default: `127.0.0.1`).
+Current WordPress tests exercise plugin-local Action authority, canonical local mapping rows, Direct OpenRouter or managed `/v2` boundaries, source adapters, and visible WordPress outcomes. They must not revive remote Action definitions, `/v1` execution, CPS Action templates, or the retired option-backed async-job evidence model.
 
-## Current Local-First WP E2E
+Reusable Form Source fixtures must be marker-owned and reset through the fixture helpers. Runtime assertions should combine the real browser path with the public evidence surface appropriate to the behavior:
 
-Current local-first tests should run with only `SENTIENT_RUN_WP_E2E=1` plus any narrow smoke flag they document. They should use plugin-local providers, mocked OpenRouter/Sentient paths, or local REST/admin flows. They MUST NOT call legacy CPS seeding, credit-balance, or direct `/v1` telemetry helpers.
+- Gravity Forms entry status, notes, and meta for native effects.
+- Submission Ledger and Action Log rows for cross-source or source-neutral outcomes.
+- Local execution events for durable execution identity and terminal state.
+- Redacted provider-boundary capture for request minimization.
 
-When a local-first test creates reusable Gravity Forms fixtures, it should also clear its local mapping rows first and assert the resulting Gravity Forms truth directly. In practice that means checking the form’s local mapping table state and any entry notes or notification outcomes, not just execution events, meta blobs, or recorded outbound URLs.
+The Direct OpenRouter development mock records only allowlisted outbound body fields needed for assertions. It never records request headers, credentials, provider responses, or arbitrary customer content outside the marker-owned test submission.
 
-Examples:
+## Key Helpers (`utils/wp-e2e-helpers.ts`)
 
-```bash
-SENTIENT_RUN_WP_E2E=1 bunx playwright test tests/e2e/wp-realtime-suggestions.spec.ts --reporter=list
-SENTIENT_RUN_WP_E2E=1 SENTIENT_RUN_LOCAL_OPENROUTER_BROWSER_SMOKE=1 bunx playwright test tests/e2e/wp-local-openrouter-browser-submission.spec.ts --reporter=list
-```
+| Function                                                        | Purpose                                                                      |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `ensureGravityForm(title)`                                      | Create or locate a deterministic Gravity Forms fixture.                      |
+| `getLocalFormMappings(formId)`                                  | Read canonical custom-table mappings for one form.                           |
+| `resetLocalFormFixture({ formId, actionCodes?, actionNames? })` | Remove marker-owned mappings, actions, execution evidence, and form entries. |
+| `runActionScheduler()`                                          | Process WordPress Action Scheduler work for current local async paths.       |
+| `getEntrySpamStatus(id)`                                        | Read Gravity Forms entry status and spam-classification meta.                |
+| `waitForGravityEntryNotes(entryId, page, predicate, options?)`  | Poll for a visible Gravity Forms note outcome.                               |
+| `waitForEntryMeta(id, key, page, predicate)`                    | Poll for one native entry-meta outcome.                                      |
+| `submitGravityForm(page, formId, name, email)`                  | Submit a real Gravity Forms preview through Playwright.                      |
 
-## Legacy CPS Seeding
+`configureGravityActionMapping()` remains only for current compatibility-oriented adapter tests that intentionally exercise normalized option-backed settings. New executable Action tests should create canonical local Action and form-mapping rows through the admin UI or local REST API.
 
-Legacy CPS-first tests require a CPS license, an activated site, and WordPress configured with the proxy API key. The `ensureCpsSeeded()` helper handles all of this **automatically and idempotently**, but it is guarded behind `SENTIENT_RUN_LEGACY_CPS_E2E=1`:
+## Execution and Accounting Ownership
 
-1. **License upsert** — inserts `LIC-LOCAL-DEV` into CPS PostgreSQL (uses the `free` tier from CPS migrations)
-2. **Site activation** — calls `POST http://localhost:10081/v1/license/activate` to generate a proxy API key
-3. **WordPress config** — stores `proxy_api_key`, `cps_base_url` (`http://cps-api:8080/v1`), and `enable_logging` in the `sentient_forms_settings` option
+- The plugin owns Action definitions, provider routing, local execution identity, WordPress-native effects, Submission Ledger linkage, and local execution events.
+- CPS owns managed `/v2` infrastructure, reservations, settlement, debt, reconciliation, and provider-side operational accounting.
+- Browser tests prove the customer-visible path. CPS deterministic tests prove exact debit, reservation, and debt invariants.
+- An accepted validation submission can remain accepted after a provider failure because visitor validation intentionally fails open; failure evidence must still be visible and no unauthorized Direct fallback may occur.
 
-> [!WARNING]
-> `ensureCpsSeeded()`, credit-balance helpers, and direct telemetry helpers are legacy CPS-first helpers. They intentionally throw unless both `SENTIENT_RUN_WP_E2E=1` and `SENTIENT_RUN_LEGACY_CPS_E2E=1` are set.
+## Telemetry Boundary
 
-## Test Execution Model
+Current telemetry is consented, allowlisted, local diagnostic logging. The plugin has no remote telemetry queue or flush path, and CPS `/v2` has no telemetry-ingestion route. Browser coverage therefore verifies consent UI behavior; PHP coverage verifies schema and minimization; CPS operational tests verify removed ingress remains unavailable and non-reflective.
 
-When `SENTIENT_RUN_WP_E2E=1`, `playwright.config.ts` forces **`workers: 1`** (serial execution). This is required because WP E2E tests share WordPress and Gravity Forms state. Legacy CPS-first tests also share one CPS license and credit balance, which makes them unsafe to parallelize.
+## Determinism
 
-## Key Helper Functions (`utils/wp-e2e-helpers.ts`)
+When `SENTIENT_RUN_WP_E2E=1`, Playwright uses one worker because WordPress and Form Source fixtures share a database. Tests must reset only their marker-owned records and must not assume an empty developer database.
 
-| Function | Purpose |
-|---|---|
-| `ensureCpsSeeded()` | Legacy only: seed CPS DB + activate license + configure WP (call first after setting `SENTIENT_RUN_LEGACY_CPS_E2E=1`) |
-| `ensureGravityForm(title)` | Create or find a GF form by title |
-| `configureGravityActionMapping(opts)` | Set per-form action mapping in WP options |
-| `getLocalFormMappings(formId)` | Read local custom-table mappings for a dedicated GF form |
-| `resetLocalFormFixture({ formId, actionCodes?, actionNames? })` | Clear local custom mappings/actions for deterministic reruns |
-| `ensureCreditBalanceAtLeast(n)` | Legacy only: apply a test credit adjustment if below threshold |
-| `runActionScheduler()` | Trigger WP Action Scheduler queue processing |
-| `getEntrySpamStatus(id)` | Read entry status + spam classification meta |
-| `waitForGravityEntryNotes(entryId, page, predicate, options?)` | Poll GF notes until the user-visible entry note state matches expectations |
-| `waitForEntryMeta(id, key, page, predicate)` | Poll until entry meta matches predicate |
-| `fetchCreditBalance(page, apiKey)` | Legacy only: GET credit balance from CPS API |
-| `submitGravityForm(page, formId, name, email)` | Fill and submit a GF form via Playwright |
-
-## Action Mapping Format
-
-`configureGravityActionMapping` stores settings as a flat object keyed by `local_mapping_id` at the top level of the GF form settings. Each action uses `trigger_hooks` (not `hooks`) to specify which GF hooks trigger it:
-
-```typescript
-configureGravityActionMapping({
-  formId: 1,
-  actionId: 'spam_analysis',
-  centralActionId: 'spam_detection_v1',
-  hooks: ['gform_after_submission'],  // stored as trigger_hooks internally
-  async: true,
-  markAsSpam: true,
-  executionPriority: 10
-});
-```
-
-## Meta Keys Reference
-
-The async finalization path writes these GF entry meta keys:
-
-| Meta Key | Type | Description |
-|---|---|---|
-| `sentient_forms_spam_classification` | `string` | `'spam'`, `'ham'`, `'reviewed'` |
-| `sentient_forms_last_response` | `JSON string` | Full CPS response payload |
-
-> [!WARNING]
-> The sync execution path uses `_sentient_forms_spam_analysis` (different key, different format). E2E tests exercise the **async** path.
-
-## Determinism & Overrides
-
-- `CPS_FORCE_VALIDATION_CLASSIFICATION=spam` (in `dev.env`) — force spam classification for validation-block tests
-- `setExecutionRequestIdOverride(id)` — pin a specific execution request ID for replay testing
-- `resetE2eState()` — legacy only: apply a test credit adjustment to 120 and clear execution_request_id override
+Use unique, non-`example.com` submission addresses. Gravity Forms rejects reserved `example.com` addresses in the local path; current tests use `example.test`.
 
 ## Network Topology
 
-| Service | Container Port | Host Port | Docker Hostname |
-|---|---|---|---|
-| WordPress | 80 | 8080 | `wordpress` |
-| CPS API | 8080 | 10081 | `cps-api` |
-| CPS PostgreSQL | 5432 | 5432 | `cps-db` |
-| MariaDB | 3306 | 3306 | `db` |
-| Telemetry DB | 5432 | 5543 | `telemetry-db` |
+| Service                                   | Container Port | Host Port | Docker Hostname |
+| ----------------------------------------- | -------------: | --------: | --------------- |
+| WordPress                                 |             80 |      8080 | `wordpress`     |
+| MariaDB                                   |           3306 |      3306 | `db`            |
+| CPS API (managed integration only)        |           8080 |     10081 | `cps-api`       |
+| CPS PostgreSQL (managed integration only) |           5432 |      5432 | `cps-db`        |
 
-WordPress connects to CPS via Docker internal URL `http://cps-api:8080/v1`. Tests connect to CPS via host URL `http://localhost:10081`.
-
-## Other Test Tags
-
-| Tag | File | Description |
-|---|---|---|
-| `@spam-e2e` | `wp-spam-e2e.spec.ts` | Core spam detection flow |
-| `@summary-e2e` | `wp-summary-e2e.spec.ts` | Spam meta storage + credit debit |
-| `@after-submission` | `wp-summary-e2e.spec.ts` | After-submission hook tests |
-| `@data-minimization-e2e` | `wp-data-minimization-e2e.spec.ts` | Verifies mapped-field payload minimization + input manifest propagation |
-| `@realtime-suggestions` | `wp-realtime-suggestions.spec.ts` | Realtime widget/runtime behavior (checkpoint, visible-only, hotlink, 429 non-blocking) |
-
-The `@spam-e2e`, `@summary-e2e`, `@after-submission`, `@data-minimization-e2e`, `@dedupe`, `@credits-insufficient`, `@validation-block`, `@telemetry-e2e`, and `@licensing-wp` CPS-era specs are legacy comparison coverage unless they are rewritten to local-first execution. Run them only with `SENTIENT_RUN_LEGACY_CPS_E2E=1`.
+WordPress managed requests use the configured CPS `/v2` base. No current plugin path should call CPS `/v1`.
 
 ## MU Plugins
 
-Dev CORS and dev-host overrides auto-load when mounted via docker-compose. Opt out with:
+Development CORS, URL-policy, and provider mocks auto-load through the repository Compose harness. Opt out of the admin development overrides with:
+
 - `SENTIENT_E2E_DISABLE_DEV_CORS=1`
 - `SENTIENT_E2E_DISABLE_ADMIN_DEV_HOST=1`

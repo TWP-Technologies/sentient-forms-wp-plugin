@@ -118,8 +118,8 @@ final class Tests_Execution_Identity extends WP_UnitTestCase
         );
     }
 
-    public function test_native_submission_token_comes_from_source_neutral_context(): void
-    {
+	public function test_native_submission_token_comes_from_source_neutral_context(): void
+	{
         $form    = [ 'id' => 48, 'title' => 'Gravity validation identity' ];
         $entry   = [ 'message' => 'same pre-save submission' ];
         $context = [ 'hook' => 'validation', 'action_id' => 'map_validation' ];
@@ -141,6 +141,45 @@ final class Tests_Execution_Identity extends WP_UnitTestCase
 
         $this->assertSame( $missing_token, $raw_post_token, 'The shared identity service must not read a Form Source superglobal.' );
         $this->assertNotSame( $valid_first, $valid_second );
-        $this->assertSame( $missing_token, $invalid_punctuation );
-    }
+		$this->assertSame( $missing_token, $invalid_punctuation );
+	}
+
+	public function test_existing_event_identity_wins_over_terminal_provider_result(): void
+	{
+		global $wpdb;
+
+		$request_id = 'execution-identity-admitted-route';
+		$events     = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+		$recorded   = $events->record(
+			[
+				'execution_request_id' => $request_id,
+				'provider'             => 'sentient_managed',
+				'model'                => 'google/gemini-3-flash-preview',
+				'status'               => 'queued',
+			]
+		);
+
+		$this->assertIsInt( $recorded );
+
+		try {
+			$identity = Sentient_Forms_Execution_Identity::resolve_provider_identity(
+				[],
+				[],
+				[
+					'provider' => 'openrouter',
+					'model'    => 'anthropic/claude-sonnet-4',
+				],
+				$request_id
+			);
+
+			$this->assertSame( 'sentient_managed', $identity['provider'] );
+			$this->assertSame( 'google/gemini-3-flash-preview', $identity['model'] );
+		} finally {
+			$wpdb->delete(
+				$wpdb->prefix . 'sentient_execution_events',
+				[ 'execution_request_id' => $request_id ],
+				[ '%s' ]
+			);
+		}
+	}
 }

@@ -25,6 +25,7 @@
 	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
+	import { DEFAULT_INPUT_MAPPING, validateInputMappingForSave } from '$lib/utils/input-mapping';
 	import {
 		createInitialMappingModalSectionExpansion,
 		toggleMappingModalSectionExpansion,
@@ -542,6 +543,7 @@
 	let mappingSectionExpansion = $state<MappingModalSectionExpansion>(
 		createInitialMappingModalSectionExpansion(false)
 	);
+	let inputMappingSaveError = $state<string | null>(null);
 	let editBaselineSignature = $state<string | null>(null);
 	type DraftTriggerSource = { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
 	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
@@ -1791,10 +1793,7 @@
 		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${webhookPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
-		const mapping = (draftSettings.input_mapping ?? {
-			mode: 'selected',
-			include_metadata: false
-		}) as InputMapping;
+		const mapping = (draftSettings.input_mapping ?? DEFAULT_INPUT_MAPPING) as InputMapping;
 		if (mapping.mode === 'all') {
 			return mapping.include_metadata ? 'All fields + metadata' : 'All fields';
 		}
@@ -3347,6 +3346,7 @@
 			conditions: cloneDraftValue(baseSettings.conditions ?? createDefaultConditionConfig())
 		};
 		draftSettings = nextDraftSettings;
+		inputMappingSaveError = null;
 		editingLinkageId = linkage.local_mapping_id;
 		resetMappingSectionExpansion(linkage);
 		showMappingConfigModal = openModal;
@@ -3360,6 +3360,7 @@
 		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		inputMappingSaveError = null;
 		if (cancelledMappingId && graphDraftByMappingId[cancelledMappingId]) {
 			const nextDraftMap = { ...graphDraftByMappingId };
 			delete nextDraftMap[cancelledMappingId];
@@ -3795,6 +3796,15 @@
 			);
 			return;
 		}
+
+		const inputMappingError = validateInputMappingForSave(draftSettings.input_mapping);
+		if (inputMappingError) {
+			mappingSectionExpansion = { ...mappingSectionExpansion, input_mapping: true };
+			inputMappingSaveError = inputMappingError;
+			notifications.error(inputMappingError);
+			return;
+		}
+		inputMappingSaveError = null;
 
 		// Ensure types are correct for spam settings
 		if (isSpamActionCode(linkage.central_action_id)) {
@@ -5765,14 +5775,22 @@
 							hidden={!mappingSectionExpansion.input_mapping}
 						>
 							{#if mappingSectionExpansion.input_mapping}
+								{#if inputMappingSaveError}
+									<Alert
+										variant="danger"
+										role="alert"
+										class="sf:mb-4"
+										data-testid="input-mapping-save-error"
+									>
+										{inputMappingSaveError}
+									</Alert>
+								{/if}
 								<FieldSelector
 									fields={formFields}
-									value={draftSettings.input_mapping ?? {
-										mode: 'selected',
-										include_metadata: false
-									}}
+									value={draftSettings.input_mapping ?? DEFAULT_INPUT_MAPPING}
 									onchange={(mapping) => {
 										draftSettings = { ...draftSettings, input_mapping: mapping };
+										inputMappingSaveError = null;
 									}}
 								/>
 							{/if}

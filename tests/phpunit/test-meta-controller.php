@@ -77,7 +77,7 @@ class MetaControllerTest extends WP_UnitTestCase
         $this->assertFalse( $data['supports_credits'] );
     }
 
-    public function test_capabilities_keep_legacy_cps_custom_actions_behind_proxy_key_when_enabled(): void
+    public function test_legacy_cps_custom_action_filter_cannot_disable_local_action_authority(): void
     {
         add_filter( 'sentient_forms_enable_legacy_cps_custom_actions', '__return_true' );
         Sentient_Forms_Plugin::instance()->clear_license_data();
@@ -89,7 +89,7 @@ class MetaControllerTest extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
 
-        $this->assertFalse( $data['supports_custom_actions'] );
+        $this->assertTrue( $data['supports_custom_actions'] );
     }
 
     public function test_capabilities_requires_authentication(): void

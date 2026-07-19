@@ -672,6 +672,63 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_presents_durable_upstream_spam_skips_as_blocked(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event();
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $recorded = $events->record(
+            [
+                'execution_request_id' => 'req-local-upstream-spam-skip',
+                'mapping_id'           => $mapping_id,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'local',
+                'model'                => 'not_applicable',
+                'status'               => 'skipped',
+                'result_json'          => [
+                    'result_summary'        => 'Skipped because an upstream Action classified the submission as spam.',
+                    'skip_reason'           => 'upstream_spam',
+                    'native_effect_outcomes' => [
+                        [
+                            'effect' => 'workflow_execution',
+                            'status' => 'skipped',
+                            'reason' => 'upstream_spam',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $recorded );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $entries  = [];
+        foreach ( $response->get_data()['entries'] as $entry )
+        {
+            $entries[ $entry['execution_request_id'] ] = $entry;
+        }
+
+        $skipped = $entries['req-local-upstream-spam-skip'];
+        $this->assertSame( 'blocked', $skipped['status'] );
+        $this->assertSame( 'not_applicable', $skipped['usage_cost']['route'] );
+        $this->assertSame( 'Not run', $skipped['usage_cost']['label'] );
+        $this->assertSame( 'not_applicable', $skipped['usage_cost']['kind'] );
+        $this->assertTrue( $skipped['usage_cost']['known'] );
+        $this->assertSame( 0, $skipped['credits_used'] );
+        $this->assertSame(
+            'Skipped because an upstream Action classified the submission as spam.',
+            $skipped['result_summary']
+        );
+        $this->assertSame( 'upstream_spam', $skipped['details']['stored_result']['skip_reason'] );
+        $this->assertSame(
+            'skipped',
+            $skipped['details']['stored_result']['native_effect_outcomes'][0]['status']
+        );
+    }
+
     public function test_get_log_entries_prefers_provider_native_event_identity_for_elementor_cps_events(): void
     {
         global $wpdb;

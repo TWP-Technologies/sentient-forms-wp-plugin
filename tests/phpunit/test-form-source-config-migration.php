@@ -38,7 +38,7 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
             update_option( 'sentient_forms_db_version', $this->original_db_version, false );
         }
 
-        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id IN (%s, %s, %s)', $wpdb->prefix . 'sentient_form_mappings', '212', '214', '302:formabc' ) );
+        $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id IN (%s, %s, %s, %s)', $wpdb->prefix . 'sentient_form_mappings', '212', '213', '214', '302:formabc' ) );
         $wpdb->delete( $wpdb->prefix . 'sentient_submission_ledger_settings', [ 'form_id' => '302:formabc' ], [ '%s' ] );
         $wpdb->delete( $wpdb->prefix . 'sentient_submission_ledger', [ 'submission_uuid' => '22222222-2222-4222-8222-222222222222' ], [ '%s' ] );
         $wpdb->query( $wpdb->prepare( 'DELETE FROM %i WHERE form_id = %s', $wpdb->prefix . 'sentient_submission_ledger', 'native-correlation-upgrade' ) );
@@ -223,12 +223,16 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade( true );
         $stored = get_option( $option_key, [] );
 
-        $this->assertSame( [ 'after_submission' ], $stored['map_summary']['trigger_hooks'] ?? null );
+        $this->assertSame( [], $stored );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '213' );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'after_submission', $rows[0]['hook'] ?? null );
         $this->assertSame(
             [ 'type' => 'hook_root' ],
-            $stored['map_summary']['settings']['trigger_sources']['after_submission'] ?? null
+            $rows[0]['settings_json']['trigger_sources']['after_submission'] ?? null
         );
-        $this->assertArrayNotHasKey( 'gform_after_submission', $stored['map_summary']['settings']['trigger_sources'] ?? [] );
+        $this->assertArrayNotHasKey( 'gform_after_submission', $rows[0]['settings_json']['trigger_sources'] ?? [] );
     }
 
     public function test_installer_normal_boot_does_not_repeat_active_config_migration(): void

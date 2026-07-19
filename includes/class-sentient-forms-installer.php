@@ -15,6 +15,11 @@ class Sentient_Forms_Installer
     private const OPTION_ACTION_RESULTS_RETIREMENT_VERSION = 'sentient_forms_action_results_retirement_version';
     private const ACTION_RESULTS_RETIREMENT_VERSION = '2026.07.18.v1';
     private const ACTION_RESULTS_RETIREMENT_MAX_ATTEMPTS = 5;
+    private const OPTION_LEGACY_ACTION_JOB_RETIREMENT_VERSION = 'sentient_forms_legacy_action_job_retirement_version';
+    private const LEGACY_ACTION_JOB_RETIREMENT_VERSION = '2026.07.18.v1';
+    private const LEGACY_ACTION_HOOK = 'sentient_forms_process_action';
+    private const LEGACY_ACTION_JOB_RETIRED_REASON = 'legacy_cps_action_job_retired';
+    private const LEGACY_ACTION_JOB_INDETERMINATE_REASON = 'legacy_cps_action_job_outcome_indeterminate';
     private const OPTION_NATIVE_CORRELATION_CURSOR = 'sentient_forms_native_correlation_cursor';
     private const OPTION_NATIVE_CORRELATION_BACKFILL_VERSION = 'sentient_forms_native_correlation_backfill_version';
     private const NATIVE_CORRELATION_BACKFILL_VERSION = 'v1';
@@ -125,6 +130,7 @@ class Sentient_Forms_Installer
         $submission_ledger_retention_backfill_complete = self::backfill_submission_ledger_retention();
 
         $action_results_retirement_complete = self::retire_option_backed_action_results();
+        $legacy_action_job_retirement_complete = self::retire_legacy_action_jobs();
 
         $native_correlation_backfill_complete = self::native_correlation_backfill_is_complete();
         if ( $native_correlation_backfill_complete && false !== get_option( self::OPTION_NATIVE_CORRELATION_CURSOR, false ) )
@@ -156,18 +162,350 @@ class Sentient_Forms_Installer
                 $form_source_config_migration_complete = 1 === (int) ( $migration_summary['migration_complete'] ?? 0 );
             }
         }
+        $action_authority_migration_complete = true;
+        if ( $should_run_form_source_config_migration )
+        {
+            if ( ! class_exists( 'Sentient_Forms_Legacy_Action_Authority_Migrator' ) )
+            {
+                $action_authority_migration_complete = false;
+            }
+            else
+            {
+                $authority_summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+                $action_authority_migration_complete = 1 === (int) ( $authority_summary['migration_complete'] ?? 0 );
+            }
+        }
         self::repair_local_first_action_integrity();
         Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
 
         if (
             $needs_db_version_update
             && $action_results_retirement_complete
+            && $legacy_action_job_retirement_complete
             && $submission_ledger_retention_backfill_complete
             && $form_source_config_migration_complete
+            && $action_authority_migration_complete
             && $native_correlation_schema_ready
         )
         {
             update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+        }
+    }
+
+    /**
+     * Resume legacy Action Scheduler retirement once its data store is ready.
+     */
+    public static function complete_legacy_action_job_retirement(): void
+    {
+        self::maybe_upgrade();
+    }
+
+    /**
+     * Retire queued jobs whose callback belonged to the removed CPS Action runtime.
+     *
+     * Pending work is canceled across every scheduler group. In-progress work
+     * holds the database version gate because an old worker may already have
+     * crossed the provider side-effect boundary. Once that worker terminalizes,
+     * an outcome lacking plugin-owned terminal evidence becomes indeterminate
+     * and permanently non-replayable.
+     */
+    private static function retire_legacy_action_jobs(): bool
+    {
+        $wp_cron_result = wp_unschedule_hook( self::LEGACY_ACTION_HOOK, true );
+        if ( is_wp_error( $wp_cron_result ) )
+        {
+            return false;
+        }
+
+        if ( self::LEGACY_ACTION_JOB_RETIREMENT_VERSION === get_option( self::OPTION_LEGACY_ACTION_JOB_RETIREMENT_VERSION, '' ) )
+        {
+            return true;
+        }
+
+        if (
+            ! class_exists( 'ActionScheduler' )
+            || ! class_exists( 'ActionScheduler_Store' )
+            || ! function_exists( 'as_get_scheduled_actions' )
+            || ! function_exists( 'as_unschedule_all_actions' )
+            || ! ActionScheduler::is_initialized()
+        )
+        {
+            if ( ! has_action( 'action_scheduler_init', [ self::class, 'complete_legacy_action_job_retirement' ] ) )
+            {
+                add_action( 'action_scheduler_init', [ self::class, 'complete_legacy_action_job_retirement' ] );
+            }
+
+            return false;
+        }
+
+        try
+        {
+            $claimed_pending_ids = self::legacy_claimed_pending_action_scheduler_ids();
+            $running_ids = self::legacy_action_scheduler_ids( ActionScheduler_Store::STATUS_RUNNING );
+            if (
+                null === $claimed_pending_ids
+                || null === $running_ids
+                || [] !== $claimed_pending_ids
+                || [] !== $running_ids
+            )
+            {
+                return false;
+            }
+
+            $pending_ids = self::legacy_action_scheduler_ids( ActionScheduler_Store::STATUS_PENDING );
+            if ( null === $pending_ids )
+            {
+                return false;
+            }
+
+            as_unschedule_all_actions( self::LEGACY_ACTION_HOOK );
+            if ( [] !== self::legacy_action_scheduler_ids( ActionScheduler_Store::STATUS_PENDING ) )
+            {
+                return false;
+            }
+
+            foreach ( $pending_ids as $action_id )
+            {
+                self::reconcile_legacy_action_job(
+                    $action_id,
+                    'failed',
+                    self::LEGACY_ACTION_JOB_RETIRED_REASON
+                );
+            }
+
+            $claimed_pending_ids = self::legacy_claimed_pending_action_scheduler_ids();
+            $running_ids = self::legacy_action_scheduler_ids( ActionScheduler_Store::STATUS_RUNNING );
+            if (
+                null === $claimed_pending_ids
+                || null === $running_ids
+                || [] !== $claimed_pending_ids
+                || [] !== $running_ids
+            )
+            {
+                return false;
+            }
+
+            foreach (
+                [
+                    ActionScheduler_Store::STATUS_COMPLETE,
+                    ActionScheduler_Store::STATUS_FAILED,
+                    ActionScheduler_Store::STATUS_CANCELED,
+                ] as $status
+            )
+            {
+                $terminal_ids = self::legacy_action_scheduler_ids( $status );
+                if ( null === $terminal_ids )
+                {
+                    return false;
+                }
+
+                foreach ( $terminal_ids as $action_id )
+                {
+                    self::reconcile_terminal_legacy_action_job( $action_id, $status );
+                }
+            }
+        }
+        catch ( Throwable $throwable )
+        {
+            return false;
+        }
+
+        $updated = update_option(
+            self::OPTION_LEGACY_ACTION_JOB_RETIREMENT_VERSION,
+            self::LEGACY_ACTION_JOB_RETIREMENT_VERSION,
+            false
+        );
+
+        return $updated
+            || self::LEGACY_ACTION_JOB_RETIREMENT_VERSION === get_option( self::OPTION_LEGACY_ACTION_JOB_RETIREMENT_VERSION, '' );
+    }
+
+    /**
+     * @return array<int, int>|null
+     */
+    private static function legacy_action_scheduler_ids( string $status ): ?array
+    {
+        $ids = as_get_scheduled_actions(
+            [
+                'hook'     => self::LEGACY_ACTION_HOOK,
+                'status'   => $status,
+                'per_page' => -1,
+                'orderby'  => 'none',
+            ],
+            'ids'
+        );
+
+        if ( ! is_array( $ids ) )
+        {
+            return null;
+        }
+
+        return array_values( array_filter( array_map( 'absint', $ids ) ) );
+    }
+
+    /**
+     * Claimed pending actions may already be owned by a runner even though
+     * their persisted status has not yet changed to in-progress.
+     *
+     * @return array<int, int>|null
+     */
+    private static function legacy_claimed_pending_action_scheduler_ids(): ?array
+    {
+        $ids = as_get_scheduled_actions(
+            [
+                'hook'     => self::LEGACY_ACTION_HOOK,
+                'status'   => ActionScheduler_Store::STATUS_PENDING,
+                'claimed'  => true,
+                'per_page' => -1,
+                'orderby'  => 'none',
+            ],
+            'ids'
+        );
+
+        if ( ! is_array( $ids ) )
+        {
+            return null;
+        }
+
+        return array_values( array_filter( array_map( 'absint', $ids ) ) );
+    }
+
+    private static function reconcile_terminal_legacy_action_job( int $action_id, string $scheduler_status ): void
+    {
+        $identity = self::legacy_action_job_identity( $action_id );
+        if ( null === $identity )
+        {
+            return;
+        }
+
+        $metadata_store = new Sentient_Forms_Async_Metadata_Store();
+        global $wpdb;
+        $request_store = new Sentient_Forms_Async_Request_Store( $wpdb );
+        $metadata = '' !== $identity['job_id'] ? $metadata_store->get( $identity['job_id'] ) : null;
+        $request  = '' !== $identity['execution_request_id'] ? $request_store->get( $identity['execution_request_id'] ) : null;
+        $plugin_outcome = self::legacy_plugin_owned_outcome( $metadata, $request );
+
+        if ( ActionScheduler_Store::STATUS_COMPLETE === $scheduler_status )
+        {
+            $target_status = $plugin_outcome ?? 'indeterminate';
+            $reason = 'indeterminate' === $target_status
+                ? self::LEGACY_ACTION_JOB_INDETERMINATE_REASON
+                : null;
+        }
+        else
+        {
+            $target_status = $plugin_outcome ?? 'failed';
+            $reason = null === $plugin_outcome ? self::LEGACY_ACTION_JOB_RETIRED_REASON : null;
+        }
+
+        self::reconcile_legacy_action_job( $action_id, $target_status, $reason );
+    }
+
+    /**
+     * @param array<string, mixed>|null $metadata
+     * @param array<string, mixed>|null $request
+     */
+    private static function legacy_plugin_owned_outcome( ?array $metadata, ?array $request ): ?string
+    {
+        foreach ( [ $metadata['status'] ?? null, $request['status'] ?? null ] as $status )
+        {
+            $status = sanitize_key( (string) $status );
+            if ( in_array( $status, [ 'success', 'succeeded' ], true ) )
+            {
+                return 'success';
+            }
+        }
+
+        foreach ( [ $metadata['status'] ?? null, $request['status'] ?? null ] as $status )
+        {
+            $status = sanitize_key( (string) $status );
+            if ( in_array( $status, [ 'failed', 'error', 'skipped' ], true ) )
+            {
+                return 'failed';
+            }
+            if ( 'indeterminate' === $status )
+            {
+                return 'indeterminate';
+            }
+        }
+
+        return null;
+    }
+
+    private static function reconcile_legacy_action_job( int $action_id, string $status, ?string $reason ): void
+    {
+        $identity = self::legacy_action_job_identity( $action_id );
+        if ( null === $identity )
+        {
+            return;
+        }
+
+        if ( '' !== $identity['job_id'] )
+        {
+            $metadata_store = new Sentient_Forms_Async_Metadata_Store();
+            $metadata = $metadata_store->get( $identity['job_id'] );
+            if ( is_array( $metadata ) && ( null !== $reason || $status !== sanitize_key( (string) ( $metadata['status'] ?? '' ) ) ) )
+            {
+                $extra = [
+                    'completed_at' => time(),
+                    'retired_at'   => time(),
+                ];
+                if ( null !== $reason )
+                {
+                    $extra['last_error'] = $reason;
+                }
+
+                $metadata_store->update_status( $identity['job_id'], $status, $extra );
+            }
+        }
+
+        if ( '' !== $identity['execution_request_id'] )
+        {
+            global $wpdb;
+            $request_store = new Sentient_Forms_Async_Request_Store( $wpdb );
+            $request = $request_store->get( $identity['execution_request_id'] );
+            if (
+                is_array( $request )
+                && ( null !== $reason || $status !== sanitize_key( (string) ( $request['status'] ?? '' ) ) )
+            )
+            {
+                $request_store->mark_status( $identity['execution_request_id'], $status, $reason );
+            }
+        }
+    }
+
+    /**
+     * @return array{job_id: string, execution_request_id: string}|null
+     */
+    private static function legacy_action_job_identity( int $action_id ): ?array
+    {
+        try
+        {
+            $action = ActionScheduler::store()->fetch_action( $action_id );
+            if ( ! $action || ! method_exists( $action, 'get_args' ) )
+            {
+                return null;
+            }
+
+            $args = $action->get_args();
+            if ( ! is_array( $args ) )
+            {
+                return null;
+            }
+
+            $payload = isset( $args[0] ) && is_array( $args[0] ) ? $args[0] : $args;
+            $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+
+            return [
+                'job_id' => sanitize_text_field( (string) ( $context['job_id'] ?? '' ) ),
+                'execution_request_id' => sanitize_text_field(
+                    (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+                ),
+            ];
+        }
+        catch ( Throwable $throwable )
+        {
+            return null;
         }
     }
 

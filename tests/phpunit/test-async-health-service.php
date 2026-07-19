@@ -30,7 +30,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         $payload = [
             'context' => [ 'action_id' => 'test_action', 'form_source' => 'gravity_forms' ],
         ];
-        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_action', $payload, time() );
+        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_local_mapping', $payload, time() );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
         $result  = $service->evaluate();
@@ -49,7 +49,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
 
         $job_id = wp_generate_uuid4();
         $payload = [ 'context' => [ 'action_id' => 'summary_v1', 'form_source' => 'gravity_forms' ] ];
-        $this->store->record_job( $job_id, 'sentient_forms_process_action', $payload, time() );
+        $this->store->record_job( $job_id, 'sentient_forms_process_local_mapping', $payload, time() );
         $this->store->update_status( $job_id, 'failed' );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
@@ -67,7 +67,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
             'context' => [ 'action_id' => 'summary_v1', 'form_source' => 'gravity_forms' ],
         ];
 
-        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_action', $payload, $run_at );
+        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_local_mapping', $payload, $run_at );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
         $result  = $service->evaluate();
@@ -98,7 +98,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         {
             $this->store->record_job(
                 wp_generate_uuid4(),
-                'sentient_forms_process_action',
+                'sentient_forms_process_local_mapping',
                 $payload,
                 $oldest_run_at + $index
             );

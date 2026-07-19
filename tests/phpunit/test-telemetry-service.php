@@ -21,6 +21,8 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
+        remove_all_filters( 'sentient_forms_debug_log_enabled' );
+        remove_all_actions( 'sentient_forms_debug_log' );
         wp_clear_scheduled_hook( 'sentient_forms_flush_telemetry' );
         $this->plugin->clear_license_data();
         delete_option( 'sentient_forms_site_id' );
@@ -46,7 +48,9 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
         $this->assertIsArray( $result );
         $this->assertTrue( $result['telemetry_opt_in'] );
         $this->assertNotEmpty( $result['updated_at'] );
-        $this->assertStringContainsString( 'saved locally', $result['last_error'] );
+        $this->assertNull( $result['last_error'] );
+        $this->assertNull( $result['synced_at'] );
+        $this->assertNull( $result['remote_updated_at'] );
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
     }
 
@@ -67,7 +71,7 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
         $this->assertSame( [], $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 ) );
     }
 
-    public function test_legacy_site_id_allows_remote_telemetry_ready_state(): void
+    public function test_remote_identity_does_not_reenable_retired_telemetry_queue(): void
     {
         $this->plugin->set_license_data(
             [
@@ -79,7 +83,7 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
         $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
 
-        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
 
         $service->queue_event(
             'async_job_success',
@@ -89,25 +93,29 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
             ]
         );
 
-        $batch = $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 );
-        $this->assertCount( 1, $batch );
-
-        $envelope = json_decode( (string) $batch[0]['telemetry_payload'], true );
-        $this->assertSame( 'legacy-site-123', $envelope['site_id'] ?? null );
+        $this->assertSame( [], $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 ) );
     }
 
-    public function test_metadata_payload_excludes_result_error_and_entry_identifiers(): void
+    public function test_local_diagnostic_metadata_excludes_result_error_and_entry_identifiers(): void
     {
-        $this->plugin->set_license_data(
-            [
-                'proxy_api_key' => 'proxy-key-123',
-                'site_id'       => 'site-123',
-            ]
-        );
         $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
+        $events  = [];
+        add_filter( 'sentient_forms_debug_log_enabled', '__return_true' );
+        add_action(
+            'sentient_forms_debug_log',
+            static function ( string $message, array $context ) use ( &$events ): void {
+                if ( str_contains( $message, '[sentient-forms][diagnostics] local diagnostic event' ) )
+                {
+                    $events[] = $context;
+                }
+            },
+            10,
+            2
+        );
 
-        $service->handle_job_success(
+        $service->queue_event(
+            'async_job_success',
             [
                 'action_id'     => 'spam_detection_v1',
                 'form_source'   => 'gravity_forms',
@@ -116,28 +124,31 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
                 'entry_id'      => '123',
                 'form_id'       => '4',
                 'request_id'    => 'req_123',
-            ],
-            [
                 'entry_id' => '123',
                 'result'   => 'contains model output',
             ]
         );
-        $service->handle_job_failure(
+        $service->queue_event(
+            'async_job_failure',
             [
                 'action_id'   => 'entry_summary_v1',
                 'form_source' => 'gravity_forms',
-            ],
-            new WP_Error( 'provider_timeout', 'The provider returned raw content in an error.' )
+                'error_code'  => 'provider_timeout',
+                'error_msg'   => 'The provider returned raw content in an error.',
+                'entry_id'    => '456',
+                'form_id'     => '7',
+                'request_id'  => 'req_456',
+            ]
         );
 
-        $batch = $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 );
-        $this->assertCount( 2, $batch );
+        $this->assertCount( 2, $events );
+        $this->assertSame( [], $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 ) );
 
         $execution_request_ids = [];
-        foreach ( $batch as $row )
+        foreach ( $events as $event )
         {
-            $envelope = json_decode( (string) $row['telemetry_payload'], true );
-            $payload  = $envelope['payload'] ?? [];
+            $this->assertSame( [ 'event', 'metadata' ], array_keys( $event ) );
+            $payload = $event['metadata'] ?? [];
             if ( isset( $payload['execution_request_id'] ) )
             {
                 $execution_request_ids[] = $payload['execution_request_id'];
@@ -156,15 +167,12 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
 
     public function test_opt_out_unschedules_flush_cron(): void
     {
-        $this->plugin->set_license_data(
-            [
-                'proxy_api_key' => 'proxy-key-123',
-                'site_id'       => 'site-123',
-            ]
-        );
+        wp_schedule_event( time() + MINUTE_IN_SECONDS, 'hourly', 'sentient_forms_flush_telemetry' );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
+
         $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
-        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
 
         $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => false ] );
         $service->maybe_schedule_flush();

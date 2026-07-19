@@ -435,7 +435,7 @@ class Sentient_Forms_Local_Data_Governance
         }
 
         $filtered = [];
-        foreach ( [ 'provider_response_id', 'model', 'finish_reason', 'usage', 'metering', 'effects', 'native_effect_outcomes', 'structured_output_valid', 'structured_output_schema_source', 'privacy_route_assertion', 'privacy_route_fallback', 'privacy_route_failure', 'fallback' ] as $key )
+        foreach ( [ 'provider_response_id', 'model', 'finish_reason', 'usage', 'metering', 'effects', 'native_effect_outcomes', 'structured_output_valid', 'structured_output_schema_source', 'privacy_route_assertion', 'privacy_route_fallback', 'privacy_route_failure', 'fallback', 'input_manifest' ] as $key )
         {
             if ( array_key_exists( $key, $result ) )
             {

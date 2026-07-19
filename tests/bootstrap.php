@@ -168,7 +168,7 @@ tests_add_filter( 'plugins_loaded', function () use ( $project_root ) {
     ] );
 
     $settings = get_option( 'sentient_forms_settings', [] );
-    $settings['cps_base_url'] = $settings['cps_base_url'] ?? 'http://cps-api:8080/v1';
+    $settings['cps_base_url'] = $settings['cps_base_url'] ?? 'http://cps-api:8080/v2';
     update_option( 'sentient_forms_settings', $settings );
 
     // Reset async stores between test runs.

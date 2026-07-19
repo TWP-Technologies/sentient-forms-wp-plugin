@@ -20,6 +20,8 @@ A TWP Technologies, LLC product. Product site: https://sentientforms.com. Public
 
 Local settings, action definitions, form mappings, execution logs, provider settings, and saved results are stored in WordPress.
 
+Optional diagnostic consent records allowlisted runtime metadata in WordPress only. Sentient Forms does not remotely queue or deliver those local diagnostic events.
+
 Use your OpenRouter key for direct execution, or connect Sentient Forms Managed Execution for managed paid features. AI-generated Site Context needs Managed Execution or a paid, web-capable OpenRouter model; you can also write it manually.
 
 == Source ==
@@ -50,17 +52,6 @@ Sentient Forms Managed Execution:
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
 
-Optional Sentient Forms telemetry:
-
-* Service: Sentient Forms
-* Endpoint: https://api.sentientforms.com/v1/sites/telemetry and https://api.sentientforms.com/v1/telemetry/async
-* When used: only after an administrator opts in and the site has a connected Sentient Forms site identity.
-* Data sent: telemetry consent state and metadata-only events: plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes.
-* Data not sent: form field contents, prompts, model outputs/results, raw error messages, visitor identifiers, saved provider secrets, billing secrets, or OpenRouter BYOK payloads.
-* Account required: a Sentient Forms site identity is required for telemetry sync and delivery.
-* Terms: https://sentientforms.com/terms
-* Privacy policy: https://sentientforms.com/privacy
-
 Administrator-configured webhooks:
 
 * Service: the webhook URL entered by the site administrator.
@@ -81,7 +72,7 @@ Realtime Clarification Assistant:
 * Visitor disclosure: site owners should disclose realtime AI suggestions in their public privacy policy or form copy before enabling this feature, because selected in-progress field values can be sent before final submission.
 * Terms and privacy policy: the same provider terms and privacy policy disclosed above for the selected execution path.
 
-No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
+No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. Local diagnostic events are recorded only after an administrator opts in and are never remotely queued or delivered.
 
 == Installation ==
 

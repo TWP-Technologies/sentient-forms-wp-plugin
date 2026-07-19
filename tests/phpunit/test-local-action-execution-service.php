@@ -160,6 +160,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             Sentient_Forms_Test_Gravity_Meta_Store::reset();
         }
 
+        if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
+        {
+            Sentient_Forms_Test_Gf_Meta_Store::reset();
+        }
+
         GFFormsModel::$notes = [];
         add_filter( 'sentient_forms_local_mark_entry_as_spam', [ $this, 'capture_spam_mark' ], 10, 3 );
     }
@@ -235,6 +240,121 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'Contact looks legitimate.', $event['result_json']['result_summary'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+    }
+
+    public function test_selected_input_mapping_projects_direct_provider_prompt_and_records_a_safe_manifest(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'prompt_template' => 'Form: {{form}} Entry: {{entry}}' ]
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'input_bindings_json' => [
+                    'mode'             => 'selected',
+                    'field_ids'        => [ '2' ],
+                    'include_metadata' => false,
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $result  = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                    [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+                ],
+            ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+        $prompt = (string) ( $client->chat_calls[0]['payload']['messages'][1]['content'] ?? '' );
+        $this->assertStringContainsString( 'ada@example.test', $prompt );
+        $this->assertStringNotContainsString( 'Ada Lovelace', $prompt );
+        $this->assertStringNotContainsString( 'Contact Form', $prompt );
+        $this->assertStringNotContainsString( '"id":99', $prompt );
+        $this->assertSame( [ '2' ], $result['result']['input_manifest']['applied_entry_keys'] ?? null );
+        $this->assertFalse( $result['result']['input_manifest']['include_metadata'] ?? true );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( [ '2' ], $event['result_json']['input_manifest']['applied_entry_keys'] ?? null );
+    }
+
+    public function test_selected_input_mapping_projects_managed_provider_prompt_and_omits_entry_identity(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [ 'prompt_template' => 'Form: {{form}} Entry: {{entry}}' ]
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'input_bindings_json' => [
+                    'mode'             => 'selected',
+                    'field_ids'        => [ '2' ],
+                    'include_metadata' => false,
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $result        = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                    [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+                ],
+            ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'managed-minimized-input',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $payload = $managed_proxy->execute_calls[0]['payload'];
+        $prompt  = (string) ( $payload['prompt'] ?? '' );
+        $this->assertStringContainsString( 'ada@example.test', $prompt );
+        $this->assertStringNotContainsString( 'Ada Lovelace', $prompt );
+        $this->assertStringNotContainsString( 'Contact Form', $prompt );
+        $this->assertStringNotContainsString( '"id":99', $prompt );
+        $this->assertNull( $payload['metadata']['form_id'] ?? null );
+        $this->assertNull( $payload['metadata']['entry_id'] ?? null );
+        $this->assertSame( [ '2' ], $result['result']['input_manifest']['applied_entry_keys'] ?? null );
+
+        $event = $this->events->get_by_request_id( 'managed-minimized-input' );
+        $this->assertIsArray( $event );
+        $this->assertSame( [ '2' ], $event['result_json']['input_manifest']['applied_entry_keys'] ?? null );
     }
 
     public function test_local_execution_events_link_to_submission_uuid_when_runtime_context_has_ledger_submission(): void

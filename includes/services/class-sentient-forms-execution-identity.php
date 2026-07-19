@@ -76,6 +76,104 @@ final class Sentient_Forms_Execution_Identity
         return 'hash:' . $payload_hash;
     }
 
+    /**
+     * Resolve the durable provider/model identity for one execution event.
+     *
+     * The first trustworthy source wins. Existing event identity is preferred
+     * over mutable mapping configuration so terminal updates cannot rewrite the
+     * provider path that was recorded when a queued request was admitted.
+     *
+     * @param array<string, mixed>      $payload Queued execution payload.
+     * @param array<string, mixed>      $context Execution context.
+     * @param array<string, mixed>|null $result  Provider result, when available.
+     * @param string                    $execution_request_id Stable request id.
+     *
+     * @return array{provider: string, model: ?string}
+     */
+    public static function resolve_provider_identity(
+        array $payload,
+        array $context = [],
+        ?array $result = null,
+        string $execution_request_id = ''
+    ): array
+    {
+        if ( '' !== $execution_request_id && class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            global $wpdb;
+            $existing          = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $execution_request_id );
+            $existing_provider = is_array( $existing )
+                ? self::normalize_provider( $existing['provider'] ?? null )
+                : null;
+            if ( null !== $existing_provider )
+            {
+                return [
+                    'provider' => $existing_provider,
+                    'model'    => self::normalize_model( $existing['model'] ?? null ),
+                ];
+            }
+        }
+
+        $result_provider = self::normalize_provider( $result['provider'] ?? null );
+        if ( null !== $result_provider )
+        {
+            return [
+                'provider' => $result_provider,
+                'model'    => self::normalize_model( $result['model'] ?? null ),
+            ];
+        }
+
+        $context_provider = self::normalize_provider( $context['provider'] ?? null );
+        if ( null !== $context_provider )
+        {
+            return [
+                'provider' => $context_provider,
+                'model'    => self::normalize_model( $context['model'] ?? null ),
+            ];
+        }
+
+        $settings        = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        $model_selection = isset( $settings['model_selection'] ) && is_array( $settings['model_selection'] )
+            ? $settings['model_selection']
+            : [];
+        $settings_provider = self::normalize_provider( $model_selection['provider'] ?? null );
+        if ( null !== $settings_provider )
+        {
+            return [
+                'provider' => $settings_provider,
+                'model'    => self::normalize_model( $model_selection['model'] ?? $model_selection['primary'] ?? null ),
+            ];
+        }
+
+        $mapping_id = absint( $payload['local_mapping_id'] ?? $context['local_form_mapping_id'] ?? 0 );
+        if (
+            $mapping_id > 0
+            && class_exists( 'Sentient_Forms_Form_Mappings_Repository' )
+            && class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' )
+        )
+        {
+            global $wpdb;
+            $mapping = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( $mapping_id );
+            if ( is_array( $mapping ) && 'custom_action' === ( $mapping['action_kind'] ?? null ) )
+            {
+                $action    = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->get( absint( $mapping['action_id'] ?? 0 ) );
+                $selection = is_array( $action['model_selection_json'] ?? null ) ? $action['model_selection_json'] : [];
+                $persisted_provider = self::normalize_provider( $selection['provider'] ?? null );
+                if ( null !== $persisted_provider )
+                {
+                    return [
+                        'provider' => $persisted_provider,
+                        'model'    => self::normalize_model( $selection['model'] ?? $selection['primary'] ?? null ),
+                    ];
+                }
+            }
+        }
+
+        return [
+            'provider' => 'unclassified',
+            'model'    => null,
+        ];
+    }
+
     private static function resolve_execution_request_id(
         string $action_code,
         array $form,
@@ -174,5 +272,29 @@ final class Sentient_Forms_Execution_Identity
         }
 
         return wp_is_uuid( substr( $submission_token, strlen( $prefix ) ) );
+    }
+
+    private static function normalize_provider( mixed $provider ): ?string
+    {
+        if ( ! is_scalar( $provider ) )
+        {
+            return null;
+        }
+
+        $provider = sanitize_key( (string) $provider );
+
+        return in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) ? $provider : null;
+    }
+
+    private static function normalize_model( mixed $model ): ?string
+    {
+        if ( ! is_scalar( $model ) )
+        {
+            return null;
+        }
+
+        $model = sanitize_text_field( (string) $model );
+
+        return '' !== $model ? $model : null;
     }
 }

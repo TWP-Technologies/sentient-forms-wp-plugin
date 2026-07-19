@@ -10,7 +10,6 @@ class Tests_Form_Controller extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         delete_option( 'sentient_forms_actions_contact_form_7_55' );
         delete_option( 'sentient_forms_actions_elementor_pro_forms_123' );
-        delete_option( 'sentient_forms_actions_elementor_pro_forms_123_formabc' );
         delete_option( 'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
 
         parent::tearDown();
@@ -118,19 +117,9 @@ class Tests_Form_Controller extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
 
-        update_option(
-            'sentient_forms_actions_elementor_pro_forms_123_formabc',
-            [
-                'enabled'     => true,
-                'map_summary' => [
-                    'local_mapping_id'           => 'map_summary',
-                    'central_action_id'          => 'entry_summary_v1',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                ],
-            ],
-            false
-        );
+        $opaque_option_key = 'sentient_forms_actions_elementor_pro_forms_'
+            . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' );
+        update_option( $opaque_option_key, [ 'enabled' => true ], false );
         update_option( 'sentient_forms_actions_elementor_pro_forms_123', [ 'enabled' => true ], false );
 
         $controller = new Sentient_Forms_Form_Controller();
@@ -149,16 +138,11 @@ class Tests_Form_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $this->assertTrue( $data['success'] ?? false );
         $this->assertFalse( $data['settings']['enabled'] ?? true );
-        $this->assertSame( 'entry_summary_v1', $data['settings']['map_summary']['central_action_id'] ?? null );
 
-        $stored_opaque = get_option(
-            'sentient_forms_actions_elementor_pro_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ),
-            []
-        );
+        $stored_opaque  = get_option( $opaque_option_key, [] );
         $stored_numeric = get_option( 'sentient_forms_actions_elementor_pro_forms_123', [] );
 
         $this->assertFalse( $stored_opaque['enabled'] ?? true );
-        $this->assertSame( 'entry_summary_v1', $stored_opaque['map_summary']['central_action_id'] ?? null );
         $this->assertTrue( $stored_numeric['enabled'] ?? false );
     }
 }

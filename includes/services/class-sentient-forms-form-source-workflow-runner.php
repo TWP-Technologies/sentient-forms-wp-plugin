@@ -259,7 +259,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             $mapping_outcomes[ $mapping_key ] = 'succeeded';
             $execution_results[ $mapping_key ] = $result;
-            $trusted_internal_action = $this->plugin->get_action( $action_id ) instanceof Sentient_Forms_Action_Interface;
+            $trusted_internal_action = Sentient_Forms_Bundled_Action_Templates::has( $action_id );
             $contract_code = $this->validation_output_contract_code( $action_id, $trusted_internal_action );
             $validation = is_array( $result ) && 'content_validation_v1' === $contract_code
                 ? $this->extract_trusted_content_validation_payload( $result, $trusted_internal_action )
@@ -386,6 +386,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'form_id'               => $form_id,
                     'entry_id'              => $entry['id'] ?? null,
                     'central_action_id'     => $action_id,
+                    'settings'              => isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                        ? $mapping['settings']
+                        : [],
                 ] + $dependency_context
             );
         }
@@ -910,20 +913,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return [];
         }
 
-        $missing  = new stdClass();
-        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, $missing );
-        if ( $missing === $settings )
-        {
-            foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_action_option_names( $form_source, $form_id ) as $legacy_option_name )
-            {
-                $legacy_settings = get_option( $legacy_option_name, $missing );
-                if ( $missing !== $legacy_settings )
-                {
-                    $settings = $legacy_settings;
-                    break;
-                }
-            }
-        }
+        $settings = get_option( 'sentient_forms_actions_' . $form_source . '_' . $suffix, [] );
 
         if ( ! is_array( $settings ) )
         {
@@ -1059,7 +1049,28 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             if ( $this->should_skip_for_upstream_spam( $dependency_ids, $resolved_mappings, $execution_results, $action_settings ) )
             {
-                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                $skip = $this->record_skipped_accepted_mapping(
+                    $form_source,
+                    $form_id,
+                    $native_entry_id,
+                    (string) $mapping_id,
+                    $action_settings,
+                    $submission_uuid,
+                    $execution_request_ids[ (string) $mapping_id ] ?? '',
+                    $native_effect_outcomes[ (string) $mapping_id ] ?? [],
+                    'upstream_spam'
+                );
+                if ( is_wp_error( $skip ) )
+                {
+                    $mapping_outcomes[ (string) $mapping_id ] = 'failed';
+                    $execution_results[ (string) $mapping_id ] = $skip;
+                }
+                else
+                {
+                    $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                    $execution_results[ (string) $mapping_id ] = $skip['result'];
+                    $native_effect_outcomes[ (string) $mapping_id ] = $skip['native_effect_outcomes'];
+                }
                 continue;
             }
 
@@ -1104,6 +1115,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                                 'form_id'          => $form_id,
                                 'entry_id'         => $native_entry_id,
                                 'submission_uuid'  => $submission_uuid,
+                                'settings'         => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                                    ? $action_settings['settings']
+                                    : [],
                             ] + $dependency_context
                         )
                     );
@@ -1132,6 +1146,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     $execution_request_ids[ (string) $mapping_id ] ?? ''
                 );
                 $mapping_outcomes[ (string) $mapping_id ] = $schedule_outcome;
+                if ( is_wp_error( $scheduled ) )
+                {
+                    $execution_results[ (string) $mapping_id ] = $scheduled;
+                }
                 if ( 'queued' === $schedule_outcome )
                 {
                     $this->log_queued_accepted_mapping(
@@ -1182,27 +1200,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
-            $scheduled = $this->plugin->process_action_async(
-                $central_action_id,
-                [
-                    'hook'        => $native_hook,
-                    'form_source' => $form_source,
-                    'form'        => $form,
-                    'entry'       => $entry,
-                ],
-                $action_settings,
-                [
-                    'hook'              => $native_hook,
-                    'form_source'       => $form_source,
-                    'action_id'         => (string) $mapping_id,
-                    'mapping_id'        => (string) $mapping_id,
-                    'local_mapping_id'  => (string) $mapping_id,
-                    'form_id'           => $form_id,
-                    'entry_id'          => $native_entry_id,
-                    'submission_uuid'   => $submission_uuid,
-                    'central_action_id' => $central_action_id,
-                    'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
-                ] + $dependency_context
+            $scheduled = new WP_Error(
+                'sentient_forms_local_mapping_required',
+                __( 'This Action mapping predates local Action authority and must be replaced with a plugin-owned local Action mapping before it can run.', 'sentient-forms' ),
+                [ 'status' => 409 ]
             );
             $schedule_outcome = $this->async_schedule_outcome(
                 $scheduled,
@@ -1655,6 +1656,102 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
     }
 
     /**
+     * Persist a source-neutral terminal skip before leaving the workflow.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<int, array{effect: string, status: string, reason: string}> $native_effect_outcomes
+     *
+     * @return array{result: array<string, mixed>, native_effect_outcomes: array<int, array{effect: string, status: string, reason: string}>}|WP_Error
+     */
+    private function record_skipped_accepted_mapping(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $mapping_id,
+        array $mapping,
+        string $submission_uuid,
+        string $execution_request_id,
+        array $native_effect_outcomes,
+        string $reason
+    ): array | WP_Error
+    {
+        if ( '' === $execution_request_id )
+        {
+            return new WP_Error(
+                'sentient_forms_missing_execution_request_id',
+                __( 'Skipped action evidence is missing its execution identity.', 'sentient-forms' )
+            );
+        }
+
+        $reason = sanitize_key( $reason );
+        if ( '' === $reason )
+        {
+            $reason = 'workflow_policy';
+        }
+
+        $native_effect_outcomes = Sentient_Forms_Native_Effect_Outcomes::merge(
+            $native_effect_outcomes,
+            [
+                [
+                    'effect' => 'workflow_execution',
+                    'status' => 'skipped',
+                    'reason' => $reason,
+                ],
+            ]
+        );
+        $result = [
+            'result_summary'          => 'upstream_spam' === $reason
+                ? __( 'Skipped because an upstream Action classified the submission as spam.', 'sentient-forms' )
+                : __( 'Skipped by workflow policy.', 'sentient-forms' ),
+            'skip_reason'             => $reason,
+            'native_effect_outcomes' => $native_effect_outcomes,
+        ];
+        $payload_digest = hash(
+            'sha256',
+            (string) wp_json_encode(
+                [
+                    'action_code'     => $this->central_action_id( $mapping ),
+                    'mapping_id'      => $mapping_id,
+                    'submission_uuid' => $submission_uuid,
+                    'skip_reason'     => $reason,
+                ]
+            )
+        );
+
+        global $wpdb;
+        $recorded = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+            [
+                'execution_request_id' => $execution_request_id,
+                'mapping_id'           => isset( $mapping['local_form_mapping_id'] ) ? absint( $mapping['local_form_mapping_id'] ) : null,
+                'mapping_key'          => $mapping_id,
+                'action_code'          => $this->central_action_id( $mapping ),
+                'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                'form_source'          => $form_source,
+                'form_id'              => $form_id,
+                'entry_id'             => $entry_id,
+                'submission_uuid'      => $submission_uuid,
+                'provider'             => 'local',
+                'model'                => 'not_applicable',
+                'status'               => 'skipped',
+                'result_json'          => $result,
+                'payload_digest'       => $payload_digest,
+            ]
+        );
+        if ( is_wp_error( $recorded ) )
+        {
+            return new WP_Error(
+                'sentient_forms_skipped_execution_event_failed',
+                __( 'Skipped action evidence could not be recorded.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'result'                 => $result,
+            'native_effect_outcomes' => $native_effect_outcomes,
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $mapping
      */
     private function log_queued_accepted_mapping(
@@ -1876,56 +1973,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $dependency_context
     ): array | bool | WP_Error
     {
-        $action = $this->plugin->get_action( $central_action_id );
-        if ( $action instanceof Sentient_Forms_Action_Interface )
-        {
-            $execution_context = [
-                'hook'                 => $lifecycle,
-                'native_hook'          => $native_hook,
-                'form_source'          => $form_source,
-                'mapping_id'           => $mapping_id,
-                'local_mapping_id'     => $mapping_id,
-                'form_id'              => $form_id,
-                'entry_id'             => $entry['id'] ?? null,
-                'submission_uuid'      => $submission_uuid,
-                'execution_request_id' => $dependency_context['execution_request_id'] ?? null,
-                'central_action_id'    => $central_action_id,
-            ] + $dependency_context;
-
-            return $action->execute(
-                [
-                    'form'              => $form,
-                    'entry'             => $entry,
-                    'hook'              => $lifecycle,
-                    'native_hook'       => $native_hook,
-                    'form_source'       => $form_source,
-                    'execution_context' => $execution_context,
-                ],
-                $action_settings,
-                $entry['id'] ?? '',
-                $form_id
-            );
-        }
-
-        return $this->plugin->get_action_executor()->execute(
-            $central_action_id,
-            $form,
-            $entry,
-            [
-                'hook'              => $lifecycle,
-                'native_hook'       => $native_hook,
-                'form_source'       => $form_source,
-                'action_id'         => $mapping_id,
-                'mapping_id'        => $mapping_id,
-                'local_mapping_id'  => $mapping_id,
-                'form_id'           => $form_id,
-                'entry_id'          => $entry['id'] ?? null,
-                'submission_uuid'   => $submission_uuid,
-                'central_action_id' => $central_action_id,
-                'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-            ] + $dependency_context
+        return new WP_Error(
+            'sentient_forms_local_mapping_required',
+            __( 'This Action mapping predates local Action authority and must be replaced with a plugin-owned local Action mapping before it can run.', 'sentient-forms' ),
+            [ 'status' => 409 ]
         );
     }
 
@@ -2326,7 +2377,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             $action_id = $this->central_action_id( $mapping );
-            $trusted_internal_action = $this->plugin->get_action( $action_id ) instanceof Sentient_Forms_Action_Interface;
+            $trusted_internal_action = Sentient_Forms_Bundled_Action_Templates::has( $action_id );
             if ( 'spam_detection_v1' !== $this->validation_output_contract_code( $action_id, $trusted_internal_action ) )
             {
                 continue;
@@ -2781,7 +2832,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $action_settings,
         string $submission_uuid,
         array $async_context
-    ): bool
+    ): bool | WP_Error
     {
         $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
         if ( $local_mapping_id <= 0 )

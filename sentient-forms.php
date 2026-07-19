@@ -22,9 +22,9 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.11.0';
-const SENTIENT_FORMS_DB_VERSION  = '2026.07.15.submission_native_correlation';
+const SENTIENT_FORMS_DB_VERSION  = '2026.07.18.action_authority_cutover';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
-const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';
+const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v2';
 const SENTIENT_FORMS_RELEASE_SOURCE_URL = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.11.0';
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );

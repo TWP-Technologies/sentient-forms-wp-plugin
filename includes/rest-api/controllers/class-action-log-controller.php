@@ -1872,6 +1872,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
      */
     private function build_local_usage_cost_summary( string $provider, array $event, array $result_json, array $cost, array $pricing ): array
     {
+        if ( 'local' === $provider || 'not_applicable' === (string) ( $event['model'] ?? '' ) )
+        {
+            return [
+                'route' => 'not_applicable',
+                'label' => __( 'Not run', 'sentient-forms' ),
+                'kind'  => 'not_applicable',
+                'known' => true,
+            ];
+        }
+
         if ( 'sentient_managed' === $provider )
         {
             $credits = absint( $pricing['debited_credits'] ?? 0 );

@@ -83,6 +83,11 @@ class Sentient_Forms_Async_Request_Store
             }
 
             $existing_status = sanitize_key( (string) ( $existing['status'] ?? '' ) );
+            if ( 'indeterminate' === $existing_status )
+            {
+                return false;
+            }
+
             $active_statuses = [ 'queued', 'running', 'success', 'succeeded', 'telemetry_queued' ];
             if ( ! $this->is_expired( $existing ) && in_array( $existing_status, $active_statuses, true ) )
             {
@@ -260,7 +265,11 @@ class Sentient_Forms_Async_Request_Store
             $status   = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
         }
 
-        if ( in_array( $status, [ 'success', 'succeeded' ], true ) )
+        if ( 'indeterminate' === $status )
+        {
+            $state = 'indeterminate';
+        }
+        elseif ( in_array( $status, [ 'success', 'succeeded' ], true ) )
         {
             $state = 'success';
         }
@@ -302,12 +311,17 @@ class Sentient_Forms_Async_Request_Store
             return false;
         }
 
+        $status = sanitize_key( (string) ( $record['status'] ?? 'queued' ) );
+        if ( 'indeterminate' === $status )
+        {
+            return true;
+        }
+
         if ( $this->is_expired( $record ) )
         {
             return false;
         }
 
-        $status = $record['status'] ?? 'queued';
         return in_array( $status, [ 'queued', 'running', 'success' ], true );
     }
 
@@ -336,7 +350,7 @@ class Sentient_Forms_Async_Request_Store
         $wpdb  = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(
-                'DELETE FROM %i WHERE last_seen_at < %s',
+                "DELETE FROM %i WHERE last_seen_at < %s AND status <> 'indeterminate'",
                 $this->table(),
                 $mysql
             )

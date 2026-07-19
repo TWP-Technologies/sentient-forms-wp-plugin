@@ -334,6 +334,48 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         $this->assertFalse( $this->store->record( $request_hash, $context ) );
     }
 
+    public function test_indeterminate_request_remains_non_replayable_after_ttl_expiry(): void
+    {
+        global $wpdb;
+
+        $request_hash = 'indeterminate-' . wp_generate_password( 24, false, false );
+        $digest       = hash( 'sha256', 'indeterminate-payload' );
+        $context      = [
+            'action_id'      => 'entry_summary_v1',
+            'record_type'    => 'job',
+            'status'         => 'queued',
+            'payload_digest' => $digest,
+        ];
+
+        $this->assertTrue( $this->store->record( $request_hash, $context ) );
+        $this->store->mark_status( $request_hash, 'indeterminate', 'Legacy execution outcome cannot be reconstructed.' );
+        $wpdb->update(
+            $wpdb->prefix . 'sentient_async_requests',
+            [ 'last_seen_at' => wp_date( 'Y-m-d H:i:s', time() - ( 2 * DAY_IN_SECONDS ), wp_timezone() ) ],
+            [ 'request_hash' => $request_hash ],
+            [ '%s' ],
+            [ '%s' ]
+        );
+
+        $this->assertTrue( $this->store->should_block( $request_hash ) );
+        $this->assertFalse( $this->store->record( $request_hash, $context ) );
+        $this->assertSame( 0, $this->store->purge_older_than( time() + DAY_IN_SECONDS ) );
+        $this->assertTrue( $this->store->should_block( $request_hash ) );
+
+        $claim = $this->store->claim_execution(
+            $request_hash,
+            [
+                'action_id'      => 'entry_summary_v1',
+                'payload_digest' => $digest,
+            ],
+            true,
+            'job'
+        );
+
+        $this->assertSame( 'indeterminate', $claim['state'] );
+        $this->assertSame( 'indeterminate', $claim['record']['status'] ?? null );
+    }
+
     public function test_fresh_requests_use_the_site_timezone_for_expiry_and_purge_cutoffs(): void
     {
         global $wpdb;

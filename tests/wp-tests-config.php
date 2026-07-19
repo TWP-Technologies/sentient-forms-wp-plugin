@@ -9,6 +9,10 @@ define( 'DB_CHARSET', 'utf8' );
 $table_prefix = 'wptests_';
 
 define( 'WP_DEBUG', true );
+// The wordpress-develop source archive does not contain generated development
+// script asset metadata. Exercise the same minified asset registry used by a
+// WordPress distribution while retaining PHP-level debug reporting above.
+define( 'SCRIPT_DEBUG', false );
 define( 'WP_TESTS_DOMAIN', 'example.org' );
 define( 'WP_TESTS_EMAIL', 'admin@example.org' );
 define( 'WP_TESTS_TITLE', 'WP Tests' );

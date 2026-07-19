@@ -122,6 +122,18 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
                 WP_CLI::error( sprintf( 'Job %s not found.', $job_id ) );
             }
 
+            if ( 'sentient_forms_process_action' === ( $job['hook'] ?? '' ) )
+            {
+                WP_CLI::error( 'Legacy CPS action jobs are retired and cannot be replayed.' );
+                return;
+            }
+
+            if ( 'indeterminate' === sanitize_key( (string) ( $job['status'] ?? '' ) ) )
+            {
+                WP_CLI::error( 'Indeterminate jobs cannot be replayed because the prior provider side effect is unknown.' );
+                return;
+            }
+
             $payload = $job['payload'] ?? null;
             if ( !is_array( $payload ) )
             {
@@ -136,22 +148,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             $context['last_error'] = null;
 
             $scheduled = false;
-            if ( 'sentient_forms_process_action' === $job['hook'] )
-            {
-                $action_id = $payload['action_id'] ?? ( $context['action_id'] ?? '' );
-                if ( empty( $action_id ) )
-                {
-                    WP_CLI::error( 'Job payload is missing an action ID.' );
-                }
-
-                $scheduled = $handler->schedule_action(
-                    $action_id,
-                    $payload['data'] ?? [],
-                    $payload['settings'] ?? [],
-                    $context,
-                );
-            }
-            elseif ( 'sentient_forms_evaluate_action' === $job['hook'] )
+            if ( 'sentient_forms_evaluate_action' === $job['hook'] )
             {
                 $scheduled = $handler->dispatch_evaluation(
                     [

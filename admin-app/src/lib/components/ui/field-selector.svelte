@@ -80,7 +80,7 @@
 
 		onchange({
 			...value,
-			include_metadata: !value.include_metadata
+			include_metadata: !(value.include_metadata ?? true)
 		});
 	}
 </script>

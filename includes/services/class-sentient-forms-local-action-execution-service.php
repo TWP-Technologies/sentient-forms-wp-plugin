@@ -32,7 +32,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
         private ?Sentient_Forms_Action_Policy_Resolver $action_policy_resolver = null,
         private ?Sentient_Forms_Action_Policy_Preflight $action_policy_preflight = null,
-        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
+        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null,
+        private ?Sentient_Forms_Action_Input_Projector $input_projector = null
     )
     {
         global $wpdb;
@@ -53,6 +54,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->action_policy_resolver = $this->action_policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
         $this->action_policy_preflight = $this->action_policy_preflight ?? new Sentient_Forms_Action_Policy_Preflight();
         $this->provider_route_decision = $this->provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
+        $this->input_projector = $this->input_projector ?? new Sentient_Forms_Action_Input_Projector();
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -240,7 +242,31 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
-        $messages = $this->build_messages( $action, $definition, $mapping, $form, $entry, $context, $action_code );
+        $input_projection = $this->input_projector->project(
+            is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
+            $form,
+            $entry
+        );
+        if ( is_wp_error( $input_projection ) )
+        {
+            return $input_projection;
+        }
+
+        $provider_form     = $input_projection['form'];
+        $provider_entry    = $input_projection['entry'];
+        $provider_bindings = $input_projection['bindings'];
+        $input_manifest    = $input_projection['manifest'];
+
+        $messages = $this->build_messages(
+            $action,
+            $definition,
+            $mapping,
+            $provider_form,
+            $provider_entry,
+            $provider_bindings,
+            $context,
+            $action_code
+        );
         if ( is_wp_error( $messages ) )
         {
             return $messages;
@@ -264,8 +290,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 $model_selection,
                 $mapping,
                 $action,
-                $form,
-                $entry,
+                $provider_form,
+                $provider_entry,
                 $context,
                 $managed_context['site_id'],
                 $execution_request_id,
@@ -388,7 +414,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                     $execution_request_id,
                     $submission_uuid,
                     $payload_digest,
-                    $effective_action_policy
+                    $effective_action_policy,
+                    $input_manifest
                 );
                 if ( null !== $backup_result )
                 {
@@ -462,6 +489,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $result;
         }
 
+        $result['input_manifest'] = $input_manifest;
         $execution_result = [
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
@@ -547,7 +575,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         string $execution_request_id,
         ?string $submission_uuid,
         string $primary_payload_digest,
-        array $effective_action_policy
+        array $effective_action_policy,
+        array $input_manifest
     ): array | WP_Error | null
     {
         $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
@@ -704,7 +733,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $result;
         }
 
-        $result['fallback'] = $fallback_meta;
+        $result['fallback']       = $fallback_meta;
+        $result['input_manifest'] = $input_manifest;
         $execution_result = [
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
@@ -1527,12 +1557,13 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $mapping,
         array $form,
         array $entry,
+        array $input_bindings,
         array $context,
         string $action_code
     ): array | WP_Error
     {
         $variables = $this->renderer->build_variables(
-            is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
+            $input_bindings,
             $form,
             $entry,
             $context
