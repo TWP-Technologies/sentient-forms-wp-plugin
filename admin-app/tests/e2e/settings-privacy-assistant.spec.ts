@@ -255,7 +255,9 @@ test.describe('Privacy setup assistant', () => {
 		});
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeHidden();
 
-		await expect(page.getByText('Maximum visibility')).toBeVisible();
+		await expect(page.getByTestId('settings-profile-base-badge')).toContainText(
+			'Maximum visibility'
+		);
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});

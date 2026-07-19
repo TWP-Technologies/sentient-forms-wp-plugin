@@ -27,7 +27,7 @@
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import { runAdminCssHealthCheck } from '$lib/utils/admin-css-health';
-	import { Toaster } from 'sonner-svelte';
+	import { Toaster, toast } from 'sonner-svelte';
 
 	interface Props {
 		children?: import('svelte').Snippet;
@@ -64,7 +64,9 @@
 	let securityRoadblock = $state<SecurityRoadblockDetail | null>(null);
 	let securityRoadblockDetailsOpen = $state(false);
 	type SonnerToasterProps = {
-		position?: 'bottom-right';
+		position?: 'top-right';
+		offset?: number;
+		style?: string;
 		richColors?: boolean;
 	};
 
@@ -269,6 +271,24 @@
 		updateWpAdminOffset();
 		runAdminCssHealthCheck();
 
+		const bridgedNotificationIds = new Set<number>();
+		const unsubscribeNotifications = notifications.subscribe((items) => {
+			for (const notification of items) {
+				if (bridgedNotificationIds.has(notification.id)) continue;
+				bridgedNotificationIds.add(notification.id);
+				const options = {
+					id: `sentient-forms-notification-${notification.id}`,
+					duration:
+						typeof notification.timeout === 'number' && notification.timeout <= 0
+							? Number.POSITIVE_INFINITY
+							: notification.timeout,
+					onDismiss: () => notifications.remove(notification.id),
+					onAutoClose: () => notifications.remove(notification.id)
+				};
+				toast[notification.type](notification.message, options);
+			}
+		});
+
 		const openAssistant = () => {
 			privacyApplyError = null;
 			privacyAssistantOpen = true;
@@ -306,6 +326,7 @@
 		});
 
 		return () => {
+			unsubscribeNotifications();
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
 			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
 			window.removeEventListener(SECURITY_ROADBLOCK_EVENT, handleSecurityRoadblock);
@@ -462,7 +483,12 @@
 	</div>
 </div>
 
-<SonnerToaster position="bottom-right" richColors />
+<SonnerToaster
+	position="top-right"
+	offset={16}
+	style="top: calc(var(--sentient-forms-wp-admin-offset, 0px) + 16px);"
+	richColors
+/>
 
 <PrivacySetupAssistant
 	open={privacyAssistantOpen}

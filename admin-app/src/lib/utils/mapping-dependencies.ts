@@ -85,21 +85,32 @@ export interface DependencyExecutionPreview {
 }
 
 const COLUMN_GAP = 420;
+const VALIDATION_HOOK_ALIASES = new Set([
+	'validation',
+	'gform_validation',
+	'wpcf7_validate',
+	'wpforms_process',
+	'elementor_pro/forms/validation'
+]);
+const AFTER_SUBMISSION_HOOK_ALIASES = new Set([
+	'after_submission',
+	'gform_after_submission',
+	'wpcf7_mail_sent',
+	'wpforms_process_complete',
+	'elementor_pro/forms/new_record'
+]);
 const KNOWN_HOOK_ORDER: Record<string, number> = {
 	real_time: 5,
-	validation: 10,
-	gform_validation: 10,
-	after_submission: 20,
-	wpcf7_mail_sent: 20,
-	gform_after_submission: 20
+	...Object.fromEntries(Array.from(VALIDATION_HOOK_ALIASES, (hook) => [hook, 10])),
+	...Object.fromEntries(Array.from(AFTER_SUBMISSION_HOOK_ALIASES, (hook) => [hook, 20]))
 };
 
 function isValidationHook(hook: string): boolean {
-	return hook === 'validation' || hook === 'gform_validation';
+	return VALIDATION_HOOK_ALIASES.has(hook);
 }
 
 function isAfterSubmissionHook(hook: string): boolean {
-	return hook === 'after_submission' || hook === 'gform_after_submission' || hook === 'wpcf7_mail_sent';
+	return AFTER_SUBMISSION_HOOK_ALIASES.has(hook);
 }
 
 function compareHookIds(left: string, right: string): number {
@@ -914,6 +925,12 @@ function topologicalOrderWithResolver(
 
 export function canDependencySatisfyHook(dependencyHooks: string[], requiredHook: string): boolean {
 	if (dependencyHooks.includes(requiredHook)) {
+		return true;
+	}
+	if (isValidationHook(requiredHook) && dependencyHooks.some(isValidationHook)) {
+		return true;
+	}
+	if (isAfterSubmissionHook(requiredHook) && dependencyHooks.some(isAfterSubmissionHook)) {
 		return true;
 	}
 	// Validation (sync) can satisfy after-submission dependants.

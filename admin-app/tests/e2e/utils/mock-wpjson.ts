@@ -16,6 +16,7 @@ type Routes = {
 		formActionConfigById?: Record<string, Record<string, unknown>>;
 		formSourceDescriptors?: Record<string, unknown>;
 		formsActions?: unknown[];
+		formsActionsByForm?: Record<string, unknown[]>;
 		formFields?: unknown[];
 		creditBalance?: unknown;
 		disableState?: unknown;
@@ -257,6 +258,10 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		}
 		return configs;
 	};
+	const formsActionsFor = (sourceSlug: string, currentFormId: string | number): unknown[] =>
+		routes.actions?.formsActionsByForm?.[`${sourceSlug}:${currentFormId}`] ??
+		routes.actions?.formsActions ??
+		[];
 	const disableState: Record<string, boolean> = {
 		sf_disabled: false,
 		global_disabled: false,
@@ -919,7 +924,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 							if (!form || typeof form !== 'object' || Array.isArray(form)) return false;
 							return String((form as { id?: unknown }).id ?? '') === String(currentFormId);
 						}) ?? null,
-					actions: routes.actions?.formsActions ?? [],
+					actions: formsActionsFor(sourceSlug, currentFormId),
 					execution_status: routes.actions?.status ?? defaultExecutionStatus,
 					disabled_state: disableState,
 					capabilities: {
@@ -958,11 +963,14 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.formsActions && /forms\/[^/]+\/actions$/.test(url) && method === 'GET') {
+		const formActionsIndexMatch = urlWithoutQuery.match(/\/([^/]+)\/forms\/([^/]+)\/actions$/);
+		if (formActionsIndexMatch && method === 'GET') {
+			const sourceSlug = decodePathSegment(formActionsIndexMatch[1]);
+			const currentFormId = routeFormId(formActionsIndexMatch[2]);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.actions.formsActions)
+				body: envelope(formsActionsFor(sourceSlug, currentFormId))
 			});
 		}
 

@@ -3,6 +3,7 @@ import type { FormActionLinkage } from '$lib/api/types';
 import {
 	buildExecutionPreview,
 	buildDependencyGraph,
+	canDependencySatisfyHook,
 	dependencyIssueIdentity,
 	findIntroducedDependencyIssues,
 	formatDependencyIssues,
@@ -180,6 +181,36 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		const preview = buildExecutionPreview(items, 'all');
 		const afterSubmission = preview.hooks.find((hook) => hook.hook === 'gform_after_submission');
 		expect(afterSubmission?.runnable).toEqual(['map_async_downstream']);
+	});
+
+	it('treats canonical and native aliases as the same dependency lifecycle', () => {
+		const lifecycleAliases = {
+			validation: [
+				'validation',
+				'gform_validation',
+				'wpcf7_validate',
+				'wpforms_process',
+				'elementor_pro/forms/validation'
+			],
+			afterSubmission: [
+				'after_submission',
+				'gform_after_submission',
+				'wpcf7_mail_sent',
+				'wpforms_process_complete',
+				'elementor_pro/forms/new_record'
+			]
+		};
+
+		for (const aliases of Object.values(lifecycleAliases)) {
+			for (const dependencyHook of aliases) {
+				for (const requiredHook of aliases) {
+					expect(
+						canDependencySatisfyHook([dependencyHook], requiredHook),
+						`${dependencyHook} should satisfy ${requiredHook}`
+					).toBe(true);
+				}
+			}
+		}
 	});
 
 	it('allows per-hook dependency source when mapping runs on sync and async hooks', () => {

@@ -56,6 +56,52 @@ const baseForms = [
 	}
 ];
 
+const gravityFormSourceDescriptor = {
+	slug: formSource,
+	label: 'Gravity Forms',
+	is_active: true,
+	lifecycles: {
+		validation: {
+			supported: true,
+			label: 'During validation',
+			native_hook: 'gform_validation',
+			execution_mode: 'blocking',
+			requires_ledger: false,
+			unsupported_reason: null
+		},
+		after_submission: {
+			supported: true,
+			label: 'After submission',
+			native_hook: 'gform_after_submission',
+			execution_mode: 'async',
+			requires_ledger: false,
+			unsupported_reason: null
+		},
+		real_time: {
+			supported: true,
+			label: 'Realtime',
+			native_hook: 'real_time',
+			execution_mode: 'real_time',
+			requires_ledger: false,
+			unsupported_reason: null
+		}
+	},
+	native_entry: { id: true, link: true, read: true, write: true },
+	native_enrichment: {
+		notes: true,
+		status: true,
+		spam: true,
+		notification_controls: true,
+		webhook_controls: true
+	},
+	ledger: {
+		required_for_parity: false,
+		enabled: false,
+		settings_source: 'sentient_submission_ledger_settings',
+		unavailable_reason: null
+	}
+};
+
 const cf7FormSource = 'contact_form_7';
 const cf7FormId = 77;
 const cf7Forms = [
@@ -84,12 +130,12 @@ const cf7FormSourceDescriptor = {
 	is_active: true,
 	lifecycles: {
 		validation: {
-			supported: false,
+			supported: true,
 			label: 'Validation',
-			native_hook: null,
+			native_hook: 'wpcf7_validate',
 			execution_mode: 'blocking',
 			requires_ledger: false,
-			unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
+			unsupported_reason: null
 		},
 		after_submission: {
 			supported: true,
@@ -3207,6 +3253,795 @@ test.describe('Actions admin flows', () => {
 		expect(modelResolveRequests).toBeLessThanOrEqual(3);
 	});
 
+	test('renders action library lifecycle summaries in the selected Form Source vocabulary', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						...baseDefinitions[1],
+						hooks: { gform_after_submission: 'Gravity after-submission' }
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId('built-in-action-option-summarize');
+
+		await expect(actionOption.getByText('Hooks: After submission')).toBeVisible();
+		await expect(actionOption).not.toContainText(/gform_after_submission|wpcf7_mail_sent/);
+	});
+
+	test('uses all compatible current-source lifecycles when a definition omits hook restrictions', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'source-compatible-defaults',
+						label: 'Source-compatible defaults',
+						source: 'bundled',
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('source-compatible-defaults'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId('built-in-action-option-source-compatible-defaults');
+
+		await expect(actionOption).toContainText('Hooks: After submission, Validation');
+		const optionRadio = actionOption.getByRole('radio');
+		await expect(optionRadio).toBeEnabled();
+		await optionRadio.check();
+		await expect(page.getByTestId('create-trigger-hook-validation')).toBeChecked();
+	});
+
+	test('disables definitions whose realtime lifecycle is unsupported by the selected Form Source', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'clarification_assistant_v1',
+						label: 'Realtime clarification assistant',
+						source: 'bundled',
+						hooks: ['real_time'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('clarification_assistant_v1'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId('built-in-action-option-clarification_assistant_v1');
+
+		await expect(actionOption).toContainText('Hooks: Not available for this Form Source');
+		await expect(actionOption.getByRole('radio')).toBeDisabled();
+		await expect(actionOption).not.toContainText('real_time');
+	});
+
+	test('fails closed on unknown native hooks while the Form Source descriptor is unavailable', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'unknown-native-hook',
+						label: 'Unknown native hook action',
+						source: 'bundled',
+						hooks: ['vendor_specific_submission_hook'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('unknown-native-hook'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId('built-in-action-option-unknown-native-hook');
+
+		await expect(actionOption).toContainText('Hooks: Not available for this Form Source');
+		await expect(actionOption.getByRole('radio')).toBeDisabled();
+		await expect(actionOption).not.toContainText('vendor_specific_submission_hook');
+	});
+
+	test('keeps known Gravity hooks unavailable for non-Gravity sources until a descriptor arrives', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'gravity-hook-without-cf7-descriptor',
+						label: 'Gravity fallback action',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('gravity-hook-without-cf7-descriptor'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId(
+			'built-in-action-option-gravity-hook-without-cf7-descriptor'
+		);
+
+		await expect(actionOption).toContainText('Hooks: Not available for this Form Source');
+		await expect(actionOption.getByRole('radio')).toBeDisabled();
+		await expect(actionOption).not.toContainText('gform_after_submission');
+	});
+
+	test('keeps foreign native hooks unavailable for descriptorless Gravity Forms', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'cf7-hook-without-gravity-descriptor',
+						label: 'Foreign fallback action',
+						source: 'bundled',
+						hooks: ['wpcf7_mail_sent'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('cf7-hook-without-gravity-descriptor'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId(
+			'built-in-action-option-cf7-hook-without-gravity-descriptor'
+		);
+
+		await expect(actionOption).toContainText('Hooks: Not available for this Form Source');
+		await expect(actionOption.getByRole('radio')).toBeDisabled();
+		await expect(actionOption).not.toContainText('wpcf7_mail_sent');
+	});
+
+	test('keeps canonical lifecycle identifiers available for descriptorless Gravity Forms', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'canonical-gravity-fallback',
+						label: 'Canonical Gravity fallback',
+						source: 'bundled',
+						hooks: ['after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('canonical-gravity-fallback'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const actionOption = page.getByTestId('built-in-action-option-canonical-gravity-fallback');
+
+		await expect(actionOption).toContainText('Hooks: 📝 After Submission (Background)');
+		await expect(actionOption.getByRole('radio')).toBeEnabled();
+		await actionOption.getByRole('radio').check();
+		await expect(page.getByTestId('create-trigger-hook-gform_after_submission')).toBeChecked();
+	});
+
+	test('collapses canonical and native aliases in descriptorless Gravity lifecycle choices', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'canonical-alias-source',
+						label: 'Canonical alias source',
+						source: 'bundled',
+						hooks: ['validation', 'after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					},
+					{
+						id: 'unrestricted-gravity-fallback',
+						label: 'Unrestricted Gravity fallback',
+						source: 'bundled',
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy([
+					'canonical-alias-source',
+					'unrestricted-gravity-fallback'
+				]),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const unrestrictedOption = page.getByTestId(
+			'built-in-action-option-unrestricted-gravity-fallback'
+		);
+		await unrestrictedOption.getByRole('radio').check();
+		const drawer = page.getByTestId('add-action-drawer');
+
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toBeVisible();
+		await expect(drawer.getByTestId('create-trigger-hook-gform_after_submission')).toBeVisible();
+		await expect(drawer.getByTestId('create-trigger-hook-validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toHaveCount(0);
+		await expect(drawer.locator('[data-testid^="create-trigger-hook-"]')).toHaveCount(2);
+	});
+
+	test('normalizes canonical descriptorless Gravity linkages and trigger sources for editing', async ({
+		page
+	}) => {
+		const linkages = [
+			{
+				...baseLinkages[0],
+				local_mapping_id: 'canonical-parent',
+				central_action_id: 'canonical-linked-action',
+				action_name_label: 'Canonical parent action',
+				trigger_hooks: ['after_submission'],
+				settings: {
+					trigger_sources: {
+						after_submission: { type: 'hook_root' }
+					}
+				}
+			},
+			{
+				...baseLinkages[0],
+				local_mapping_id: 'canonical-linkage',
+				central_action_id: 'canonical-linked-action',
+				action_name_label: 'Canonical linked action',
+				trigger_hooks: ['after_submission', 'gform_after_submission'],
+				settings: {
+					trigger_sources: {
+						after_submission: { type: 'mapping', mapping_id: 'canonical-parent' }
+					},
+					dependency_ids: ['canonical-parent']
+				}
+			}
+		];
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'canonical-linked-action',
+						label: 'Canonical linked action',
+						source: 'bundled',
+						hooks: ['validation', 'after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		let savedPayload: Record<string, unknown> | null = null;
+		page.on('request', (request) => {
+			if (
+				request.method() === 'PUT' &&
+				request.url().includes('/gravity_forms/forms/123/actions/canonical-linkage')
+			) {
+				savedPayload = request.postDataJSON() as Record<string, unknown>;
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		const row = table.locator('tbody tr').filter({ hasText: 'Canonical linked action' });
+		await expect(row).toContainText('📝 After Submission (Background)');
+		await expect(row).not.toContainText('after_submission');
+		await row.getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-trigger-hook-gform_after_submission')).toBeChecked();
+		await expect(modal.getByTestId('mapping-trigger-hook-after_submission')).toHaveCount(0);
+		await modal.getByTestId('mapping-trigger-hook-gform_validation').check();
+		await modal.getByTestId('mapping-config-save').click();
+		await expect.poll(() => savedPayload).not.toBeNull();
+
+		const settings = savedPayload?.settings as Record<string, unknown>;
+		const triggerSources = settings.trigger_sources as Record<string, unknown>;
+		expect(savedPayload?.trigger_hooks).toEqual([
+			'gform_after_submission',
+			'gform_validation'
+		]);
+		expect(Object.keys(triggerSources).sort()).toEqual([
+			'gform_after_submission',
+			'gform_validation'
+		]);
+		expect(triggerSources.gform_after_submission).toEqual({
+			type: 'mapping',
+			mapping_id: 'canonical-parent'
+		});
+		expect(triggerSources.gform_validation).toEqual({ type: 'hook_root' });
+		expect(settings.dependency_ids).toEqual(['canonical-parent']);
+		expect(triggerSources).not.toHaveProperty('after_submission');
+	});
+
+	test('re-evaluates descriptorless lifecycle compatibility when the route source changes', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms, [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'gravity-route-fallback',
+						label: 'Gravity route fallback',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				providerPathPolicy: managedProviderPathPolicy('gravity-route-fallback'),
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: {},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const gravityOption = page.getByTestId('built-in-action-option-gravity-route-fallback');
+		await expect(gravityOption).toContainText('Hooks: 📝 After Submission (Background)');
+		await expect(gravityOption.getByRole('radio')).toBeEnabled();
+		await page.getByTestId('add-action-drawer').getByRole('button', { name: 'Close' }).click();
+		await expect(page.getByTestId('add-action-drawer')).toHaveCount(0);
+
+		await page.evaluate(() => {
+			const link = document.createElement('a');
+			link.href = '/actions/contact_form_7/77';
+			link.dataset.testid = 'same-component-source-navigation';
+			link.textContent = 'Open Contact Form 7 action settings';
+			const appRoot = document.querySelector('[data-sentient-admin-content]');
+			if (!appRoot) throw new Error('Sentient Forms app root is unavailable');
+			appRoot.append(link);
+		});
+		await page.getByTestId('same-component-source-navigation').click();
+		await expectAppUrl(page, '/actions/contact_form_7/77');
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const cf7Option = page.getByTestId('built-in-action-option-gravity-route-fallback');
+
+		await expect(cf7Option).toContainText('Hooks: Not available for this Form Source');
+		await expect(cf7Option.getByRole('radio')).toBeDisabled();
+	});
+
+	test('reloads route-scoped state and ignores stale config when same-component form parameters change', async ({
+		page
+	}) => {
+		const formConfigWarnings: string[] = [];
+		page.on('console', (message) => {
+			if (message.type() === 'warning' && message.text().includes('[FormLevelConfig]')) {
+				formConfigWarnings.push(message.text());
+			}
+		});
+		const gravityMapping = {
+			...baseLinkages[0],
+			local_mapping_id: 'gravity-route-mapping',
+			central_action_id: 'route-neutral-action',
+			action_name_label: 'Gravity route mapping',
+			trigger_hooks: ['gform_after_submission'],
+			settings: {
+				trigger_sources: {
+					gform_after_submission: { type: 'hook_root' }
+				}
+			}
+		};
+		const cf7Mapping = {
+			...baseLinkages[0],
+			form_id: cf7FormId,
+			local_mapping_id: 'cf7-route-mapping',
+			central_action_id: 'route-neutral-action',
+			action_name_label: 'CF7 route mapping',
+			trigger_hooks: ['wpcf7_mail_sent'],
+			settings: {
+				trigger_sources: {
+					wpcf7_mail_sent: { type: 'hook_root' }
+				}
+			}
+		};
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms, [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'route-neutral-action',
+						label: 'Route-neutral action',
+						source: 'bundled',
+						hooks: ['after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActionsByForm: {
+					'gravity_forms:123': [gravityMapping],
+					'contact_form_7:77': [cf7Mapping]
+				},
+				formFields: [],
+				formSourceDescriptors: {
+					[formSource]: gravityFormSourceDescriptor,
+					[cf7FormSource]: cf7FormSourceDescriptor
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.addInitScript(() => {
+			type StaleConfigWindow = Window & {
+				__sentientGravityConfigRequestCount?: number;
+				__sentientReleaseGravityConfigs?: () => void;
+			};
+			const runtimeWindow = window as StaleConfigWindow;
+			const originalFetch = window.fetch.bind(window);
+			const pendingGravityConfigs: Array<(response: Response) => void> = [];
+			const staleGravityResponse = () =>
+				new Response(
+					JSON.stringify({
+						success: true,
+						data: {
+							form_source_slug: 'gravity_forms',
+							form_source: 'gravity_forms',
+							form_id: '123',
+							action_id: 'route-neutral-action',
+							config: {
+								model_selection: {
+									primary: 'openai/stale-gravity-model',
+									is_preset: false,
+									provider: 'openrouter'
+								}
+							}
+						}
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				);
+			runtimeWindow.__sentientReleaseGravityConfigs = () => {
+				for (const resolve of pendingGravityConfigs.splice(0)) {
+					resolve(staleGravityResponse());
+				}
+			};
+			window.fetch = (...args: Parameters<typeof window.fetch>) => {
+				const input = args[0];
+				const url =
+					typeof input === 'string'
+						? input
+						: input instanceof URL
+							? input.toString()
+							: input.url;
+				if (!url.includes('/forms/gravity_forms/123/action-config/route-neutral-action')) {
+					return originalFetch(...args);
+				}
+
+				runtimeWindow.__sentientGravityConfigRequestCount =
+					(runtimeWindow.__sentientGravityConfigRequestCount ?? 0) + 1;
+				return new Promise<Response>((resolve) => {
+					pendingGravityConfigs.push(resolve);
+				});
+			};
+		});
+
+		const bootstrapRequests: string[] = [];
+		page.on('request', (request) => {
+			if (request.method() === 'GET' && request.url().includes('/actions/bootstrap')) {
+				bootstrapRequests.push(request.url());
+			}
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		let table = await openLinkedActionsTable(page);
+		await expect(table).toContainText('Gravity route mapping');
+		await expect(table).not.toContainText('CF7 route mapping');
+		await expect(page.getByTestId('form-context-band')).toContainText('Gravity Forms');
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Gravity route mapping' })
+			.getByRole('button', { name: 'Configure' })
+			.click();
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						((window as Window & { __sentientGravityConfigRequestCount?: number })
+							.__sentientGravityConfigRequestCount ?? 0) > 0
+				)
+			)
+			.toBe(true);
+
+		await page.evaluate(() => {
+			const link = document.createElement('a');
+			link.href = '/actions/contact_form_7/77';
+			link.dataset.testid = 'same-component-bootstrap-navigation';
+			link.textContent = 'Open Contact Form 7 action settings';
+			const appRoot = document.querySelector('[data-sentient-admin-content]');
+			if (!appRoot) throw new Error('Sentient Forms app root is unavailable');
+			appRoot.append(link);
+		});
+		await page.getByTestId('same-component-bootstrap-navigation').click();
+		await expectAppUrl(page, '/actions/contact_form_7/77');
+
+		await expect(page.getByTestId('linked-actions-view-table')).toBeVisible();
+		table = await openLinkedActionsTable(page);
+		await expect(table).toContainText('CF7 route mapping');
+		await expect(table).not.toContainText('Gravity route mapping');
+		await expect(page.getByTestId('form-context-band')).toContainText('Contact Form 7');
+		await expect
+			.poll(
+				() =>
+					bootstrapRequests.filter((url) =>
+						/gravity_forms\/forms\/123|contact_form_7\/forms\/77/.test(url)
+					).length
+			)
+			.toBe(2);
+		await page.evaluate(
+			() =>
+				new Promise<void>((resolve) => {
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+				})
+		);
+
+		await page.evaluate(() => {
+			(
+				window as Window & {
+					__sentientReleaseGravityConfigs?: () => void;
+				}
+			).__sentientReleaseGravityConfigs?.();
+		});
+		await page.evaluate(
+			() =>
+				new Promise<void>((resolve) => {
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+				})
+		);
+		await expect(page.getByTestId('mapping-config-modal')).toHaveCount(0);
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const cf7ActionOption = page.getByTestId('built-in-action-option-route-neutral-action');
+		await expect(cf7ActionOption).toBeVisible();
+		await expect(cf7ActionOption).not.toContainText('stale-gravity-model');
+		expect(formConfigWarnings).toEqual([]);
+	});
+
+	test('marks an unsupported persisted lifecycle invalid and blocks unchanged save', async ({ page }) => {
+		const unsupportedMapping = {
+			...baseLinkages[0],
+			form_id: wpformsFormId,
+			local_mapping_id: 'unsupported-validation-mapping',
+			central_action_id: 'lifecycle-repair-action',
+			action_name_label: 'Lifecycle repair action',
+			trigger_hooks: ['validation'],
+			settings: {
+				trigger_sources: {
+					validation: { type: 'hook_root' }
+				}
+			}
+		};
+		await mockWpJson(page, {
+			actions: {
+				forms: { [wpformsFormSource]: wpformsForms },
+				definitions: [
+					{
+						id: 'lifecycle-repair-action',
+						label: 'Lifecycle repair action',
+						source: 'bundled',
+						hooks: ['validation', 'after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [unsupportedMapping],
+				formFields: [],
+				formSourceDescriptors: { [wpformsFormSource]: wpformsLiteFormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		const requests = trackSentientRestRequests(page);
+		await page.goto('/actions/wpforms/88', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		const row = table.locator('tbody tr').filter({ hasText: 'Lifecycle repair action' });
+		await expect(row).toContainText('Invalid');
+		await expect(row).toContainText(/unsupported lifecycle/i);
+		await row.getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-trigger-hook-validation')).toBeChecked();
+		await expect(modal.getByTestId('unsupported-lifecycle-repair-alert')).toContainText(
+			/unsupported.*remove.*repair/i
+		);
+		await modal.getByTestId('mapping-config-save').click();
+		await expect(page.locator('[data-sonner-sv-toast]')).toContainText(/unsupported lifecycle/i);
+		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
+	});
+
+	test('prefers the current Form Source trigger alias regardless of persisted key order', async ({ page }) => {
+		const parent = {
+			...baseLinkages[0],
+			form_id: cf7FormId,
+			local_mapping_id: 'cf7-alias-parent',
+			central_action_id: 'cf7-alias-action',
+			action_name_label: 'CF7 alias parent',
+			trigger_hooks: ['wpcf7_mail_sent'],
+			settings: {
+				trigger_sources: { wpcf7_mail_sent: { type: 'hook_root' } }
+			}
+		};
+		const children = [
+			{
+				...baseLinkages[0],
+				form_id: cf7FormId,
+				local_mapping_id: 'cf7-foreign-first',
+				central_action_id: 'cf7-alias-action',
+				action_name_label: 'CF7 foreign first',
+				trigger_hooks: ['gform_after_submission', 'wpcf7_mail_sent'],
+				settings: {
+					trigger_sources: {
+						gform_after_submission: { type: 'hook_root' },
+						wpcf7_mail_sent: { type: 'mapping', mapping_id: 'cf7-alias-parent' }
+					},
+					dependency_ids: ['cf7-alias-parent']
+				}
+			},
+			{
+				...baseLinkages[0],
+				form_id: cf7FormId,
+				local_mapping_id: 'cf7-current-first',
+				central_action_id: 'cf7-alias-action',
+				action_name_label: 'CF7 current first',
+				trigger_hooks: ['wpcf7_mail_sent', 'gform_after_submission'],
+				settings: {
+					trigger_sources: {
+						wpcf7_mail_sent: { type: 'mapping', mapping_id: 'cf7-alias-parent' },
+						gform_after_submission: { type: 'hook_root' }
+					},
+					dependency_ids: ['cf7-alias-parent']
+				}
+			}
+		];
+		const linkages = [parent, ...children];
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'cf7-alias-action',
+						label: 'CF7 alias action',
+						source: 'bundled',
+						hooks: ['after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: [],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		const savedPayloads = new Map<string, Record<string, unknown>>();
+		page.on('request', (request) => {
+			if (request.method() !== 'PUT') return;
+			for (const child of children) {
+				if (request.url().includes(`/actions/${child.local_mapping_id}`)) {
+					savedPayloads.set(child.local_mapping_id, request.postDataJSON() as Record<string, unknown>);
+				}
+			}
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		for (const child of children) {
+			const row = table.locator('tbody tr').filter({ hasText: child.action_name_label });
+			await row.getByRole('button', { name: 'Configure' }).click();
+			const saveButton = page.getByTestId('mapping-config-save');
+			await saveButton.focus();
+			await saveButton.press('Enter');
+			await expect.poll(() => savedPayloads.has(child.local_mapping_id)).toBe(true);
+
+			const payload = savedPayloads.get(child.local_mapping_id) as Record<string, unknown>;
+			const settings = payload.settings as Record<string, unknown>;
+			const triggerSources = settings.trigger_sources as Record<string, unknown>;
+			expect(payload.trigger_hooks).toEqual(['after_submission']);
+			expect(triggerSources).toEqual({
+				after_submission: { type: 'mapping', mapping_id: 'cf7-alias-parent' }
+			});
+			expect(settings.dependency_ids).toEqual(['cf7-alias-parent']);
+		}
+	});
+
 	test('presents WPForms Lite as ledger-only after-submission support without native entry claims', async ({
 		page
 	}) => {
@@ -6119,6 +6954,9 @@ test.describe('Actions admin flows', () => {
 		await modal.getByTestId('mapping-config-save').click();
 
 		await expect(modal.getByTestId('input-mapping-save-error')).toContainText(
+			'Select at least one field or include form metadata.'
+		);
+		await expect(page.locator('[data-sonner-sv-toast]')).toContainText(
 			'Select at least one field or include form metadata.'
 		);
 		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
