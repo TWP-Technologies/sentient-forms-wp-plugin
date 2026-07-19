@@ -24,6 +24,7 @@ This ledger covers the marketing/compliance bundle for `MKT-010`, `MKT-009`,
 | Add 10 KB preflight to release checklist | MKT-066 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add six WordPress.org screenshot captions | MKT-013 | +339 | Terse captions preserve the `9700` byte target while matching `screenshot-1.png` through `screenshot-6.png`. |
 | Final 0.11.0 readme | MKT-010/MKT-013/WPORG-0.6.1 | 9682 | Release reconciliation keeps the listing `18` bytes under target and `318` bytes under the hard maximum. |
+| Retire legacy CPS runtime wording | Architecture cutover | -703 | The current 0.11.0 readme is `8979` bytes after removing obsolete remote Action-runtime guidance; it is `721` bytes under target and `1021` bytes under the hard maximum. |
 
 ## Required Checks
 
