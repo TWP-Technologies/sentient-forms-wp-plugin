@@ -511,11 +511,8 @@ final class Sentient_Forms_Plugin
     private function get_telemetry_defaults(): array
     {
         return [
-            'telemetry_opt_in' => false,
-            'updated_at'       => null,
-            'synced_at'        => null,
-            'remote_updated_at'=> null,
-            'last_error'       => null,
+            'local_diagnostics_enabled' => false,
+            'updated_at'                => null,
         ];
     }
 
@@ -526,43 +523,27 @@ final class Sentient_Forms_Plugin
             ? $options['telemetry']
             : [];
 
-        $settings = array_merge( $this->get_telemetry_defaults(), $stored );
-        $settings['telemetry_opt_in'] = ! empty( $settings['telemetry_opt_in'] );
+        $settings   = array_merge( $this->get_telemetry_defaults(), $stored );
+        $updated_at = isset( $settings['updated_at'] )
+            ? sanitize_text_field( (string) $settings['updated_at'] )
+            : null;
 
-        foreach ( [ 'updated_at', 'synced_at', 'remote_updated_at', 'last_error' ] as $field )
-        {
-            if ( isset( $settings[ $field ] ) && null !== $settings[ $field ] )
-            {
-                $settings[ $field ] = sanitize_text_field( (string) $settings[ $field ] );
-            }
-            else
-            {
-                $settings[ $field ] = null;
-            }
-        }
-
-        return $settings;
+        return [
+            'local_diagnostics_enabled' => ! empty( $settings['local_diagnostics_enabled'] ),
+            'updated_at'                => '' !== $updated_at ? $updated_at : null,
+        ];
     }
 
     public function set_telemetry_settings( array $settings ): void
     {
         $options  = $this->get_options();
-        $merged   = array_merge( $this->get_telemetry_defaults(), $settings );
-        $merged['telemetry_opt_in'] = ! empty( $merged['telemetry_opt_in'] );
-
-        foreach ( [ 'updated_at', 'synced_at', 'remote_updated_at', 'last_error' ] as $field )
-        {
-            if ( isset( $merged[ $field ] ) && null !== $merged[ $field ] )
-            {
-                $merged[ $field ] = sanitize_text_field( (string) $merged[ $field ] );
-            }
-            else
-            {
-                $merged[ $field ] = null;
-            }
-        }
-
-        $options['telemetry'] = $merged;
+        $updated_at = isset( $settings['updated_at'] )
+            ? sanitize_text_field( (string) $settings['updated_at'] )
+            : null;
+        $options['telemetry'] = [
+            'local_diagnostics_enabled' => ! empty( $settings['local_diagnostics_enabled'] ),
+            'updated_at'                => '' !== $updated_at ? $updated_at : null,
+        ];
         $this->save_options( $options );
     }
 

@@ -252,10 +252,12 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $updated = $this->mappings->update(
             $fixture['mapping_id'],
             [
-                'input_bindings_json' => [
-                    'mode'             => 'selected',
-                    'field_ids'        => [ '2' ],
-                    'include_metadata' => false,
+                'settings_json' => [
+                    'input_mapping' => [
+                        'mode'             => 'selected',
+                        'field_ids'        => [ '2' ],
+                        'include_metadata' => false,
+                    ],
                 ],
             ]
         );
@@ -306,10 +308,12 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $updated = $this->mappings->update(
             $fixture['mapping_id'],
             [
-                'input_bindings_json' => [
-                    'mode'             => 'selected',
-                    'field_ids'        => [ '2' ],
-                    'include_metadata' => false,
+                'settings_json' => [
+                    'input_mapping' => [
+                        'mode'             => 'selected',
+                        'field_ids'        => [ '2' ],
+                        'include_metadata' => false,
+                    ],
                 ],
             ]
         );

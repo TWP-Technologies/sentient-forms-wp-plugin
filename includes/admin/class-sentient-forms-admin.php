@@ -375,7 +375,7 @@ SVG;
 		$settings = Sentient_Forms_Plugin::instance()->get_telemetry_settings();
 
 		return [
-			'optIn'     => ! empty( $settings['telemetry_opt_in'] ),
+			'enabled'   => ! empty( $settings['local_diagnostics_enabled'] ),
 			'updatedAt' => $settings['updated_at'] ?? null,
 		];
 	}

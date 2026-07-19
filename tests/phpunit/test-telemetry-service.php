@@ -32,31 +32,29 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
 
     public function test_constructor_does_not_schedule_cron_without_remote_identity(): void
     {
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
 
         new Sentient_Forms_Telemetry_Service( $this->plugin );
 
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
     }
 
-    public function test_update_and_sync_persists_local_consent_without_proxy_key(): void
+    public function test_update_preference_persists_only_local_diagnostic_state(): void
     {
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
 
-        $result = $service->update_and_sync( true, 'wp_user:1' );
+        $result = $service->update_preference( true );
 
         $this->assertIsArray( $result );
-        $this->assertTrue( $result['telemetry_opt_in'] );
+        $this->assertSame( [ 'local_diagnostics_enabled', 'updated_at' ], array_keys( $result ) );
+        $this->assertTrue( $result['local_diagnostics_enabled'] );
         $this->assertNotEmpty( $result['updated_at'] );
-        $this->assertNull( $result['last_error'] );
-        $this->assertNull( $result['synced_at'] );
-        $this->assertNull( $result['remote_updated_at'] );
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
     }
 
     public function test_queue_event_does_not_store_rows_without_remote_identity(): void
     {
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
 
         $service->queue_event(
@@ -80,7 +78,7 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
             ]
         );
         update_option( 'sentient_forms_site_id', 'legacy-site-123', false );
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
 
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
@@ -98,7 +96,7 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
 
     public function test_local_diagnostic_metadata_excludes_result_error_and_entry_identifiers(): void
     {
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
         $events  = [];
         add_filter( 'sentient_forms_debug_log_enabled', '__return_true' );
@@ -165,16 +163,74 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
         $this->assertContains( 'req-test-success', $execution_request_ids );
     }
 
+    public function test_constructor_wires_async_runtime_events_to_local_diagnostics(): void
+    {
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
+        $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
+        $events  = [];
+        add_filter( 'sentient_forms_debug_log_enabled', '__return_true' );
+        add_action(
+            'sentient_forms_debug_log',
+            static function ( string $message, array $context ) use ( &$events ): void {
+                if ( str_contains( $message, '[sentient-forms][diagnostics] local diagnostic event' ) )
+                {
+                    $events[] = $context;
+                }
+            },
+            10,
+            2
+        );
+
+        $this->assertSame( 20, has_action( 'sentient_forms_async_success', [ $service, 'handle_job_success' ] ) );
+        $this->assertSame( 20, has_action( 'sentient_forms_async_failure', [ $service, 'handle_job_failure' ] ) );
+        $this->assertSame( 10, has_action( 'sentient_forms_async_health_warning', [ $service, 'handle_health_warning' ] ) );
+
+        do_action(
+            'sentient_forms_async_success',
+            [
+                'action_id'             => 'entry_summary_v1',
+                'execution_request_id'  => 'req-success-hook',
+                'provider_path'         => 'openrouter',
+                'form_source'           => 'gravity_forms',
+            ],
+            [ 'result' => 'private model output' ]
+        );
+        do_action(
+            'sentient_forms_async_failure',
+            [
+                'action_id'            => 'entry_summary_v1',
+                'execution_request_id' => 'req-failure-hook',
+                'form_source'          => 'gravity_forms',
+            ],
+            new WP_Error( 'provider_timeout', 'Private provider failure text.' )
+        );
+        do_action( 'sentient_forms_async_health_warning', [ 'code' => 'queue_backlog' ] );
+
+        $event_types = array_map(
+            static fn ( array $event ): string => (string) ( $event['event'] ?? '' ),
+            $events
+        );
+        $this->assertContains( 'async_job_success', $event_types );
+        $this->assertContains( 'async_job_failure', $event_types );
+        $this->assertContains( 'async_health_warning', $event_types );
+        $this->assertStringNotContainsString( 'private model output', wp_json_encode( $events ) );
+        $this->assertStringNotContainsString( 'Private provider failure text.', wp_json_encode( $events ) );
+
+        remove_action( 'sentient_forms_async_success', [ $service, 'handle_job_success' ], 20 );
+        remove_action( 'sentient_forms_async_failure', [ $service, 'handle_job_failure' ], 20 );
+        remove_action( 'sentient_forms_async_health_warning', [ $service, 'handle_health_warning' ], 10 );
+    }
+
     public function test_opt_out_unschedules_flush_cron(): void
     {
         wp_schedule_event( time() + MINUTE_IN_SECONDS, 'hourly', 'sentient_forms_flush_telemetry' );
         $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
 
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );
 
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => false ] );
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => false ] );
         $service->maybe_schedule_flush();
 
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_flush_telemetry' ) );

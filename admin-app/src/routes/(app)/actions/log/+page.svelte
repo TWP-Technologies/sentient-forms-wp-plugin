@@ -860,14 +860,24 @@
 															{entry.pricing.pricing_policy_version}
 														</p>
 														<p class="sf:mt-1">
-															{usagePolicyLabel(entry)}
-															{usageCostLabel(entry)}
-															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
-																, base floor {entry.pricing.base_floor_credits}
-															{/if}
-															{#if entry.pricing.normalized_actual_credits !== null && entry.pricing.normalized_actual_credits !== undefined}
-																, normalized actual {entry.pricing.normalized_actual_credits}
-															{/if}
+															<span
+																class="sf:block"
+																data-testid={`action-log-usage-policy-${entry.id}`}
+															>
+																{usagePolicyLabel(entry)}
+															</span>
+															<span
+																class="sf:block"
+																data-testid={`action-log-usage-cost-${entry.id}`}
+															>
+																{usageCostLabel(entry)}
+																{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
+																	, base floor {entry.pricing.base_floor_credits}
+																{/if}
+																{#if entry.pricing.normalized_actual_credits !== null && entry.pricing.normalized_actual_credits !== undefined}
+																	, normalized actual {entry.pricing.normalized_actual_credits}
+																{/if}
+															</span>
 														</p>
 													</div>
 												{/if}

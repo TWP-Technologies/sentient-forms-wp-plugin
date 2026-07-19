@@ -26,6 +26,10 @@ import {
 	type ManagedCheckoutStartResponse
 } from '$lib/api/managed-checkout-contract';
 import { billingCheckoutSessionResponseSchema } from '$lib/api/billing-checkout-contract';
+import {
+	localDiagnosticsSettingsResponseSchema,
+	type LocalDiagnosticsSettingsResponse
+} from '$lib/api/local-diagnostics-contract';
 import type {
 	ActionDefinition,
 	ActionDefaultsBatchResponse,
@@ -37,8 +41,6 @@ import type {
 	BillingPortalSessionResponse,
 	BillingStateResponse,
 	AsyncHealthResponse,
-	CloneTemplateMappingRequest,
-	CreateFormMappingRequest,
 	CustomAction,
 	CustomActionCreatePayload,
 	CustomActionFilters,
@@ -64,7 +66,6 @@ import type {
 	RequestTraceRequest,
 	RequestTraceResponse,
 	WorkflowPlanResponse,
-	FormMapping,
 	FormSummary,
 	CapabilitiesResponse,
 	LicenseActivationRequest,
@@ -110,11 +111,9 @@ import type {
 	SpamGuidanceEntryStatusFilter,
 	SpamGuidanceExampleAppendPayload,
 	SpamGuidanceExampleAppendResponse,
-	TelemetrySettingsResponse,
 	PluginSettingsResponse,
 	TopUpCheckoutSessionRequest,
-	TopUpCheckoutSessionResponse,
-	UpdateFormMappingRequest
+	TopUpCheckoutSessionResponse
 } from '$lib/api/types';
 
 export interface ClientConfig {
@@ -175,7 +174,12 @@ const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => 
 const nullableJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? null);
 const submissionLedgerActionRunSchema = z.object({
 	execution_request_id: z.string(),
-	mapping_id: z.coerce.number().int().nullable().optional().transform((value) => value ?? null),
+	mapping_id: z.coerce
+		.number()
+		.int()
+		.nullable()
+		.optional()
+		.transform((value) => value ?? null),
 	status: z.string(),
 	provider: nullableScalarStringSchema,
 	model: nullableScalarStringSchema,
@@ -233,7 +237,10 @@ const submissionLedgerRecordSchema = z.object({
 	provider_metadata: nullishJsonRecordSchema,
 	file_refs: nullishJsonRecordArraySchema,
 	redaction_summary: nullishJsonRecordSchema,
-	action_runs: z.array(submissionLedgerActionRunSchema).nullish().transform((value) => value ?? []),
+	action_runs: z
+		.array(submissionLedgerActionRunSchema)
+		.nullish()
+		.transform((value) => value ?? []),
 	expires_at: z.string().nullable(),
 	detail_endpoint: z.string()
 });
@@ -1028,14 +1035,11 @@ export class SentientFormsApiClient {
 		payload: BillingCheckoutSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingCheckoutSessionResponse> {
-		const response = await this.request<RestEnvelope<unknown>>(
-			'license/billing/checkout-session',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
+		const response = await this.request<RestEnvelope<unknown>>('license/billing/checkout-session', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
 		return billingCheckoutSessionResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
@@ -1100,24 +1104,23 @@ export class SentientFormsApiClient {
 		) as TopUpCheckoutSessionResponse;
 	}
 
-	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
-		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>(
-			'telemetry',
-			options
-		);
-		return this.unwrap(response);
+	async getLocalDiagnosticsSettings(
+		options: RequestOptions = {}
+	): Promise<LocalDiagnosticsSettingsResponse> {
+		const response = await this.request<RestEnvelope<unknown>>('telemetry', options);
+		return localDiagnosticsSettingsResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
-	async updateTelemetrySettings(
-		optIn: boolean,
+	async updateLocalDiagnosticsSettings(
+		enabled: boolean,
 		options: RequestOptions = {}
-	): Promise<TelemetrySettingsResponse> {
-		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', {
+	): Promise<LocalDiagnosticsSettingsResponse> {
+		const response = await this.request<RestEnvelope<unknown>>('telemetry', {
 			method: 'PUT',
-			body: { telemetry_opt_in: optIn },
+			body: { local_diagnostics_enabled: enabled },
 			...options
 		});
-		return this.unwrap(response);
+		return localDiagnosticsSettingsResponseSchema.parse(this.unwrap<unknown>(response));
 	}
 
 	async getAsyncSettings(options: RequestOptions = {}): Promise<AsyncSettingsResponse> {
@@ -2533,102 +2536,6 @@ export class SentientFormsApiClient {
 		});
 	}
 
-	// ==========================================================================
-	// Phase 7: Form Mappings (CSM - Cross-Site Mapping Portability)
-	// ==========================================================================
-
-	/**
-	 * Get all form mappings for the current license.
-	 * CSM-001: local mapping storage
-	 */
-	async getFormMappings(options: RequestOptions = {}): Promise<FormMapping[]> {
-		const response = await this.request<{ success: boolean; data: FormMapping[] }>('mappings', {
-			showNotifications: false,
-			...options
-		});
-		return response.data;
-	}
-
-	/**
-	 * Get template mappings only (reusable across sites).
-	 * CSM-003: Save as Template
-	 */
-	async getFormMappingTemplates(options: RequestOptions = {}): Promise<FormMapping[]> {
-		const response = await this.request<{ success: boolean; data: FormMapping[] }>(
-			'mappings/templates',
-			{ showNotifications: false, ...options }
-		);
-		return response.data;
-	}
-
-	/**
-	 * Get a single form mapping by ID.
-	 */
-	async getFormMapping(id: string, options: RequestOptions = {}): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(id)}`,
-			{ showNotifications: false, ...options }
-		);
-		return response.data;
-	}
-
-	/**
-	 * Create a new form mapping.
-	 * CSM-001: local mapping storage
-	 */
-	async createFormMapping(
-		payload: CreateFormMappingRequest,
-		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>('mappings', {
-			method: 'POST',
-			body: payload,
-			...options
-		});
-		return response.data;
-	}
-
-	/**
-	 * Update an existing form mapping.
-	 */
-	async updateFormMapping(
-		id: string,
-		payload: UpdateFormMappingRequest,
-		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(id)}`,
-			{ method: 'PUT', body: payload, ...options }
-		);
-		return response.data;
-	}
-
-	/**
-	 * Delete a form mapping.
-	 */
-	async deleteFormMapping(id: string, options: RequestOptions = {}): Promise<void> {
-		await this.request(`mappings/${encodeURIComponent(id)}`, {
-			method: 'DELETE',
-			...options
-		});
-	}
-
-	/**
-	 * Clone a template mapping to a specific site and form.
-	 * CSM-004: Import from Library
-	 */
-	async cloneFormMappingTemplate(
-		templateId: string,
-		payload: CloneTemplateMappingRequest,
-		options: RequestOptions = {}
-	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			`mappings/${encodeURIComponent(templateId)}/clone`,
-			{ method: 'POST', body: payload, ...options }
-		);
-		return response.data;
-	}
-
 	async getExecutionStatus(
 		formSourceSlug: string,
 		formId: FormSourceFormId,
@@ -2925,11 +2832,8 @@ function defaultRuntimeConfig(): SentientFormsConfig {
 			siteId: null
 		},
 		telemetry: {
-			optIn: false,
-			updatedAt: null,
-			syncedAt: null,
-			remoteUpdatedAt: null,
-			lastError: null
+			enabled: false,
+			updatedAt: null
 		},
 		i18n: {}
 	};

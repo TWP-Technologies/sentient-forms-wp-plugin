@@ -18,6 +18,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'field_ids'        => [ '2', '3' ],
                 'include_metadata' => false,
             ],
+            [ 'customer_name' => '1' ],
             $this->form(),
             $this->entry()
         );
@@ -27,7 +28,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
         $this->assertSame( [], $projection['form'] );
         $this->assertArrayNotHasKey( 'id', $projection['entry'] );
         $this->assertArrayNotHasKey( 'title', $projection['form'] );
-        $this->assertSame( [], $projection['bindings'] );
+        $this->assertSame( [ 'customer_name' => '1' ], $projection['bindings'] );
         $this->assertSame(
             [
                 'mapping_source'        => 'explicit_mapping',
@@ -50,6 +51,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'field_ids'        => [ '2' ],
                 'include_metadata' => true,
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -68,6 +70,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'mode'             => 'all',
                 'include_metadata' => false,
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -89,12 +92,27 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
         $form  = $this->form();
         $entry = $this->entry();
 
-        $projection = $this->projector->project( $bindings, $form, $entry );
+        $projection = $this->projector->project( null, $bindings, $form, $entry );
 
         $this->assertIsArray( $projection );
         $this->assertSame( $bindings, $projection['bindings'] );
         $this->assertSame( $form, $projection['form'] );
         $this->assertSame( $entry, $projection['entry'] );
+        $this->assertSame( 'variable_bindings', $projection['manifest']['mapping_source'] );
+        $this->assertTrue( $projection['manifest']['full_entry_sent'] );
+    }
+
+    public function test_binding_named_mode_remains_a_binding_when_no_projection_policy_exists(): void
+    {
+        $bindings = [
+            'mode'  => '3',
+            'email' => '2',
+        ];
+
+        $projection = $this->projector->project( null, $bindings, $this->form(), $this->entry() );
+
+        $this->assertIsArray( $projection );
+        $this->assertSame( $bindings, $projection['bindings'] );
         $this->assertSame( 'variable_bindings', $projection['manifest']['mapping_source'] );
         $this->assertTrue( $projection['manifest']['full_entry_sent'] );
     }
@@ -106,6 +124,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'mode'      => 'sometimes',
                 'field_ids' => [ '2' ],
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -121,6 +140,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'mode'      => 'selected',
                 'field_ids' => '2',
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -137,6 +157,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'field_ids'        => [ '2' ],
                 'include_metadata' => 'false',
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -154,6 +175,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                     'mode'      => 'selected',
                     'field_ids' => [ $field_id ],
                 ],
+                [],
                 $this->form(),
                 $this->entry()
             );
@@ -171,6 +193,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'field_ids'        => [],
                 'include_metadata' => false,
             ],
+            [],
             $this->form(),
             $this->entry()
         );
@@ -187,6 +210,7 @@ class Tests_Action_Input_Projector extends WP_UnitTestCase
                 'field_ids'        => [],
                 'include_metadata' => true,
             ],
+            [],
             $this->form(),
             $this->entry()
         );

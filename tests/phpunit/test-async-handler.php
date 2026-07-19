@@ -548,8 +548,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
     public function test_dispatch_action_evaluation_emits_duplicate_block_event(): void
     {
-        // Enable telemetry so events are emitted even without debug mode.
-        $this->plugin->set_telemetry_settings( [ 'telemetry_opt_in' => true ] );
+        // Enable local diagnostics so events are emitted even without debug mode.
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
 
         $job = [
             'adapter_id' => 'gravity_forms',

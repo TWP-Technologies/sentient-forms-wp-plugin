@@ -1,6 +1,6 @@
 <?php
 /**
- * REST API controller for telemetry consent.
+ * REST API controller for the local diagnostic-event preference.
  *
  * @package SentientForms
  */
@@ -49,7 +49,7 @@ class Sentient_Forms_Telemetry_Controller extends Sentient_Forms_Abstract_Base_C
                     'callback'            => [ $this, 'update_settings' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
-                        'telemetry_opt_in' => [
+                        'local_diagnostics_enabled' => [
                             'type'              => 'boolean',
                             'required'          => true,
                             'sanitize_callback' => 'rest_sanitize_boolean',
@@ -68,10 +68,8 @@ class Sentient_Forms_Telemetry_Controller extends Sentient_Forms_Abstract_Base_C
 
     public function update_settings( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        $telemetry_opt_in = rest_sanitize_boolean( $request->get_param( 'telemetry_opt_in' ) );
-        $actor_hint       = $this->build_actor_hint();
-
-        $result = $this->service->update_and_sync( $telemetry_opt_in, $actor_hint );
+        $enabled = rest_sanitize_boolean( $request->get_param( 'local_diagnostics_enabled' ) );
+        $result  = $this->service->update_preference( $enabled );
 
         if ( is_wp_error( $result ) )
         {
@@ -84,22 +82,8 @@ class Sentient_Forms_Telemetry_Controller extends Sentient_Forms_Abstract_Base_C
     private function format_response( array $settings ): array
     {
         return [
-            'telemetry_opt_in'  => ! empty( $settings['telemetry_opt_in'] ),
-            'updated_at'        => $settings['updated_at'] ?? null,
-            'synced_at'         => $settings['synced_at'] ?? null,
-            'remote_updated_at' => $settings['remote_updated_at'] ?? null,
-            'last_error'        => $settings['last_error'] ?? null,
+            'local_diagnostics_enabled' => ! empty( $settings['local_diagnostics_enabled'] ),
+            'updated_at'                => $settings['updated_at'] ?? null,
         ];
-    }
-
-    private function build_actor_hint(): string
-    {
-        $user_id = get_current_user_id();
-        if ( $user_id )
-        {
-            return 'wp_user:' . $user_id;
-        }
-
-        return 'wp_user:0';
     }
 }

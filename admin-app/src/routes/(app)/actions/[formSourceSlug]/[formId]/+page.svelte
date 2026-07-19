@@ -11,7 +11,6 @@
 		SelectField,
 		FieldSelector,
 		ConditionBuilder,
-		TemplateLibrary,
 		ModelSelector,
 		Toggle,
 		MappingDependencyGraph,
@@ -25,7 +24,11 @@
 	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
-	import { DEFAULT_INPUT_MAPPING, validateInputMappingForSave } from '$lib/utils/input-mapping';
+	import {
+		DEFAULT_INPUT_MAPPING,
+		parseInputMapping,
+		validateInputMappingForSave
+	} from '$lib/utils/input-mapping';
 	import {
 		createInitialMappingModalSectionExpansion,
 		toggleMappingModalSectionExpansion,
@@ -48,7 +51,6 @@
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { notifications } from '$lib/stores/notifications';
 	import { licenseState } from '$lib/stores/license.svelte';
-	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
@@ -519,7 +521,6 @@
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
 	let showAddPanel = $state(false);
-	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
 	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
 	let localBuilderCredentialId = $state('');
@@ -1793,7 +1794,10 @@
 		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${webhookPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
-		const mapping = (draftSettings.input_mapping ?? DEFAULT_INPUT_MAPPING) as InputMapping;
+		const mapping = parseInputMapping(draftSettings.input_mapping);
+		if (!mapping) {
+			return 'Invalid configuration · review required';
+		}
 		if (mapping.mode === 'all') {
 			return mapping.include_metadata ? 'All fields + metadata' : 'All fields';
 		}
@@ -3797,7 +3801,10 @@
 			return;
 		}
 
-		const inputMappingError = validateInputMappingForSave(draftSettings.input_mapping);
+		const inputMappingError = validateInputMappingForSave(
+			draftSettings.input_mapping,
+			formFields.map((field) => field.id)
+		);
 		if (inputMappingError) {
 			mappingSectionExpansion = { ...mappingSectionExpansion, input_mapping: true };
 			inputMappingSaveError = inputMappingError;
@@ -4084,68 +4091,6 @@
 		void loadCurrentFormSummary();
 		void loadProviderCredentials();
 		void loadFormActionConfigIndex();
-	}
-
-	// Phase 7 CSM: Save current action config as a template
-	let savingTemplate = $state(false);
-	async function saveAsTemplate(linkage: FormActionLinkage) {
-		if (!licenseState.siteId) {
-			notifications.error('Site not activated. Please activate your license first.');
-			return;
-		}
-
-		savingTemplate = true;
-		try {
-			const displayName = linkage.action_name_label ?? `Template from form ${data.formId}`;
-
-			// Create a portable template mapping through the current API contract.
-			// The API expects UUIDs for action_template_id, but string codes for action_template_code.
-			// For master templates (codes like 'spam_detection_v1'), we use action_template_code.
-			const isMasterTemplate = linkage.action_type_indicator === 'master';
-
-			// CSM-006: Extract portable field references from current form fields
-			// This enables smart field re-mapping when importing template to different sites
-			const inputMapping = linkage.settings?.input_mapping;
-			let portableFields: Array<{ label: string; type: string }> = [];
-
-			if (inputMapping?.mode === 'selected' && inputMapping.field_ids) {
-				// Only include fields that were explicitly selected
-				portableFields = formFields
-					.filter((f) => inputMapping.field_ids!.includes(f.id))
-					.map((f) => ({ label: f.label, type: f.type }));
-			} else if (inputMapping?.mode !== 'exclude') {
-				// Include all fields for 'all' mode or no mapping specified
-				portableFields = formFields.map((f) => ({ label: f.label, type: f.type }));
-			}
-
-			const result = await formMappingsStore.createMapping({
-				form_source: data.formSourceSlug,
-				display_name: displayName,
-				// UUID field - leave undefined for code-based templates
-				action_template_id: undefined,
-				// String code field for master templates like 'spam_detection_v1'
-				action_template_code: isMasterTemplate ? linkage.central_action_id : undefined,
-				custom_action_id:
-					linkage.action_type_indicator === 'custom' ? linkage.central_action_id : undefined,
-				is_template: true,
-				settings: {
-					trigger_hooks: getMappingTriggerHooks(linkage),
-					portable_fields: portableFields, // CSM-006: field labels for cross-site portability
-					...(linkage.settings ?? {})
-				}
-			});
-
-			if (result) {
-				notifications.success(`Saved "${displayName}" as template`);
-			} else {
-				notifications.error('Failed to save as template');
-			}
-		} catch (error) {
-			console.error('Failed to save as template', error);
-			notifications.error('Failed to save as template');
-		} finally {
-			savingTemplate = false;
-		}
 	}
 
 	async function checkEntryStatus(event?: SubmitEvent | Event) {
@@ -4513,12 +4458,6 @@
 			{/if}
 			<Button variant="secondary" onclick={() => void refresh()} data-testid="actions-refresh">Refresh</Button>
 			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
-			<Button
-				variant="secondary"
-				onclick={() => (showTemplateLibrary = true)}
-				disabled={!canConfigureFormSource}
-				>Import from Library</Button
-			>
 			{#if supportsNativeEntryLookup}
 				<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
 			{/if}
@@ -5097,14 +5036,6 @@
 									<div class="sf:mt-2 sf:space-x-2">
 										<Button size="sm" variant="ghost" onclick={() => startEditingAction(linkage)}>
 											Configure
-										</Button>
-										<Button
-											size="sm"
-											variant="ghost"
-											onclick={() => saveAsTemplate(linkage)}
-											disabled={savingTemplate || !licenseState.siteId}
-										>
-											{savingTemplate ? 'Saving...' : 'Save as Template'}
 										</Button>
 									</div>
 									{#if editingLinkageId === linkage.local_mapping_id}
@@ -5787,7 +5718,7 @@
 								{/if}
 								<FieldSelector
 									fields={formFields}
-									value={draftSettings.input_mapping ?? DEFAULT_INPUT_MAPPING}
+									value={parseInputMapping(draftSettings.input_mapping) ?? DEFAULT_INPUT_MAPPING}
 									onchange={(mapping) => {
 										draftSettings = { ...draftSettings, input_mapping: mapping };
 										inputMappingSaveError = null;
@@ -6753,16 +6684,4 @@
 		</div>
 	{/if}
 
-	<!-- Phase 7 CSM: Template Library Modal -->
-	<TemplateLibrary
-		bind:open={showTemplateLibrary}
-		siteId={licenseState.siteId ?? ''}
-		formSource={data.formSourceSlug}
-		formId={data.formId}
-		{formFields}
-		onImport={(mapping) => {
-			notifications.success(`Imported template: ${mapping.display_name}`);
-			formActionsStore.refresh(data.formSourceSlug, data.formId);
-		}}
-	/>
 </Section>

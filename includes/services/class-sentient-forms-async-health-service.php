@@ -131,6 +131,11 @@ class Sentient_Forms_Async_Health_Service
             ];
         }
 
+        foreach ( $warnings as $warning )
+        {
+            do_action( 'sentient_forms_async_health_warning', $warning );
+        }
+
         return [
             'queue_depth'            => $queue_depth,
             'oldest_run_at'          => $oldest_run,

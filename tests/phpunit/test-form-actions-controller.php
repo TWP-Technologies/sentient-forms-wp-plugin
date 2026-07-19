@@ -2449,6 +2449,89 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'input_mapping.field_ids', $response->get_error_data()['field'] ?? null );
     }
 
+    public function test_update_form_action_item_rejects_input_mapping_without_explicit_mode(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'settings', [ 'input_mapping' => [ 'email' => '3' ] ] );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'input_mapping.mode', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_null_input_mapping(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'settings', [ 'input_mapping' => null ] );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'input_mapping', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_excluding_every_form_field_without_metadata(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Projection validation',
+            'fields' => [
+                [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+            ],
+        ];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param(
+            'settings',
+            [
+                'input_mapping' => [
+                    'mode'             => 'exclude',
+                    'field_ids'        => [ '1', '2' ],
+                    'include_metadata' => false,
+                ],
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'input_mapping.field_ids', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_item_schema_publishes_the_input_mapping_structure(): void
+    {
+        $schema        = $this->controller->get_item_schema();
+        $input_mapping = $schema['properties']['settings']['properties']['input_mapping'] ?? null;
+
+        $this->assertIsArray( $input_mapping );
+        $this->assertSame( 'object', $input_mapping['type'] ?? null );
+        $this->assertFalse( $input_mapping['additionalProperties'] ?? true );
+        $this->assertSame( [ 'mode' ], $input_mapping['required'] ?? null );
+        $this->assertSame( [ 'all', 'selected', 'exclude' ], $input_mapping['properties']['mode']['enum'] ?? null );
+        $this->assertSame( 'array', $input_mapping['properties']['field_ids']['type'] ?? null );
+        $this->assertSame( 'string', $input_mapping['properties']['field_ids']['items']['type'] ?? null );
+        $this->assertSame( 'boolean', $input_mapping['properties']['include_metadata']['type'] ?? null );
+    }
+
     public function test_update_form_action_item_rejects_nested_input_mapping_field_ids(): void
     {
         $record = $this->create_local_first_mapping_fixture( '1' );
@@ -2478,6 +2561,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     public function test_update_form_action_item_normalizes_explicit_input_mapping_field_ids_before_storage(): void
     {
         $record = $this->create_local_first_mapping_fixture( '1' );
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Projection normalization',
+            'fields' => [
+                [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+            ],
+        ];
 
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
@@ -2501,8 +2592,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $stored = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( (int) $record['mapping_id'] );
         $this->assertSame(
             [ 'mode' => 'selected', 'field_ids' => [ '2', '1' ], 'include_metadata' => false ],
-            $stored['input_bindings_json'] ?? null
+            $stored['settings_json']['input_mapping'] ?? null
         );
+        $this->assertSame( [ 'email' => '3' ], $stored['input_bindings_json'] ?? null );
     }
 
     public function test_add_form_action_creates_local_first_bundled_mapping_with_canonical_identity(): void
@@ -2538,7 +2630,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 'spam_result_display_mode'       => 'all_results',
                 'spam_indicators_display'        => 'detailed',
                 'input_mapping'                  => [
-                    'email' => '3',
+                    'mode'             => 'all',
+                    'field_ids'        => [],
+                    'include_metadata' => true,
                 ],
             ]
         );
@@ -2600,7 +2694,11 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertIsArray( $submission_mapping );
         $this->assertSame( 'sync', $validation_mapping['execution_mode'] ?? null );
         $this->assertSame( 'sync', $submission_mapping['execution_mode'] ?? null );
-        $this->assertSame( [ 'email' => '3' ], $validation_mapping['input_bindings_json'] ?? null );
+        $this->assertSame( [], $validation_mapping['input_bindings_json'] ?? null );
+        $this->assertSame(
+            [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            $validation_mapping['settings_json']['input_mapping'] ?? null
+        );
         $this->assertFalse( $validation_mapping['effect_mapping_json']['spam']['suppress_notifications_on_spam'] ?? true );
         $this->assertTrue( $validation_mapping['effect_mapping_json']['spam']['skip_downstream_on_spam'] ?? false );
         $this->assertSame( 0.65, $validation_mapping['effect_mapping_json']['spam']['min_confidence'] ?? null );
@@ -2811,7 +2909,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [ 'gform_validation' ],
             [
                 'input_mapping' => [
-                    'message' => '4',
+                    'mode'             => 'all',
+                    'field_ids'        => [],
+                    'include_metadata' => true,
                 ],
             ]
         );
@@ -2830,7 +2930,11 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertCount( 1, $stored_mappings );
         $this->assertSame( 'validation', $stored_mappings[0]['hook'] ?? null );
         $this->assertSame( 'sync', $stored_mappings[0]['execution_mode'] ?? null );
-        $this->assertSame( [ 'message' => '4' ], $stored_mappings[0]['input_bindings_json'] ?? null );
+        $this->assertSame( [], $stored_mappings[0]['input_bindings_json'] ?? null );
+        $this->assertSame(
+            [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            $stored_mappings[0]['settings_json']['input_mapping'] ?? null
+        );
         $this->assertTrue( $stored_mappings[0]['effect_mapping_json']['store_result'] ?? false );
         $this->assertSame( 'structured.message', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
     }
@@ -2903,7 +3007,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'settings',
             [
                 'input_mapping' => [
-                    'email' => '3',
+                    'mode'             => 'all',
+                    'field_ids'        => [],
+                    'include_metadata' => true,
                 ],
             ]
         );
@@ -2924,7 +3030,11 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( $action_id, (int) ( $stored_mappings[0]['action_id'] ?? 0 ) );
         $this->assertSame( 'custom_action', $stored_mappings[0]['action_kind'] ?? null );
         $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
-        $this->assertSame( [ 'email' => '3' ], $stored_mappings[0]['input_bindings_json'] ?? null );
+        $this->assertSame( [], $stored_mappings[0]['input_bindings_json'] ?? null );
+        $this->assertSame(
+            [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            $stored_mappings[0]['settings_json']['input_mapping'] ?? null
+        );
     }
 
     public function test_add_form_action_applies_bundled_contract_to_existing_bundled_local_custom_action(): void
@@ -4930,7 +5040,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'after_submission' ], $data[0]['trigger_hooks'] ?? null );
         $this->assertTrue( $data[0]['is_action_enabled_for_form'] ?? false );
         $this->assertSame( 'after_submission', $data[0]['settings']['execution_mode'] ?? null );
-        $this->assertSame( [ 'email' => '3' ], $data[0]['settings']['input_mapping'] ?? null );
+        $this->assertSame(
+            [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            $data[0]['settings']['input_mapping'] ?? null
+        );
+        global $wpdb;
+        $stored = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( (int) $record['mapping_id'] );
+        $this->assertSame( [ 'email' => '3' ], $stored['input_bindings_json'] ?? null );
         $this->assertSame(
             [ 'sentient_forms_qualification' => 'structured.qualification' ],
             $data[0]['settings']['effect_mapping_json']['meta'] ?? null
@@ -5580,8 +5696,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'execution_mode' => 'after_submission',
                 'input_mapping'  => [
-                    'name'    => '1',
-                    'message' => '2',
+                    'mode'             => 'all',
+                    'field_ids'        => [],
+                    'include_metadata' => true,
                 ],
                 'conditions'     => [
                     'enabled' => true,
@@ -5612,14 +5729,18 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertSame( 'local_first_' . $record['mapping_id'], $data['local_mapping_id'] ?? null );
         $this->assertFalse( $data['is_action_enabled_for_form'] ?? true );
-        $this->assertSame( [ 'name' => '1', 'message' => '2' ], $data['settings']['input_mapping'] ?? null );
+        $this->assertSame( [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ], $data['settings']['input_mapping'] ?? null );
         $this->assertSame( 'sentient_managed', $data['settings']['model_selection']['provider'] ?? null );
         $this->assertSame( 'sf_default', $data['settings']['model_selection']['primary'] ?? null );
         $this->assertSame( 1, (int) ( $data['settings']['model_selection']['credential_id'] ?? 0 ) );
         $this->assertSame( 'yes', $data['settings']['include_site_context'] ?? null );
         $this->assertIsArray( $stored );
         $this->assertFalse( $stored['enabled'] );
-        $this->assertSame( [ 'name' => '1', 'message' => '2' ], $stored['input_bindings_json'] ?? null );
+        $this->assertSame( [ 'email' => '3' ], $stored['input_bindings_json'] ?? null );
+        $this->assertSame(
+            [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            $stored['settings_json']['input_mapping'] ?? null
+        );
         $this->assertSame( 'sentient_managed', $stored['settings_json']['model_selection']['provider'] ?? null );
         $this->assertSame( 'sf_default', $stored['settings_json']['model_selection']['primary'] ?? null );
         $this->assertSame( 1, (int) ( $stored['settings_json']['model_selection']['credential_id'] ?? 0 ) );

@@ -38,10 +38,10 @@ import type {
 	LocalCustomActionRecord,
 	LocalProviderCredential,
 	PluginSettingsResponse,
-	TelemetrySettingsResponse,
 	TopUpCheckoutSessionRequest,
 	TopUpCheckoutSessionResponse
 } from './types';
+import type { LocalDiagnosticsSettingsResponse } from './local-diagnostics-contract';
 
 type AsyncSettingsPayload = {
 	maxAttempts?: number;
@@ -207,7 +207,7 @@ export class MockSentientFormsApiClient {
 					current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
 					current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
 					trial_end: null,
-				provider_price_id: 'price_mock_starter'
+					provider_price_id: 'price_mock_starter'
 				}
 			},
 			credits: {
@@ -291,19 +291,16 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async getTelemetrySettings(): Promise<TelemetrySettingsResponse> {
+	async getLocalDiagnosticsSettings(): Promise<LocalDiagnosticsSettingsResponse> {
 		const timestamp = new Date().toISOString();
 		return {
-			telemetry_opt_in: true,
-			updated_at: timestamp,
-			synced_at: timestamp,
-			remote_updated_at: timestamp,
-			last_error: null
+			local_diagnostics_enabled: true,
+			updated_at: timestamp
 		};
 	}
 
-	async updateTelemetrySettings(): Promise<TelemetrySettingsResponse> {
-		return this.getTelemetrySettings();
+	async updateLocalDiagnosticsSettings(): Promise<LocalDiagnosticsSettingsResponse> {
+		return this.getLocalDiagnosticsSettings();
 	}
 
 	async getPluginSettings(): Promise<PluginSettingsResponse> {
@@ -351,10 +348,7 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	private toLocalCustomActionRecord(
-		action: CustomAction,
-		index: number
-	): LocalCustomActionRecord {
+	private toLocalCustomActionRecord(action: CustomAction, index: number): LocalCustomActionRecord {
 		const parsedId = Number.parseInt(String(action.id), 10);
 		const parsedTemplateId =
 			action.template_id === null ? Number.NaN : Number.parseInt(String(action.template_id), 10);

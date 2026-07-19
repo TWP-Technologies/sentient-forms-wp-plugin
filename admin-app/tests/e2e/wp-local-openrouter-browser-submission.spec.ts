@@ -12,6 +12,16 @@ import {
 	runWpEval,
 	waitForGravityEntryNotes
 } from './utils/wp-e2e-helpers';
+import {
+	parseLocalExecutionEvent,
+	parseLocalExecutionEvents,
+	parseLocalOpenRouterRequests,
+	parseLocalOpenRouterSmokeUrls,
+	parseLocalSpamSummaryChainSeed,
+	type LocalExecutionEvent,
+	type LocalOpenRouterRequest,
+	type LocalSpamSummaryChainSeed
+} from './utils/local-runtime-schemas';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
 const runLocalOpenRouterBrowserSmoke =
@@ -29,38 +39,10 @@ type LocalProviderSeed = {
 	consent_id: number;
 };
 
-type LocalExecutionEvent = {
-	id?: number;
-	status?: string;
-	mapping_id?: number;
-	mapping_key?: string;
-	action_code?: string;
-	entry_id?: string;
-	provider?: string;
-	model?: string;
-	result_json?: {
-		result_summary?: string;
-		skip_reason?: string;
-		native_effect_outcomes?: Array<{ effect?: string; status?: string; reason?: string }>;
-	};
-};
-
-type LocalOpenRouterRequest = {
-	body?: {
-		model?: string;
-		messages?: Array<{ role?: string; content?: string }>;
-	};
-};
-
 type LocalCustomActionSeed = {
 	action_id: number;
 	mapping_id: number;
 	model_selection_json: Record<string, unknown>;
-};
-
-type LocalSpamSummaryChainSeed = {
-	spam_mapping_id: number;
-	summary_mapping_id: number;
 };
 
 async function ensureDirectOpenRouterBuilder(page: Page, drawer: Locator): Promise<void> {
@@ -299,8 +281,7 @@ $requests = get_option( 'sentient_forms_local_openrouter_smoke_requests', [] );
 echo wp_json_encode( is_array( $requests ) ? $requests : [] );
 `
 	);
-	const parsed = JSON.parse(output) as unknown;
-	return Array.isArray(parsed) ? (parsed as LocalOpenRouterRequest[]) : [];
+	return parseLocalOpenRouterRequests(output);
 }
 
 function ensureGravityFormPage(formId: number, pageTitle: string): string {
@@ -465,7 +446,7 @@ echo 'null';
 		}
 	);
 
-	return JSON.parse(output) as LocalExecutionEvent | null;
+	return parseLocalExecutionEvent(output);
 }
 
 function getLocalExecutionEvents(entryId: number): LocalExecutionEvent[] {
@@ -489,14 +470,7 @@ echo wp_json_encode( $matched );
 		}
 	);
 
-	const parsed = JSON.parse(output) as unknown;
-	return Array.isArray(parsed)
-		? (parsed as LocalExecutionEvent[]).map((event) => ({
-				...event,
-				id: Number(event.id ?? 0),
-				mapping_id: Number(event.mapping_id ?? 0)
-			}))
-		: [];
+	return parseLocalExecutionEvents(output);
 }
 
 function getLocalOpenRouterSmokeUrls(): string[] {
@@ -507,8 +481,7 @@ echo wp_json_encode( [ 'urls' => is_array( $urls ) ? $urls : [] ] );
 `
 	);
 
-	const parsed = JSON.parse(output) as { urls?: string[] };
-	return Array.isArray(parsed.urls) ? parsed.urls : [];
+	return parseLocalOpenRouterSmokeUrls(output);
 }
 
 function seedLocalSpamSummaryChain(
@@ -644,9 +617,12 @@ $spam_mapping_id = $mappings->create(
         'hook'                => 'after_submission',
         'action_kind'         => 'custom_action',
         'action_id'           => $created['spam']['action_id'],
-        'input_bindings_json' => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+        'input_bindings_json' => [],
         'effect_mapping_json' => $spam_effects,
         'execution_mode'      => 'sync',
+        'settings_json'       => [
+            'input_mapping' => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+        ],
         'enabled'             => true,
     ]
 );
@@ -663,12 +639,13 @@ $summary_mapping_id = $mappings->create(
         'hook'                => 'after_submission',
         'action_kind'         => 'custom_action',
         'action_id'           => $created['summary']['action_id'],
-        'input_bindings_json' => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+        'input_bindings_json' => [],
         'effect_mapping_json' => is_array( $created['summary']['definition']['effect_mapping_json'] ?? null )
             ? $created['summary']['definition']['effect_mapping_json']
             : [ 'store_result' => true ],
         'execution_mode'      => 'sync',
         'settings_json'       => [
+            'input_mapping'  => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
             'dependency_ids' => [ $spam_runtime_key ],
             'trigger_sources' => [
                 'after_submission' => [
@@ -698,18 +675,12 @@ echo wp_json_encode(
 		}
 	);
 
-	const parsed = JSON.parse(output) as Partial<LocalSpamSummaryChainSeed> & { error?: string };
-	if (parsed.error) {
+	const parsed = parseLocalSpamSummaryChainSeed(output);
+	if ('error' in parsed) {
 		throw new Error(`Failed to seed local spam-summary chain: ${parsed.error}`);
 	}
-	if (!parsed.spam_mapping_id || !parsed.summary_mapping_id) {
-		throw new Error(`Local spam-summary chain seed returned an invalid payload: ${output}`);
-	}
 
-	return {
-		spam_mapping_id: parsed.spam_mapping_id,
-		summary_mapping_id: parsed.summary_mapping_id
-	};
+	return parsed satisfies LocalSpamSummaryChainSeed;
 }
 
 function seedImportedEntrySummaryMappingWithoutCredential(

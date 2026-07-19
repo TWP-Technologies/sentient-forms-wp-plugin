@@ -26,6 +26,11 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
     public function test_queue_warning_triggers_when_threshold_exceeded(): void
     {
         add_filter( 'sentient_forms_async_queue_threshold', static fn () => 1 );
+        $emitted_warnings = [];
+        $capture_warning = static function ( array $warning ) use ( &$emitted_warnings ): void {
+            $emitted_warnings[] = $warning;
+        };
+        add_action( 'sentient_forms_async_health_warning', $capture_warning );
 
         $payload = [
             'context' => [ 'action_id' => 'test_action', 'form_source' => 'gravity_forms' ],
@@ -40,7 +45,9 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         $this->assertContains( 'queue_backlog', $codes );
         $warning = $result['warnings'][0] ?? [];
         $this->assertStringContainsString( 'Background queue backlog', (string) ( $warning['message'] ?? '' ) );
+        $this->assertContains( 'queue_backlog', wp_list_pluck( $emitted_warnings, 'code' ) );
 
+        remove_action( 'sentient_forms_async_health_warning', $capture_warning );
     }
 
     public function test_failure_warning_triggers_for_recent_failures(): void

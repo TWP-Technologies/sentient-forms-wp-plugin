@@ -1,3 +1,7 @@
+import type { InputMapping } from '$lib/utils/input-mapping';
+
+export type { InputMapping } from '$lib/utils/input-mapping';
+
 export interface LicenseActivationRequest {
 	licenseKey: string;
 	siteUrl: string;
@@ -822,19 +826,6 @@ export interface TemplateSchemaResponse {
 	code: string;
 	display_name: string;
 	override_schema: TemplateOverrideSchema;
-}
-
-/**
- * Input mapping configuration for field selection (CA-MAP-001)
- * Controls which form fields are sent to the selected execution provider
- */
-export interface InputMapping {
-	/** Field selection mode */
-	mode: 'all' | 'selected' | 'exclude';
-	/** Gravity Forms field IDs to include/exclude based on mode */
-	field_ids?: string[];
-	/** Include form metadata (title, entry ID, etc.) */
-	include_metadata?: boolean;
 }
 
 /**
@@ -2015,14 +2006,6 @@ export interface MeteringSummary {
 	workflow?: WorkflowMeteringSummary | null;
 }
 
-export interface TelemetrySettingsResponse {
-	telemetry_opt_in: boolean;
-	updated_at: string | null;
-	synced_at: string | null;
-	remote_updated_at: string | null;
-	last_error: string | null;
-}
-
 export interface AsyncSettingsResponse {
 	max_attempts: number;
 	base_delay_seconds: number;
@@ -2189,87 +2172,4 @@ export interface FormSourceSummary {
 	availabilityMessage?: string | null;
 	requiresPro?: boolean;
 	descriptor?: FormSourceDescriptor | null;
-}
-
-// ============================================================================
-// Phase 7: Cross-Site Mapping Portability (CSM)
-// ============================================================================
-
-/**
- * Mapping settings for trigger hooks, input selection, and effect handling
- */
-export interface MappingSettings {
-	trigger_hooks?: string[];
-	dependency_ids?: string[];
-	input_mapping?: {
-		mode: 'all' | 'selected' | 'exclude';
-		field_ids?: string[];
-		include_metadata?: boolean;
-	};
-	attachment_mapping?: AttachmentMapping;
-	conditions?: MappingConditionsConfig;
-	effect_mapping?: Record<
-		string,
-		{
-			mark_spam?: boolean;
-			notify_admin?: boolean;
-			reject_submission?: boolean;
-		}
-	>;
-	portable_fields?: Array<{ label: string; type: string }>;
-	field_mapping?: Record<string, string>;
-}
-
-/**
- * Portable form mapping record.
- */
-export interface FormMapping {
-	id: string;
-	license_id: string;
-	site_id: string | null;
-	form_source: string;
-	form_id: number | null;
-	action_template_id: string | null;
-	custom_action_id: string | null;
-	display_name: string;
-	settings: MappingSettings;
-	is_template: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-/**
- * Request to create a new form mapping
- */
-export interface CreateFormMappingRequest {
-	site_id?: string | null;
-	form_source: string;
-	form_id?: number | null;
-	/** Action template ID. */
-	action_template_id?: string | null;
-	/** String-based template code (for master templates like "spam_detection_v1") */
-	action_template_code?: string | null;
-	custom_action_id?: string | null;
-	display_name: string;
-	settings: MappingSettings;
-	is_template?: boolean;
-}
-
-/**
- * Request to update an existing form mapping
- */
-export interface UpdateFormMappingRequest {
-	display_name?: string;
-	settings?: MappingSettings;
-	is_template?: boolean;
-}
-
-/**
- * Request to clone a template to a site/form
- */
-export interface CloneTemplateMappingRequest {
-	site_id: string;
-	form_source: string;
-	form_id: string | number;
-	field_mapping?: Record<string, string>;
 }

@@ -85,11 +85,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -314,11 +311,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -492,11 +486,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -754,11 +745,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -984,11 +972,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});
@@ -1232,11 +1217,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});
@@ -1402,11 +1384,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});

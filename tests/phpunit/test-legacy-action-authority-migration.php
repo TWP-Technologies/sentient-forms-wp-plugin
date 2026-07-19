@@ -46,6 +46,12 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'contact_form_7', '9922' ],
                 [ 'wpforms', '9923' ],
                 [ 'gravity_forms', '9924' ],
+                [ 'gravity_forms', '9925' ],
+                [ 'gravity_forms', '9926' ],
+                [ 'gravity_forms', '9927' ],
+                [ 'gravity_forms', '9928' ],
+                [ 'gravity_forms', '9929' ],
+                [ 'gravity_forms', '9930' ],
                 [ 'elementor_pro_forms', '321:opaque-form' ],
             ] as [ $form_source, $form_id ]
         )
@@ -104,14 +110,261 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $this->assertSame( 'custom_action', $rows[0]['action_kind'] ?? null );
         $this->assertTrue( $rows[0]['enabled'] ?? false );
         $this->assertSame(
-            [ 'mode' => 'selected', 'field_ids' => [ '1' ], 'include_metadata' => false ],
+            [],
             $rows[0]['input_bindings_json'] ?? null
         );
+        $this->assertSame(
+            [ 'mode' => 'selected', 'field_ids' => [ '1' ], 'include_metadata' => false ],
+            $rows[0]['settings_json']['input_mapping'] ?? null
+        );
+        $projection = ( new Sentient_Forms_Action_Input_Projector() )->project(
+            $rows[0]['settings_json']['input_mapping'] ?? null,
+            $rows[0]['input_bindings_json'] ?? [],
+            [ 'id' => 9916, 'fields' => [ [ 'id' => '1' ], [ 'id' => '2' ] ] ],
+            [ 'id' => 41, '1' => 'allowed', '2' => 'private' ]
+        );
+        $this->assertIsArray( $projection );
+        $this->assertSame( [ 1 ], array_keys( $projection['entry'] ?? [] ) );
+        $this->assertSame( [], $projection['form'] ?? null );
         $this->assertStringStartsWith( 'legacy_action_authority_', (string) ( $rows[0]['external_id'] ?? '' ) );
 
         $action = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->get( absint( $rows[0]['action_id'] ?? 0 ) );
         $this->assertSame( 'bundled__entry_summary_v1', $action['code'] ?? null );
         $this->assertSame( 'active', $action['status'] ?? null );
+    }
+
+    public function test_migrates_released_gravity_option_prefix_and_preserves_binding_named_mode(): void
+    {
+        $option_key          = 'sentient_forms_gravity_forms_9925';
+        $this->option_keys[] = $option_key;
+        $bindings            = [
+            'mode'  => '3',
+            'email' => '2',
+        ];
+        update_option(
+            $option_key,
+            [
+                'legacy_summary' => [
+                    'local_mapping_id'           => 'legacy_summary',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'action_name_label'          => 'Entry Summary',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'input_mapping' => $bindings,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $first  = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $first['migration_complete'] ?? null );
+        $this->assertSame( 1, $first['mappings_migrated'] ?? null );
+        $this->assertSame( 0, $second['mappings_migrated'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9925' );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( $bindings, $rows[0]['input_bindings_json'] ?? null );
+        $this->assertArrayNotHasKey( 'input_mapping', $rows[0]['settings_json'] ?? [] );
+        $projection = ( new Sentient_Forms_Action_Input_Projector() )->project(
+            $rows[0]['settings_json']['input_mapping'] ?? null,
+            $rows[0]['input_bindings_json'] ?? [],
+            [ 'id' => 9925, 'fields' => [ [ 'id' => '1' ], [ 'id' => '2' ] ] ],
+            [ 'id' => 42, '1' => 'full', '2' => 'entry' ]
+        );
+        $this->assertIsArray( $projection );
+        $this->assertSame( $bindings, $projection['bindings'] ?? null );
+        $this->assertSame( [ 'id', 1, 2 ], array_keys( $projection['entry'] ?? [] ) );
+        $this->assertSame( 'variable_bindings', $projection['manifest']['mapping_source'] ?? null );
+    }
+
+    public function test_canonical_gravity_option_wins_when_released_fallback_also_exists(): void
+    {
+        $canonical_key = 'sentient_forms_actions_gravity_forms_9926';
+        $released_key  = 'sentient_forms_gravity_forms_9926';
+        $this->option_keys[] = $canonical_key;
+        $this->option_keys[] = $released_key;
+        $canonical_mapping = [
+            'local_mapping_id'           => 'legacy_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'action_name_label'          => 'Canonical Entry Summary',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'input_mapping' => [ 'email' => '2' ] ],
+        ];
+        $released_mapping = array_replace_recursive(
+            $canonical_mapping,
+            [
+                'action_name_label'          => 'Stale Entry Summary',
+                'is_action_enabled_for_form' => false,
+                'settings'                   => [ 'input_mapping' => [ 'email' => '999' ] ],
+            ]
+        );
+        update_option( $canonical_key, [ 'actions' => [ 'legacy_summary' => $canonical_mapping ] ], false );
+        update_option( $released_key, [ 'legacy_summary' => $released_mapping ], false );
+
+        $first  = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $first['migration_complete'] ?? null );
+        $this->assertSame( 1, $first['mappings_migrated'] ?? null );
+        $this->assertSame( 0, $second['mappings_migrated'] ?? null );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9926' );
+        $this->assertCount( 1, $rows );
+        $this->assertTrue( $rows[0]['enabled'] ?? false );
+        $this->assertSame( [ 'email' => '2' ], $rows[0]['input_bindings_json'] ?? null );
+        $this->assertSame( [ 'actions' => [] ], get_option( $canonical_key ) );
+        $this->assertSame( [ 'legacy_summary' => $released_mapping ], get_option( $released_key ) );
+    }
+
+    public function test_released_gravity_option_is_used_when_canonical_option_is_empty(): void
+    {
+        $canonical_key = 'sentient_forms_actions_gravity_forms_9927';
+        $released_key  = 'sentient_forms_gravity_forms_9927';
+        $this->option_keys[] = $canonical_key;
+        $this->option_keys[] = $released_key;
+        $released_mapping = [
+            'local_mapping_id'           => 'legacy_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'action_name_label'          => 'Released Entry Summary',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'input_mapping' => [ 'email' => '2' ] ],
+        ];
+        update_option( $canonical_key, [], false );
+        update_option( $released_key, [ 'legacy_summary' => $released_mapping ], false );
+
+        $first  = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $first['migration_complete'] ?? null );
+        $this->assertSame( 1, $first['mappings_migrated'] ?? null );
+        $this->assertSame( 0, $second['mappings_migrated'] ?? null );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9927' );
+        $this->assertCount( 1, $rows );
+        $this->assertTrue( $rows[0]['enabled'] ?? false );
+        $this->assertSame( [ 'email' => '2' ], $rows[0]['input_bindings_json'] ?? null );
+        $this->assertSame( [], get_option( $canonical_key ) );
+        $this->assertSame( [], get_option( $released_key ) );
+    }
+
+    public function test_migrates_mode_only_projection_policy_without_widening_input(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9928';
+        $this->option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'actions' => [
+                    'legacy_summary' => [
+                        'local_mapping_id'           => 'legacy_summary',
+                        'central_action_id'          => 'entry_summary_v1',
+                        'action_type_indicator'      => 'master',
+                        'action_name_label'          => 'Metadata-only Entry Summary',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'settings'                   => [ 'input_mapping' => [ 'mode' => 'selected' ] ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9928' );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( [], $rows[0]['input_bindings_json'] ?? null );
+        $this->assertSame( [ 'mode' => 'selected' ], $rows[0]['settings_json']['input_mapping'] ?? null );
+
+        $projection = ( new Sentient_Forms_Action_Input_Projector() )->project(
+            $rows[0]['settings_json']['input_mapping'] ?? null,
+            $rows[0]['input_bindings_json'] ?? [],
+            [ 'id' => 9928, 'title' => 'Metadata-only', 'fields' => [ [ 'id' => '1' ], [ 'id' => '2' ] ] ],
+            [ 'id' => 43, '1' => 'private-one', '2' => 'private-two' ]
+        );
+        $this->assertIsArray( $projection );
+        $this->assertSame( [ 'id' => 43 ], $projection['entry'] ?? null );
+        $this->assertSame( [], $projection['form']['fields'] ?? null );
+    }
+
+    public function test_preserves_enum_valued_binding_names_as_bindings(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9929';
+        $this->option_keys[] = $option_key;
+        $bindings            = [
+            'mode'      => 'selected',
+            'field_ids' => '2',
+        ];
+        update_option(
+            $option_key,
+            [
+                'actions' => [
+                    'legacy_summary' => [
+                        'local_mapping_id'           => 'legacy_summary',
+                        'central_action_id'          => 'entry_summary_v1',
+                        'action_type_indicator'      => 'master',
+                        'action_name_label'          => 'Binding Collision Summary',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'settings'                   => [ 'input_mapping' => $bindings ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9929' );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( $bindings, $rows[0]['input_bindings_json'] ?? null );
+        $this->assertArrayNotHasKey( 'input_mapping', $rows[0]['settings_json'] ?? [] );
+    }
+
+    public function test_preserves_malformed_projection_intent_and_fails_closed(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9930';
+        $this->option_keys[] = $option_key;
+        $mapping             = [
+            'local_mapping_id'           => 'legacy_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'action_name_label'          => 'Malformed Projection Summary',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [
+                'input_mapping' => [
+                    'mode'             => 'selected',
+                    'field_ids'        => [ '1' ],
+                    'include_metadata' => 'yes',
+                ],
+            ],
+        ];
+        update_option( $option_key, [ 'actions' => [ 'legacy_summary' => $mapping ] ], false );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 0, $summary['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['mappings_failed'] ?? null );
+        $this->assertSame( [ 'actions' => [ 'legacy_summary' => $mapping ] ], get_option( $option_key ) );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9930' );
+        $this->assertSame( [], $rows );
     }
 
     public function test_remaps_hook_scoped_dependencies_to_canonical_row_ids(): void

@@ -113,4 +113,39 @@ final class LegacyCpsRuntimeDetachmentTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/actions/definitions', $routes );
         $this->assertArrayHasKey( '/sentient-forms/v1/local/custom-actions', $routes );
     }
+
+    public function test_admin_app_contains_no_controls_or_clients_for_retired_mapping_library_routes(): void
+    {
+        $plugin_root = dirname( __DIR__, 2 );
+        $retired_files = [
+            'admin-app/src/lib/components/ui/TemplateLibrary.svelte',
+            'admin-app/src/lib/stores/form-mappings.svelte.ts',
+        ];
+        foreach ( $retired_files as $relative_path )
+        {
+            $this->assertFileDoesNotExist(
+                $plugin_root . '/' . $relative_path,
+                "Retired mapping-library client {$relative_path} must not ship."
+            );
+        }
+
+        $frontend_paths = [
+            'admin-app/src/lib/api/client.ts',
+            'admin-app/src/routes/(app)/actions/[formSourceSlug]/[formId]/+page.svelte',
+            'admin-app/tests/e2e/utils/mock-wpjson.ts',
+        ];
+        foreach ( $frontend_paths as $relative_path )
+        {
+            $contents = file_get_contents( $plugin_root . '/' . $relative_path );
+            $this->assertIsString( $contents, "Unable to read {$relative_path}." );
+            foreach ( [ 'mappings/templates', 'Save as Template', 'Import from Library' ] as $retired_surface )
+            {
+                $this->assertStringNotContainsString(
+                    $retired_surface,
+                    $contents,
+                    "Retired mapping-library surface {$retired_surface} must not remain in {$relative_path}."
+                );
+            }
+        }
+    }
 }

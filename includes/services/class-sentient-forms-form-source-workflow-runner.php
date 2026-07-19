@@ -2631,7 +2631,14 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         $settings = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
         $settings['local_form_mapping_id'] = $id;
         $settings['execution_mode']        = $execution_mode;
-        $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null ) ? $row['input_bindings_json'] : [];
+        if ( ! array_key_exists( 'input_mapping', $settings ) )
+        {
+            $settings['input_mapping'] = [
+                'mode'             => 'all',
+                'field_ids'        => [],
+                'include_metadata' => true,
+            ];
+        }
         if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
         {
             $settings['trigger_sources'] = [

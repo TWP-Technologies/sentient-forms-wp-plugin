@@ -208,6 +208,50 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_stale_bundled_database_rows_do_not_hide_the_code_owned_catalog(): void
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $stale_code = 'retired_bundled_action_v0';
+        $inserted   = $repository->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => $stale_code,
+                'display_name'    => 'Retired bundled Action',
+                'prompt_template' => 'This stale row must not become executable.',
+                'version'         => '0',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $inserted );
+
+        try
+        {
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+            $ids = array_column( $response->get_data(), 'id' );
+            $this->assertSame( Sentient_Forms_Bundled_Action_Templates::codes(), $ids );
+            $this->assertNotContains( $stale_code, $ids );
+        }
+        finally
+        {
+            $repository->upsert_by_code(
+                [
+                    'source'          => 'bundled',
+                    'code'            => $stale_code,
+                    'display_name'    => 'Retired bundled Action',
+                    'prompt_template' => 'This stale row must not become executable.',
+                    'version'         => '0',
+                    'is_active'       => false,
+                ]
+            );
+        }
+    }
+
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void
     {
         $enable_cps_templates = static fn() => true;

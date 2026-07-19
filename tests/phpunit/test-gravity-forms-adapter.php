@@ -2261,6 +2261,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             )
         );
         $this->assertCount( 1, $dependent_events );
+        $this->assertNotSame( '', (string) ( $dependent_events[0]['execution_request_id'] ?? '' ) );
         $this->assertSame( 'skipped', $dependent_events[0]['status'] ?? null );
         $this->assertSame( 'upstream_spam', $dependent_events[0]['result_json']['skip_reason'] ?? null );
         $this->assertSame(

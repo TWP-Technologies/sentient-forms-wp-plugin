@@ -48,11 +48,8 @@ test.describe('Settings retention controls', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -95,6 +92,9 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
+		await expect(page.getByText('Enable local diagnostic events')).toBeVisible();
+		await expect(page.getByText('Nothing is sent to Sentient Forms.')).toBeVisible();
+		await expect(page.getByText('Enable telemetry sharing')).toHaveCount(0);
 	});
 
 	test('updates local retention and uninstall cleanup settings', async ({ page }) => {
@@ -151,11 +151,8 @@ test.describe('Settings retention controls', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -251,11 +248,8 @@ test.describe('Settings retention controls', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -330,11 +324,8 @@ test.describe('Settings retention controls', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});

@@ -787,7 +787,8 @@ class Sentient_Forms_Async_Handler
      * @param array<string, mixed> $context          Runtime context.
      * @param int|null             $run_at           Optional Unix timestamp.
      *
-     * @return bool Whether the local mapping job was scheduled.
+     * @return bool|WP_Error True when scheduled, false when rejected or already queued,
+     *                       or a recording error when durable job creation fails.
      */
     public function schedule_local_mapping( int $local_mapping_id, array $form, array $entry, array $context = [], ?int $run_at = null ): bool | WP_Error
     {
@@ -2443,7 +2444,7 @@ class Sentient_Forms_Async_Handler
         $options      = $this->plugin->get_options();
         $debug_mode   = ! empty( $options['global_settings']['debug_mode'] );
         $telemetry    = $this->plugin->get_telemetry_settings();
-        $telemetry_on = ! empty( $telemetry['telemetry_opt_in'] );
+        $telemetry_on = ! empty( $telemetry['local_diagnostics_enabled'] );
 
         if ( !$telemetry_on && !$debug_mode )
         {

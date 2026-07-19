@@ -27,7 +27,7 @@ describe('FieldSelector', () => {
 		const checkbox = target.querySelector<HTMLInputElement>('input[type="checkbox"]');
 		expect(checkbox?.checked).toBe(true);
 
-		checkbox?.dispatchEvent(new Event('change', { bubbles: true }));
+		checkbox?.click();
 		await tick();
 
 		expect(changes).toEqual([{ mode: 'selected', include_metadata: false }]);

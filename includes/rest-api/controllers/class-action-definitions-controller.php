@@ -191,11 +191,6 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
         $templates = $repository->list_by_source( 'bundled' );
         $codes     = Sentient_Forms_Bundled_Action_Templates::codes();
 
-        if ( count( $templates ) !== count( $codes ) )
-        {
-            return [];
-        }
-
         $templates_by_code = [];
         foreach ( $templates as $template )
         {
@@ -207,9 +202,17 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
                 '' === $code
                 || $id <= 0
                 || 'bundled' !== sanitize_key( (string) ( $template['source'] ?? '' ) )
-                || ! in_array( $code, $codes, true )
-                || isset( $templates_by_code[ $code ] )
             )
+            {
+                return [];
+            }
+
+            if ( ! in_array( $code, $codes, true ) )
+            {
+                continue;
+            }
+
+            if ( isset( $templates_by_code[ $code ] ) )
             {
                 return [];
             }

@@ -242,7 +242,24 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
+        $runtime_settings = is_array( $mapping['settings_json'] ?? null ) ? $mapping['settings_json'] : [];
+        $input_policy     = null;
+        if ( array_key_exists( 'input_mapping', $runtime_settings ) )
+        {
+            if ( ! is_array( $runtime_settings['input_mapping'] ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_invalid_input_mapping',
+                    __( 'Action input mapping is invalid.', 'sentient-forms' ),
+                    [ 'status' => 422 ]
+                );
+            }
+
+            $input_policy = $runtime_settings['input_mapping'];
+        }
+
         $input_projection = $this->input_projector->project(
+            $input_policy,
             is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
             $form,
             $entry

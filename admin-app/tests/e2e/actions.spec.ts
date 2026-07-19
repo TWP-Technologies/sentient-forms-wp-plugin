@@ -6094,6 +6094,71 @@ test.describe('Actions admin flows', () => {
 		await expect(modal.getByText('1 custom example')).toBeVisible();
 	});
 
+	test('blocks a selected-fields mapping that would send no fields or metadata', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		const requests = trackSentientRestRequests(page);
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await modal.getByTestId('mapping-section-toggle-input_mapping').click();
+		await modal.locator('select').filter({ hasText: 'Send all fields' }).selectOption('selected');
+		await modal.getByRole('checkbox', { name: /include form metadata/i }).uncheck();
+		await modal.getByTestId('mapping-config-save').click();
+
+		await expect(modal.getByTestId('input-mapping-save-error')).toContainText(
+			'Select at least one field or include form metadata.'
+		);
+		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
+	});
+
+	test('blocks an exclusion mapping that would exclude every field and send no metadata', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		const requests = trackSentientRestRequests(page);
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await modal.getByTestId('mapping-section-toggle-input_mapping').click();
+		await modal.locator('select').filter({ hasText: 'Send all fields' }).selectOption('exclude');
+		const selectAll = modal.getByRole('button', { name: 'Select all' });
+		await selectAll.click();
+		await expect(modal.getByRole('button', { name: 'Deselect all' })).toBeVisible();
+		await modal.getByRole('checkbox', { name: /include form metadata/i }).uncheck();
+		await modal.getByTestId('mapping-config-save').click();
+
+		await expect(modal.getByTestId('input-mapping-save-error')).toContainText(
+			'Select at least one field or include form metadata.'
+		);
+		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
+	});
+
 	test('preserves local draft on close and clears it on discard', async ({ page }) => {
 		const linkages = [
 			{

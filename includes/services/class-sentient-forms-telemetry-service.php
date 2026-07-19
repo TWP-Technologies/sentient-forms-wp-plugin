@@ -41,6 +41,63 @@ class Sentient_Forms_Telemetry_Service
     public function __construct( private Sentient_Forms_Plugin $plugin )
     {
         $this->unschedule_flush();
+        add_action( 'sentient_forms_async_success', [ $this, 'handle_job_success' ], 20, 2 );
+        add_action( 'sentient_forms_async_failure', [ $this, 'handle_job_failure' ], 20, 2 );
+        add_action( 'sentient_forms_async_health_warning', [ $this, 'handle_health_warning' ] );
+    }
+
+    public function handle_job_success( array $context, array $result ): void
+    {
+        unset( $result );
+
+        $this->queue_event(
+            'async_job_success',
+            [
+                'action_id'            => $context['action_id'] ?? '',
+                'action_code'          => $context['action_code'] ?? '',
+                'execution_request_id' => $context['execution_request_id'] ?? '',
+                'provider_path'        => $context['provider_path'] ?? $context['provider'] ?? '',
+                'adapter'              => $context['form_source'] ?? '',
+                'attempt'              => (int) ( $context['attempt'] ?? 1 ),
+                'max_attempts'         => (int) ( $context['max_attempts'] ?? 3 ),
+                'job_type'             => $context['job_type'] ?? 'execution',
+                'status'               => 'success',
+            ]
+        );
+    }
+
+    public function handle_job_failure( array $context, WP_Error $error ): void
+    {
+        $this->queue_event(
+            'async_job_failure',
+            [
+                'action_id'            => $context['action_id'] ?? '',
+                'action_code'          => $context['action_code'] ?? '',
+                'execution_request_id' => $context['execution_request_id'] ?? '',
+                'provider_path'        => $context['provider_path'] ?? $context['provider'] ?? '',
+                'adapter'              => $context['form_source'] ?? '',
+                'attempt'              => (int) ( $context['attempt'] ?? 1 ),
+                'max_attempts'         => (int) ( $context['max_attempts'] ?? 3 ),
+                'job_type'             => $context['job_type'] ?? 'execution',
+                'status'               => 'failure',
+                'error_code'           => $error->get_error_code(),
+            ]
+        );
+    }
+
+    public function handle_health_warning( array $warning ): void
+    {
+        $this->queue_event(
+            'async_health_warning',
+            [
+                'action_id'     => $warning['action_id'] ?? '',
+                'provider_path' => $warning['provider_path'] ?? $warning['provider'] ?? '',
+                'adapter'       => $warning['adapter'] ?? $warning['form_source'] ?? '',
+                'job_type'      => $warning['job_type'] ?? 'async_health',
+                'status'        => 'warning',
+                'warning_code'  => $warning['warning_code'] ?? $warning['code'] ?? 'async_health_warning',
+            ]
+        );
     }
 
     public function queue_event( string $event_type, array $payload ): void
@@ -70,14 +127,12 @@ class Sentient_Forms_Telemetry_Service
         return $this->plugin->get_telemetry_settings();
     }
 
-    public function update_and_sync( bool $opt_in, string $actor_hint ): array
+    public function update_preference( bool $enabled ): array
     {
-        unset( $actor_hint );
-
         $this->plugin->set_telemetry_settings(
             [
-                'telemetry_opt_in' => $opt_in,
-                'updated_at'       => current_time( 'mysql' ),
+                'local_diagnostics_enabled' => $enabled,
+                'updated_at'                => current_time( 'mysql' ),
             ]
         );
         $this->unschedule_flush();
@@ -105,7 +160,7 @@ class Sentient_Forms_Telemetry_Service
     {
         $telemetry = $this->plugin->get_telemetry_settings();
 
-        return ! empty( $telemetry['telemetry_opt_in'] );
+        return ! empty( $telemetry['local_diagnostics_enabled'] );
     }
 
     private function log_debug( string $message, array $context = [] ): void

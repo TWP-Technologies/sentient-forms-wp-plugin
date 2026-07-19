@@ -435,14 +435,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             ? $this->filter_effect_mapping_for_form_source_capabilities( $form_source, $row['effect_mapping_json'] )
             : null;
         $settings       = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
+        if ( ! array_key_exists( 'input_mapping', $settings ) )
+        {
+            $settings['input_mapping'] = [
+                'mode'             => 'all',
+                'field_ids'        => [],
+                'include_metadata' => true,
+            ];
+        }
         $settings       = array_replace_recursive(
             $settings,
             [
                 'local_form_mapping_id' => $id,
                 'execution_mode'        => $execution_mode,
-                'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
-                    ? $row['input_bindings_json']
-                    : [],
                 'effect_mapping_json'   => $effect_mapping,
                 'linked_action_status'  => $identity['linked_action_status'],
                 'repair_state'          => $identity['repair_state'],
@@ -3735,17 +3740,22 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        $form_source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $form_id     = $this->get_request_form_id( $request );
+
         if ( $request->has_param( 'settings' ) )
         {
-            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            $settings_validation = $this->validate_settings_write_payload(
+                $request->get_param( 'settings' ),
+                $form_source,
+                $form_id
+            );
             if ( is_wp_error( $settings_validation ) )
             {
                 return $settings_validation;
             }
         }
 
-        $form_source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
-        $form_id     = $this->get_request_form_id( $request );
         $settings      = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
         $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
         if ( [] === $trigger_hooks )
@@ -3794,9 +3804,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'conditions_json'     => isset( $settings['conditions'] ) && is_array( $settings['conditions'] )
                     ? $settings['conditions']
                     : null,
-                'input_bindings_json' => isset( $settings['input_mapping'] ) && is_array( $settings['input_mapping'] )
-                    ? $settings['input_mapping']
-                    : [],
+                'input_bindings_json' => [],
                 'execution_mode'      => $this->resolve_local_first_execution_mode_for_hook( $hook, $settings, $definition ),
                 'effect_mapping_json' => $effect_mapping,
                 'settings_json'       => $this->build_local_first_runtime_settings( $settings ),
@@ -3890,17 +3898,22 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        $form_source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $form_id     = $this->get_request_form_id( $request );
+
         if ( $request->has_param( 'settings' ) )
         {
-            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            $settings_validation = $this->validate_settings_write_payload(
+                $request->get_param( 'settings' ),
+                $form_source,
+                $form_id
+            );
             if ( is_wp_error( $settings_validation ) )
             {
                 return $settings_validation;
             }
         }
 
-        $form_source  = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
-        $form_id      = $this->get_request_form_id( $request );
         $settings        = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
         $storage_validation = $this->validate_realtime_storage_target( $form_source, $form_id, $settings );
         if ( is_wp_error( $storage_validation ) )
@@ -3968,9 +3981,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'conditions_json'     => isset( $settings['conditions'] ) && is_array( $settings['conditions'] )
                     ? $settings['conditions']
                     : null,
-                'input_bindings_json' => isset( $settings['input_mapping'] ) && is_array( $settings['input_mapping'] )
-                    ? $settings['input_mapping']
-                    : [],
+                'input_bindings_json' => [],
                 'execution_mode'      => $this->resolve_local_first_execution_mode_for_hook( $hook, $settings, $definition ),
                 'effect_mapping_json' => $effect_mapping,
                 'settings_json'       => $this->build_local_first_runtime_settings( $settings ),
@@ -4228,7 +4239,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             'conditions',
             'effect_mapping_json',
             'execution_mode',
-            'input_mapping',
             'is_action_enabled_for_form',
             'linked_action_status',
             'local_form_mapping_id',
@@ -4661,7 +4671,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
                 if ( $request->has_param( 'settings' ) )
                 {
-                    $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+                    $settings_validation = $this->validate_settings_write_payload(
+                        $request->get_param( 'settings' ),
+                        sanitize_key( (string) $form_source_slug ),
+                        $form_id
+                    );
                     if ( is_wp_error( $settings_validation ) )
                     {
                         return $settings_validation;
@@ -4698,11 +4712,6 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     if ( array_key_exists( 'conditions', $settings ) && is_array( $settings['conditions'] ) )
                     {
                         $update['conditions_json'] = $settings['conditions'];
-                    }
-
-                    if ( array_key_exists( 'input_mapping', $settings ) && is_array( $settings['input_mapping'] ) )
-                    {
-                        $update['input_bindings_json'] = $settings['input_mapping'];
                     }
 
                     $has_effect_mapping_update = array_key_exists( 'effect_mapping_json', $settings ) && is_array( $settings['effect_mapping_json'] );
@@ -5858,6 +5867,29 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     'type'        => 'object',
                     'context'     => [ 'view', 'edit' ],
                     'default'     => [],
+                    'properties'  => [
+                        'input_mapping' => [
+                            'description'          => __( 'Field and metadata projection used to construct the Action input.', 'sentient-forms' ),
+                            'type'                 => 'object',
+                            'required'             => [ 'mode' ],
+                            'additionalProperties' => false,
+                            'properties'           => [
+                                'mode'             => [
+                                    'type' => 'string',
+                                    'enum' => [ 'all', 'selected', 'exclude' ],
+                                ],
+                                'field_ids'        => [
+                                    'type'  => 'array',
+                                    'items' => [
+                                        'type' => 'string',
+                                    ],
+                                ],
+                                'include_metadata' => [
+                                    'type' => 'boolean',
+                                ],
+                            ],
+                        ],
+                    ],
                 ],
             ],
         ];
@@ -6870,7 +6902,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      * @param mixed $settings Raw settings payload.
      * @return WP_Error|null
      */
-    private function validate_settings_write_payload( mixed $settings ): ?WP_Error
+    private function validate_settings_write_payload( mixed $settings, string $form_source, string $form_id ): ?WP_Error
     {
         if ( null === $settings )
         {
@@ -6968,7 +7000,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( array_key_exists( 'input_mapping', $settings ) )
         {
-            $validation = $this->validate_input_mapping_for_write( $settings['input_mapping'] );
+            $validation = $this->validate_input_mapping_for_write(
+                $settings['input_mapping'],
+                $form_source,
+                $form_id
+            );
             if ( is_wp_error( $validation ) )
             {
                 return $validation;
@@ -6978,13 +7014,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return null;
     }
 
-    private function validate_input_mapping_for_write( mixed $value ): ?WP_Error
+    private function validate_input_mapping_for_write( mixed $value, string $form_source, string $form_id ): ?WP_Error
     {
-        if ( null === $value )
-        {
-            return null;
-        }
-
         if ( ! is_array( $value ) )
         {
             return $this->invalid_settings_write_error(
@@ -6995,7 +7026,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( ! array_key_exists( 'mode', $value ) )
         {
-            return null;
+            return $this->invalid_settings_write_error(
+                'input_mapping.mode',
+                __( 'Action input mapping mode is required.', 'sentient-forms' )
+            );
         }
 
         $mode = is_string( $value['mode'] ) ? sanitize_key( $value['mode'] ) : '';
@@ -7046,15 +7080,64 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
-        if ( 'selected' === $mode && [] === $normalized_field_ids && ! $include_metadata )
+        if ( ! $include_metadata )
         {
-            return $this->invalid_settings_write_error(
-                'input_mapping.field_ids',
-                __( 'Select at least one field or include form metadata.', 'sentient-forms' )
-            );
+            $available_field_ids = $this->get_input_field_ids_for_mapping_validation( $form_source, $form_id );
+            if ( is_wp_error( $available_field_ids ) )
+            {
+                return $available_field_ids;
+            }
+
+            $effective_field_ids = match ( $mode ) {
+                'selected' => array_values( array_intersect( $available_field_ids, $normalized_field_ids ) ),
+                'exclude'  => array_values( array_diff( $available_field_ids, $normalized_field_ids ) ),
+                default    => $available_field_ids,
+            };
+            if ( [] === $effective_field_ids )
+            {
+                return $this->invalid_settings_write_error(
+                    'input_mapping.field_ids',
+                    __( 'Select at least one field or include form metadata.', 'sentient-forms' )
+                );
+            }
         }
 
         return null;
+    }
+
+    /**
+     * @return array<int, string>|WP_Error
+     */
+    private function get_input_field_ids_for_mapping_validation( string $form_source, string $form_id ): array | WP_Error
+    {
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source ) : null;
+        if ( ! $adapter )
+        {
+            return $this->invalid_settings_write_error(
+                'input_mapping.field_ids',
+                __( 'Action input mapping could not be validated because the form adapter is unavailable.', 'sentient-forms' )
+            );
+        }
+
+        $field_ids     = [];
+        $excluded_types = [ 'html', 'page', 'section', 'captcha' ];
+        foreach ( $adapter->get_form_fields( $form_id ) as $field )
+        {
+            $field_type = strtolower( $this->extract_form_field_property( $field, 'type' ) );
+            if ( in_array( $field_type, $excluded_types, true ) )
+            {
+                continue;
+            }
+
+            $field_id = trim( $this->extract_form_field_property( $field, 'id' ) );
+            if ( '' !== $field_id )
+            {
+                $field_ids[] = $field_id;
+            }
+        }
+
+        return array_values( array_unique( $field_ids ) );
     }
 
     private function validate_realtime_settings_for_write( mixed $value ): ?WP_Error

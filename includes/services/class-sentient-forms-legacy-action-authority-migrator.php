@@ -16,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) )
 final class Sentient_Forms_Legacy_Action_Authority_Migrator
 {
     private const OPTION_PREFIX = 'sentient_forms_actions_';
+    private const RELEASED_GRAVITY_OPTION_PREFIX = 'sentient_forms_gravity_forms_';
     private const JOURNAL_OPTION = 'sentient_forms_action_authority_migration_journal';
     private const LOCK_OPTION = 'sentient_forms_action_authority_migration_lock';
     private const LOCK_TTL_SECONDS = 300;
@@ -386,6 +387,11 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
 
         $settings = is_array( $mapping['settings'] ?? null ) ? $mapping['settings'] : [];
+        $input_policy = self::legacy_input_projection_policy( $settings['input_mapping'] ?? null );
+        if ( is_wp_error( $input_policy ) )
+        {
+            return $input_policy;
+        }
         $hooks = Sentient_Forms_Form_Source_Lifecycles::normalize_many(
             is_array( $mapping['trigger_hooks'] ?? null )
                 ? $mapping['trigger_hooks']
@@ -519,6 +525,8 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     {
         $settings   = $prepared['settings'];
         $definition = $prepared['definition'];
+        $input_mapping = is_array( $settings['input_mapping'] ?? null ) ? $settings['input_mapping'] : [];
+        $input_policy  = self::legacy_input_projection_policy( $input_mapping );
         $effects = is_array( $definition['effect_mapping_json'] ?? null ) ? $definition['effect_mapping_json'] : [];
         if ( is_array( $settings['effect_mapping_json'] ?? null ) )
         {
@@ -533,7 +541,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             'action_kind'         => 'custom_action',
             'action_id'           => $action_id,
             'conditions_json'     => is_array( $settings['conditions'] ?? null ) ? $settings['conditions'] : null,
-            'input_bindings_json' => is_array( $settings['input_mapping'] ?? null ) ? $settings['input_mapping'] : [],
+            'input_bindings_json' => is_array( $input_policy ) ? [] : $input_mapping,
             'execution_mode'      => self::execution_mode( $hook, $settings, $definition ),
             'effect_mapping_json' => $effects,
             'settings_json'       => self::runtime_settings_without_dependencies( $settings ),
@@ -609,6 +617,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     /** @return array<string, mixed> */
     private static function runtime_settings_without_dependencies( array $settings ): array
     {
+        $input_policy = self::legacy_input_projection_policy( $settings['input_mapping'] ?? null );
         foreach (
             [
                 'conditions',
@@ -626,7 +635,60 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             unset( $settings[ $key ] );
         }
 
+        if ( is_array( $input_policy ) )
+        {
+            $settings['input_mapping'] = $input_policy;
+        }
+
         return $settings;
+    }
+
+    /** @return array<string, mixed>|WP_Error|null */
+    private static function legacy_input_projection_policy( mixed $value ): array | WP_Error | null
+    {
+        if ( ! is_array( $value ) || ! array_key_exists( 'mode', $value ) )
+        {
+            return null;
+        }
+
+        $mode = is_scalar( $value['mode'] ) ? sanitize_key( (string) $value['mode'] ) : '';
+        if ( ! in_array( $mode, [ 'all', 'selected', 'exclude' ], true ) )
+        {
+            return null;
+        }
+
+        $has_field_ids        = array_key_exists( 'field_ids', $value );
+        $has_include_metadata = array_key_exists( 'include_metadata', $value );
+        $extra_keys           = array_diff( array_keys( $value ), [ 'mode', 'field_ids', 'include_metadata' ] );
+
+        if ( ! $has_field_ids && ! $has_include_metadata )
+        {
+            return [] === $extra_keys ? $value : null;
+        }
+
+        if ( $has_field_ids && ! is_array( $value['field_ids'] ) && ! $has_include_metadata )
+        {
+            return null;
+        }
+
+        if (
+            [] !== $extra_keys
+            || ( $has_field_ids && ! is_array( $value['field_ids'] ) )
+            || ( $has_include_metadata && ! is_bool( $value['include_metadata'] ) )
+        )
+        {
+            return new WP_Error( 'sentient_forms_malformed_legacy_input_projection' );
+        }
+
+        foreach ( $value['field_ids'] ?? [] as $field_id )
+        {
+            if ( is_bool( $field_id ) || ! is_scalar( $field_id ) || '' === trim( (string) $field_id ) )
+            {
+                return new WP_Error( 'sentient_forms_malformed_legacy_input_projection' );
+            }
+        }
+
+        return $value;
     }
 
     private static function execution_mode( string $hook, array $settings, array $definition ): string
@@ -651,6 +713,23 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     /** @return array<string, mixed>|null */
     private static function option_identity( string $option_key ): ?array
     {
+        if ( str_starts_with( $option_key, self::RELEASED_GRAVITY_OPTION_PREFIX ) )
+        {
+            $form_id = Sentient_Forms_Provider_Form_Id_Keys::decode_option_suffix(
+                'gravity_forms',
+                substr( $option_key, strlen( self::RELEASED_GRAVITY_OPTION_PREFIX ) )
+            );
+
+            return Sentient_Forms_Provider_Form_Id_Keys::is_valid( $form_id )
+                ? [ 'form_source' => 'gravity_forms', 'form_id' => $form_id ]
+                : null;
+        }
+
+        if ( ! str_starts_with( $option_key, self::OPTION_PREFIX ) )
+        {
+            return null;
+        }
+
         $tail = substr( $option_key, strlen( self::OPTION_PREFIX ) );
         foreach ( self::FORM_SOURCES as $form_source )
         {
@@ -721,15 +800,43 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     private static function option_keys(): array
     {
         global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- One-time legacy migration must enumerate current plugin-owned option names by prefix; WordPress exposes no option-name query API and cached results could omit concurrent legacy rows.
         $keys = $wpdb->get_col(
             $wpdb->prepare(
-                'SELECT option_name FROM %i WHERE option_name LIKE %s ORDER BY option_name ASC',
+                'SELECT option_name FROM %i WHERE option_name LIKE %s OR option_name LIKE %s ORDER BY option_name ASC',
                 $wpdb->options,
-                $wpdb->esc_like( self::OPTION_PREFIX ) . '%'
+                $wpdb->esc_like( self::OPTION_PREFIX ) . '%',
+                $wpdb->esc_like( self::RELEASED_GRAVITY_OPTION_PREFIX ) . '%'
             )
         );
 
-        return is_array( $keys ) ? array_values( array_filter( $keys, 'is_string' ) ) : [];
+        if ( ! is_array( $keys ) )
+        {
+            return [];
+        }
+
+        $filtered = [];
+        foreach ( array_filter( $keys, 'is_string' ) as $option_key )
+        {
+            if ( str_starts_with( $option_key, self::RELEASED_GRAVITY_OPTION_PREFIX ) )
+            {
+                $identity = self::option_identity( $option_key );
+                if ( is_array( $identity ) )
+                {
+                    $canonical_key = self::OPTION_PREFIX
+                        . 'gravity_forms_'
+                        . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( $identity['form_id'] );
+                    if ( ! empty( get_option( $canonical_key, [] ) ) )
+                    {
+                        continue;
+                    }
+                }
+            }
+
+            $filtered[] = $option_key;
+        }
+
+        return array_values( $filtered );
     }
 
     private static function acquire_lock(): bool
@@ -756,6 +863,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
 
         global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Atomic byte-exact compare-and-swap is required so concurrent migration workers cannot replace each other's plugin-owned lock value; the option cache is invalidated after success.
         $updated = $wpdb->update(
             $wpdb->options,
             [ 'option_value' => maybe_serialize( $candidate ) ],
@@ -782,6 +890,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         if ( is_array( $lock ) && hash_equals( self::$lock_token, (string) ( $lock['token'] ?? '' ) ) )
         {
             global $wpdb;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Atomic byte-exact delete is required so an expired worker cannot release a newer worker's plugin-owned lock; the option cache is invalidated immediately afterward.
             $wpdb->delete(
                 $wpdb->options,
                 [

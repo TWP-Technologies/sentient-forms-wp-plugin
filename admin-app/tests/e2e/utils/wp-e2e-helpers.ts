@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { z } from 'zod';
+import { parseLocalFormMappings, type LocalFormMappingRecord } from './local-runtime-schemas';
 import { loginToWpAdmin, wpBaseUrl } from './wp-admin';
 
 const dockerContainers: Record<string, string> = {
@@ -200,17 +201,7 @@ export type GravityActionSettingsRecord = Record<string, unknown> & {
 	actions?: Record<string, Record<string, unknown>>;
 };
 
-export type LocalFormMappingRecord = {
-	id: number;
-	form_source: string;
-	form_id: string;
-	hook: string;
-	action_kind: string;
-	action_id: number | null;
-	input_bindings_json: Record<string, unknown> | null;
-	execution_mode: string | null;
-	enabled: boolean;
-};
+export type { LocalFormMappingRecord } from './local-runtime-schemas';
 
 export type ResetLocalFormFixtureArgs = {
 	formId: number;
@@ -830,12 +821,7 @@ echo wp_json_encode(
 		return [];
 	}
 
-	try {
-		const decoded = JSON.parse(payload) as { mappings?: LocalFormMappingRecord[] };
-		return Array.isArray(decoded.mappings) ? decoded.mappings : [];
-	} catch (_error) {
-		throw new Error(`Failed to parse local form mappings payload: ${payload}`);
-	}
+	return parseLocalFormMappings(payload);
 }
 
 export function resetLocalFormFixture(args: ResetLocalFormFixtureArgs): void {

@@ -42,20 +42,21 @@ final class Sentient_Forms_Action_Input_Projector
     ];
 
     /**
-     * @param array<string, mixed> $input_config Mapping input policy or legacy prompt-variable bindings.
-     * @param array<string, mixed> $form         Source-normalized form metadata.
-     * @param array<string, mixed> $entry        Source-normalized entry values.
+     * @param array<string, mixed>|null $input_policy Explicit field-projection policy, or null for legacy full input.
+     * @param array<string, mixed>      $bindings     Prompt-variable bindings stored independently from projection policy.
+     * @param array<string, mixed>      $form         Source-normalized form metadata.
+     * @param array<string, mixed>      $entry        Source-normalized entry values.
      *
      * @return array{form:array<string,mixed>,entry:array<string,mixed>,bindings:array<string,mixed>,manifest:array<string,mixed>}|WP_Error
      */
-    public function project( array $input_config, array $form, array $entry ): array | WP_Error
+    public function project( ?array $input_policy, array $bindings, array $form, array $entry ): array | WP_Error
     {
-        if ( ! array_key_exists( 'mode', $input_config ) )
+        if ( null === $input_policy )
         {
             return [
                 'form'     => $form,
                 'entry'    => $entry,
-                'bindings' => $input_config,
+                'bindings' => $bindings,
                 'manifest' => [
                     'mapping_source'         => 'variable_bindings',
                     'mode'                   => 'all',
@@ -68,8 +69,8 @@ final class Sentient_Forms_Action_Input_Projector
             ];
         }
 
-        $mode = is_scalar( $input_config['mode'] )
-            ? sanitize_key( (string) $input_config['mode'] )
+        $mode = isset( $input_policy['mode'] ) && is_scalar( $input_policy['mode'] )
+            ? sanitize_key( (string) $input_policy['mode'] )
             : '';
         if ( ! in_array( $mode, self::MODES, true ) )
         {
@@ -80,7 +81,7 @@ final class Sentient_Forms_Action_Input_Projector
             );
         }
 
-        if ( array_key_exists( 'include_metadata', $input_config ) && ! is_bool( $input_config['include_metadata'] ) )
+        if ( array_key_exists( 'include_metadata', $input_policy ) && ! is_bool( $input_policy['include_metadata'] ) )
         {
             return new WP_Error(
                 'sentient_forms_invalid_input_mapping_metadata_control',
@@ -89,9 +90,9 @@ final class Sentient_Forms_Action_Input_Projector
             );
         }
 
-        $include_metadata = ! array_key_exists( 'include_metadata', $input_config )
-            || $input_config['include_metadata'];
-        $requested_field_ids = $this->normalize_field_ids( $input_config['field_ids'] ?? [] );
+        $include_metadata = ! array_key_exists( 'include_metadata', $input_policy )
+            || $input_policy['include_metadata'];
+        $requested_field_ids = $this->normalize_field_ids( $input_policy['field_ids'] ?? [] );
         if ( is_wp_error( $requested_field_ids ) )
         {
             return $requested_field_ids;
@@ -151,7 +152,7 @@ final class Sentient_Forms_Action_Input_Projector
         return [
             'form'     => $projected_form,
             'entry'    => $projected_entry,
-            'bindings' => [],
+            'bindings' => $bindings,
             'manifest' => [
                 'mapping_source'         => 'explicit_mapping',
                 'mode'                   => $mode,

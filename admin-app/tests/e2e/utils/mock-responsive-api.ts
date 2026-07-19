@@ -225,11 +225,8 @@ const siteContextStatus = {
 };
 
 const initialTelemetryState = {
-	telemetry_opt_in: false,
-	updated_at: '2026-02-24T00:00:00Z',
-	synced_at: '2026-02-24T00:00:00Z',
-	remote_updated_at: '2026-02-24T00:00:00Z',
-	last_error: null
+	local_diagnostics_enabled: false,
+	updated_at: '2026-02-24T00:00:00Z'
 };
 
 const initialAsyncSettingsState = {
@@ -568,9 +565,8 @@ export async function mockResponsiveApi(
 						...form,
 						actions: formActions,
 						action_count: formActions.length,
-						enabled_action_count: formActions.filter(
-							(action) => action.is_action_enabled_for_form
-						).length,
+						enabled_action_count: formActions.filter((action) => action.is_action_enabled_for_form)
+							.length,
 						execution_status: executionStatusUnknown
 					})),
 					generated_at: '2030-01-05T10:00:00Z'
@@ -611,7 +607,10 @@ export async function mockResponsiveApi(
 					form_action_configs: {},
 					form_fields: formFields,
 					action_defaults: Object.fromEntries(
-						[...actionDefinitions.map((definition) => definition.id), ...customActions.map((action) => action.code)]
+						[
+							...actionDefinitions.map((definition) => definition.id),
+							...customActions.map((action) => action.code)
+						]
 							.filter(Boolean)
 							.map((id) => [id, {}])
 					),
@@ -699,11 +698,8 @@ export async function mockResponsiveApi(
 		if (endpoint === 'telemetry' && method === 'PUT') {
 			telemetryState = {
 				...telemetryState,
-				telemetry_opt_in: Boolean(payload.telemetry_opt_in ?? false),
-				updated_at: '2026-02-25T00:00:00Z',
-				synced_at: '2026-02-25T00:00:00Z',
-				remote_updated_at: '2026-02-25T00:00:00Z',
-				last_error: null
+				local_diagnostics_enabled: Boolean(payload.local_diagnostics_enabled ?? false),
+				updated_at: '2026-02-25T00:00:00Z'
 			};
 			return respondJson(route, telemetryState);
 		}

@@ -10,7 +10,6 @@ type Routes = {
 					sourceSlug: string,
 					formId: string | number
 			  ) => { status?: number; body: unknown } | null);
-		mappingTemplates?: unknown[];
 		status?: unknown;
 		settings?: Record<string, unknown>;
 		actionDefaultsById?: Record<string, Record<string, unknown>>;
@@ -723,14 +722,6 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						actions: ['spam_detection_v1']
 					}
 				})
-			});
-		}
-
-		if (url.endsWith('/mappings/templates') && method === 'GET') {
-			return route.fulfill({
-				status: 200,
-				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.actions?.mappingTemplates ?? [])
 			});
 		}
 

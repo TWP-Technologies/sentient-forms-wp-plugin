@@ -1,71 +1,84 @@
 import { writable } from 'svelte/store';
 import { createClientFromConfig, type SentientFormsApiClient } from '$lib/api/client';
-import type { TelemetrySettingsResponse } from '$lib/api/types';
+import {
+	parseLocalDiagnosticsBootstrap,
+	type LocalDiagnosticsSettingsResponse
+} from '$lib/api/local-diagnostics-contract';
 import { notifications } from '$lib/stores/notifications';
 
-export interface TelemetryState {
+export interface LocalDiagnosticsState {
 	loading: boolean;
 	saving: boolean;
-	optIn: boolean;
+	enabled: boolean;
 	updatedAt: string | null;
-	syncedAt: string | null;
-	remoteUpdatedAt: string | null;
 	lastError: string | null;
 }
 
-const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.telemetry;
-const initialState: TelemetryState = {
+const runtime = parseLocalDiagnosticsBootstrap(
+	typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.telemetry
+);
+const initialState: LocalDiagnosticsState = {
 	loading: false,
 	saving: false,
-	optIn: runtime?.optIn ?? false,
+	enabled: runtime?.enabled ?? false,
 	updatedAt: runtime?.updatedAt ?? null,
-	syncedAt: runtime?.syncedAt ?? null,
-	remoteUpdatedAt: runtime?.remoteUpdatedAt ?? null,
-	lastError: runtime?.lastError ?? null
+	lastError: null
 };
 
-function mapResponse(payload: TelemetrySettingsResponse): TelemetryState {
+function mapResponse(payload: LocalDiagnosticsSettingsResponse): LocalDiagnosticsState {
 	return {
 		loading: false,
 		saving: false,
-		optIn: Boolean(payload.telemetry_opt_in),
+		enabled: payload.local_diagnostics_enabled,
 		updatedAt: payload.updated_at ?? null,
-		syncedAt: payload.synced_at ?? null,
-		remoteUpdatedAt: payload.remote_updated_at ?? null,
-		lastError: payload.last_error ?? null
+		lastError: null
 	};
 }
 
-export function createTelemetryStore(client: SentientFormsApiClient = createClientFromConfig()) {
-	const { subscribe, set, update } = writable<TelemetryState>({ ...initialState });
+export function createLocalDiagnosticsStore(
+	client: SentientFormsApiClient = createClientFromConfig()
+) {
+	const { subscribe, set, update } = writable<LocalDiagnosticsState>({ ...initialState });
 
 	return {
 		subscribe,
 		async load() {
 			update((state) => ({ ...state, loading: true }));
 			try {
-				const response = await client.getTelemetrySettings({ showNotifications: false });
+				const response = await client.getLocalDiagnosticsSettings({
+					showNotifications: false
+				});
 				const mapped = mapResponse(response);
 				set(mapped);
 				return mapped;
 			} catch (error) {
-				console.error('Failed to load telemetry settings', error);
-				update((state) => ({ ...state, loading: false }));
+				console.error('Failed to load local diagnostic settings', error);
+				update((state) => ({
+					...state,
+					loading: false,
+					lastError: 'Local diagnostic settings could not be loaded.'
+				}));
 				return null;
 			}
 		},
-		async setOptIn(next: boolean) {
+		async setEnabled(next: boolean) {
 			update((state) => ({ ...state, saving: true }));
 			try {
-				const response = await client.updateTelemetrySettings(next, { showNotifications: true });
+				const response = await client.updateLocalDiagnosticsSettings(next, {
+					showNotifications: true
+				});
 				const mapped = mapResponse(response);
 				set(mapped);
-				notifications.success(next ? 'Telemetry enabled' : 'Telemetry disabled');
+				notifications.success(next ? 'Local diagnostics enabled' : 'Local diagnostics disabled');
 				return mapped;
 			} catch (error) {
-				console.error('Failed to update telemetry', error);
-				update((state) => ({ ...state, saving: false }));
-				notifications.error('Unable to update telemetry preference');
+				console.error('Failed to update local diagnostic settings', error);
+				update((state) => ({
+					...state,
+					saving: false,
+					lastError: 'Local diagnostic preference could not be saved.'
+				}));
+				notifications.error('Unable to update local diagnostics');
 				return null;
 			}
 		},
@@ -75,4 +88,4 @@ export function createTelemetryStore(client: SentientFormsApiClient = createClie
 	};
 }
 
-export const telemetryStore = createTelemetryStore();
+export const localDiagnosticsStore = createLocalDiagnosticsStore();
