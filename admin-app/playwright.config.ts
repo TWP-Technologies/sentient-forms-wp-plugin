@@ -18,7 +18,9 @@ const previewWebServer = isWpE2E
 				PREVIEW_HOST,
 				PREVIEW_PORT: String(PREVIEW_PORT)
 			},
-			reuseExistingServer: !process.env.CI,
+			// The E2E runner selects a free port before this config loads. Refuse reuse so
+			// Playwright owns the preview process for the complete test session.
+			reuseExistingServer: false,
 			timeout: 900_000
 		};
 

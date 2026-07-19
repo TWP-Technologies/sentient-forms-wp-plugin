@@ -2,11 +2,9 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { selectPreviewPort } from './preview-port.mjs';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
-const DEFAULT_PREVIEW_PORT = 4175;
-const MIN_PORT = 1;
-const MAX_PORT = 65_535;
 
 function isBunNodeShim(candidate) {
 	if (typeof candidate !== 'string') return false;
@@ -75,36 +73,11 @@ function buildPlaywrightEnv() {
 	return env;
 }
 
-function parsePort(rawValue, fieldName) {
-	if (typeof rawValue !== 'string') return null;
-	const normalized = rawValue.trim();
-	if (normalized.length === 0) return null;
-	if (!/^\d+$/.test(normalized)) {
-		throw new Error(`${fieldName} must be a numeric port between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	const parsed = Number(normalized);
-	if (!Number.isInteger(parsed) || parsed < MIN_PORT || parsed > MAX_PORT) {
-		throw new Error(`${fieldName} must be between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	return parsed;
-}
-
 function resolvePreviewHost() {
 	const rawHost = process.env.PREVIEW_HOST;
 	if (typeof rawHost !== 'string') return DEFAULT_PREVIEW_HOST;
 	const normalized = rawHost.trim();
 	return normalized.length > 0 ? normalized : DEFAULT_PREVIEW_HOST;
-}
-
-function resolvePreviewPort() {
-	const requestedPort = parsePort(process.env.PREVIEW_PORT, 'PREVIEW_PORT');
-	if (requestedPort !== null) {
-		return { port: requestedPort, source: 'env' };
-	}
-
-	return { port: DEFAULT_PREVIEW_PORT, source: 'default' };
 }
 
 function runPlaywrightTest(env, args) {
@@ -124,14 +97,18 @@ function runPlaywrightTest(env, args) {
 	return result.status ?? 1;
 }
 
-function main() {
+async function main() {
 	const previewHost = resolvePreviewHost();
-	const { port: previewPort, source } = resolvePreviewPort();
+	const { port: previewPort, source } = await selectPreviewPort(
+		process.env.PREVIEW_PORT,
+		previewHost
+	);
 	const previewOrigin = `http://${previewHost}:${previewPort}`;
 	const env = {
 		...buildPlaywrightEnv(),
 		PREVIEW_HOST: previewHost,
-		PREVIEW_PORT: String(previewPort)
+		PREVIEW_PORT: String(previewPort),
+		PREVIEW_ORIGIN: previewOrigin
 	};
 
 	console.log(`[E2E] Preview origin ${previewOrigin} (${source})`);

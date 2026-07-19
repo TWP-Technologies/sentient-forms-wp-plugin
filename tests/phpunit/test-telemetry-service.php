@@ -122,7 +122,6 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
                 'entry_id'      => '123',
                 'form_id'       => '4',
                 'request_id'    => 'req_123',
-                'entry_id' => '123',
                 'result'   => 'contains model output',
             ]
         );

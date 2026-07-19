@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { parsePreviewPort } from './preview-port.mjs';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
 const DEFAULT_PREVIEW_PORT = 4175;
-const MIN_PORT = 1;
-const MAX_PORT = 65_535;
 
 function getBunCommand() {
 	return process.platform === 'win32' ? 'bun.exe' : 'bun';
@@ -19,22 +18,6 @@ function getViteCliPath() {
 	return path.resolve(process.cwd(), 'node_modules', 'vite', 'bin', 'vite.js');
 }
 
-function parsePort(rawValue, fieldName) {
-	if (typeof rawValue !== 'string') return null;
-	const normalized = rawValue.trim();
-	if (normalized.length === 0) return null;
-	if (!/^\d+$/.test(normalized)) {
-		throw new Error(`${fieldName} must be a numeric port between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	const parsed = Number(normalized);
-	if (!Number.isInteger(parsed) || parsed < MIN_PORT || parsed > MAX_PORT) {
-		throw new Error(`${fieldName} must be between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	return parsed;
-}
-
 function resolvePreviewHost() {
 	const rawHost = process.env.PREVIEW_HOST;
 	if (typeof rawHost !== 'string') return DEFAULT_PREVIEW_HOST;
@@ -43,7 +26,7 @@ function resolvePreviewHost() {
 }
 
 function resolvePreviewPort() {
-	return parsePort(process.env.PREVIEW_PORT, 'PREVIEW_PORT') ?? DEFAULT_PREVIEW_PORT;
+	return parsePreviewPort(process.env.PREVIEW_PORT) ?? DEFAULT_PREVIEW_PORT;
 }
 
 function runCommand(command, args, env) {
@@ -82,7 +65,6 @@ async function main() {
 		PREVIEW_PORT: String(previewPort)
 	};
 
-	await ensureExitCodeZero('node', ['scripts/kill-preview-port.mjs'], env);
 	await ensureExitCodeZero(getBunCommand(), ['run', 'build'], env);
 	await ensureExitCodeZero(getNodeCommand(), ['scripts/select-layout.mjs'], env);
 	await ensureExitCodeZero(getNodeCommand(), [

@@ -21,7 +21,7 @@ Managed-service billing and lifecycle assertions belong to CPS repository tests 
 ## Preview Host and Port
 
 - `bun run e2e` resolves a local preview origin automatically.
-- If `PREVIEW_PORT` is unset, the runner tries `4175` and then selects an available fallback.
+- If `PREVIEW_PORT` is unset, the runner asks the operating system for a free local port.
 - Set `PREVIEW_PORT=<port>` to pin the port or `PREVIEW_HOST=<host>` to override the default `127.0.0.1` host.
 
 ## Current WordPress Runtime Assignments

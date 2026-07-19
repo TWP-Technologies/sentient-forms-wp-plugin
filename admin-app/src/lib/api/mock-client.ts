@@ -124,6 +124,10 @@ export class MockSentientFormsApiClient {
 	];
 	private providerCredentials: LocalProviderCredential[] = [];
 	private formDisabled: Record<string, boolean> = {};
+	private localDiagnosticsSettings: LocalDiagnosticsSettingsResponse = {
+		local_diagnostics_enabled: true,
+		updated_at: new Date().toISOString()
+	};
 	private pluginSettings: PluginSettingsResponse = {
 		enable_logging: true,
 		execution_global_disabled: false,
@@ -292,14 +296,14 @@ export class MockSentientFormsApiClient {
 	}
 
 	async getLocalDiagnosticsSettings(): Promise<LocalDiagnosticsSettingsResponse> {
-		const timestamp = new Date().toISOString();
-		return {
-			local_diagnostics_enabled: true,
-			updated_at: timestamp
-		};
+		return { ...this.localDiagnosticsSettings };
 	}
 
-	async updateLocalDiagnosticsSettings(): Promise<LocalDiagnosticsSettingsResponse> {
+	async updateLocalDiagnosticsSettings(enabled: boolean): Promise<LocalDiagnosticsSettingsResponse> {
+		this.localDiagnosticsSettings = {
+			local_diagnostics_enabled: enabled,
+			updated_at: new Date().toISOString()
+		};
 		return this.getLocalDiagnosticsSettings();
 	}
 

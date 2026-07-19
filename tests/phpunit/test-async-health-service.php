@@ -46,6 +46,11 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         $warning = $result['warnings'][0] ?? [];
         $this->assertStringContainsString( 'Background queue backlog', (string) ( $warning['message'] ?? '' ) );
         $this->assertContains( 'queue_backlog', wp_list_pluck( $emitted_warnings, 'code' ) );
+        $emitted_warning = $emitted_warnings[0] ?? [];
+        $this->assertSame( 'queue_backlog', $emitted_warning['code'] ?? null );
+        $this->assertSame( 'warning', $emitted_warning['level'] ?? null );
+        $this->assertIsString( $emitted_warning['message'] ?? null );
+        $this->assertIsArray( $emitted_warning['data'] ?? null );
 
         remove_action( 'sentient_forms_async_health_warning', $capture_warning );
     }
