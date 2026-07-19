@@ -804,20 +804,22 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $this->assertArrayHasKey( 'transitive_dependent', $remaining );
         $this->assertArrayNotHasKey( 'successful', $remaining );
 
-        $rows           = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9932' );
-        $actions        = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $rows_by_action = [];
+        $rows                = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9932' );
+        $actions             = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $rows_by_hook_action = [];
         foreach ( $rows as $row )
         {
             $action = $actions->get( absint( $row['action_id'] ?? 0 ) );
-            $rows_by_action[ $action['code'] ?? '' ] = $row;
+            $key    = ( $row['hook'] ?? '' ) . '|' . ( $action['code'] ?? '' );
+            $rows_by_hook_action[ $key ] = $row;
         }
 
         $this->assertCount( 4, $rows );
-        $this->assertFalse( $rows_by_action['bundled__spam_detection_v1']['enabled'] ?? true );
-        $this->assertFalse( $rows_by_action['bundled__entry_summary_v1']['enabled'] ?? true );
-        $this->assertFalse( $rows_by_action['bundled__sentiment_urgency_v1']['enabled'] ?? true );
-        $this->assertTrue( $rows_by_action['bundled__missing_information_v1']['enabled'] ?? false );
+        $this->assertFalse( $rows_by_hook_action['validation|bundled__spam_detection_v1']['enabled'] ?? true );
+        $this->assertArrayNotHasKey( 'after_submission|bundled__spam_detection_v1', $rows_by_hook_action );
+        $this->assertFalse( $rows_by_hook_action['after_submission|bundled__entry_summary_v1']['enabled'] ?? true );
+        $this->assertFalse( $rows_by_hook_action['after_submission|bundled__sentiment_urgency_v1']['enabled'] ?? true );
+        $this->assertTrue( $rows_by_hook_action['after_submission|bundled__missing_information_v1']['enabled'] ?? false );
     }
 
     public function test_cutover_preserves_custom_uuid_mapping_and_holds_db_version_for_operator_remediation(): void
