@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { selectPreviewPort } from './preview-port.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { preview as startVitePreview } from 'vite';
+import { startOwnedPreview } from './preview-runtime.mjs';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
 
@@ -53,6 +54,10 @@ function getPlaywrightCliPath() {
 	return path.resolve(process.cwd(), 'node_modules', 'playwright', 'cli.js');
 }
 
+function getBunCommand() {
+	return process.platform === 'win32' ? 'bun.exe' : 'bun';
+}
+
 function ensureArtifactDirs() {
 	mkdirSync(path.resolve(process.cwd(), 'playwright-report'), { recursive: true });
 	mkdirSync(path.resolve(process.cwd(), 'test-results'), { recursive: true });
@@ -80,42 +85,72 @@ function resolvePreviewHost() {
 	return normalized.length > 0 ? normalized : DEFAULT_PREVIEW_HOST;
 }
 
+function ensureExitCodeZero(command, args, env) {
+	const result = spawnSync(command, args, { stdio: 'inherit', env });
+	if (result.error) throw result.error;
+	if (result.signal) throw new Error(`${command} exited via signal ${result.signal}.`);
+	if (result.status !== 0) {
+		throw new Error(`${command} ${args.join(' ')} failed with exit code ${result.status ?? 1}.`);
+	}
+}
+
 function runPlaywrightTest(env, args) {
-	const result = spawnSync(resolveRealNodeCommand(), [getPlaywrightCliPath(), 'test', ...args], {
-		stdio: 'inherit',
-		env
+	return new Promise((resolve, reject) => {
+		const child = spawn(resolveRealNodeCommand(), [getPlaywrightCliPath(), 'test', ...args], {
+			stdio: 'inherit',
+			env
+		});
+
+		child.on('error', reject);
+		child.on('exit', (code, signal) => {
+			if (signal) {
+				reject(new Error(`Playwright exited via signal ${signal}.`));
+				return;
+			}
+			resolve(code ?? 1);
+		});
 	});
-
-	if (result.error) {
-		throw result.error;
-	}
-
-	if (result.signal) {
-		throw new Error(`Playwright exited via signal ${result.signal}.`);
-	}
-
-	return result.status ?? 1;
 }
 
 async function main() {
+	ensureArtifactDirs();
+	const baseEnv = buildPlaywrightEnv();
+	if (process.env.SENTIENT_RUN_WP_E2E === '1') {
+		process.exitCode = await runPlaywrightTest(baseEnv, process.argv.slice(2));
+		return;
+	}
+
 	const previewHost = resolvePreviewHost();
-	const { port: previewPort, source } = await selectPreviewPort(
-		process.env.PREVIEW_PORT,
-		previewHost
-	);
-	const previewOrigin = `http://${previewHost}:${previewPort}`;
+	const previewEnv = {
+		...baseEnv,
+		SENTIENT_FORMS_ROUTER: process.env.SENTIENT_FORMS_ROUTER ?? 'pathname'
+	};
+	ensureExitCodeZero(getBunCommand(), ['run', 'build'], previewEnv);
+
+	const ownedPreview = await startOwnedPreview({
+		host: previewHost,
+		rawPort: process.env.PREVIEW_PORT,
+		startPreview: (config) =>
+			startVitePreview({
+				...config,
+				clearScreen: false,
+				root: process.cwd()
+			})
+	});
 	const env = {
-		...buildPlaywrightEnv(),
+		...previewEnv,
 		PREVIEW_HOST: previewHost,
-		PREVIEW_PORT: String(previewPort),
-		PREVIEW_ORIGIN: previewOrigin
+		PREVIEW_PORT: String(ownedPreview.port),
+		PREVIEW_ORIGIN: ownedPreview.origin,
+		SENTIENT_FORMS_OWNED_PREVIEW: '1'
 	};
 
-	console.log(`[E2E] Preview origin ${previewOrigin} (${source})`);
-
-	ensureArtifactDirs();
-	const exitCode = runPlaywrightTest(env, process.argv.slice(2));
-	process.exit(exitCode);
+	console.log(`[E2E] Preview origin ${ownedPreview.origin} (owned)`);
+	try {
+		process.exitCode = await runPlaywrightTest(env, process.argv.slice(2));
+	} finally {
+		await ownedPreview.server.close();
+	}
 }
 
 main().catch((error) => {

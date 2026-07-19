@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { parsePreviewPort } from './preview-port.mjs';
+import { parsePreviewPort } from './preview-runtime.mjs';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
 const DEFAULT_PREVIEW_PORT = 4175;
@@ -66,18 +66,21 @@ async function main() {
 	};
 
 	await ensureExitCodeZero(getBunCommand(), ['run', 'build'], env);
-	await ensureExitCodeZero(getNodeCommand(), ['scripts/select-layout.mjs'], env);
-	await ensureExitCodeZero(getNodeCommand(), [
-		getViteCliPath(),
-		'preview',
-		'--host',
-		previewHost,
-		'--port',
-		String(previewPort),
-		'--strictPort',
-		'--outDir',
-		'build'
-	], env);
+	await ensureExitCodeZero(
+		getNodeCommand(),
+		[
+			getViteCliPath(),
+			'preview',
+			'--host',
+			previewHost,
+			'--port',
+			String(previewPort),
+			'--strictPort',
+			'--outDir',
+			'build'
+		],
+		env
+	);
 }
 
 main().catch((error) => {
