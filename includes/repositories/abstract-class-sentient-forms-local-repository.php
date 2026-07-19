@@ -22,6 +22,18 @@ abstract class Sentient_Forms_Local_Repository
         return current_time( 'mysql', true );
     }
 
+    /**
+     * Serialize local-state mutations with authority migration and approved reset.
+     *
+     * @template T
+     * @param callable():T $operation
+     * @return T|WP_Error
+     */
+    protected function with_local_state_write_lock( callable $operation ): mixed
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock( $operation );
+    }
+
     protected function encode_json_field( mixed $value, string $field_name, bool $required = false ): string | null | WP_Error
     {
         if ( null === $value )

@@ -25,7 +25,15 @@ class Sentient_Forms_Async_Metadata_Store
      * @param int|null             $action_scheduler_id Optional Action Scheduler action ID.
      * @param string|null          $group              Action Scheduler group slug.
      */
-    public function record_job( string $job_id, string $hook, array $payload, int $run_at, ?int $action_scheduler_id = null, ?string $group = null ): void
+    public function record_job( string $job_id, string $hook, array $payload, int $run_at, ?int $action_scheduler_id = null, ?string $group = null ): bool | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): bool | WP_Error => $this->record_job_locked( $job_id, $hook, $payload, $run_at, $action_scheduler_id, $group )
+        );
+    }
+
+    /** Record a job after the complete read-modify-write fence is held. */
+    private function record_job_locked( string $job_id, string $hook, array $payload, int $run_at, ?int $action_scheduler_id, ?string $group ): bool | WP_Error
     {
         $jobs = $this->get_jobs();
         $filtered_payload = $this->filter_payload( $payload, $hook );
@@ -43,30 +51,38 @@ class Sentient_Forms_Async_Metadata_Store
             'payload'      => $filtered_payload,
         ];
 
-        $this->persist( $this->trim( $jobs ) );
+        return $this->persist_locked( $this->trim( $jobs ) );
     }
 
     /**
      * Update a job's status.
      */
-    public function update_status( ?string $job_id, string $status, array $extra = [] ): void
+    public function update_status( ?string $job_id, string $status, array $extra = [] ): bool | WP_Error
     {
         if ( empty( $job_id ) )
         {
-            return;
+            return false;
         }
 
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): bool | WP_Error => $this->update_status_locked( $job_id, $status, $extra )
+        );
+    }
+
+    /** Update status after the complete read-modify-write fence is held. */
+    private function update_status_locked( string $job_id, string $status, array $extra ): bool | WP_Error
+    {
         $jobs = $this->get_jobs();
         if ( ! isset( $jobs[ $job_id ] ) )
         {
-            return;
+            return false;
         }
 
         $jobs[ $job_id ]['status'] = $status;
         $jobs[ $job_id ] = array_merge( $jobs[ $job_id ], $extra );
         $jobs[ $job_id ]['updated_at'] = time();
 
-        $this->persist( $jobs );
+        return $this->persist_locked( $jobs );
     }
 
     /**
@@ -95,7 +111,15 @@ class Sentient_Forms_Async_Metadata_Store
         return $jobs[ $job_id ] ?? null;
     }
 
-    public function purge( callable $should_delete ): int
+    public function purge( callable $should_delete ): int | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): int | WP_Error => $this->purge_locked( $should_delete )
+        );
+    }
+
+    /** Purge after the complete read-modify-write fence is held. */
+    private function purge_locked( callable $should_delete ): int | WP_Error
     {
         $jobs    = $this->get_jobs();
         $removed = 0;
@@ -111,7 +135,11 @@ class Sentient_Forms_Async_Metadata_Store
 
         if ( $removed > 0 )
         {
-            $this->persist( $jobs );
+            $persisted = $this->persist_locked( $jobs );
+            if ( is_wp_error( $persisted ) )
+            {
+                return $persisted;
+            }
         }
 
         return $removed;
@@ -196,7 +224,7 @@ class Sentient_Forms_Async_Metadata_Store
                 continue;
             }
 
-            $this->update_status(
+            $status_update = $this->update_status(
                 $candidate['job_id'],
                 $target_status,
                 [
@@ -209,6 +237,13 @@ class Sentient_Forms_Async_Metadata_Store
                         : ( $job['last_error'] ?? null ),
                 ]
             );
+            if ( is_wp_error( $status_update ) )
+            {
+                $candidate['update_error'] = $status_update->get_error_code();
+                $candidates[ array_key_last( $candidates ) ] = $candidate;
+                $skipped++;
+                continue;
+            }
             $updated++;
         }
 
@@ -225,9 +260,14 @@ class Sentient_Forms_Async_Metadata_Store
     /**
      * Remove all tracked jobs (mainly for tests).
      */
-    public function clear(): void
+    public function clear(): bool | WP_Error
     {
-        delete_option( self::OPTION );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            static function (): bool {
+                $deleted = delete_option( self::OPTION );
+                return $deleted || false === get_option( self::OPTION, false );
+            }
+        );
     }
 
     private function get_jobs(): array
@@ -236,9 +276,17 @@ class Sentient_Forms_Async_Metadata_Store
         return is_array( $stored ) ? $stored : [];
     }
 
-    private function persist( array $jobs ): void
+    private function persist_locked( array $jobs ): bool | WP_Error
     {
-        update_option( self::OPTION, $jobs, false );
+        if ( update_option( self::OPTION, $jobs, false ) || $jobs === get_option( self::OPTION, null ) )
+        {
+            return true;
+        }
+
+        return new WP_Error(
+            'sentient_forms_async_metadata_persistence_failed',
+            __( 'Could not persist Sentient Forms async job metadata.', 'sentient-forms' )
+        );
     }
 
     private function trim( array $jobs ): array

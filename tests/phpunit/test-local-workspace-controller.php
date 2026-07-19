@@ -30,6 +30,8 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_is_active' );
         remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
         remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
+        delete_option( 'sentient_forms_action_defaults_reset_race' );
+        delete_option( 'sentient_forms_action_defaults_external_race' );
         parent::tearDown();
     }
 
@@ -1008,6 +1010,537 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $row['summary_json']['after']['local_tables']['sentient_form_mappings'] );
     }
 
+    public function test_migration_approved_reset_reports_failed_option_deletion_and_retries(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $failed_option = 'sentient_forms_action_log';
+        $intercepted   = false;
+        $fail_option_delete = static function ( string $query ) use ( $failed_option, &$intercepted ): string {
+            if ( ! $intercepted && str_starts_with( ltrim( $query ), 'DELETE' ) && str_contains( $query, $failed_option ) )
+            {
+                $intercepted = true;
+                return 'SENTIENT FORMS FORCED OPTION DELETE FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_option_delete, PHP_INT_MAX );
+        $suppress_errors = $wpdb->suppress_errors( true );
+        try
+        {
+            $failure = $this->dispatch_json(
+                'POST',
+                '/sentient-forms/v1/local/migration/approved-reset',
+                [
+                    'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                ],
+                500
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppress_errors );
+            remove_filter( 'query', $fail_option_delete, PHP_INT_MAX );
+        }
+
+        $this->assertTrue( $intercepted );
+        $this->assertSame( 'sentient_forms_local_cutover_option_delete_failed', $failure['code'] ?? null );
+        $this->assertIsArray( get_option( $failed_option ) );
+        $run_id = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT id FROM %i ORDER BY id DESC LIMIT 1',
+                $wpdb->prefix . 'sentient_migration_runs'
+            )
+        );
+        $run = ( new Sentient_Forms_Migration_Runs_Repository( $wpdb ) )->get( $run_id );
+        $this->assertSame( 'failed', $run['status'] ?? null );
+        $this->assertSame(
+            'sentient_forms_local_cutover_option_delete_failed',
+            $run['summary_json']['error_code'] ?? null
+        );
+
+        $retry = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+        $this->assertSame( 'completed', $retry['status'] ?? null );
+        $this->assertFalse( get_option( $failed_option, false ) );
+    }
+
+    public function test_migration_approved_reset_cannot_race_action_authority_cutover(): void
+    {
+        $this->seed_local_cutover_state();
+
+        $nested_migration = null;
+        $ran_nested_migration = false;
+        $run_migration_before_delete = static function ( string $option_name ) use ( &$nested_migration, &$ran_nested_migration ): void {
+            if ( $ran_nested_migration || 'sentient_forms_actions_gravity_forms_42' !== $option_name )
+            {
+                return;
+            }
+
+            $ran_nested_migration = true;
+            $nested_migration     = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        };
+        add_action( 'delete_option', $run_migration_before_delete );
+        try
+        {
+            $result = $this->dispatch_json(
+                'POST',
+                '/sentient-forms/v1/local/migration/approved-reset',
+                [
+                    'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'delete_option', $run_migration_before_delete );
+        }
+
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertSame( 0, $nested_migration['migration_complete'] ?? null );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+    }
+
+    public function test_migration_approved_reset_requires_global_execution_quiescence(): void
+    {
+        $this->seed_local_cutover_state();
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'execution_global_disabled'   => false,
+                'execution_provider_disabled' => [ 'gravity_forms' => true ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/approved-reset' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->set_body_params(
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 'sentient_forms_local_cutover_execution_not_quiesced', $response->get_data()['code'] ?? null );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertIsArray( get_option( 'sentient_forms_action_log' ) );
+    }
+
+    public function test_migration_approved_reset_rejects_running_local_mapping_metadata(): void
+    {
+        $this->seed_local_cutover_state();
+        update_option(
+            'sentient_forms_async_jobs',
+            [
+                'running-local-mapping' => [
+                    'job_id' => 'running-local-mapping',
+                    'hook'   => 'sentient_forms_process_local_mapping',
+                    'status' => 'running',
+                ],
+            ],
+            false
+        );
+
+        $failure = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ],
+            409
+        );
+
+        $this->assertSame( 'sentient_forms_local_cutover_execution_not_quiesced', $failure['code'] ?? null );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+    }
+
+    public function test_migration_approved_reset_rejects_authoritative_running_request_without_metadata(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        delete_option( 'sentient_forms_async_jobs' );
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'sentient_async_requests',
+            [ 'status' => 'running' ],
+            [ 'request_hash' => str_repeat( 'a', 64 ) ],
+            [ '%s' ],
+            [ '%s' ]
+        );
+        $this->assertSame( 1, $updated );
+
+        $failure = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ],
+            409
+        );
+
+        $this->assertSame( 'sentient_forms_local_cutover_execution_not_quiesced', $failure['code'] ?? null );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+    }
+
+    public function test_migration_approved_reset_rejects_running_synchronous_accepted_execution(): void
+    {
+        $this->seed_local_cutover_state();
+        delete_option( 'sentient_forms_async_jobs' );
+
+        $request_id = 'accepted-sync-reset-race-' . wp_generate_password( 20, false, false );
+        $claim = Sentient_Forms_Plugin::instance()->get_async_request_store()->claim_execution(
+            $request_id,
+            [
+                'action_id'      => 'entry_summary_v1',
+                'adapter'        => 'gravity_forms',
+                'payload_digest' => hash( 'sha256', 'accepted-sync-reset-race' ),
+            ],
+            false,
+            'accepted_sync'
+        );
+        $this->assertSame( 'claimed', $claim['state'] ?? null );
+
+        $failure = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ],
+            409
+        );
+
+        $this->assertSame( 'sentient_forms_local_cutover_execution_not_quiesced', $failure['code'] ?? null );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame(
+            'running',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
+    }
+
+    public function test_migration_approved_reset_cancels_pending_local_mapping_jobs_and_clears_metadata(): void
+    {
+        $this->seed_local_cutover_state();
+        $action_id = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            'sentient_forms_process_local_mapping',
+            [ [ 'local_mapping_id' => 1 ] ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+        ( new Sentient_Forms_Async_Metadata_Store() )->record_job(
+            'pending-local-mapping',
+            'sentient_forms_process_local_mapping',
+            [ 'local_mapping_id' => 1 ],
+            time() + HOUR_IN_SECONDS,
+            $action_id,
+            'sentient_forms_async'
+        );
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertSame( ActionScheduler_Store::STATUS_CANCELED, ActionScheduler::store()->get_status( $action_id ) );
+        $this->assertFalse( get_option( 'sentient_forms_async_jobs', false ) );
+    }
+
+    public function test_migration_approved_reset_cancels_pending_local_mapping_jobs_across_custom_groups(): void
+    {
+        $this->seed_local_cutover_state();
+        $action_id = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            'sentient_forms_process_local_mapping',
+            [ [ 'local_mapping_id' => 1 ] ],
+            'sentient_forms_custom_async_group'
+        );
+        $this->assertIsInt( $action_id );
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertSame( ActionScheduler_Store::STATUS_CANCELED, ActionScheduler::store()->get_status( $action_id ) );
+    }
+
+    public function test_migration_approved_reset_clears_wp_cron_local_mapping_fallbacks(): void
+    {
+        $this->seed_local_cutover_state();
+        $payload = [ [ 'local_mapping_id' => 1, 'execution_request_id' => 'wp-cron-reset-race' ] ];
+        $run_at  = time() + HOUR_IN_SECONDS;
+        $this->assertTrue( wp_schedule_single_event( $run_at, 'sentient_forms_process_local_mapping', $payload ) );
+        $this->assertSame( $run_at, wp_next_scheduled( 'sentient_forms_process_local_mapping', $payload ) );
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_process_local_mapping', $payload ) );
+    }
+
+    public function test_migration_approved_reset_cancels_evaluation_jobs_across_action_scheduler_and_wp_cron(): void
+    {
+        $this->seed_local_cutover_state();
+        $evaluation_payload = [ 'context' => [ 'job_id' => 'evaluation-reset-fixture' ] ];
+        $action_id = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            'sentient_forms_evaluate_action',
+            $evaluation_payload,
+            'sentient_forms_custom_evaluation_group'
+        );
+        $this->assertIsInt( $action_id );
+
+        $wp_cron_payload = [ 'context' => [ 'job_id' => 'evaluation-wp-cron-reset-fixture' ] ];
+        $run_at = time() + HOUR_IN_SECONDS;
+        $this->assertTrue( wp_schedule_single_event( $run_at, 'sentient_forms_evaluate_action', $wp_cron_payload ) );
+        $this->assertSame( $run_at, wp_next_scheduled( 'sentient_forms_evaluate_action', $wp_cron_payload ) );
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertSame( ActionScheduler_Store::STATUS_CANCELED, ActionScheduler::store()->get_status( $action_id ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_evaluate_action', $wp_cron_payload ) );
+    }
+
+    public function test_migration_approved_reset_retains_lock_across_wordpress_database_reconnect(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_observer = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $lock_connection_id = (int) $lock_database->get_var( 'SELECT CONNECTION_ID()' );
+        $lock_filter   = static function ( mixed $candidate ) use ( $lock_database ): wpdb {
+            return $lock_database;
+        };
+        $reconnected   = false;
+        $observed_lock_owner = null;
+        $reconnect_during_reset = static function ( string $query ) use ( $wpdb, $lock_observer, $lock_name, &$observed_lock_owner, &$reconnected ): string {
+            if ( ! $reconnected && preg_match( '/^DELETE\s+FROM/i', ltrim( $query ) ) )
+            {
+                $reconnected = true;
+                $wpdb->close();
+                $observed_lock_owner = (int) $lock_observer->get_var(
+                    $lock_observer->prepare( 'SELECT IS_USED_LOCK(%s)', $lock_name )
+                );
+            }
+
+            return $query;
+        };
+
+        add_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10, 3 );
+        add_filter( 'query', $reconnect_during_reset );
+        try
+        {
+            $result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                self::$admin_id
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10 );
+            remove_filter( 'query', $reconnect_during_reset );
+            $lock_database->close();
+            $lock_observer->close();
+        }
+
+        $this->assertTrue( $reconnected );
+        $this->assertSame( $lock_connection_id, $observed_lock_owner );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_local_cutover_postcondition_failed', $result->get_error_code() );
+    }
+
+    public function test_migration_approved_reset_fences_plugin_owned_runtime_writers(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $outcomes = [];
+        $attempted = false;
+        $attempt_writes_during_finalization = static function ( string $option_name ) use ( $wpdb, &$attempted, &$outcomes ): void {
+            if ( $attempted || 'sentient_forms_settings' !== $option_name )
+            {
+                return;
+            }
+            $attempted = true;
+
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/reset_race/defaults' );
+            $request->set_param( 'action_id', 'reset_race' );
+            $request->set_param( 'action_customization', 'Must not survive reset.' );
+            $outcomes['action_defaults'] = ( new Sentient_Forms_Form_Action_Config_Controller() )->update_action_defaults( $request );
+            $outcomes['action_log'] = Sentient_Forms_Action_Log_Controller::log_execution(
+                [
+                    'execution_request_id' => 'reset-race-action-log',
+                    'status'               => 'pending',
+                ]
+            );
+            $outcomes['managed_usage_scrub'] = Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+            $outcomes['execution_event'] = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+                [
+                    'execution_request_id' => 'reset-race-event',
+                    'provider'             => 'openrouter',
+                    'status'               => 'queued',
+                ]
+            );
+            $outcomes['async_request'] = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->record(
+                'reset-race-async',
+                [
+                    'action_id'      => 'entry_summary_v1',
+                    'record_type'    => 'job',
+                    'status'         => 'queued',
+                    'payload_digest' => hash( 'sha256', 'reset-race-async' ),
+                ]
+            );
+            $outcomes['action_template'] = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+                [
+                    'code'            => 'reset_race_template',
+                    'display_name'    => 'Reset Race Template',
+                    'prompt_template' => 'Do not persist.',
+                ]
+            );
+            $outcomes['custom_action'] = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+                [
+                    'code'            => 'reset_race_action',
+                    'display_name'    => 'Reset Race Action',
+                    'definition_json' => [ 'prompt' => 'Do not persist.' ],
+                ]
+            );
+            $outcomes['form_mapping'] = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+                [
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => 'reset-race',
+                    'hook'                => 'after_submission',
+                    'action_kind'         => 'custom_action',
+                    'action_id'           => 1,
+                    'input_bindings_json' => [],
+                    'enabled'             => true,
+                ]
+            );
+            $outcomes['lead_scoring'] = ( new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb ) )->upsert_from_execution(
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 'reset-race',
+                    'entry_id'             => '1',
+                    'action_code'          => 'lead_grading_v1',
+                    'execution_request_id' => 'reset-race-lead',
+                ]
+            );
+            $settings_request = new WP_REST_Request( 'POST', '/sentient-forms/v1/settings' );
+            $settings_request->set_param( 'execution_global_disabled', false );
+            $outcomes['settings'] = ( new Sentient_Forms_Settings_Controller() )->update_settings( $settings_request );
+        };
+        add_action( 'updated_option', $attempt_writes_during_finalization, 10, 1 );
+        try
+        {
+            $result = $this->dispatch_json(
+                'POST',
+                '/sentient-forms/v1/local/migration/approved-reset',
+                [
+                    'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'updated_option', $attempt_writes_during_finalization, 10 );
+        }
+
+        $this->assertTrue( $attempted );
+        $this->assertSame( 'completed', $result['status'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['action_defaults'] ?? null );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $outcomes['action_defaults']->get_error_code() );
+        $this->assertFalse( $outcomes['action_log'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['managed_usage_scrub'] ?? null );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $outcomes['managed_usage_scrub']->get_error_code() );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['execution_event'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['async_request'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['action_template'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['custom_action'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['form_mapping'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['lead_scoring'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $outcomes['settings'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_action_defaults_reset_race', false ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_async_requests' ) );
+    }
+
+    public function test_migration_approved_reset_fails_closed_when_unfenced_state_reappears(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $repopulated = false;
+        $repopulate_after_final_option_delete = static function ( string $option_name ) use ( &$repopulated ): void {
+            if ( $repopulated || 'sentient_forms_settings' !== $option_name )
+            {
+                return;
+            }
+            $repopulated = true;
+            update_option( 'sentient_forms_action_defaults_external_race', [ 'model_override' => 'openrouter/auto' ], false );
+        };
+        add_action( 'updated_option', $repopulate_after_final_option_delete, 10, 1 );
+        try
+        {
+            $failure = $this->dispatch_json(
+                'POST',
+                '/sentient-forms/v1/local/migration/approved-reset',
+                [
+                    'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                ],
+                500
+            );
+        }
+        finally
+        {
+            remove_action( 'updated_option', $repopulate_after_final_option_delete, 10 );
+        }
+
+        $this->assertTrue( $repopulated );
+        $this->assertSame( 'sentient_forms_local_cutover_postcondition_failed', $failure['code'] ?? null );
+        $this->assertIsArray( get_option( 'sentient_forms_action_defaults_external_race', false ) );
+        $run_id = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT id FROM %i ORDER BY id DESC LIMIT 1',
+                $wpdb->prefix . 'sentient_migration_runs'
+            )
+        );
+        $run = ( new Sentient_Forms_Migration_Runs_Repository( $wpdb ) )->get( $run_id );
+        $this->assertSame( 'failed', $run['status'] ?? null );
+        $this->assertSame( 'sentient_forms_local_cutover_postcondition_failed', $run['summary_json']['error_code'] ?? null );
+    }
+
     public function test_execute_form_mapping_delegates_to_local_execution_service(): void
     {
         $service    = new Sentient_Forms_Test_Local_Action_Execution_Service(
@@ -1129,7 +1662,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         }
 
         $response = rest_get_server()->dispatch( $request );
-        $this->assertSame( $expected_status, $response->get_status() );
+        $this->assertSame( $expected_status, $response->get_status(), wp_json_encode( $response->get_data() ) );
 
         $data = $response->get_data();
         $this->assertIsArray( $data );

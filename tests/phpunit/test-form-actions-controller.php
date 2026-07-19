@@ -3945,6 +3945,396 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_rest_duplicate_inserts_local_first_mapping_and_rewires_exact_children(): void
+    {
+        global $wpdb;
+
+        GFAPI::$forms[403] = [ 'id' => 403, 'title' => 'Local-first duplicate fixture' ];
+        $actions           = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id         = $actions->create(
+            [
+                'code'                 => 'duplicate_graph_custom',
+                'display_name'         => 'Duplicate graph custom',
+                'definition_json'      => [ 'prompt_template' => 'Classify {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $create_row = function ( string $form_id, ?int $parent_id = null ) use ( $mappings, $action_id ): int {
+            $settings = [];
+            if ( null !== $parent_id )
+            {
+                $parent_mapping_id = 'local_first_' . $parent_id;
+                $settings = [
+                    'trigger_sources' => [
+                        'after_submission' => [ 'type' => 'mapping', 'mapping_id' => $parent_mapping_id ],
+                    ],
+                    'dependency_ids' => [ $parent_mapping_id ],
+                ];
+            }
+
+            $row_id = $mappings->create(
+                [
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => $form_id,
+                    'hook'                => 'after_submission',
+                    'action_kind'         => 'custom_action',
+                    'action_id'           => $action_id,
+                    'input_bindings_json' => [],
+                    'execution_mode'      => 'async',
+                    'settings_json'       => $settings,
+                    'enabled'             => true,
+                ]
+            );
+            $this->assertIsInt( $row_id );
+            return $row_id;
+        };
+
+        $parent_id    = $create_row( '403' );
+        $source_id    = $create_row( '403', $parent_id );
+        $child_id     = $create_row( '403', $parent_id );
+        $unrelated_id = $create_row( '403' );
+        $foreign_id   = $create_row( '9999' );
+
+        $request = $this->authenticate_rest_request(
+            new WP_REST_Request(
+                'POST',
+                '/sentient-forms/v1/gravity_forms/forms/403/actions/local_first_' . $source_id . '/duplicate'
+            )
+        );
+        $request->set_param(
+            'parent',
+            [
+                'type'       => 'mapping',
+                'hook'       => 'after_submission',
+                'mapping_id' => 'local_first_' . $parent_id,
+            ]
+        );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 201, $response->get_status() );
+        $duplicate_id = absint( $data['duplicate']['local_form_mapping_id'] ?? 0 );
+        $this->assertGreaterThan( $foreign_id, $duplicate_id );
+        $this->assertSame( $action_id, absint( $mappings->get( $duplicate_id )['action_id'] ?? 0 ) );
+        $this->assertSame(
+            [ 'type' => 'mapping', 'mapping_id' => 'local_first_' . $parent_id ],
+            $mappings->get( $duplicate_id )['settings_json']['trigger_sources']['after_submission'] ?? null
+        );
+        $this->assertSame(
+            [ 'local_first_' . $duplicate_id ],
+            $mappings->get( $source_id )['settings_json']['dependency_ids'] ?? null
+        );
+        $this->assertSame(
+            [ 'local_first_' . $duplicate_id ],
+            $mappings->get( $child_id )['settings_json']['dependency_ids'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'dependency_ids', $mappings->get( $unrelated_id )['settings_json'] ?? [] );
+        $this->assertSame(
+            [ 'local_first_' . $source_id, 'local_first_' . $child_id ],
+            $data['insertion']['moved_children'] ?? []
+        );
+        $this->assertSame( [], $data['insertion']['skipped_children'] ?? null );
+    }
+
+    public function test_rest_duplicate_rolls_back_new_row_when_child_rewire_fails(): void
+    {
+        global $wpdb;
+
+        GFAPI::$forms[404] = [ 'id' => 404, 'title' => 'Duplicate rollback fixture' ];
+        $actions           = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id         = $actions->create(
+            [
+                'code'                 => 'duplicate_rollback_custom',
+                'display_name'         => 'Duplicate rollback custom',
+                'definition_json'      => [ 'prompt_template' => 'Classify {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $parent_id = $mappings->create(
+            [
+                'form_source' => 'gravity_forms', 'form_id' => '404', 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'settings_json' => [], 'enabled' => true,
+            ]
+        );
+        $source_id = $mappings->create(
+            [
+                'form_source' => 'gravity_forms', 'form_id' => '404', 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async',
+                'settings_json' => [
+                    'trigger_sources' => [
+                        'after_submission' => [ 'type' => 'mapping', 'mapping_id' => 'local_first_' . $parent_id ],
+                    ],
+                    'dependency_ids' => [ 'local_first_' . $parent_id ],
+                ],
+                'enabled' => true,
+            ]
+        );
+        $second_child_id = $mappings->create(
+            [
+                'form_source' => 'gravity_forms', 'form_id' => '404', 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async',
+                'settings_json' => [
+                    'trigger_sources' => [
+                        'after_submission' => [ 'type' => 'mapping', 'mapping_id' => 'local_first_' . $parent_id ],
+                    ],
+                    'dependency_ids' => [ 'local_first_' . $parent_id ],
+                ],
+                'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $parent_id );
+        $this->assertIsInt( $source_id );
+        $this->assertIsInt( $second_child_id );
+        $before = $mappings->list_for_form( 'gravity_forms', '404' );
+
+        $mapping_update_count = 0;
+        $break_second_mapping_update = static function ( string $query ) use ( $wpdb, &$mapping_update_count ): string {
+            if ( str_contains( $query, 'UPDATE `' . $wpdb->prefix . 'sentient_form_mappings`' ) )
+            {
+                $mapping_update_count++;
+                if ( 2 !== $mapping_update_count )
+                {
+                    return $query;
+                }
+                return str_replace(
+                    '`' . $wpdb->prefix . 'sentient_form_mappings`',
+                    '`' . $wpdb->prefix . 'sentient_form_mappings_missing_fixture`',
+                    $query
+                );
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $break_second_mapping_update );
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        try
+        {
+            $request = $this->authenticate_rest_request(
+                new WP_REST_Request(
+                    'POST',
+                    '/sentient-forms/v1/gravity_forms/forms/404/actions/local_first_' . $source_id . '/duplicate'
+                )
+            );
+            $request->set_param(
+                'parent',
+                [
+                    'type'       => 'mapping',
+                    'hook'       => 'after_submission',
+                    'mapping_id' => 'local_first_' . $parent_id,
+                ]
+            );
+            $response = $this->dispatch_form_actions_request( $request );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $previous_suppress_errors );
+            remove_filter( 'query', $break_second_mapping_update );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'rest_duplicate_transaction_failed', $response->get_data()['code'] ?? null );
+        $this->assertGreaterThanOrEqual( 2, $mapping_update_count );
+        $this->assertSame( $before, $mappings->list_for_form( 'gravity_forms', '404' ) );
+    }
+
+    public function test_rest_duplicate_locks_and_replans_children_from_current_graph(): void
+    {
+        global $wpdb;
+
+        GFAPI::$forms[405] = [ 'id' => 405, 'title' => 'Concurrent duplicate graph fixture' ];
+        $actions           = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id         = $actions->create(
+            [
+                'code'                 => 'duplicate_concurrent_custom',
+                'display_name'         => 'Duplicate concurrent custom',
+                'definition_json'      => [ 'prompt_template' => 'Classify {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $create_row = static function ( ?int $parent_id = null ) use ( $mappings, $action_id ): int | WP_Error {
+            $settings = [];
+            if ( null !== $parent_id )
+            {
+                $settings = [
+                    'trigger_sources' => [
+                        'after_submission' => [ 'type' => 'mapping', 'mapping_id' => 'local_first_' . $parent_id ],
+                    ],
+                    'dependency_ids' => [ 'local_first_' . $parent_id ],
+                ];
+            }
+            return $mappings->create(
+                [
+                    'form_source' => 'gravity_forms', 'form_id' => '405', 'hook' => 'after_submission',
+                    'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                    'execution_mode' => 'async', 'settings_json' => $settings, 'enabled' => true,
+                ]
+            );
+        };
+        $first_parent_id  = $create_row();
+        $second_parent_id = $create_row();
+        $source_id        = $create_row( $first_parent_id );
+        $detached_id      = $create_row( $first_parent_id );
+        $this->assertIsInt( $first_parent_id );
+        $this->assertIsInt( $second_parent_id );
+        $this->assertIsInt( $source_id );
+        $this->assertIsInt( $detached_id );
+
+        $new_child_id = 0;
+        $injected     = false;
+        $mutate_before_lock = function ( string $query ) use (
+            $mappings,
+            $create_row,
+            $first_parent_id,
+            $second_parent_id,
+            $detached_id,
+            &$new_child_id,
+            &$injected
+        ): string {
+            if ( $injected || ! str_contains( $query, 'SAVEPOINT sentient_forms_mapping_graph' ) )
+            {
+                return $query;
+            }
+            $injected = true;
+            $updated  = $mappings->update(
+                $detached_id,
+                [
+                    'settings_json' => [
+                        'trigger_sources' => [
+                            'after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'local_first_' . $second_parent_id,
+                            ],
+                        ],
+                        'dependency_ids' => [ 'local_first_' . $second_parent_id ],
+                    ],
+                ]
+            );
+            $this->assertNotWPError( $updated );
+            $created = $create_row( $first_parent_id );
+            $this->assertIsInt( $created );
+            $new_child_id = $created;
+            return $query;
+        };
+        add_filter( 'query', $mutate_before_lock );
+        try
+        {
+            $request = $this->authenticate_rest_request(
+                new WP_REST_Request(
+                    'POST',
+                    '/sentient-forms/v1/gravity_forms/forms/405/actions/local_first_' . $source_id . '/duplicate'
+                )
+            );
+            $request->set_param(
+                'parent',
+                [
+                    'type'       => 'mapping',
+                    'hook'       => 'after_submission',
+                    'mapping_id' => 'local_first_' . $first_parent_id,
+                ]
+            );
+            $response = $this->dispatch_form_actions_request( $request );
+        }
+        finally
+        {
+            remove_filter( 'query', $mutate_before_lock );
+        }
+
+        $this->assertTrue( $injected );
+        $this->assertGreaterThan( 0, $new_child_id );
+        $this->assertSame( 201, $response->get_status() );
+        $duplicate_id = absint( $response->get_data()['duplicate']['local_form_mapping_id'] ?? 0 );
+        $this->assertGreaterThan( 0, $duplicate_id );
+        $this->assertSame(
+            [ 'local_first_' . $duplicate_id ],
+            $mappings->get( $new_child_id )['settings_json']['dependency_ids'] ?? null
+        );
+        $this->assertSame(
+            [ 'local_first_' . $second_parent_id ],
+            $mappings->get( $detached_id )['settings_json']['dependency_ids'] ?? null
+        );
+        $this->assertContains( 'local_first_' . $new_child_id, $response->get_data()['insertion']['moved_children'] ?? [] );
+        $this->assertNotContains( 'local_first_' . $detached_id, $response->get_data()['insertion']['moved_children'] ?? [] );
+    }
+
+    public function test_rest_duplicate_preserves_locked_graph_conflict_as_http_409(): void
+    {
+        global $wpdb;
+
+        GFAPI::$forms[406] = [ 'id' => 406, 'title' => 'Duplicate conflict fixture' ];
+        $actions           = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id         = $actions->create(
+            [
+                'code'                 => 'duplicate_conflict_custom',
+                'display_name'         => 'Duplicate conflict custom',
+                'definition_json'      => [ 'prompt_template' => 'Classify {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $source_id = $mappings->create(
+            [
+                'form_source' => 'gravity_forms', 'form_id' => '406', 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'settings_json' => [], 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $source_id );
+
+        $mutated = false;
+        $change_before_lock = static function ( string $query ) use ( $mappings, $source_id, &$mutated ): string {
+            if ( $mutated || ! str_contains( $query, 'SAVEPOINT sentient_forms_mapping_graph' ) )
+            {
+                return $query;
+            }
+            $mutated = true;
+            $updated = $mappings->update( $source_id, [ 'hook' => 'validation' ] );
+            if ( is_wp_error( $updated ) )
+            {
+                throw new RuntimeException( $updated->get_error_message() );
+            }
+            return $query;
+        };
+        add_filter( 'query', $change_before_lock );
+        try
+        {
+            $request = $this->authenticate_rest_request(
+                new WP_REST_Request(
+                    'POST',
+                    '/sentient-forms/v1/gravity_forms/forms/406/actions/local_first_' . $source_id . '/duplicate'
+                )
+            );
+            $request->set_param( 'parent', [ 'type' => 'hook_root', 'hook' => 'after_submission' ] );
+            $response = $this->dispatch_form_actions_request( $request );
+        }
+        finally
+        {
+            remove_filter( 'query', $change_before_lock );
+        }
+
+        $this->assertTrue( $mutated );
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 'rest_duplicate_transaction_conflict', $response->get_data()['code'] ?? null );
+        $this->assertCount( 1, $mappings->list_for_form( 'gravity_forms', '406' ) );
+    }
+
 
 
     public function test_add_bundled_mapping_rejects_execution_mode_outside_action_source_contract(): void
@@ -5804,6 +6194,42 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $stored_mapping['enabled'] ?? false );
     }
 
+    public function test_update_form_action_item_preserves_reactivation_writer_barrier_error(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        global $wpdb;
+        $actions  = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->assertTrue( $actions->update_status( $record['action_id'], 'archived' ) );
+        $this->assertIsArray( $mappings->update( $record['mapping_id'], [ 'enabled' => false ] ) );
+
+        $locked_actions = new class( $wpdb ) extends Sentient_Forms_Local_Custom_Actions_Repository {
+            public function update_status( int $id, string $status ): bool | WP_Error
+            {
+                return new WP_Error(
+                    'sentient_forms_action_authority_write_locked',
+                    'Local state is locked.',
+                    [ 'status' => 409 ]
+                );
+            }
+        };
+        $property = new ReflectionProperty( Sentient_Forms_Form_Actions_Controller::class, 'local_custom_actions' );
+        $property->setValue( $this->controller, $locked_actions );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'is_action_enabled_for_form', true );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $response->get_error_code() );
+        $this->assertFalse( $mappings->get( $record['mapping_id'] )['enabled'] ?? true );
+    }
+
     public function test_update_form_action_item_does_not_reactivate_archived_action_before_validation(): void
     {
         $record = $this->create_local_first_mapping_fixture( '168' );
@@ -5926,6 +6352,63 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_delete_local_first_mapping_cannot_restore_legacy_option_during_authority_cutover(): void
+    {
+        $record     = $this->create_local_first_mapping_fixture( '408' );
+        $mapping_id = 'local_first_' . $record['mapping_id'];
+        $option_key = 'sentient_forms_actions_gravity_forms_408';
+        $this->dynamic_action_option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'legacy_summary' => [
+                    'local_mapping_id'           => 'legacy_summary',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [],
+                ],
+            ],
+            false
+        );
+
+        $nested_migration = null;
+        $run_migration_before_stale_write = static function ( mixed $value ) use ( &$nested_migration ): mixed {
+            $nested_migration = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            return $value;
+        };
+        add_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        try
+        {
+            $request = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/gravity_forms/forms/408/actions/' . $mapping_id );
+            $request->set_param( 'form_source_slug', 'gravity_forms' );
+            $request->set_param( 'form_id', 408 );
+            $request->set_param( 'local_mapping_id', $mapping_id );
+            $response = $this->controller->delete_form_action_item( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        }
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 0, $nested_migration['migration_complete'] ?? null );
+        $this->assertArrayHasKey( 'legacy_summary', get_option( $option_key ) );
+
+        global $wpdb;
+        $rows = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->assertNull( $rows->get( $record['mapping_id'] ) );
+
+        $completed = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $completed['migration_complete'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+        $migrated = $rows->list_for_form( 'gravity_forms', '408' );
+        $this->assertCount( 1, $migrated );
+        $this->assertTrue( $migrated[0]['enabled'] ?? false );
+    }
+
 
 
 
@@ -5968,6 +6451,54 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $data['sf_disabled'], 'GET should reflect the cleared disabled state' );
 
         delete_option( $option_key );
+    }
+
+    public function test_toggle_form_disabled_cannot_restore_legacy_mapping_during_authority_cutover(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_407';
+        $this->dynamic_action_option_keys[] = $option_key;
+        $legacy_mapping = [
+            'local_mapping_id'           => 'stale_writer_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        update_option( $option_key, [ 'stale_writer_summary' => $legacy_mapping ], false );
+
+        $nested_migration = null;
+        $run_migration_before_stale_write = static function ( mixed $value ) use ( &$nested_migration ): mixed {
+            $nested_migration = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            return $value;
+        };
+        add_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        try
+        {
+            $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/407/actions/disable' );
+            $request->set_param( 'form_source_slug', 'gravity_forms' );
+            $request->set_param( 'form_id', 407 );
+            $request->set_param( 'sf_disabled', true );
+            $response = $this->controller->toggle_form_disabled( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        }
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 0, $nested_migration['migration_complete'] ?? null );
+        $this->assertArrayHasKey( 'stale_writer_summary', get_option( $option_key ) );
+        $this->assertTrue( get_option( $option_key )['sf_disabled'] ?? false );
+
+        $completed = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $completed['migration_complete'] ?? null );
+        $this->assertSame( [ 'sf_disabled' => true ], get_option( $option_key ) );
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '407' );
+        $this->assertCount( 1, $rows );
+        $this->assertTrue( $rows[0]['enabled'] ?? false );
     }
 
     public function test_get_form_disabled_includes_global_and_provider_disable_flags(): void

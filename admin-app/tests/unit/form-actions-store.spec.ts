@@ -275,6 +275,44 @@ describe('formActionsStore', () => {
 		expect(stubClient.getFormExecutionStatus).not.toHaveBeenCalled();
 	});
 
+	it('reloads the full bootstrap after creating a multi-hook action', async () => {
+		const validationLinkage = {
+			local_mapping_id: 'local_first_41',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'local_first',
+			trigger_hooks: ['validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 41
+		};
+		const afterSubmissionLinkage = {
+			...validationLinkage,
+			local_mapping_id: 'local_first_42',
+			trigger_hooks: ['after_submission'],
+			execution_priority: 42
+		};
+
+		stubClient.getFormActions
+			.mockResolvedValueOnce([])
+			.mockResolvedValueOnce([validationLinkage, afterSubmissionLinkage]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.createFormAction.mockResolvedValue(validationLinkage);
+
+		await formActionsStore.load('gravity_forms', 1);
+		stubClient.getFormActionsBootstrap.mockClear();
+		await formActionsStore.create('gravity_forms', 1, {
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['validation', 'after_submission']
+		});
+
+		expect(stubClient.getFormActionsBootstrap).toHaveBeenCalledWith('gravity_forms', 1, {
+			showNotifications: false,
+			forceRefresh: true
+		});
+		expect(snapshotState().items).toEqual([validationLinkage, afterSubmissionLinkage]);
+	});
+
 	it('updates submission ledger settings in the loaded bootstrap state', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
 		stubClient.getActionDefinitions.mockResolvedValue([]);

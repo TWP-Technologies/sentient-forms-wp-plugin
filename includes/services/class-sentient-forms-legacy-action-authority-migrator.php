@@ -19,7 +19,9 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     private const RELEASED_GRAVITY_OPTION_PREFIX = 'sentient_forms_gravity_forms_';
     private const JOURNAL_OPTION = 'sentient_forms_action_authority_migration_journal';
     private const LOCK_OPTION = 'sentient_forms_action_authority_migration_lock';
-    private const LOCK_TTL_SECONDS = 300;
+    private const LOCK_MODE_MIGRATION = 'migration';
+    private const LOCK_MODE_RESET = 'reset';
+    private const LOCK_MODE_WRITER = 'writer';
 
     /** @var array<int, string> */
     private const FORM_SOURCES = [
@@ -30,6 +32,12 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     ];
 
     private static string $lock_token = '';
+
+    private static string $lock_mode = '';
+
+    private static int $lock_connection_id = 0;
+
+    private static ?wpdb $dedicated_lock_database = null;
 
     /**
      * @return array<string, int>
@@ -46,23 +54,36 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             'migration_complete' => 0,
         ];
 
-        if ( ! self::acquire_lock() )
+        if ( ! self::acquire_lock( self::LOCK_MODE_MIGRATION ) )
         {
             return $summary;
         }
 
         try
         {
-            if ( ! self::resume_journal() )
+            if ( ! self::owns_database_lock() )
+            {
+                return $summary;
+            }
+
+            if ( ! self::resume_journal( true ) )
+            {
+                return $summary;
+            }
+            if ( ! self::owns_database_lock() )
             {
                 return $summary;
             }
 
             foreach ( self::option_keys() as $option_key )
             {
+                if ( ! self::owns_database_lock() )
+                {
+                    return $summary;
+                }
                 $summary['options_scanned']++;
                 self::migrate_option( $option_key, $summary );
-                if ( false !== get_option( self::JOURNAL_OPTION, false ) )
+                if ( ! self::owns_database_lock() || false !== get_option( self::JOURNAL_OPTION, false ) )
                 {
                     return $summary;
                 }
@@ -78,30 +99,135 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     }
 
     /**
+     * Serialize plugin-owned legacy option writers with the authority cutover.
+     *
+     * @template T
+     * @param callable():T $operation
+     * @return T|WP_Error
+     */
+    public static function with_option_write_lock( callable $operation ): mixed
+    {
+        if ( in_array( self::$lock_mode, [ self::LOCK_MODE_MIGRATION, self::LOCK_MODE_WRITER ], true ) && '' !== self::$lock_token )
+        {
+            if ( ! self::owns_database_lock() || ( self::LOCK_MODE_WRITER === self::$lock_mode && self::has_pending_journal() ) )
+            {
+                self::clear_lock_state();
+                return self::write_locked_error();
+            }
+
+            $result = $operation();
+            return self::owns_database_lock() ? $result : self::write_locked_error();
+        }
+
+        if ( ! self::acquire_lock( self::LOCK_MODE_WRITER ) )
+        {
+            return self::write_locked_error();
+        }
+
+        try
+        {
+            if ( ! self::owns_database_lock() )
+            {
+                return self::write_locked_error();
+            }
+            if ( self::has_pending_journal() )
+            {
+                return self::write_locked_error();
+            }
+
+            $result = $operation();
+            return self::owns_database_lock() ? $result : self::write_locked_error();
+        }
+        finally
+        {
+            self::release_lock();
+        }
+    }
+
+    /**
+     * Run a destructive reset while denying every normal local-state writer.
+     *
+     * @template T
+     * @param callable():T $operation
+     * @return T|WP_Error
+     */
+    public static function with_exclusive_reset_lock( callable $operation ): mixed
+    {
+        if ( '' !== self::$lock_token || ! self::acquire_lock( self::LOCK_MODE_RESET ) )
+        {
+            return self::write_locked_error();
+        }
+
+        try
+        {
+            if ( ! self::owns_database_lock() )
+            {
+                return self::write_locked_error();
+            }
+
+            $result = $operation();
+            return self::owns_database_lock() ? $result : self::write_locked_error();
+        }
+        finally
+        {
+            self::release_lock();
+        }
+    }
+
+    /**
+     * Persist one legacy Action option at the concrete adapter write boundary.
+     *
+     * @param array<string, mixed> $value Option payload.
+     */
+    public static function update_action_option( string $option_key, array $value ): bool | WP_Error
+    {
+        if ( ! str_starts_with( $option_key, self::OPTION_PREFIX ) )
+        {
+            return new WP_Error(
+                'sentient_forms_invalid_action_option_key',
+                __( 'The Action configuration option key is invalid.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        return self::with_option_write_lock(
+            static fn(): bool => update_option( $option_key, $value, false )
+        );
+    }
+
+    /**
+     * Whether an interrupted option swap still owns the named option key.
+     */
+    public static function has_pending_journal(): bool
+    {
+        return false !== get_option( self::JOURNAL_OPTION, false );
+    }
+
+    /**
      * @param array<string, int> $summary
      */
     private static function migrate_option( string $option_key, array &$summary ): void
     {
         $identity = self::option_identity( $option_key );
-        $stored   = get_option( $option_key, null );
-        if ( null === $identity || ! is_array( $stored ) )
+        $snapshot = self::read_option_snapshot( $option_key );
+        $stored   = is_array( $snapshot ) ? $snapshot['value'] : null;
+        if ( null === $identity || ! is_array( $snapshot ) || ! is_array( $stored ) )
         {
             return;
         }
 
-        $wrapped    = isset( $stored['actions'] ) && is_array( $stored['actions'] );
-        $collection = $wrapped ? $stored['actions'] : $stored;
+        global $wpdb;
+        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $rows      = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $wrapped   = isset( $stored['actions'] ) && is_array( $stored['actions'] );
+        $candidates = self::logical_mapping_candidates( $stored, $wrapped );
         $mappings   = [];
-        foreach ( $collection as $key => $candidate )
+        foreach ( $candidates as $mapping_id => $candidate )
         {
-            if ( ! is_array( $candidate ) || ! self::looks_like_mapping( $candidate ) )
-            {
-                continue;
-            }
-
             $summary['mappings_found']++;
-            $mapping_id = self::mapping_id( $key, $candidate );
-            $prepared   = self::prepare_mapping( $mapping_id, $candidate );
+            $payload    = $candidate['payload'];
+            $prepared   = self::prepare_mapping( $mapping_id, $payload, $actions );
             if ( is_wp_error( $prepared ) )
             {
                 $summary['mappings_failed']++;
@@ -109,8 +235,9 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             }
 
             $mappings[ $mapping_id ] = [
-                'key'      => $key,
-                'payload'  => $candidate,
+                'key'      => $candidate['key'],
+                'payload'  => $payload,
+                'copies'   => $candidate['copies'],
                 'prepared' => $prepared,
             ];
         }
@@ -126,16 +253,14 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             return;
         }
 
-        global $wpdb;
-        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
-        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
-        $rows      = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $row_index = [];
 
         foreach ( $mappings as $mapping_id => &$mapping )
         {
             $definition = $mapping['prepared']['definition'];
-            $action     = self::ensure_action( $definition, $mapping['prepared']['settings'], $templates, $actions );
+            $action     = is_array( $mapping['prepared']['existing_action'] ?? null )
+                ? $mapping['prepared']['existing_action']
+                : self::ensure_action( $definition, $mapping['prepared']['settings'], $templates, $actions );
             if ( is_wp_error( $action ) )
             {
                 $summary['mappings_failed']++;
@@ -229,16 +354,18 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
 
         $journal = [
-            'option_key' => $option_key,
-            'wrapped'    => $wrapped,
-            'mappings'   => [],
-            'rows'       => $journal_rows,
+            'option_key'   => $option_key,
+            'option_value' => $snapshot['raw'],
+            'wrapped'      => $wrapped,
+            'mappings'     => [],
+            'rows'         => $journal_rows,
         ];
         foreach ( $mappings as $mapping )
         {
             $journal['mappings'][] = [
-                'key'  => $mapping['key'],
-                'hash' => hash( 'sha256', wp_json_encode( $mapping['payload'] ) ),
+                'key'    => $mapping['key'],
+                'hash'   => hash( 'sha256', wp_json_encode( $mapping['payload'] ) ),
+                'copies' => $mapping['copies'],
             ];
         }
 
@@ -247,7 +374,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             return;
         }
 
-        if ( self::resume_journal() )
+        if ( self::resume_journal( false ) )
         {
             $summary['mappings_migrated'] += count( $mappings );
         }
@@ -256,8 +383,13 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     /**
      * Complete the option-swap/row-enable phase after an interrupted request.
      */
-    private static function resume_journal(): bool
+    private static function resume_journal( bool $abandon_stale = false ): bool
     {
+        if ( ! self::owns_database_lock() )
+        {
+            return false;
+        }
+
         $journal = get_option( self::JOURNAL_OPTION, false );
         if ( false === $journal )
         {
@@ -280,55 +412,286 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
 
         $option_key = $journal['option_key'];
-        $stored     = get_option( $option_key, null );
+        $snapshot   = self::read_option_snapshot( $option_key );
+        if ( ! is_array( $snapshot ) )
+        {
+            return $abandon_stale ? self::abandon_journal( $journal ) : false;
+        }
+
+        $legacy_journal = ! is_string( $journal['option_value'] ?? null );
+        $stored         = $legacy_journal
+            ? $snapshot['value']
+            : maybe_unserialize( $journal['option_value'] );
         if ( ! is_array( $stored ) )
         {
             return false;
         }
 
-        $wrapped    = ! empty( $journal['wrapped'] );
-        $collection = $wrapped && is_array( $stored['actions'] ?? null ) ? $stored['actions'] : $stored;
-        foreach ( is_array( $journal['mappings'] ?? null ) ? $journal['mappings'] : [] as $mapping )
+        if ( $legacy_journal && self::legacy_wrapped_journal_has_root_alias( $journal, $stored ) )
         {
-            $key = $mapping['key'] ?? null;
-            if ( null === $key || ! array_key_exists( $key, $collection ) )
-            {
-                continue;
-            }
-            if ( ! is_array( $collection[ $key ] ) )
-            {
-                return false;
-            }
-            $current_hash = hash( 'sha256', wp_json_encode( $collection[ $key ] ) );
-            if ( ! hash_equals( (string) ( $mapping['hash'] ?? '' ), $current_hash ) )
-            {
-                return false;
-            }
-            unset( $collection[ $key ] );
+            return $abandon_stale ? self::abandon_journal( $journal ) : false;
         }
 
-        if ( $wrapped )
+        $expected_option_value = $legacy_journal ? $snapshot['raw'] : $journal['option_value'];
+
+        $wrapped = ! empty( $journal['wrapped'] );
+        foreach ( is_array( $journal['mappings'] ?? null ) ? $journal['mappings'] : [] as $mapping )
         {
-            $stored['actions'] = $collection;
+            $copies = is_array( $mapping['copies'] ?? null )
+                ? $mapping['copies']
+                : [
+                    [
+                        'scope' => $wrapped ? 'actions' : 'root',
+                        'key'   => $mapping['key'] ?? null,
+                        'hash'  => $mapping['hash'] ?? '',
+                    ],
+                ];
+
+            foreach ( $copies as $copy )
+            {
+                $scope = sanitize_key( (string) ( $copy['scope'] ?? '' ) );
+                $key   = $copy['key'] ?? null;
+                if ( null === $key )
+                {
+                    return false;
+                }
+
+                if ( 'actions' === $scope )
+                {
+                    if ( ! isset( $stored['actions'] ) || ! is_array( $stored['actions'] ) )
+                    {
+                        continue;
+                    }
+                    if ( ! array_key_exists( $key, $stored['actions'] ) )
+                    {
+                        continue;
+                    }
+                    if ( ! is_array( $stored['actions'][ $key ] ) )
+                    {
+                        return false;
+                    }
+                    $current_hash = hash( 'sha256', wp_json_encode( $stored['actions'][ $key ] ) );
+                    if ( ! hash_equals( (string) ( $copy['hash'] ?? '' ), $current_hash ) )
+                    {
+                        return false;
+                    }
+                    unset( $stored['actions'][ $key ] );
+                    continue;
+                }
+
+                if ( 'root' !== $scope )
+                {
+                    return false;
+                }
+                if ( ! array_key_exists( $key, $stored ) )
+                {
+                    continue;
+                }
+                if ( ! is_array( $stored[ $key ] ) )
+                {
+                    return false;
+                }
+                $current_hash = hash( 'sha256', wp_json_encode( $stored[ $key ] ) );
+                if ( ! hash_equals( (string) ( $copy['hash'] ?? '' ), $current_hash ) )
+                {
+                    return false;
+                }
+                unset( $stored[ $key ] );
+            }
         }
-        else
+
+        $target_option_value = maybe_serialize( $stored );
+        $current_option_value = $snapshot['raw'];
+        if ( ! hash_equals( $expected_option_value, $current_option_value ) )
         {
-            $stored = $collection;
+            if ( ! hash_equals( $target_option_value, $current_option_value ) )
+            {
+                return $abandon_stale ? self::abandon_journal( $journal ) : false;
+            }
         }
-        if ( ! update_option( $option_key, $stored, false ) && $stored !== get_option( $option_key, null ) )
+        elseif ( ! hash_equals( $target_option_value, $current_option_value ) )
         {
-            return false;
+            if ( ! self::owns_database_lock() )
+            {
+                return false;
+            }
+            if ( ! self::compare_and_swap_option( $option_key, $expected_option_value, $target_option_value ) )
+            {
+                return false;
+            }
+            if ( ! self::owns_database_lock() )
+            {
+                return false;
+            }
         }
 
         foreach ( $row_targets as $row_id => $enabled )
         {
+            if ( ! self::owns_database_lock() )
+            {
+                return false;
+            }
             if ( is_wp_error( $rows->update( absint( $row_id ), [ 'enabled' => rest_sanitize_boolean( $enabled ) ] ) ) )
+            {
+                return false;
+            }
+            if ( ! self::owns_database_lock() )
             {
                 return false;
             }
         }
 
-        return delete_option( self::JOURNAL_OPTION ) || false === get_option( self::JOURNAL_OPTION, false );
+        if ( ! self::owns_database_lock() )
+        {
+            return false;
+        }
+        $deleted = self::compare_and_delete_option( self::JOURNAL_OPTION, maybe_serialize( $journal ) )
+            || false === get_option( self::JOURNAL_OPTION, false );
+
+        return $deleted && self::owns_database_lock();
+    }
+
+    /**
+     * Read the exact persisted option bytes without trusting the object cache.
+     *
+     * @return array{raw:string,value:mixed}|null
+     */
+    private static function read_option_snapshot( string $option_key ): ?array
+    {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Exact persisted bytes are required for the migration journal compare-and-swap boundary.
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT option_value FROM %i WHERE option_name = %s',
+                $wpdb->options,
+                $option_key
+            ),
+            ARRAY_A
+        );
+        if ( ! is_array( $row ) || ! is_string( $row['option_value'] ?? null ) )
+        {
+            return null;
+        }
+
+        return [
+            'raw'   => $row['option_value'],
+            'value' => maybe_unserialize( $row['option_value'] ),
+        ];
+    }
+
+    /**
+     * Replace an option only when its persisted name and value bytes still
+     * match the snapshot observed by the caller.
+     */
+    private static function compare_and_swap_option( string $option_key, string $expected, string $replacement ): bool
+    {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- The option-backed control-plane cutover requires one byte-exact compare-and-swap so concurrent writers cannot be overwritten.
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                'UPDATE %i SET `option_value` = %s WHERE BINARY `option_name` = BINARY %s AND BINARY `option_value` = BINARY %s',
+                $wpdb->options,
+                $replacement,
+                $option_key,
+                $expected
+            )
+        );
+        if ( 1 !== $updated )
+        {
+            return false;
+        }
+
+        wp_cache_delete( $option_key, 'options' );
+        return true;
+    }
+
+    /** Delete only the exact persisted option row observed by the caller. */
+    private static function compare_and_delete_option( string $option_key, string $expected ): bool
+    {
+        global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Journal and lock ownership require an exact conditional delete rather than a collation-aware options API write.
+        $deleted = $wpdb->query(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE BINARY `option_name` = BINARY %s AND BINARY `option_value` = BINARY %s',
+                $wpdb->options,
+                $option_key,
+                $expected
+            )
+        );
+        if ( 1 !== $deleted )
+        {
+            return false;
+        }
+
+        wp_cache_delete( $option_key, 'options' );
+        return true;
+    }
+
+    /**
+     * Old wrapped journals did not record top-level aliases. Rebuild them from
+     * current top-level-wins truth instead of transiently enabling stale rows.
+     */
+    private static function legacy_wrapped_journal_has_root_alias( array $journal, array $stored ): bool
+    {
+        if ( empty( $journal['wrapped'] ) )
+        {
+            return false;
+        }
+
+        $mapping_ids = [];
+        foreach ( is_array( $journal['mappings'] ?? null ) ? $journal['mappings'] : [] as $mapping )
+        {
+            $mapping_key = $mapping['key'] ?? '';
+            $payload     = isset( $stored['actions'][ $mapping_key ] ) && is_array( $stored['actions'][ $mapping_key ] )
+                ? $stored['actions'][ $mapping_key ]
+                : [];
+            $mapping_id  = self::mapping_id( $mapping_key, $payload );
+            if ( '' !== $mapping_id )
+            {
+                $mapping_ids[ $mapping_id ] = true;
+            }
+        }
+
+        foreach ( $stored as $key => $payload )
+        {
+            if ( 'actions' === $key || ! is_array( $payload ) )
+            {
+                continue;
+            }
+            $mapping_id = self::mapping_id( $key, $payload );
+            if ( isset( $mapping_ids[ $mapping_id ] ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function abandon_journal( array $journal ): bool
+    {
+        if ( ! self::owns_database_lock() )
+        {
+            return false;
+        }
+
+        global $wpdb;
+        $rows = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        foreach ( is_array( $journal['rows'] ?? null ) ? array_keys( $journal['rows'] ) : [] as $row_id )
+        {
+            if ( ! self::owns_database_lock() )
+            {
+                return false;
+            }
+
+            $disabled = $rows->update( absint( $row_id ), [ 'enabled' => false ] );
+            if ( is_wp_error( $disabled ) || ! self::owns_database_lock() )
+            {
+                return false;
+            }
+        }
+
+        return self::compare_and_delete_option( self::JOURNAL_OPTION, maybe_serialize( $journal ) );
     }
 
     /**
@@ -451,13 +814,60 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     /**
      * @return array<string, mixed>|WP_Error
      */
-    private static function prepare_mapping( string $mapping_id, array $mapping ): array | WP_Error
+    private static function prepare_mapping(
+        string $mapping_id,
+        array $mapping,
+        Sentient_Forms_Local_Custom_Actions_Repository $actions
+    ): array | WP_Error
     {
         $action_code = sanitize_key( (string) ( $mapping['central_action_id'] ?? '' ) );
         $definition  = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
-        if ( '' === $mapping_id || ! is_array( $definition ) )
+        $existing_action = null;
+        if ( '' === $mapping_id )
         {
             return new WP_Error( 'sentient_forms_unconvertible_legacy_action' );
+        }
+
+        if ( ! is_array( $definition ) )
+        {
+            $action_type = sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) );
+            if ( 'custom' !== $action_type )
+            {
+                return new WP_Error( 'sentient_forms_unconvertible_legacy_action' );
+            }
+
+            $action_id = absint( $mapping['action_id'] ?? 0 );
+            if ( $action_id > 0 )
+            {
+                $existing_action = $actions->get( $action_id );
+            }
+            if ( ! is_array( $existing_action ) && '' !== $action_code )
+            {
+                $existing_action = $actions->get_by_code( $action_code );
+            }
+            $status = is_array( $existing_action )
+                ? sanitize_key( (string) ( $existing_action['status'] ?? '' ) )
+                : '';
+            $mapping_enabled = ! empty( $mapping['is_action_enabled_for_form'] );
+            if (
+                ! is_array( $existing_action )
+                || ( 'active' !== $status && ! ( 'archived' === $status && ! $mapping_enabled ) )
+            )
+            {
+                return new WP_Error( 'sentient_forms_unconvertible_legacy_action' );
+            }
+
+            $resolved_code = sanitize_key( (string) ( $existing_action['code'] ?? '' ) );
+            if ( '' !== $action_code && $resolved_code !== $action_code )
+            {
+                return new WP_Error( 'sentient_forms_legacy_custom_action_identity_mismatch' );
+            }
+
+            $definition = is_array( $existing_action['definition_json'] ?? null )
+                ? $existing_action['definition_json']
+                : [];
+            $definition['code']         = $resolved_code;
+            $definition['display_name'] = sanitize_text_field( (string) ( $existing_action['display_name'] ?? $resolved_code ) );
         }
 
         $settings = is_array( $mapping['settings'] ?? null ) ? $mapping['settings'] : [];
@@ -473,21 +883,33 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         );
         if ( [] === $hooks )
         {
-            $hooks = Sentient_Forms_Form_Source_Lifecycles::normalize_many(
-                is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
-            );
+            $hooks = is_array( $existing_action )
+                ? [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ]
+                : Sentient_Forms_Form_Source_Lifecycles::normalize_many(
+                    is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
+                );
         }
         if ( [] === $hooks )
         {
             return new WP_Error( 'sentient_forms_unconvertible_legacy_hooks' );
         }
 
-        $eligible = Sentient_Forms_Form_Source_Lifecycles::normalize_many(
-            is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
-        );
-        if ( [] !== array_diff( $hooks, $eligible ) )
+        if ( is_array( $existing_action ) )
         {
-            return new WP_Error( 'sentient_forms_ineligible_legacy_hooks' );
+            if ( in_array( Sentient_Forms_Form_Source_Lifecycles::REAL_TIME, $hooks, true ) )
+            {
+                return new WP_Error( 'sentient_forms_ineligible_legacy_hooks' );
+            }
+        }
+        else
+        {
+            $eligible = Sentient_Forms_Form_Source_Lifecycles::normalize_many(
+                is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
+            );
+            if ( [] !== array_diff( $hooks, $eligible ) )
+            {
+                return new WP_Error( 'sentient_forms_ineligible_legacy_hooks' );
+            }
         }
 
         $trigger_sources = is_array( $settings['trigger_sources'] ?? null ) ? $settings['trigger_sources'] : [];
@@ -497,10 +919,77 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             'definition' => $definition,
             'settings'   => $settings,
             'hooks'      => $hooks,
+            'existing_action' => $existing_action,
             'enabled'    => array_key_exists( 'is_action_enabled_for_form', $mapping )
                 ? rest_sanitize_boolean( $mapping['is_action_enabled_for_form'] )
                 : true,
         ];
+    }
+
+    /**
+     * Build one logical mapping set while retaining every physical option alias.
+     * Top-level mappings intentionally override stale wrapped copies.
+     *
+     * @param array<string, mixed> $stored
+     * @return array<string, array{key:int|string,payload:array<string,mixed>,copies:array<int,array{scope:string,key:int|string,hash:string}>}>
+     */
+    private static function logical_mapping_candidates( array $stored, bool $wrapped ): array
+    {
+        $candidates = [];
+        $register = static function ( array &$target, string $scope, int | string $key, array $payload ): void {
+            if ( ! self::looks_like_mapping( $payload ) )
+            {
+                return;
+            }
+
+            $mapping_id = self::mapping_id( $key, $payload );
+            if ( '' === $mapping_id )
+            {
+                return;
+            }
+
+            if ( ! isset( $target[ $mapping_id ] ) )
+            {
+                $target[ $mapping_id ] = [
+                    'key'     => $key,
+                    'payload' => $payload,
+                    'copies'  => [],
+                ];
+            }
+
+            $target[ $mapping_id ]['copies'][] = [
+                'scope' => $scope,
+                'key'   => $key,
+                'hash'  => hash( 'sha256', wp_json_encode( $payload ) ),
+            ];
+            if ( 'root' === $scope )
+            {
+                $target[ $mapping_id ]['key']     = $key;
+                $target[ $mapping_id ]['payload'] = $payload;
+            }
+        };
+
+        if ( $wrapped )
+        {
+            foreach ( $stored['actions'] as $key => $payload )
+            {
+                if ( is_array( $payload ) )
+                {
+                    $register( $candidates, 'actions', $key, $payload );
+                }
+            }
+        }
+
+        foreach ( $stored as $key => $payload )
+        {
+            if ( 'actions' === (string) $key || ! is_array( $payload ) )
+            {
+                continue;
+            }
+            $register( $candidates, 'root', $key, $payload );
+        }
+
+        return $candidates;
     }
 
     /**
@@ -913,68 +1402,189 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         return array_values( $filtered );
     }
 
-    private static function acquire_lock(): bool
+    private static function acquire_lock( string $mode ): bool
     {
-        $now        = time();
-        $existing   = get_option( self::LOCK_OPTION, null );
-        $created    = is_array( $existing ) ? absint( $existing['created_at'] ?? 0 ) : 0;
-        $lock_token = wp_generate_uuid4();
-        $candidate  = [ 'token' => $lock_token, 'created_at' => $now ];
-        if ( $created > 0 && $created + self::LOCK_TTL_SECONDS > $now )
+        if ( '' !== self::$lock_token || ! in_array( $mode, [ self::LOCK_MODE_MIGRATION, self::LOCK_MODE_RESET, self::LOCK_MODE_WRITER ], true ) )
         {
             return false;
         }
 
-        if ( null === $existing )
+        $lock_database = self::lock_database_for_acquisition( $mode );
+        if ( ! $lock_database instanceof wpdb )
         {
-            if ( ! add_option( self::LOCK_OPTION, $candidate, '', false ) )
-            {
-                return false;
-            }
+            return false;
+        }
 
-            self::$lock_token = $lock_token;
+        $timeout = self::LOCK_MODE_WRITER === $mode
+            ? max( 0, min( 5, (int) apply_filters( 'sentient_forms_action_authority_writer_lock_timeout', 1 ) ) )
+            : 0;
+        $acquired = $lock_database->get_var(
+            $lock_database->prepare( 'SELECT GET_LOCK(%s, %d)', self::database_lock_name(), $timeout )
+        );
+        if ( 1 !== (int) $acquired )
+        {
+            return false;
+        }
+
+        $connection_id = (int) $lock_database->get_var( 'SELECT CONNECTION_ID()' );
+        $owner         = (int) $lock_database->get_var(
+            $lock_database->prepare( 'SELECT IS_USED_LOCK(%s)', self::database_lock_name() )
+        );
+        if ( $connection_id <= 0 || $connection_id !== $owner )
+        {
+            $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', self::database_lock_name() ) );
+            return false;
+        }
+
+        $lock_token = wp_generate_uuid4();
+        $candidate  = [
+            'token'         => $lock_token,
+            'mode'          => $mode,
+            'connection_id' => $connection_id,
+            'created_at'    => time(),
+        ];
+        self::$lock_token         = $lock_token;
+        self::$lock_mode          = $mode;
+        self::$lock_connection_id = $connection_id;
+
+        if ( self::LOCK_MODE_WRITER === $mode )
+        {
             return true;
         }
 
-        global $wpdb;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Atomic byte-exact compare-and-swap is required so concurrent migration workers cannot replace each other's plugin-owned lock value; the option cache is invalidated after success.
-        $updated = $wpdb->update(
-            $wpdb->options,
-            [ 'option_value' => maybe_serialize( $candidate ) ],
-            [
-                'option_name'  => self::LOCK_OPTION,
-                'option_value' => maybe_serialize( $existing ),
-            ],
-            [ '%s' ],
-            [ '%s', '%s' ]
-        );
-        if ( 1 !== $updated )
+        if ( ! update_option( self::LOCK_OPTION, $candidate, false ) && $candidate !== get_option( self::LOCK_OPTION, null ) )
         {
+            self::release_lock();
             return false;
         }
 
-        wp_cache_delete( self::LOCK_OPTION, 'options' );
-        self::$lock_token = $lock_token;
         return true;
     }
 
     private static function release_lock(): void
     {
-        $lock = get_option( self::LOCK_OPTION, null );
-        if ( is_array( $lock ) && hash_equals( self::$lock_token, (string) ( $lock['token'] ?? '' ) ) )
+        $lock_token = self::$lock_token;
+        $lock_mode  = self::$lock_mode;
+        $lock       = self::LOCK_MODE_WRITER === $lock_mode ? null : get_option( self::LOCK_OPTION, null );
+        if ( '' !== $lock_token && is_array( $lock ) && hash_equals( $lock_token, (string) ( $lock['token'] ?? '' ) ) )
         {
-            global $wpdb;
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Atomic byte-exact delete is required so an expired worker cannot release a newer worker's plugin-owned lock; the option cache is invalidated immediately afterward.
-            $wpdb->delete(
-                $wpdb->options,
-                [
-                    'option_name'  => self::LOCK_OPTION,
-                    'option_value' => maybe_serialize( $lock ),
-                ],
-                [ '%s', '%s' ]
-            );
-            wp_cache_delete( self::LOCK_OPTION, 'options' );
+            self::compare_and_delete_option( self::LOCK_OPTION, maybe_serialize( $lock ) );
         }
-        self::$lock_token = '';
+
+        $lock_database = self::$dedicated_lock_database;
+        if ( $lock_database instanceof wpdb && '' !== $lock_token )
+        {
+            $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', self::database_lock_name() ) );
+        }
+        self::clear_lock_state();
+    }
+
+    private static function owns_database_lock(): bool
+    {
+        if ( '' === self::$lock_token || self::$lock_connection_id <= 0 )
+        {
+            return false;
+        }
+
+        $lock_database = self::$dedicated_lock_database;
+        if ( ! $lock_database instanceof wpdb )
+        {
+            return false;
+        }
+
+        $owner = $lock_database->get_var(
+            $lock_database->prepare( 'SELECT IS_USED_LOCK(%s)', self::database_lock_name() )
+        );
+
+        return self::$lock_connection_id === (int) $owner;
+    }
+
+    private static function database_lock_name(): string
+    {
+        global $wpdb;
+        $database = isset( $wpdb ) && is_object( $wpdb ) && property_exists( $wpdb, 'dbname' )
+            ? (string) $wpdb->dbname
+            : ( defined( 'DB_NAME' ) ? (string) DB_NAME : '' );
+        $options_table = isset( $wpdb ) && is_object( $wpdb ) && property_exists( $wpdb, 'options' )
+            ? (string) $wpdb->options
+            : '';
+
+        return 'sf_action_authority_' . substr( hash( 'sha256', $database . '|' . $options_table ), 0, 40 );
+    }
+
+    private static function lock_database_for_acquisition( string $mode ): ?wpdb
+    {
+        global $wpdb;
+        if ( ! isset( $wpdb ) || ! $wpdb instanceof wpdb )
+        {
+            return null;
+        }
+
+        /**
+         * Supply a dedicated lock connection for database-routing or replicated topologies.
+         *
+         * The returned connection must route writes to the same primary database as the
+         * supplied WordPress connection. Returning the primary connection is rejected
+         * because reconnecting it would release the named lock mid-mutation.
+         *
+         * @param wpdb|null $lock_database Existing/default dedicated connection.
+         * @param wpdb      $primary       WordPress mutation connection.
+         * @param string    $mode          Lock mode.
+         */
+        $filtered = apply_filters(
+            'sentient_forms_action_authority_lock_database',
+            self::$dedicated_lock_database,
+            $wpdb,
+            $mode
+        );
+        if ( $filtered instanceof wpdb && $filtered !== $wpdb )
+        {
+            if ( ! $filtered->check_connection( false ) )
+            {
+                return null;
+            }
+            self::$dedicated_lock_database = $filtered;
+            return self::$dedicated_lock_database;
+        }
+        if ( null !== $filtered )
+        {
+            return null;
+        }
+        if ( self::$dedicated_lock_database instanceof wpdb )
+        {
+            if ( ! self::$dedicated_lock_database->check_connection( false ) )
+            {
+                self::$dedicated_lock_database = null;
+                return null;
+            }
+            return self::$dedicated_lock_database;
+        }
+        if ( wpdb::class !== get_class( $wpdb ) )
+        {
+            return null;
+        }
+        if ( ! defined( 'DB_USER' ) || ! defined( 'DB_PASSWORD' ) || ! defined( 'DB_NAME' ) || ! defined( 'DB_HOST' ) )
+        {
+            return null;
+        }
+
+        self::$dedicated_lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        return self::$dedicated_lock_database;
+    }
+
+    private static function clear_lock_state(): void
+    {
+        self::$lock_token         = '';
+        self::$lock_mode          = '';
+        self::$lock_connection_id = 0;
+    }
+
+    private static function write_locked_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_action_authority_write_locked',
+            __( 'Sentient Forms local state is being migrated or reset. Please retry the request.', 'sentient-forms' ),
+            [ 'status' => 409 ]
+        );
     }
 }

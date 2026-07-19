@@ -146,6 +146,14 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
      */
     public function update_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): WP_Error | WP_REST_Response => $this->update_settings_locked( $request )
+        );
+    }
+
+    /** Update settings after the shared local-state fence is held. */
+    private function update_settings_locked( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
         $current_settings = get_option( self::SETTINGS_OPTION_KEY, [] );
         $current_settings = is_array( $current_settings ) ? $current_settings : [];
         $updated_settings = [];

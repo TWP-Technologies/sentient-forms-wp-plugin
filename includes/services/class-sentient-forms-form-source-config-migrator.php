@@ -56,7 +56,58 @@ final class Sentient_Forms_Form_Source_Config_Migrator
      */
     public static function migrate_active_configuration(): array
     {
-        $summary = [
+        $result = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            static fn(): array => self::migrate_active_configuration_locked()
+        );
+        if ( is_wp_error( $result ) )
+        {
+            $summary = self::empty_summary();
+            $summary['active_config_option_failures'] = 1;
+            $summary['migration_failures']             = 1;
+            return $summary;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Run the configuration migration while the shared Action-option write fence is held.
+     *
+     * @return array<string, int>
+     */
+    private static function migrate_active_configuration_locked(): array
+    {
+        $summary = self::empty_summary();
+        if ( Sentient_Forms_Legacy_Action_Authority_Migrator::has_pending_journal() )
+        {
+            $summary['active_config_option_failures'] = 1;
+            $summary['migration_failures']             = 1;
+            return $summary;
+        }
+
+        self::migrate_option_backed_configuration( $summary );
+        self::migrate_local_first_mapping_rows( $summary );
+        self::migrate_elementor_option_keys( $summary );
+        self::migrate_elementor_action_log( $summary );
+        self::migrate_elementor_provider_disable_setting( $summary );
+        self::migrate_elementor_async_metadata( $summary );
+        self::migrate_elementor_storage_rows( $summary );
+
+        $summary['migration_failures'] = (int) $summary['active_config_option_failures']
+            + (int) $summary['mapping_row_failures']
+            + (int) $summary['form_source_option_failures']
+            + (int) $summary['form_source_storage_failures'];
+        $summary['migration_complete'] = 0 === $summary['migration_failures'] ? 1 : 0;
+
+        return $summary;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private static function empty_summary(): array
+    {
+        return [
             'options_scanned'      => 0,
             'options_updated'      => 0,
             'active_config_option_failures' => 0,
@@ -74,22 +125,6 @@ final class Sentient_Forms_Form_Source_Config_Migrator
             'migration_failures'             => 0,
             'migration_complete'             => 0,
         ];
-
-        self::migrate_option_backed_configuration( $summary );
-        self::migrate_local_first_mapping_rows( $summary );
-        self::migrate_elementor_option_keys( $summary );
-        self::migrate_elementor_action_log( $summary );
-        self::migrate_elementor_provider_disable_setting( $summary );
-        self::migrate_elementor_async_metadata( $summary );
-        self::migrate_elementor_storage_rows( $summary );
-
-        $summary['migration_failures'] = (int) $summary['active_config_option_failures']
-            + (int) $summary['mapping_row_failures']
-            + (int) $summary['form_source_option_failures']
-            + (int) $summary['form_source_storage_failures'];
-        $summary['migration_complete'] = 0 === $summary['migration_failures'] ? 1 : 0;
-
-        return $summary;
     }
 
     /**

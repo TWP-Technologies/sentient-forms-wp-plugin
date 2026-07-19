@@ -53,6 +53,7 @@
 		getMappingDependencyIdsForHook,
 		getMappingTriggerHooks,
 		getMappingTriggerSources,
+		isLocalFirstMappingLinkage,
 		normalizeDependencyIds,
 		validateMappingDependencies,
 		withHookTriggerSource,
@@ -981,6 +982,7 @@
 			});
 
 			for (const candidate of linkages) {
+				if (!isLocalFirstMappingLinkage(candidate)) continue;
 				const candidateId = candidate.local_mapping_id;
 				const candidateHooks = getMappingTriggerHooks(candidate);
 				if (!canDependencySatisfyHook(candidateHooks, hook)) continue;

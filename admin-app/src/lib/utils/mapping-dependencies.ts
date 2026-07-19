@@ -105,6 +105,13 @@ const KNOWN_HOOK_ORDER: Record<string, number> = {
 	...Object.fromEntries(Array.from(AFTER_SUBMISSION_HOOK_ALIASES, (hook) => [hook, 20]))
 };
 
+export function isLocalFirstMappingLinkage(linkage: FormActionLinkage): boolean {
+	return (
+		linkage.action_type_indicator === 'local_first' &&
+		/^local_first_[1-9]\d*$/.test(linkage.local_mapping_id)
+	);
+}
+
 function isValidationHook(hook: string): boolean {
 	return VALIDATION_HOOK_ALIASES.has(hook);
 }

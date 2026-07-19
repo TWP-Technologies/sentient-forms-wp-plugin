@@ -8,6 +8,7 @@ import {
 	findIntroducedDependencyIssues,
 	formatDependencyIssues,
 	getMappingDependencyIds,
+	isLocalFirstMappingLinkage,
 	normalizeDependencyIds,
 	setMappingDependencyIds,
 	validateMappingDependencies
@@ -30,6 +31,22 @@ function linkage(
 }
 
 describe('mapping-dependencies utils (CB-FORMS-004)', () => {
+	it('identifies only plugin-owned mapping rows as executable duplicate parents', () => {
+		expect(
+			isLocalFirstMappingLinkage({
+				...linkage('local_first_42', ['after_submission']),
+				action_type_indicator: 'local_first'
+			})
+		).toBe(true);
+		expect(isLocalFirstMappingLinkage(linkage('legacy_mapping', ['after_submission']))).toBe(false);
+		expect(
+			isLocalFirstMappingLinkage({
+				...linkage('local_first_not_numeric', ['after_submission']),
+				action_type_indicator: 'local_first'
+			})
+		).toBe(false);
+	});
+
 	it('normalizes dependency ids', () => {
 		expect(normalizeDependencyIds([' a ', 'a', '', 7 as any])).toEqual(['a']);
 	});

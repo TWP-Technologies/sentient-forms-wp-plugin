@@ -423,6 +423,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
      */
     public static function log_execution( array $data ): bool
     {
+        $result = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            static fn(): bool => self::log_execution_locked( $data )
+        );
+
+        return is_wp_error( $result ) ? false : $result;
+    }
+
+    /** Persist one Action log entry after the shared local-state fence is held. */
+    private static function log_execution_locked( array $data ): bool
+    {
         $execution_request_id = self::resolve_execution_request_id( $data );
         $entry = [
             'id'             => wp_generate_uuid4(),
@@ -501,6 +511,28 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
      * @return int Number of local audit rows updated.
      */
     public static function backfill_entry_id_for_execution_requests(
+        array $execution_request_ids,
+        int $entry_id,
+        ?string $form_source = null,
+        ?int $form_id = null,
+        ?string $submission_uuid = null
+    ): int
+    {
+        $result = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            static fn(): int => self::backfill_entry_id_for_execution_requests_locked(
+                $execution_request_ids,
+                $entry_id,
+                $form_source,
+                $form_id,
+                $submission_uuid
+            )
+        );
+
+        return is_wp_error( $result ) ? 0 : $result;
+    }
+
+    /** Backfill after the shared local-state fence is held. */
+    private static function backfill_entry_id_for_execution_requests_locked(
         array $execution_request_ids,
         int $entry_id,
         ?string $form_source = null,

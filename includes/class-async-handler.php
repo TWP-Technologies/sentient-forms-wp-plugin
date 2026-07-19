@@ -73,44 +73,117 @@ class Sentient_Forms_Async_Handler
                     'payload'    => $result,
                 ]
             );
+        $payload_digest = isset( $context['evaluation_payload_digest'] ) && is_scalar( $context['evaluation_payload_digest'] )
+            ? (string) $context['evaluation_payload_digest']
+            : wp_hash( wp_json_encode( $result ) );
+
+        $started = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $context, $evaluation_request_id, $payload_digest ): bool | WP_Error {
+                $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+                if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+                {
+                    $disabled_error = new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+                    );
+                    $request_result = $this->get_request_store()->reject_queued_execution(
+                        $evaluation_request_id,
+                        'evaluation',
+                        $payload_digest,
+                        $disabled_error->get_error_message()
+                    );
+                    if ( is_wp_error( $request_result ) )
+                    {
+                        return $request_result;
+                    }
+                    if ( 'rejected' !== ( $request_result['state'] ?? '' ) )
+                    {
+                        return false;
+                    }
+
+                    $this->update_metadata_best_effort(
+                        $context['job_id'] ?? null,
+                        'skipped',
+                        [ 'last_error' => $disabled_error->get_error_message(), 'completed_at' => time() ],
+                        $context
+                    );
+                    return $disabled_error;
+                }
+
+                $claim = $this->get_request_store()->claim_queued_execution(
+                    $evaluation_request_id,
+                    'evaluation',
+                    $payload_digest
+                );
+                if ( is_wp_error( $claim ) )
+                {
+                    return $claim;
+                }
+                if ( 'claimed' !== ( $claim['state'] ?? '' ) )
+                {
+                    return false;
+                }
+
+                $this->update_metadata_best_effort( $context['job_id'] ?? null, 'running', [], $context );
+                return true;
+            }
+        );
+        if ( true !== $started )
+        {
+            if ( is_wp_error( $started ) && 'sentient_forms_execution_globally_disabled' !== $started->get_error_code() )
+            {
+                $this->record_async_persistence_failure( $started, $context );
+            }
+            return;
+        }
+
         $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
 
         if ( !$adapter )
         {
-            $this->get_metadata_store()->update_status(
+            $this->update_metadata_best_effort(
                 $context['job_id'] ?? null,
                 'failed',
-                [
-                    'last_error'   => __( 'Adapter not available', 'sentient-forms' ),
-                    'completed_at' => time(),
-                ]
+                [ 'last_error' => __( 'Adapter not available', 'sentient-forms' ), 'completed_at' => time() ],
+                $context
             );
             if ( $evaluation_request_id )
             {
-                $this->get_request_store()->mark_status( $evaluation_request_id, 'failed', __( 'Adapter not available', 'sentient-forms' ), 'evaluation' );
+                $failed = $this->get_request_store()->finish_execution( $evaluation_request_id, 'failed', __( 'Adapter not available', 'sentient-forms' ), 'evaluation' );
+                if ( is_wp_error( $failed ) )
+                {
+                    $this->record_async_persistence_failure( $failed, $context );
+                }
             }
             return;
         }
 
         try
         {
-            if ( $evaluation_request_id )
-            {
-                $this->get_request_store()->mark_status( $evaluation_request_id, 'running', null, 'evaluation' );
-            }
-            $this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
             $adapter->finalize_async_evaluation( $context, $result );
             do_action( 'sentient_forms_async_success', $context, $result );
             $this->emit_async_event( 'evaluation_success', $context, $result );
-            $this->get_metadata_store()->update_status(
-                $context['job_id'] ?? null,
-                'success',
-                [ 'completed_at' => time() ]
-            );
             if ( $evaluation_request_id )
             {
-                $this->get_request_store()->mark_status( $evaluation_request_id, 'success', null, 'evaluation' );
+                $finished = $this->get_request_store()->finish_execution( $evaluation_request_id, 'success', null, 'evaluation' );
+                if ( is_wp_error( $finished ) )
+                {
+                    $this->get_request_store()->mark_status(
+                        $evaluation_request_id,
+                        'indeterminate',
+                        $finished->get_error_message(),
+                        'evaluation'
+                    );
+                    $this->record_async_persistence_failure( $finished, $context );
+                    return;
+                }
             }
+            $this->update_metadata_best_effort(
+                $context['job_id'] ?? null,
+                'success',
+                [ 'completed_at' => time() ],
+                $context
+            );
         } catch ( Throwable $throwable )
         {
             $this->handle_evaluation_failure(
@@ -125,13 +198,15 @@ class Sentient_Forms_Async_Handler
 
             if ( $evaluation_request_id )
             {
-                // If status stayed queued, force it to failed to avoid ledger leaks.
+                // A queued row may be the durable lease for a scheduled retry. Only a
+                // running row here represents a worker that crossed the effect boundary
+                // without recording a terminal or retry transition.
                 $row = $store->get( $evaluation_request_id, 'evaluation' );
-                if ( $row && ( $row['status'] ?? '' ) === 'queued' )
+                if ( $row && ( $row['status'] ?? '' ) === 'running' )
                 {
                     $store->mark_status(
                         $evaluation_request_id,
-                        'failed',
+                        'indeterminate',
                         __( 'Evaluation job did not complete', 'sentient-forms' ),
                         'evaluation'
                     );
@@ -153,29 +228,69 @@ class Sentient_Forms_Async_Handler
 			$context['attempt']    = $attempt + 1;
 			$context['last_error'] = $error->get_error_message();
 			$delay                 = $this->compute_backoff_delay( $attempt, $context );
-            $this->get_metadata_store()->update_status(
+            $this->update_metadata_best_effort(
                 $context['job_id'] ?? null,
                 'retry_scheduled',
                 [
                     'last_error' => $error->get_error_message(),
                     'run_at'     => time() + $delay,
-                ]
-            );
-            unset( $context['job_id'] );
-            $this->dispatch_evaluation(
-                [
-                    'adapter_id' => $context['adapter_id'] ?? $context['form_source'] ?? null,
-                    'entry_id'   => $context['entry_id'] ?? null,
-                    'form_id'    => $context['form_id'] ?? null,
-                    'action_id'  => $context['action_id'] ?? null,
-                    'payload'    => $result,
-                    'context'    => $context,
-                    'run_at'     => time() + $delay,
                 ],
+                $context
             );
-            if ( $evaluation_request_id )
+            $scheduled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+                function () use ( &$context, $evaluation_request_id, $error, $result, $delay ): bool | WP_Error {
+                    if ( $evaluation_request_id )
+                    {
+                        $prepared = $this->get_request_store()->prepare_retry(
+                            $evaluation_request_id,
+                            'evaluation',
+                            $error->get_error_message()
+                        );
+                        if ( is_wp_error( $prepared ) )
+                        {
+                            $this->mark_indeterminate_after_persistence_failure(
+                                $prepared,
+                                $context,
+                                $evaluation_request_id,
+                                'evaluation'
+                            );
+                            return $prepared;
+                        }
+                    }
+
+                    unset( $context['job_id'] );
+                    $dispatched = $this->dispatch_evaluation(
+                        [
+                            'adapter_id' => $context['adapter_id'] ?? $context['form_source'] ?? null,
+                            'entry_id'   => $context['entry_id'] ?? null,
+                            'form_id'    => $context['form_id'] ?? null,
+                            'action_id'  => $context['action_id'] ?? null,
+                            'payload'    => $result,
+                            'context'    => $context,
+                            'run_at'     => time() + $delay,
+                            'evaluation_request_id' => $evaluation_request_id,
+                        ],
+                    );
+                    if ( ! $dispatched && $evaluation_request_id )
+                    {
+                        $schedule_error = new WP_Error(
+                            'sentient_forms_async_retry_schedule_failed',
+                            __( 'Evaluation retry could not be scheduled.', 'sentient-forms' )
+                        );
+                        $this->mark_indeterminate_after_persistence_failure(
+                            $schedule_error,
+                            $context,
+                            $evaluation_request_id,
+                            'evaluation'
+                        );
+                    }
+
+                    return $dispatched;
+                }
+            );
+            if ( true !== $scheduled )
             {
-                $this->get_request_store()->mark_status( $evaluation_request_id, 'queued', $error->get_error_message(), 'evaluation' );
+                return;
             }
             $this->emit_async_event(
                 'evaluation_retry_scheduled',
@@ -196,17 +311,22 @@ class Sentient_Forms_Async_Handler
             $context,
             [ 'error' => $error->get_error_message() ],
         );
-		$this->get_metadata_store()->update_status(
+		$this->update_metadata_best_effort(
 			$context['job_id'] ?? null,
 			'failed',
 			[
 				'last_error'   => $error->get_error_message(),
 				'completed_at' => time(),
-			]
+			],
+            $context
 		);
         if ( $evaluation_request_id )
         {
-            $this->get_request_store()->mark_status( $evaluation_request_id, 'failed', $error->get_error_message(), 'evaluation' );
+            $finished = $this->get_request_store()->finish_execution( $evaluation_request_id, 'failed', $error->get_error_message(), 'evaluation' );
+            if ( is_wp_error( $finished ) )
+            {
+                $this->record_async_persistence_failure( $finished, $context );
+            }
         }
     }
 
@@ -326,18 +446,18 @@ class Sentient_Forms_Async_Handler
             $action_id = as_schedule_single_action( $run_at, $hook, $args, $group );
             if ( is_wp_error( $action_id ) )
             {
-                return [ 'scheduled' => false, 'action_id' => null ];
+                return [ 'scheduled' => false, 'action_id' => null, 'group' => $group ];
             }
 
             $record_enqueued( $action_id );
-            return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null ];
+            return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null, 'group' => $group ];
         }
 
         if ( function_exists( 'as_enqueue_async_action' ) )
         {
             $action_id = as_enqueue_async_action( $hook, $args, $group );
             $record_enqueued( $action_id );
-            return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null ];
+            return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null, 'group' => $group ];
         }
 
         $scheduled = (bool) wp_schedule_single_event( $run_at, $hook, $args );
@@ -346,7 +466,7 @@ class Sentient_Forms_Async_Handler
             $record_enqueued( null );
         }
 
-        return [ 'scheduled' => $scheduled, 'action_id' => null ];
+        return [ 'scheduled' => $scheduled, 'action_id' => null, 'group' => $group ];
     }
 
     private function get_scheduler_group(): string
@@ -798,6 +918,24 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): bool | WP_Error => $this->schedule_local_mapping_locked( $local_mapping_id, $form, $entry, $context, $run_at )
+        );
+    }
+
+    /** Schedule after the durable-record, enqueue, and metadata fence is held. */
+    private function schedule_local_mapping_locked( int $local_mapping_id, array $form, array $entry, array $context, ?int $run_at ): bool | WP_Error
+    {
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_execution_globally_disabled',
+                __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
         $form_source     = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
         $form_id         = sanitize_text_field( (string) ( $context['form_id'] ?? $form['id'] ?? '' ) );
         $entry_id        = sanitize_text_field( (string) ( $context['entry_id'] ?? $entry['id'] ?? '' ) );
@@ -869,7 +1007,22 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $this->record_local_execution_event( $payload, 'queued' );
+        $queued_event = $this->record_local_execution_event( $payload, 'queued' );
+        if ( is_wp_error( $queued_event ) )
+        {
+            $recovered = $this->recover_unscheduled_queued_request(
+                $execution_request_id,
+                'job',
+                $payload_digest,
+                $queued_event->get_error_message()
+            );
+            if ( is_wp_error( $recovered ) )
+            {
+                $this->record_async_persistence_failure( $recovered, $payload['context'] );
+            }
+            $this->record_async_persistence_failure( $queued_event, $payload['context'] );
+            return $queued_event;
+        }
 
         $run_at_ts = $run_at ?? time();
         $scheduled = $this->enqueue_job(
@@ -880,28 +1033,61 @@ class Sentient_Forms_Async_Handler
 
         if ( $scheduled['scheduled'] )
         {
-            $this->get_metadata_store()->record_job(
+            $metadata_recorded = $this->get_metadata_store()->record_job(
                 $payload['context']['job_id'],
                 self::LOCAL_MAPPING_HOOK,
                 $payload,
                 $run_at_ts,
                 $scheduled['action_id'],
-                $this->get_scheduler_group(),
+                $scheduled['group'],
             );
+            if ( is_wp_error( $metadata_recorded ) )
+            {
+                $this->record_async_persistence_failure( $metadata_recorded, $payload['context'] );
+            }
             return true;
         }
 
-        $this->get_request_store()->mark_status(
-            $execution_request_id,
-            'failed',
+        $schedule_error = new WP_Error(
+            'sentient_forms_local_mapping_schedule_failed',
             __( 'Local mapping scheduling failed.', 'sentient-forms' )
         );
-        $this->record_local_execution_event(
+        $failed = $this->get_request_store()->mark_status(
+            $execution_request_id,
+            'failed',
+            $schedule_error->get_error_message()
+        );
+        if ( is_wp_error( $failed ) )
+        {
+            $recovered = $this->recover_unscheduled_queued_request(
+                $execution_request_id,
+                'job',
+                $payload_digest,
+                $schedule_error->get_error_message()
+            );
+            if ( is_wp_error( $recovered ) )
+            {
+                $this->record_async_persistence_failure( $recovered, $payload['context'] );
+            }
+            $event_recorded = $this->record_local_execution_event( $payload, 'failed', null, $schedule_error );
+            if ( is_wp_error( $event_recorded ) )
+            {
+                $this->record_async_persistence_failure( $event_recorded, $payload['context'] );
+            }
+            $this->record_async_persistence_failure( $failed, $payload['context'] );
+            return $failed;
+        }
+        $event_recorded = $this->record_local_execution_event(
             $payload,
             'failed',
             null,
-            new WP_Error( 'sentient_forms_local_mapping_schedule_failed', __( 'Local mapping scheduling failed.', 'sentient-forms' ) )
+            $schedule_error
         );
+        if ( is_wp_error( $event_recorded ) )
+        {
+            $this->record_async_persistence_failure( $event_recorded, $payload['context'] );
+            return $event_recorded;
+        }
 
         return false;
     }
@@ -920,6 +1106,7 @@ class Sentient_Forms_Async_Handler
             $payload = $payload[0];
         }
 
+        $serialized_payload_digest = $this->local_mapping_payload_digest( $payload );
         $payload = $this->normalize_queued_form_source_identities( $payload );
 
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
@@ -944,12 +1131,97 @@ class Sentient_Forms_Async_Handler
             'context'              => $context,
         ];
 
+        $started = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $payload, $context, $execution_request_id, $serialized_payload_digest ): bool | WP_Error {
+                $current_settings = get_option( 'sentient_forms_plugin_settings', [] );
+                $normalized_payload_digest = $this->local_mapping_payload_digest( $payload );
+                $stored_request            = $this->get_request_store()->get( $execution_request_id, 'job' );
+                $stored_digest             = is_array( $stored_request ) && is_scalar( $stored_request['payload_digest'] ?? null )
+                    ? (string) $stored_request['payload_digest']
+                    : '';
+                $claim_digest = '' !== $stored_digest && hash_equals( $stored_digest, $serialized_payload_digest )
+                    ? $serialized_payload_digest
+                    : $normalized_payload_digest;
+                if ( is_array( $current_settings ) && ! empty( $current_settings['execution_global_disabled'] ) )
+                {
+                    $disabled_error = new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+                    );
+                    $request_result = $this->get_request_store()->reject_queued_execution(
+                        $execution_request_id,
+                        'job',
+                        $claim_digest,
+                        $disabled_error->get_error_message()
+                    );
+                    if ( is_wp_error( $request_result ) )
+                    {
+                        return $request_result;
+                    }
+                    if ( 'rejected' !== ( $request_result['state'] ?? '' ) )
+                    {
+                        return false;
+                    }
+                    $this->update_metadata_best_effort(
+                        $context['job_id'] ?? null,
+                        'skipped',
+                        [ 'last_error' => $disabled_error->get_error_message(), 'completed_at' => time() ],
+                        $context
+                    );
+                    $event_recorded = $this->record_local_execution_event( $payload, 'skipped', null, $disabled_error );
+                    if ( is_wp_error( $event_recorded ) )
+                    {
+                        return $event_recorded;
+                    }
+                    return $disabled_error;
+                }
+
+                $claim = $this->get_request_store()->claim_queued_execution(
+                    $execution_request_id,
+                    'job',
+                    $claim_digest
+                );
+                if ( is_wp_error( $claim ) )
+                {
+                    return $claim;
+                }
+                if ( 'claimed' !== ( $claim['state'] ?? '' ) )
+                {
+                    return false;
+                }
+
+                $this->update_metadata_best_effort( $context['job_id'] ?? null, 'running', [], $context );
+                $event_recorded = $this->record_local_execution_event( $payload, 'running' );
+                if ( is_wp_error( $event_recorded ) )
+                {
+                    return $this->abort_claimed_local_execution_before_effect( $payload, $event_recorded );
+                }
+                return true;
+            }
+        );
+        if ( true !== $started )
+        {
+            if ( is_wp_error( $started ) && 'sentient_forms_execution_globally_disabled' !== $started->get_error_code() )
+            {
+                $this->record_async_persistence_failure( $started, $context );
+            }
+            return;
+        }
+
         $dependency_gate = $this->evaluate_dependency_gate( $job );
         if ( 'skip' === $dependency_gate['state'] )
         {
             $reason = $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' );
-            $this->handle_dependency_skip( $job, $reason, $dependency_gate['reason_code'] ?? null );
-            $this->record_local_execution_event( $payload, 'skipped', null, new WP_Error( 'sentient_forms_local_mapping_dependency_skipped', $reason ) );
+            $skipped = $this->handle_dependency_skip_with_event(
+                $job,
+                $payload,
+                $reason,
+                $dependency_gate['reason_code'] ?? null
+            );
+            if ( is_wp_error( $skipped ) && 'sentient_forms_execution_globally_disabled' !== $skipped->get_error_code() )
+            {
+                $this->record_async_persistence_failure( $skipped, $context );
+            }
             $this->sweep_stale_async_rows();
             return;
         }
@@ -964,13 +1236,6 @@ class Sentient_Forms_Async_Handler
             $this->sweep_stale_async_rows();
             return;
         }
-
-        $this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
-        if ( '' !== $execution_request_id )
-        {
-            $this->get_request_store()->mark_status( $execution_request_id, 'running' );
-        }
-        $this->record_local_execution_event( $payload, 'running' );
 
         try
         {
@@ -1125,16 +1390,21 @@ class Sentient_Forms_Async_Handler
         );
         $this->emit_async_event( 'local_mapping_success', $context, $result );
 
-        $this->get_metadata_store()->update_status(
-            $context['job_id'] ?? null,
-            'success',
-            [ 'completed_at' => time() ]
-        );
-
         if ( '' !== $execution_request_id )
         {
-            $this->get_request_store()->mark_status( $execution_request_id, 'success' );
+            $finished = $this->get_request_store()->finish_execution( $execution_request_id, 'success' );
+            if ( is_wp_error( $finished ) )
+            {
+                $this->mark_indeterminate_after_persistence_failure( $finished, $context, $execution_request_id );
+                return;
+            }
         }
+        $this->update_metadata_best_effort(
+            $context['job_id'] ?? null,
+            'success',
+            [ 'completed_at' => time() ],
+            $context
+        );
     }
 
     /**
@@ -1162,34 +1432,53 @@ class Sentient_Forms_Async_Handler
             $delay                 = $this->compute_backoff_delay( $attempt, $context );
             $run_at                = time() + $delay;
 
-            $this->get_metadata_store()->update_status(
+            $this->update_metadata_best_effort(
                 $context['job_id'] ?? null,
                 'retry_scheduled',
                 [
                     'last_error' => $error->get_error_message(),
                     'run_at'     => $run_at,
-                ]
+                ],
+                $context
             );
 
-            unset( $context['job_id'] );
-            if ( '' !== $execution_request_id )
-            {
-                $this->get_request_store()->mark_status( $execution_request_id, 'retry_pending', $error->get_error_message() );
-            }
-            $scheduled = $this->schedule_local_mapping(
-                absint( $payload['local_mapping_id'] ?? 0 ),
-                [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
-                [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
-                $context,
-                $run_at,
+            $scheduled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+                function () use ( &$context, $execution_request_id, $error, $payload, $run_at ): bool | WP_Error {
+                    if ( '' !== $execution_request_id )
+                    {
+                        $prepared = $this->get_request_store()->prepare_retry( $execution_request_id, 'job', $error->get_error_message() );
+                        if ( is_wp_error( $prepared ) )
+                        {
+                            $this->mark_indeterminate_after_persistence_failure( $prepared, $context, $execution_request_id );
+                            return $prepared;
+                        }
+                    }
+
+                    unset( $context['job_id'] );
+                    $rescheduled = $this->schedule_local_mapping(
+                        absint( $payload['local_mapping_id'] ?? 0 ),
+                        [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
+                        [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
+                        $context,
+                        $run_at,
+                    );
+                    if ( true !== $rescheduled && '' !== $execution_request_id )
+                    {
+                        $schedule_error = is_wp_error( $rescheduled )
+                            ? $rescheduled
+                            : new WP_Error(
+                                'sentient_forms_local_mapping_retry_schedule_failed',
+                                __( 'Local mapping retry could not be scheduled.', 'sentient-forms' )
+                            );
+                        $this->mark_indeterminate_after_persistence_failure( $schedule_error, $context, $execution_request_id );
+                    }
+
+                    return $rescheduled;
+                }
             );
 
             if ( true === $scheduled )
             {
-                if ( '' !== $execution_request_id )
-                {
-                    $this->get_request_store()->mark_status( $execution_request_id, 'queued', $error->get_error_message() );
-                }
                 $this->emit_async_event(
                     'local_mapping_retry_scheduled',
                     $context,
@@ -1200,22 +1489,29 @@ class Sentient_Forms_Async_Handler
                 );
                 return;
             }
+
+            return;
         }
 
-        $this->record_local_execution_event( $payload, 'failed', null, $error );
-        $this->get_metadata_store()->update_status(
-            $context['job_id'] ?? null,
-            'failed',
-            [
-                'last_error'   => $error->get_error_message(),
-                'completed_at' => time(),
-            ]
-        );
-
+        $event_recorded = $this->record_local_execution_event( $payload, 'failed', null, $error );
+        if ( is_wp_error( $event_recorded ) )
+        {
+            $this->record_async_persistence_failure( $event_recorded, $context );
+        }
         if ( '' !== $execution_request_id )
         {
-            $this->get_request_store()->mark_status( $execution_request_id, 'failed', $error->get_error_message() );
+            $finished = $this->get_request_store()->finish_execution( $execution_request_id, 'failed', $error->get_error_message() );
+            if ( is_wp_error( $finished ) )
+            {
+                $this->record_async_persistence_failure( $finished, $context );
+            }
         }
+        $this->update_metadata_best_effort(
+            $context['job_id'] ?? null,
+            'failed',
+            [ 'last_error' => $error->get_error_message(), 'completed_at' => time() ],
+            $context
+        );
 
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
@@ -1235,38 +1531,56 @@ class Sentient_Forms_Async_Handler
         }
 
         $run_at = time() + max( 5, $delay_seconds );
-        $this->get_metadata_store()->update_status(
+        $this->update_metadata_best_effort(
             $context['job_id'] ?? null,
             'retry_scheduled',
             [
                 'last_error' => $reason,
                 'run_at'     => $run_at,
-            ]
+            ],
+            $context
         );
 
         $execution_request_id = sanitize_text_field(
             (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
         );
-        if ( '' !== $execution_request_id )
-        {
-            $this->get_request_store()->mark_status( $execution_request_id, 'dependency_wait', $reason );
-        }
+        $scheduled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( &$context, $execution_request_id, $reason, $payload, $run_at ): bool | WP_Error {
+                if ( '' !== $execution_request_id )
+                {
+                    $prepared = $this->get_request_store()->prepare_dependency_wait( $execution_request_id, 'job', $reason );
+                    if ( is_wp_error( $prepared ) )
+                    {
+                        $this->mark_indeterminate_after_persistence_failure( $prepared, $context, $execution_request_id );
+                        return $prepared;
+                    }
+                }
 
-        unset( $context['job_id'] );
-        $scheduled = $this->schedule_local_mapping(
-            absint( $payload['local_mapping_id'] ?? 0 ),
-            [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
-            [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
-            $context,
-            $run_at,
+                unset( $context['job_id'] );
+                $rescheduled = $this->schedule_local_mapping(
+                    absint( $payload['local_mapping_id'] ?? 0 ),
+                    [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
+                    [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
+                    $context,
+                    $run_at,
+                );
+                if ( true !== $rescheduled && '' !== $execution_request_id )
+                {
+                    $schedule_error = is_wp_error( $rescheduled )
+                        ? $rescheduled
+                        : new WP_Error(
+                            'sentient_forms_local_mapping_dependency_wait_reschedule_failed',
+                            $reason
+                        );
+                    $this->mark_indeterminate_after_persistence_failure( $schedule_error, $context, $execution_request_id );
+                }
+
+                return $rescheduled;
+            }
         );
 
         if ( true !== $scheduled )
         {
-            $this->handle_local_mapping_failure(
-                $payload,
-                new WP_Error( 'sentient_forms_local_mapping_dependency_wait_reschedule_failed', $reason )
-            );
             return;
         }
 
@@ -1395,7 +1709,7 @@ class Sentient_Forms_Async_Handler
         );
     }
 
-    private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): void
+    private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): int | WP_Error
     {
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
         $preflight_effect_outcomes = isset( $context['native_effect_outcomes'] ) && is_array( $context['native_effect_outcomes'] )
@@ -1410,7 +1724,10 @@ class Sentient_Forms_Async_Handler
         );
         if ( '' === $execution_request_id )
         {
-            return;
+            return new WP_Error(
+                'sentient_forms_execution_event_request_id_missing',
+                __( 'The local execution event is missing its execution request identifier.', 'sentient-forms' )
+            );
         }
 
         $provider_identity = Sentient_Forms_Execution_Identity::resolve_provider_identity(
@@ -1461,7 +1778,72 @@ class Sentient_Forms_Async_Handler
             $event['error_message'] = $error->get_error_message();
         }
 
-        $this->get_execution_events_repository()->record( $event );
+        return $this->get_execution_events_repository()->record( $event );
+    }
+
+    /** Terminalize an exact unscheduled queue identity after a broader status write failed. */
+    private function recover_unscheduled_queued_request(
+        string $request_id,
+        string $record_type,
+        string $payload_digest,
+        string $error
+    ): true | WP_Error
+    {
+        $recovered = $this->get_request_store()->reject_queued_execution(
+            $request_id,
+            $record_type,
+            $payload_digest,
+            $error
+        );
+        if ( is_wp_error( $recovered ) )
+        {
+            return $recovered;
+        }
+
+        if ( in_array( $recovered['state'] ?? '', [ 'rejected', 'terminal', 'missing' ], true ) )
+        {
+            return true;
+        }
+
+        return new WP_Error(
+            'sentient_forms_async_request_recovery_failed',
+            __( 'The unscheduled async execution could not be terminalized safely.', 'sentient-forms' )
+        );
+    }
+
+    /** Stop a claimed local execution before any model or native effect boundary is crossed. */
+    private function abort_claimed_local_execution_before_effect( array $payload, WP_Error $cause ): WP_Error
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+        if ( '' !== $execution_request_id )
+        {
+            $finished = $this->get_request_store()->finish_execution(
+                $execution_request_id,
+                'failed',
+                $cause->get_error_message()
+            );
+            if ( is_wp_error( $finished ) )
+            {
+                $this->record_async_persistence_failure( $finished, $context );
+            }
+        }
+
+        $this->update_metadata_best_effort(
+            $context['job_id'] ?? null,
+            'failed',
+            [ 'last_error' => $cause->get_error_message(), 'completed_at' => time() ],
+            $context
+        );
+        $terminal_event = $this->record_local_execution_event( $payload, 'failed', null, $cause );
+        if ( is_wp_error( $terminal_event ) )
+        {
+            $this->record_async_persistence_failure( $terminal_event, $context );
+        }
+
+        return $cause;
     }
 
     private function first_sanitized_key( array $candidates ): string
@@ -1590,6 +1972,25 @@ class Sentient_Forms_Async_Handler
      */
     public function dispatch_evaluation( array $job ): bool
     {
+        $result = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): bool | WP_Error => $this->dispatch_evaluation_locked( $job )
+        );
+
+        return true === $result;
+    }
+
+    /** Schedule an evaluation while the request, queue, and metadata fence is held. */
+    private function dispatch_evaluation_locked( array $job ): bool | WP_Error
+    {
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_execution_globally_disabled',
+                __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+            );
+        }
+
         $payload_data = isset( $job['payload'] ) && is_array( $job['payload'] ) ? $job['payload'] : [];
         $payload_data = $this->enrich_evaluation_payload_ids( $payload_data, $job );
         if ( empty( $payload_data ) )
@@ -1605,26 +2006,7 @@ class Sentient_Forms_Async_Handler
         $evaluation_request_id = $job['evaluation_request_id'] ?? $this->generate_evaluation_request_id( $job );
         $request_store         = $this->get_request_store();
 
-        if ( $request_store->should_block( $evaluation_request_id, 'evaluation' ) )
-        {
-            // Treat duplicates as a no-op so health dashboards stay green, but keep the event visible.
-            $this->emit_async_event(
-                'evaluation_duplicate_blocked',
-                array_merge(
-                    $job['context'] ?? [],
-                    [
-                        'evaluation_request_id' => $evaluation_request_id,
-                        'adapter_id'            => $job['adapter_id'] ?? $job['context']['adapter_id'] ?? $job['context']['form_source'] ?? null,
-                        'action_id'             => $job['action_id'] ?? $job['context']['action_id'] ?? null,
-                    ]
-                ),
-                [
-                    'reason' => 'duplicate_blocked',
-                ]
-            );
-            return false;
-        }
-
+        $payload_digest = wp_hash( wp_json_encode( $payload_data ) );
         $recorded = $request_store->record(
             $evaluation_request_id,
             [
@@ -1632,11 +2014,27 @@ class Sentient_Forms_Async_Handler
                 'adapter'        => $adapter_id,
                 'status'         => 'queued',
                 'record_type'    => 'evaluation',
-                'payload_digest' => $payload_data ? wp_hash( wp_json_encode( $payload_data ) ) : null,
+                'payload_digest' => $payload_digest,
             ]
         );
+        if ( is_wp_error( $recorded ) )
+        {
+            return $recorded;
+        }
         if ( true !== $recorded )
         {
+            $this->emit_async_event(
+                'evaluation_duplicate_blocked',
+                array_merge(
+                    $job['context'] ?? [],
+                    [
+                        'evaluation_request_id' => $evaluation_request_id,
+                        'adapter_id'            => $adapter_id,
+                        'action_id'             => $job['action_id'] ?? $job['context']['action_id'] ?? null,
+                    ]
+                ),
+                [ 'reason' => 'duplicate_blocked' ]
+            );
             return false;
         }
 
@@ -1648,6 +2046,7 @@ class Sentient_Forms_Async_Handler
                 'action_id'          => $job['action_id'] ?? $job['context']['action_id'] ?? null,
                 'job_type'           => 'evaluation',
                 'evaluation_payload' => $payload_data,
+                'evaluation_payload_digest' => $payload_digest,
                 'evaluation_request_id' => $evaluation_request_id,
             ],
             array_merge(
@@ -1674,23 +2073,41 @@ class Sentient_Forms_Async_Handler
 
         if ( $scheduled['scheduled'] )
         {
-            $this->get_metadata_store()->record_job(
+            $metadata_recorded = $this->get_metadata_store()->record_job(
                 $payload['context']['job_id'],
                 'sentient_forms_evaluate_action',
                 $payload,
                 $run_at_ts,
                 $scheduled['action_id'],
-                $this->get_scheduler_group(),
+                (string) ( $scheduled['group'] ?? $this->get_scheduler_group() ),
             );
+            if ( is_wp_error( $metadata_recorded ) )
+            {
+                $this->record_async_persistence_failure( $metadata_recorded, $payload['context'] );
+            }
         }
         else
         {
-            $this->get_request_store()->mark_status(
+            $failed = $this->get_request_store()->mark_status(
                 $evaluation_request_id,
                 'failed',
                 __( 'Scheduling failed', 'sentient-forms' ),
                 'evaluation'
             );
+            if ( is_wp_error( $failed ) )
+            {
+                $recovered = $this->recover_unscheduled_queued_request(
+                    (string) $evaluation_request_id,
+                    'evaluation',
+                    $payload_digest,
+                    __( 'Scheduling failed', 'sentient-forms' )
+                );
+                if ( is_wp_error( $recovered ) )
+                {
+                    $this->record_async_persistence_failure( $recovered, $payload['context'] );
+                }
+                $this->record_async_persistence_failure( $failed, $payload['context'] );
+            }
         }
 
         return $scheduled['scheduled'];
@@ -1705,7 +2122,7 @@ class Sentient_Forms_Async_Handler
         $form_id   = $job['form_id'] ?? $job['context']['form_id'] ?? null;
         $action_id = $job['action_id'] ?? $job['context']['action_id'] ?? null;
         $action_label = $job['context']['action_name_label'] ?? null;
-        $form_source  = $job['context']['form_source'] ?? $job['context']['adapter_id'] ?? null;
+        $form_source  = $job['context']['form_source'] ?? $job['context']['adapter_id'] ?? $job['adapter_id'] ?? null;
 
         if ( $entry_id && empty( $payload['entry_id'] ) )
         {
@@ -1910,9 +2327,9 @@ class Sentient_Forms_Async_Handler
      * @param string               $reason      Skip reason.
      * @param string|null          $reason_code Skip reason code.
      *
-     * @return void
+     * @return true|WP_Error
      */
-    private function handle_dependency_skip( array $job, string $reason, ?string $reason_code = null ): void
+    private function handle_dependency_skip( array $job, string $reason, ?string $reason_code = null ): true | WP_Error
     {
         $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
         $already_recorded = false;
@@ -1925,19 +2342,20 @@ class Sentient_Forms_Async_Handler
                 && $reason === ( $existing['last_error'] ?? null );
         }
 
-        $this->get_metadata_store()->update_status(
-            $context['job_id'] ?? null,
-            'skipped',
-            [
-                'last_error'   => $reason,
-                'completed_at' => time(),
-            ]
-        );
-
         if ( ! empty( $job['execution_request_id'] ) )
         {
-            $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
+            $finished = $this->get_request_store()->finish_execution( (string) $job['execution_request_id'], 'skipped', $reason );
+            if ( is_wp_error( $finished ) )
+            {
+                return $finished;
+            }
         }
+        $this->update_metadata_best_effort(
+            $context['job_id'] ?? null,
+            'skipped',
+            [ 'last_error' => $reason, 'completed_at' => time() ],
+            $context
+        );
 
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )
         {
@@ -1948,6 +2366,88 @@ class Sentient_Forms_Async_Handler
             'skipped',
             $context,
             [ 'reason' => $reason ]
+        );
+
+        return true;
+    }
+
+    /**
+     * Commit a dependency skip and its durable event under one reset fence.
+     *
+     * @param array<string, mixed> $job         Job payload.
+     * @param array<string, mixed> $payload     Local mapping payload.
+     * @param string               $reason      Skip reason.
+     * @param string|null          $reason_code Skip reason code.
+     *
+     * @return true|WP_Error
+     */
+    private function handle_dependency_skip_with_event(
+        array $job,
+        array $payload,
+        string $reason,
+        ?string $reason_code = null
+    ): true | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $job, $payload, $reason, $reason_code ): true | WP_Error {
+                $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+                $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                if ( is_array( $settings ) && ! empty( $settings['execution_global_disabled'] ) )
+                {
+                    $disabled = new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' ),
+                        [ 'status' => 409 ]
+                    );
+                    if ( ! empty( $job['execution_request_id'] ) )
+                    {
+                        $finished = $this->get_request_store()->finish_execution(
+                            (string) $job['execution_request_id'],
+                            'skipped',
+                            $disabled->get_error_message()
+                        );
+                        if ( is_wp_error( $finished ) )
+                        {
+                            return $finished;
+                        }
+                    }
+                    $this->update_metadata_best_effort(
+                        $context['job_id'] ?? null,
+                        'skipped',
+                        [ 'last_error' => $disabled->get_error_message(), 'completed_at' => time() ],
+                        $context
+                    );
+                    $event_recorded = $this->record_local_execution_event(
+                        $payload,
+                        'skipped',
+                        null,
+                        $disabled
+                    );
+                    if ( is_wp_error( $event_recorded ) )
+                    {
+                        return $event_recorded;
+                    }
+                    return $disabled;
+                }
+
+                $handled = $this->handle_dependency_skip( $job, $reason, $reason_code );
+                if ( is_wp_error( $handled ) )
+                {
+                    return $handled;
+                }
+                $event_recorded = $this->record_local_execution_event(
+                    $payload,
+                    'skipped',
+                    null,
+                    new WP_Error( 'sentient_forms_local_mapping_dependency_skipped', $reason )
+                );
+                if ( is_wp_error( $event_recorded ) )
+                {
+                    return $event_recorded;
+                }
+
+                return true;
+            }
         );
     }
 
@@ -2432,6 +2932,51 @@ class Sentient_Forms_Async_Handler
         }
     }
 
+    /** Persist advisory health metadata without making the lossy option an execution authority. */
+    private function update_metadata_best_effort( mixed $job_id, string $status, array $changes, array $context ): void
+    {
+        $updated = $this->get_metadata_store()->update_status( $job_id, $status, $changes );
+        if ( is_wp_error( $updated ) )
+        {
+            $this->record_async_persistence_failure( $updated, $context );
+        }
+    }
+
+    /** Report a durable-state or observability write failure without exposing request payloads. */
+    private function record_async_persistence_failure( WP_Error $error, array $context ): void
+    {
+        $safe_context = [
+            'error_code'           => $error->get_error_code(),
+            'job_id'               => sanitize_text_field( (string) ( $context['job_id'] ?? '' ) ),
+            'execution_request_id' => sanitize_text_field( (string) ( $context['execution_request_id'] ?? $context['evaluation_request_id'] ?? '' ) ),
+            'action_id'            => sanitize_key( (string) ( $context['action_id'] ?? '' ) ),
+            'form_source'          => sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? '' ) ),
+        ];
+        $this->plugin->get_logger()->error( 'async persistence failure', $safe_context );
+        $this->emit_async_event( 'async_persistence_failure', $safe_context, [ 'error_code' => $error->get_error_code() ] );
+    }
+
+    /** Fail closed when a durable transition fails after a worker acquired its lease. */
+    private function mark_indeterminate_after_persistence_failure(
+        WP_Error $error,
+        array $context,
+        string $request_id,
+        string $record_type = 'job'
+    ): void
+    {
+        $fallback = $this->get_request_store()->mark_status(
+            $request_id,
+            'indeterminate',
+            $error->get_error_message(),
+            $record_type
+        );
+        if ( is_wp_error( $fallback ) )
+        {
+            $this->record_async_persistence_failure( $fallback, $context );
+        }
+        $this->record_async_persistence_failure( $error, $context );
+    }
+
     /**
      * Emit a consent-aware async event for external logging.
      *
@@ -2467,28 +3012,10 @@ class Sentient_Forms_Async_Handler
         );
     }
 
-    /**
-     * Mark lingering queued evaluation/telemetry rows so async-health stays accurate.
-     */
+    /** Mark stale advisory telemetry rows without mutating executable request leases. */
     private function sweep_stale_async_rows(): void
     {
         $store = $this->get_request_store();
-
-        // Sweep evaluation rows that never transitioned out of queued.
-        foreach ( $store->list( [ 'record_type' => 'evaluation', 'status' => 'queued', 'limit' => 50 ] ) as $queued )
-        {
-            if ( empty( $queued['request_hash'] ) )
-            {
-                continue;
-            }
-
-            $store->mark_status(
-                $queued['request_hash'],
-                'failed',
-                __( 'Evaluation cleanup sweep (stale queued)', 'sentient-forms' ),
-                'evaluation'
-            );
-        }
 
         // Telemetry rows can stick in telemetry_queued if cron does not run; mark them sent.
         foreach ( $store->list( [ 'record_type' => 'telemetry', 'status' => 'telemetry_queued', 'limit' => 50 ] ) as $queued )

@@ -18,6 +18,14 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
 
     public function record( array $data ): int | WP_Error
     {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): int | WP_Error => $this->record_locked( $data )
+        );
+    }
+
+    /** Record an execution event after the shared local-state fence is held. */
+    private function record_locked( array $data ): int | WP_Error
+    {
         $execution_request_id = sanitize_text_field( (string) ( $data['execution_request_id'] ?? '' ) );
         if ( '' === $execution_request_id )
         {
@@ -406,6 +414,16 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
     }
 
     public function cleanup_expired( ?string $before = null ): int
+    {
+        $result = $this->with_local_state_write_lock(
+            fn(): int => $this->cleanup_expired_locked( $before )
+        );
+
+        return is_wp_error( $result ) ? 0 : $result;
+    }
+
+    /** Delete expired events after the shared local-state fence is held. */
+    private function cleanup_expired_locked( ?string $before = null ): int
     {
         $before = $before ?: $this->now();
         $wpdb  = $this->wpdb;

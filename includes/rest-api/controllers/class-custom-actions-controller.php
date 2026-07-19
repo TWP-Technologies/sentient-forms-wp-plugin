@@ -257,6 +257,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
         }
 
         $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'archived' );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
         if ( ! $updated )
         {
             return new WP_Error(
@@ -289,6 +293,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
         }
 
         $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'active' );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
         if ( ! $updated )
         {
             return new WP_Error(

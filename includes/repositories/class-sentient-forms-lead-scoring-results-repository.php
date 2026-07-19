@@ -18,6 +18,14 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
 
     public function upsert_from_execution( array $data ): int | WP_Error
     {
+        return $this->with_local_state_write_lock(
+            fn(): int | WP_Error => $this->upsert_from_execution_locked( $data )
+        );
+    }
+
+    /** Upsert after the shared local-state fence is held. */
+    private function upsert_from_execution_locked( array $data ): int | WP_Error
+    {
         $action_code = sanitize_key( (string) ( $data['action_code'] ?? '' ) );
         if ( ! in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true ) )
         {
@@ -292,6 +300,14 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
 
     public function apply_human_correction( string $form_source, string $form_id, string $entry_id, string $grade, string $justification, ?int $user_id = null ): array | WP_Error
     {
+        return $this->with_local_state_write_lock(
+            fn(): array | WP_Error => $this->apply_human_correction_locked( $form_source, $form_id, $entry_id, $grade, $justification, $user_id )
+        );
+    }
+
+    /** Apply a correction after the shared local-state fence is held. */
+    private function apply_human_correction_locked( string $form_source, string $form_id, string $entry_id, string $grade, string $justification, ?int $user_id = null ): array | WP_Error
+    {
         $row = $this->latest_action_row( $form_source, $form_id, $entry_id, 'lead_grading_v1' );
         if ( null === $row )
         {
@@ -363,6 +379,16 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
     }
 
     public function cleanup_expired( ?string $before = null ): int
+    {
+        $result = $this->with_local_state_write_lock(
+            fn(): int => $this->cleanup_expired_locked( $before )
+        );
+
+        return is_wp_error( $result ) ? 0 : $result;
+    }
+
+    /** Delete expired rows after the shared local-state fence is held. */
+    private function cleanup_expired_locked( ?string $before = null ): int
     {
         $before = $before ?: $this->now();
         // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared -- Static query uses %i/%s placeholders and a plugin-owned table identifier.

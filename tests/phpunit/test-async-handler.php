@@ -154,7 +154,9 @@ final class Sentient_Forms_Test_Recording_Gravity_Adapter extends Sentient_Forms
 {
     public int $success_calls = 0;
     public int $error_calls = 0;
+    public int $evaluation_calls = 0;
     public bool $throw_after_success = false;
+    public bool $throw_during_evaluation = false;
     /** @var array<string,mixed> */
     public array $last_success_context = [];
 
@@ -173,6 +175,15 @@ final class Sentient_Forms_Test_Recording_Gravity_Adapter extends Sentient_Forms
     public function finalize_async_error( array $context, WP_Error $error ): void
     {
         ++$this->error_calls;
+    }
+
+    public function finalize_async_evaluation( array $context, array $result ): void
+    {
+        if ( $this->throw_during_evaluation )
+        {
+            throw new RuntimeException( 'Synthetic evaluation failure.' );
+        }
+        ++$this->evaluation_calls;
     }
 }
 
@@ -290,15 +301,50 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
     }
 
+    /** @return array<string, mixed> */
+    private function schedule_failed_dependency_payload( string $request_id, string $dependency_request_id ): array
+    {
+        $this->plugin->get_async_request_store()->record(
+            $dependency_request_id,
+            [
+                'status'    => 'failed',
+                'action_id' => 'local_mapping_111',
+            ]
+        );
+
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            323,
+            [ 'id' => 44, 'title' => 'Dependency Terminal Fixture' ],
+            [ 'id' => 1944, 'message' => 'dependency terminal fixture' ],
+            [
+                'form_source'                      => 'gravity_forms',
+                'form_id'                          => '44',
+                'entry_id'                         => '1944',
+                'action_id'                        => 'local_first_323',
+                'action_name_label'                => 'Entry Summary',
+                'execution_request_id'             => $request_id,
+                'dependency_mapping_ids'           => [ 'local_first_111' ],
+                'dependency_execution_request_ids' => [ 'local_first_111' => $dependency_request_id ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+        $this->assertTrue( $scheduled );
+
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $this->assertIsArray( $payload );
+
+        return $payload;
+    }
+
 
     public function test_process_local_mapping_normalizes_legacy_elementor_identity_from_persisted_payload(): void
     {
         $store = $this->plugin->get_async_request_store();
         $store->record( 'legacy-elementor-dependency', [ 'status' => 'running', 'action_id' => 'local_mapping_900' ] );
-        $store->record( 'legacy-elementor-dependent', [ 'status' => 'queued', 'action_id' => 'local_mapping_901' ] );
-
-        $this->plugin->get_async_handler()->process_local_mapping(
-            [
+        $legacy_payload = [
                 'local_mapping_id'    => 901,
                 'form_source'        => 'elementor_forms',
                 'adapter_id'         => 'elementor_forms',
@@ -318,8 +364,26 @@ class AsyncHandlerTest extends WP_UnitTestCase
                     'dependency_wait_poll_seconds'     => 5,
                     'custom_data'                      => [ 'form_source' => 'elementor_forms' ],
                 ],
-            ]
+            ];
+        $legacy_digest = hash(
+            'sha256',
+            wp_json_encode(
+                [
+                    'local_mapping_id' => 901,
+                    'form_source'      => 'elementor_forms',
+                    'form_id'          => '91:formabc',
+                    'entry_id'         => '11111111-1111-4111-8111-111111111111',
+                    'submission_uuid'  => null,
+                    'settings_digest'  => hash( 'sha256', (string) wp_json_encode( [] ) ),
+                ]
+            )
         );
+        $store->record(
+            'legacy-elementor-dependent',
+            [ 'status' => 'queued', 'action_id' => 'local_mapping_901', 'payload_digest' => $legacy_digest ]
+        );
+
+        $this->plugin->get_async_handler()->process_local_mapping( $legacy_payload );
 
         $retry   = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
         $payload = $retry['args'][0] ?? [];
@@ -482,6 +546,551 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'skipped', $local_events[0]['status'] ?? null );
     }
 
+    public function test_dependency_skip_terminalization_and_event_share_one_reset_fence(): void
+    {
+        global $wpdb;
+
+        $request_store         = $this->plugin->get_async_request_store();
+        $submission_uuid       = '33333333-4444-4555-8666-777777777777';
+        $dependency_request_id = 'cf7_dependency_reset_fence_upstream';
+        $request_table         = $wpdb->prefix . 'sentient_async_requests';
+        $event_table           = $wpdb->prefix . 'sentient_execution_events';
+        $original_settings     = get_option( 'sentient_forms_plugin_settings', false );
+        $reset_result          = null;
+        $terminalized          = false;
+        $attempting_reset      = false;
+
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => 'local_mapping_110',
+            ]
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '43',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.98,
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            322,
+            [ 'id' => 43, 'title' => 'CF7 Dependency Reset Fence' ],
+            [
+                'id'              => null,
+                'submission_uuid' => $submission_uuid,
+                'message'         => 'prove dependency skip reset fencing',
+            ],
+            [
+                'hook'                             => 'wpcf7_mail_sent',
+                'form_source'                      => 'contact_form_7',
+                'form_id'                          => 43,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'local_first_322',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'local_first_322',
+                'dependency_mapping_ids'           => [ 'local_first_110' ],
+                'dependency_execution_request_ids' => [ 'local_first_110' => $dependency_request_id ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+                'settings'                         => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ]
+        );
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $this->assertIsArray( $payload );
+
+        $attempt_reset = static function () use ( &$reset_result, &$attempting_reset ): void {
+            if ( null !== $reset_result || $attempting_reset )
+            {
+                return;
+            }
+
+            $attempting_reset = true;
+            $settings = get_option( 'sentient_forms_plugin_settings', [] );
+            $settings = is_array( $settings ) ? $settings : [];
+            $settings['execution_global_disabled'] = true;
+            update_option( 'sentient_forms_plugin_settings', $settings, false );
+            $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                get_current_user_id()
+            );
+            $attempting_reset = false;
+        };
+        $reset_at_unfenced_event_acquisition = static function ( mixed $timeout ) use ( &$terminalized, $attempt_reset ): mixed {
+            if ( ! $terminalized )
+            {
+                return $timeout;
+            }
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if ( 'record_local_execution_event' === ( $frame['function'] ?? '' ) )
+                {
+                    $attempt_reset();
+                    break;
+                }
+            }
+
+            return $timeout;
+        };
+        $observe_terminal_and_event = static function ( string $query ) use (
+            $request_table,
+            $event_table,
+            &$terminalized,
+            &$attempting_reset,
+            $attempt_reset
+        ): string {
+            if (
+                ! $attempting_reset
+                && str_contains( $query, $request_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'skipped'/", $query )
+            )
+            {
+                $terminalized = true;
+            }
+
+            if (
+                ! $attempting_reset
+                && $terminalized
+                && str_contains( $query, $event_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'skipped'/", $query )
+            )
+            {
+                $attempt_reset();
+            }
+
+            return $query;
+        };
+
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_event_acquisition );
+        add_filter( 'query', $observe_terminal_and_event );
+        try
+        {
+            $this->plugin->get_async_handler()->process_local_mapping( $payload );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_event_acquisition );
+            remove_filter( 'query', $observe_terminal_and_event );
+            if ( false === $original_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+            }
+            if ( is_array( $reset_result ) && 'completed' === ( $reset_result['status'] ?? null ) )
+            {
+                Sentient_Forms_Installer::maybe_upgrade( true );
+            }
+        }
+
+        $request = $request_store->get( (string) ( $payload['execution_request_id'] ?? '' ), 'job' );
+        $local_event = $events->get_by_request_id( (string) ( $payload['execution_request_id'] ?? '' ) );
+        $this->assertTrue( $terminalized );
+        $this->assertInstanceOf( WP_Error::class, $reset_result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $reset_result->get_error_code() );
+        $this->assertSame( 'skipped', $request['status'] ?? null );
+        $this->assertSame( 'skipped', $local_event['status'] ?? null );
+    }
+
+    public function test_global_disable_after_claim_terminalizes_dependency_request_metadata_and_event(): void
+    {
+        global $wpdb;
+
+        $original_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_settings  = is_array( $original_settings ) ? $original_settings : [];
+        $enabled_settings['execution_global_disabled'] = false;
+        update_option( 'sentient_forms_plugin_settings', $enabled_settings, false );
+
+        $payload = $this->schedule_failed_dependency_payload(
+            'dependency-disabled-after-claim',
+            'dependency-disabled-upstream'
+        );
+        $settings_reads = 0;
+        $disable_during_dependency_completion = static function ( mixed $settings ) use ( &$settings_reads ): mixed {
+            ++$settings_reads;
+            if ( 2 <= $settings_reads )
+            {
+                $settings = is_array( $settings ) ? $settings : [];
+                $settings['execution_global_disabled'] = true;
+            }
+
+            return $settings;
+        };
+
+        add_filter( 'option_sentient_forms_plugin_settings', $disable_during_dependency_completion );
+        try
+        {
+            $this->plugin->get_async_handler()->process_local_mapping( $payload );
+        }
+        finally
+        {
+            remove_filter( 'option_sentient_forms_plugin_settings', $disable_during_dependency_completion );
+            if ( false === $original_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+            }
+        }
+
+        $request_id = (string) ( $payload['execution_request_id'] ?? '' );
+        $request = $this->plugin->get_async_request_store()->get( $request_id, 'job' );
+        $metadata = $this->plugin->get_async_metadata_store()->get( (string) ( $payload['context']['job_id'] ?? '' ) );
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $this->assertGreaterThanOrEqual( 2, $settings_reads );
+        $this->assertSame( 'skipped', $request['status'] ?? null );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+        $this->assertSame( 'skipped', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_execution_globally_disabled', $event['error_code'] ?? null );
+    }
+
+    public function test_dependency_skip_event_sql_failure_is_reported_as_persistence_failure(): void
+    {
+        global $wpdb;
+
+        $payload = $this->schedule_failed_dependency_payload(
+            'dependency-event-write-failure',
+            'dependency-event-write-upstream'
+        );
+        $event_table = $wpdb->prefix . 'sentient_execution_events';
+        $failed_event_update = false;
+        $fail_skipped_event_update = static function ( string $query ) use ( $event_table, &$failed_event_update ): string {
+            if (
+                ! $failed_event_update
+                && str_contains( $query, $event_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'skipped'/", $query )
+            )
+            {
+                $failed_event_update = true;
+                return 'SENTIENT FORMS FORCED DEPENDENCY EVENT UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        $emitted = [];
+        $capture_event = static function ( array $event ) use ( &$emitted ): void {
+            $emitted[] = $event;
+        };
+        $original_telemetry = $this->plugin->get_telemetry_settings();
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
+        add_filter( 'query', $fail_skipped_event_update );
+        add_action( 'sentient_forms_async_event', $capture_event );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $this->plugin->get_async_handler()->process_local_mapping( $payload );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_skipped_event_update );
+            remove_action( 'sentient_forms_async_event', $capture_event );
+            $this->plugin->set_telemetry_settings( $original_telemetry );
+        }
+
+        $request_id = (string) ( $payload['execution_request_id'] ?? '' );
+        $request = $this->plugin->get_async_request_store()->get( $request_id, 'job' );
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $persistence_failures = array_values(
+            array_filter(
+                $emitted,
+                static fn( array $candidate ): bool => 'async_persistence_failure' === ( $candidate['event'] ?? null )
+            )
+        );
+        $this->assertTrue( $failed_event_update );
+        $this->assertSame( 'skipped', $request['status'] ?? null );
+        $this->assertSame( 'running', $event['status'] ?? null );
+        $this->assertNotEmpty( $persistence_failures );
+        $this->assertSame(
+            'sentient_forms_db_update_failed',
+            $persistence_failures[0]['payload']['error_code'] ?? null
+        );
+    }
+
+    public function test_queued_event_sql_failure_prevents_scheduling_and_terminalizes_request(): void
+    {
+        global $wpdb;
+
+        $event_table = $wpdb->prefix . 'sentient_execution_events';
+        $failed_event_insert = false;
+        $fail_queued_event_insert = static function ( string $query ) use ( $event_table, &$failed_event_insert ): string {
+            if (
+                ! $failed_event_insert
+                && str_contains( $query, $event_table )
+                && str_starts_with( ltrim( $query ), 'INSERT INTO' )
+            )
+            {
+                $failed_event_insert = true;
+                return 'SENTIENT FORMS FORCED QUEUED EVENT INSERT FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_queued_event_insert );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+                77,
+                [ 'id' => 321 ],
+                [ 'id' => 654 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 321,
+                    'entry_id'             => 654,
+                    'execution_request_id' => 'queued-event-write-failure',
+                ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_queued_event_insert );
+        }
+
+        $request = $this->plugin->get_async_request_store()->get( 'queued-event-write-failure', 'job' );
+        $this->assertTrue( $failed_event_insert );
+        $this->assertInstanceOf( WP_Error::class, $scheduled );
+        $this->assertSame( 'sentient_forms_db_insert_failed', $scheduled->get_error_code() );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+    }
+
+    public function test_running_event_sql_failure_stops_before_effects_and_terminalizes_request(): void
+    {
+        global $wpdb;
+
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                77,
+                [ 'id' => 321 ],
+                [ 'id' => 654 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 321,
+                    'entry_id'             => 654,
+                    'execution_request_id' => 'running-event-write-failure',
+                ]
+            )
+        );
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $event_table = $wpdb->prefix . 'sentient_execution_events';
+        $failed_event_update = false;
+        $fail_running_event_update = static function ( string $query ) use ( $event_table, &$failed_event_update ): string {
+            if (
+                ! $failed_event_update
+                && str_contains( $query, $event_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'running'/", $query )
+            )
+            {
+                $failed_event_update = true;
+                return 'SENTIENT FORMS FORCED RUNNING EVENT UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_running_event_update );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $handler->process_local_mapping( $payload );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_running_event_update );
+        }
+
+        $request = $this->plugin->get_async_request_store()->get( 'running-event-write-failure', 'job' );
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( 'running-event-write-failure' );
+        $this->assertTrue( $failed_event_update );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_db_update_failed', $event['error_code'] ?? null );
+        $this->assertSame( [], $GLOBALS['__sentient_forms_http_calls'] );
+    }
+
+    public function test_global_disable_event_sql_failure_is_reported_as_persistence_failure(): void
+    {
+        global $wpdb;
+
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                77,
+                [ 'id' => 321 ],
+                [ 'id' => 654 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 321,
+                    'entry_id'             => 654,
+                    'execution_request_id' => 'disabled-event-write-failure',
+                ]
+            )
+        );
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $event_table = $wpdb->prefix . 'sentient_execution_events';
+        $failed_event_update = false;
+        $fail_skipped_event_update = static function ( string $query ) use ( $event_table, &$failed_event_update ): string {
+            if (
+                ! $failed_event_update
+                && str_contains( $query, $event_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'skipped'/", $query )
+            )
+            {
+                $failed_event_update = true;
+                return 'SENTIENT FORMS FORCED DISABLED EVENT UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        $emitted = [];
+        $capture_event = static function ( array $event ) use ( &$emitted ): void {
+            $emitted[] = $event;
+        };
+        $original_settings  = get_option( 'sentient_forms_plugin_settings', false );
+        $original_telemetry = $this->plugin->get_telemetry_settings();
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
+        update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => true ], false );
+        add_filter( 'query', $fail_skipped_event_update );
+        add_action( 'sentient_forms_async_event', $capture_event );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $handler->process_local_mapping( $payload );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_skipped_event_update );
+            remove_action( 'sentient_forms_async_event', $capture_event );
+            $this->plugin->set_telemetry_settings( $original_telemetry );
+            if ( false === $original_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+            }
+        }
+
+        $persistence_failures = array_values(
+            array_filter(
+                $emitted,
+                static fn( array $candidate ): bool => 'async_persistence_failure' === ( $candidate['event'] ?? null )
+            )
+        );
+        $this->assertTrue( $failed_event_update );
+        $this->assertNotEmpty( $persistence_failures );
+        $this->assertSame(
+            'sentient_forms_db_update_failed',
+            $persistence_failures[0]['payload']['error_code'] ?? null
+        );
+    }
+
+    public function test_terminal_failure_event_sql_failure_is_reported_as_persistence_failure(): void
+    {
+        global $wpdb;
+
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                77,
+                [ 'id' => 321 ],
+                [ 'id' => 654 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 321,
+                    'entry_id'             => 654,
+                    'execution_request_id' => 'failed-event-write-failure',
+                    'max_attempts'         => 1,
+                ]
+            )
+        );
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $event_table = $wpdb->prefix . 'sentient_execution_events';
+        $failed_event_update = false;
+        $fail_terminal_event_update = static function ( string $query ) use ( $event_table, &$failed_event_update ): string {
+            if (
+                ! $failed_event_update
+                && str_contains( $query, $event_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'failed'/", $query )
+            )
+            {
+                $failed_event_update = true;
+                return 'SENTIENT FORMS FORCED TERMINAL EVENT UPDATE FAILURE';
+            }
+
+            return $query;
+        };
+        $emitted = [];
+        $capture_event = static function ( array $event ) use ( &$emitted ): void {
+            $emitted[] = $event;
+        };
+        $original_telemetry = $this->plugin->get_telemetry_settings();
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
+        add_filter( 'query', $fail_terminal_event_update );
+        add_action( 'sentient_forms_async_event', $capture_event );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $handler->process_local_mapping( $payload );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_terminal_event_update );
+            remove_action( 'sentient_forms_async_event', $capture_event );
+            $this->plugin->set_telemetry_settings( $original_telemetry );
+        }
+
+        $persistence_failures = array_values(
+            array_filter(
+                $emitted,
+                static fn( array $candidate ): bool => 'async_persistence_failure' === ( $candidate['event'] ?? null )
+            )
+        );
+        $request = $this->plugin->get_async_request_store()->get( 'failed-event-write-failure', 'job' );
+        $this->assertTrue( $failed_event_update );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertNotEmpty( $persistence_failures );
+        $this->assertSame(
+            'sentient_forms_db_update_failed',
+            $persistence_failures[0]['payload']['error_code'] ?? null
+        );
+    }
+
 
 
 
@@ -522,6 +1131,48 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNotEmpty( $context['job_id'] );
     }
 
+    public function test_dispatch_evaluation_holds_writer_fence_through_enqueue_and_metadata(): void
+    {
+        $reset_result = null;
+        $attempt_reset_during_enqueue = static function () use ( &$reset_result ): void {
+            update_option(
+                'sentient_forms_plugin_settings',
+                [ 'execution_global_disabled' => true ],
+                false
+            );
+            $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                get_current_user_id()
+            );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $attempt_reset_during_enqueue, 20 );
+
+        try
+        {
+            $scheduled = $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 515,
+                    'form_id'    => 25,
+                    'action_id'  => 'entry_evaluation',
+                    'payload'    => [ 'result' => 'fenced' ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $attempt_reset_during_enqueue, 20 );
+            update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => false ], false );
+        }
+
+        $queued  = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $context = $queued[0]['args']['context'] ?? [];
+        $this->assertTrue( $scheduled );
+        $this->assertInstanceOf( WP_Error::class, $reset_result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $reset_result->get_error_code() );
+        $this->assertNotNull( $this->plugin->get_async_metadata_store()->get( (string) ( $context['job_id'] ?? '' ) ) );
+    }
+
     public function test_dispatch_action_evaluation_blocks_duplicate_jobs(): void
     {
         $job = [
@@ -544,6 +1195,66 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertCount( 1, $rows );
         $this->assertSame( 'queued', $rows[0]['status'] );
+    }
+
+    public function test_failed_evaluation_enqueue_does_not_strand_an_unscheduled_queued_identity(): void
+    {
+        global $wpdb;
+
+        $request_table       = $wpdb->prefix . 'sentient_async_requests';
+        $schedule_attempts   = 0;
+        $failed_status_write = false;
+        $reject_evaluation_schedule = static function ( mixed $pre, int $timestamp, string $hook ) use ( &$schedule_attempts ): mixed {
+            if ( 'sentient_forms_evaluate_action' === $hook )
+            {
+                ++$schedule_attempts;
+                return 0;
+            }
+
+            return $pre;
+        };
+        $fail_first_status_write = static function ( string $query ) use ( $request_table, &$failed_status_write ): string {
+            if (
+                ! $failed_status_write
+                && str_contains( $query, $request_table )
+                && str_contains( $query, "'evaluation'" )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'failed'/", $query )
+            )
+            {
+                $failed_status_write = true;
+                return 'SENTIENT FORMS FORCED EVALUATION FAILURE STATUS WRITE FAILURE';
+            }
+
+            return $query;
+        };
+        $job = [
+            'adapter_id' => 'gravity_forms',
+            'entry_id'   => 1001,
+            'form_id'    => 101,
+            'action_id'  => 'entry_evaluation',
+            'payload'    => [ 'result' => 'unscheduled-evaluation' ],
+        ];
+
+        add_filter( 'pre_as_schedule_single_action', $reject_evaluation_schedule, 10, 3 );
+        add_filter( 'query', $fail_first_status_write );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $this->assertFalse( $this->plugin->dispatch_action_evaluation( $job ) );
+            $this->assertFalse( $this->plugin->dispatch_action_evaluation( $job ) );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'pre_as_schedule_single_action', $reject_evaluation_schedule, 10 );
+            remove_filter( 'query', $fail_first_status_write );
+        }
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
+        $this->assertTrue( $failed_status_write );
+        $this->assertSame( 2, $schedule_attempts );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'failed', $rows[0]['status'] ?? null );
     }
 
     public function test_dispatch_action_evaluation_emits_duplicate_block_event(): void
@@ -643,6 +1354,259 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'success', $metadata['status'] ?? null );
     }
 
+    public function test_process_evaluation_stops_before_native_effects_when_execution_is_globally_disabled(): void
+    {
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $this->assertTrue(
+            $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 1234,
+                    'form_id'    => 77,
+                    'action_id'  => 'entry_evaluation',
+                    'payload'    => [ 'result' => 'must-not-apply' ],
+                ]
+            )
+        );
+        $evaluation_job = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => true ], false );
+
+        try
+        {
+            $this->plugin->get_async_handler()->process_evaluation( $evaluation_job['args'] );
+        }
+        finally
+        {
+            update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => false ], false );
+        }
+
+        $request = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 1 ] )[0] ?? [];
+        $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] ?? '' );
+        $this->assertSame( 0, $adapter->evaluation_calls );
+        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+    }
+
+    public function test_disabled_duplicate_evaluation_callbacks_preserve_success_and_indeterminate_authority(): void
+    {
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+
+        foreach ( [ 'success', 'indeterminate' ] as $terminal_status )
+        {
+            $this->assertTrue(
+                $this->plugin->dispatch_action_evaluation(
+                    [
+                        'adapter_id' => 'gravity_forms',
+                        'entry_id'   => 'disabled-duplicate-' . $terminal_status,
+                        'form_id'    => 77,
+                        'action_id'  => 'entry_evaluation',
+                        'payload'    => [ 'result' => $terminal_status ],
+                    ]
+                )
+            );
+            $job        = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $request_id = (string) ( $job['args']['context']['evaluation_request_id'] ?? '' );
+            $digest     = (string) ( $job['args']['context']['evaluation_payload_digest'] ?? '' );
+            if ( 'success' === $terminal_status )
+            {
+                $this->plugin->get_async_handler()->process_evaluation( $job['args'] );
+            }
+            else
+            {
+                $this->assertSame(
+                    'claimed',
+                    $this->plugin->get_async_request_store()->claim_queued_execution( $request_id, 'evaluation', $digest )['state'] ?? null
+                );
+                $this->assertTrue(
+                    $this->plugin->get_async_request_store()->finish_execution( $request_id, 'indeterminate', null, 'evaluation' )
+                );
+            }
+            $metadata_before = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] ?? '' );
+            $calls_before    = $adapter->evaluation_calls;
+            update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => true ], false );
+            try
+            {
+                $this->plugin->get_async_handler()->process_evaluation( $job['args'] );
+            }
+            finally
+            {
+                update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => false ], false );
+            }
+
+            $request_after  = $this->plugin->get_async_request_store()->get( $request_id, 'evaluation' );
+            $metadata_after = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] ?? '' );
+            $this->assertSame( $terminal_status, $request_after['status'] ?? null );
+            $this->assertSame( $metadata_before['status'] ?? null, $metadata_after['status'] ?? null );
+            $this->assertSame( $calls_before, $adapter->evaluation_calls );
+        }
+    }
+
+    public function test_process_evaluation_requires_authoritative_request_lease_when_metadata_was_pruned(): void
+    {
+        global $wpdb;
+
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $this->assertTrue(
+            $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 2234,
+                    'form_id'    => 87,
+                    'action_id'  => 'entry_evaluation',
+                    'payload'    => [ 'result' => 'missing-lease' ],
+                ]
+            )
+        );
+        $evaluation_job = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $request_id     = (string) ( $evaluation_job['args']['context']['evaluation_request_id'] ?? '' );
+        $this->plugin->get_async_metadata_store()->clear();
+        $wpdb->delete(
+            $wpdb->prefix . 'sentient_async_requests',
+            [
+                'request_hash' => $request_id,
+                'record_type'  => 'evaluation',
+            ],
+            [ '%s', '%s' ]
+        );
+
+        $this->plugin->get_async_handler()->process_evaluation( $evaluation_job['args'] );
+
+        $this->assertSame( 0, $adapter->evaluation_calls );
+        $this->assertNull( $this->plugin->get_async_request_store()->get( $request_id, 'evaluation' ) );
+    }
+
+    public function test_completing_one_evaluation_does_not_fail_other_queued_evaluations(): void
+    {
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        foreach ( [ 301, 302 ] as $entry_id )
+        {
+            $this->assertTrue(
+                $this->plugin->dispatch_action_evaluation(
+                    [
+                        'adapter_id' => 'gravity_forms',
+                        'entry_id'   => $entry_id,
+                        'form_id'    => 90,
+                        'action_id'  => 'entry_evaluation',
+                        'payload'    => [ 'result' => 'queued-' . $entry_id ],
+                    ]
+                )
+            );
+        }
+
+        $jobs = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $this->plugin->get_async_handler()->process_evaluation( $jobs[0]['args'] );
+
+        $second_request_id = (string) ( $jobs[1]['args']['context']['evaluation_request_id'] ?? '' );
+        $second_request    = $this->plugin->get_async_request_store()->get( $second_request_id, 'evaluation' );
+        $this->assertSame( 1, $adapter->evaluation_calls );
+        $this->assertSame( 'queued', $second_request['status'] ?? null );
+
+        $this->plugin->get_async_handler()->process_evaluation( $jobs[1]['args'] );
+        $this->assertSame( 2, $adapter->evaluation_calls );
+        $this->assertSame( 'success', $this->plugin->get_async_request_store()->get( $second_request_id, 'evaluation' )['status'] ?? null );
+    }
+
+    public function test_terminal_request_persistence_failure_after_evaluation_effect_is_not_retried(): void
+    {
+        global $wpdb;
+
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $this->assertTrue(
+            $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 401,
+                    'form_id'    => 91,
+                    'action_id'  => 'entry_evaluation',
+                    'payload'    => [ 'result' => 'persist-failure' ],
+                ]
+            )
+        );
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $request_id = (string) ( $job['args']['context']['evaluation_request_id'] ?? '' );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $rewrite_terminal_update = static function ( string $query ) use ( $request_table ): string {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE `' . $request_table . '`' ) && str_contains( $query, "status = 'success'" ) )
+            {
+                return 'UPDATE sentient_forms_missing_async_request_table SET status = \'success\'';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_terminal_update );
+        $previous_suppression = $wpdb->suppress_errors( true );
+        try
+        {
+            $this->plugin->get_async_handler()->process_evaluation( $job['args'] );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_terminal_update );
+        }
+
+        $request = $this->plugin->get_async_request_store()->get( $request_id, 'evaluation' );
+        $this->assertSame( 1, $adapter->evaluation_calls );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $this->plugin->get_async_handler()->process_evaluation( $job['args'] );
+        $this->assertSame( 1, $adapter->evaluation_calls );
+    }
+
+    public function test_metadata_terminal_failure_does_not_invalidate_authoritative_evaluation_success(): void
+    {
+        global $wpdb;
+
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $this->assertTrue(
+            $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 402,
+                    'form_id'    => 91,
+                    'action_id'  => 'entry_evaluation',
+                    'payload'    => [ 'result' => 'metadata-failure' ],
+                ]
+            )
+        );
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $request_id = (string) ( $job['args']['context']['evaluation_request_id'] ?? '' );
+        $rewrite_metadata_update = static function ( string $query ): string {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE `wp_options`' ) && str_contains( $query, 'sentient_forms_async_jobs' ) )
+            {
+                return 'UPDATE sentient_forms_missing_async_metadata_table SET option_value = NULL';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_metadata_update );
+        $previous_suppression = $wpdb->suppress_errors( true );
+        try
+        {
+            $this->plugin->get_async_handler()->process_evaluation( $job['args'] );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_metadata_update );
+        }
+
+        $this->assertSame( 1, $adapter->evaluation_calls );
+        $this->assertSame( 'success', $this->plugin->get_async_request_store()->get( $request_id, 'evaluation' )['status'] ?? null );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+    }
+
     public function test_process_evaluation_marks_request_success_with_action_scheduler_runtime_shape(): void
     {
         $job = [
@@ -686,6 +1650,42 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'Adapter not available', $rows[0]['last_error'] ?? '' );
         $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] );
         $this->assertSame( 'failed', $metadata['status'] ?? null );
+    }
+
+    public function test_process_evaluation_requeues_after_a_pre_effect_runtime_failure(): void
+    {
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $adapter->throw_during_evaluation = true;
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+
+        $this->assertTrue(
+            $this->plugin->dispatch_action_evaluation(
+                [
+                    'adapter_id' => 'gravity_forms',
+                    'entry_id'   => 56,
+                    'form_id'    => 5,
+                    'action_id'  => 'spam_analysis',
+                    'payload'    => [ 'result' => 'temporary-failure' ],
+                ]
+            )
+        );
+        $evaluation_job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+
+        $this->plugin->get_async_handler()->process_evaluation( $evaluation_job['args'] );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 1 ] );
+        $this->assertSame( 'queued', $rows[0]['status'] );
+        $this->assertCount( 2, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $retry = $GLOBALS['__sentient_forms_async_queue']['enqueued'][1];
+        $this->assertSame( 'sentient_forms_evaluate_action', $retry['hook'] ?? null );
+        $this->assertSame( 2, (int) ( $retry['args']['context']['attempt'] ?? 0 ) );
+        $this->assertSame(
+            $evaluation_job['args']['context']['evaluation_request_id'] ?? null,
+            $retry['args']['context']['evaluation_request_id'] ?? null
+        );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] );
+        $this->assertSame( 'retry_scheduled', $metadata['status'] ?? null );
     }
 
 
@@ -920,6 +1920,131 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'entry', $jobs[0]['args'][0] ?? [] );
     }
 
+    public function test_schedule_local_mapping_holds_writer_fence_through_enqueue_and_metadata(): void
+    {
+        $handler      = $this->plugin->get_async_handler();
+        $reset_result = null;
+        $attempt_reset_during_enqueue = static function () use ( &$reset_result ): void {
+            update_option(
+                'sentient_forms_plugin_settings',
+                [ 'execution_global_disabled' => true ],
+                false
+            );
+            $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE
+            );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $attempt_reset_during_enqueue, 20 );
+
+        try
+        {
+            $scheduled = $handler->schedule_local_mapping(
+                902,
+                [ 'id' => 902 ],
+                [ 'id' => 1902 ],
+                [
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '902',
+                    'entry_id'            => '1902',
+                    'central_action_id'   => 'local_reset_interleave_fixture',
+                    'execution_request_id' => 'local-reset-interleave-request',
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $attempt_reset_during_enqueue, 20 );
+            if ( function_exists( 'as_unschedule_all_actions' ) )
+            {
+                as_unschedule_all_actions( 'sentient_forms_process_local_mapping' );
+            }
+            update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => false ], false );
+        }
+
+        $this->assertTrue( $scheduled );
+        $this->assertInstanceOf( WP_Error::class, $reset_result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $reset_result->get_error_code() );
+        $this->assertNotNull( $this->plugin->get_async_metadata_store()->get( $GLOBALS['__sentient_forms_async_queue']['enqueued'][0]['args'][0]['context']['job_id'] ) );
+    }
+
+    public function test_schedule_local_mapping_keeps_authoritative_job_when_diagnostic_metadata_fails(): void
+    {
+        update_option(
+            'sentient_forms_async_jobs',
+            [
+                'existing-diagnostic-row' => [
+                    'job_id' => 'existing-diagnostic-row',
+                    'status' => 'success',
+                ],
+            ],
+            false
+        );
+        $reject_metadata_update = static function ( mixed $value, mixed $old_value ): mixed {
+            return $old_value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_async_jobs', $reject_metadata_update, 10, 2 );
+        try
+        {
+            $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+                904,
+                [ 'id' => 904 ],
+                [ 'id' => 1904 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => '904',
+                    'entry_id'             => '1904',
+                    'central_action_id'    => 'metadata-best-effort-fixture',
+                    'execution_request_id' => 'local-metadata-best-effort',
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_async_jobs', $reject_metadata_update, 10 );
+        }
+
+        $this->assertTrue( $scheduled );
+        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertSame(
+            'queued',
+            $this->plugin->get_async_request_store()->get( 'local-metadata-best-effort' )['status'] ?? null
+        );
+    }
+
+    public function test_process_local_mapping_fails_closed_when_authoritative_request_is_missing(): void
+    {
+        global $wpdb;
+
+        $handler = $this->plugin->get_async_handler();
+        $this->assertTrue(
+            $handler->schedule_local_mapping(
+                903,
+                [ 'id' => 903 ],
+                [ 'id' => 1903 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => '903',
+                    'entry_id'             => '1903',
+                    'central_action_id'    => 'missing-authoritative-request-fixture',
+                    'execution_request_id' => 'local-missing-authoritative-request',
+                ]
+            )
+        );
+        $job     = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $payload = $job['args'][0] ?? [];
+        $wpdb->delete(
+            $wpdb->prefix . 'sentient_async_requests',
+            [ 'request_hash' => 'local-missing-authoritative-request' ],
+            [ '%s' ]
+        );
+
+        $handler->process_local_mapping( $payload );
+
+        $this->assertSame( [], $GLOBALS['__sentient_forms_http_calls'] );
+        $this->assertNull( $this->plugin->get_async_request_store()->get( 'local-missing-authoritative-request' ) );
+        $this->assertSame( 'queued', $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] )['status'] ?? null );
+    }
+
     public function test_managed_local_mapping_keeps_provider_identity_across_queued_and_failed_events(): void
     {
         Sentient_Forms_Installer::maybe_upgrade();
@@ -1059,6 +2184,115 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 'queued', $event['status'] ?? null );
 		$this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
 		$this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+	}
+
+	public function test_process_local_mapping_stops_before_effects_when_execution_is_globally_disabled(): void
+	{
+		$original_settings = get_option( 'sentient_forms_plugin_settings', false );
+		$scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+			77,
+			[ 'id' => 321 ],
+			[ 'id' => 654 ],
+			[
+				'form_source'          => 'gravity_forms',
+				'form_id'              => 321,
+				'entry_id'             => 654,
+				'execution_request_id' => 'globally-disabled-local-mapping',
+			]
+		);
+		$this->assertTrue( $scheduled );
+		$job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+		$payload = $job['args'][0] ?? [];
+		update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => true ], false );
+
+		try
+		{
+			$this->plugin->get_async_handler()->process_local_mapping( $payload );
+		}
+		finally
+		{
+			if ( false === $original_settings )
+			{
+				delete_option( 'sentient_forms_plugin_settings' );
+			}
+			else
+			{
+				update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+			}
+		}
+
+		$metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] ?? '' );
+		$request  = $this->plugin->get_async_request_store()->get( 'globally-disabled-local-mapping' );
+		$this->assertSame( 'skipped', $metadata['status'] ?? null );
+		$this->assertSame( 'failed', $request['status'] ?? null );
+		$this->assertSame( [], $GLOBALS['__sentient_forms_http_calls'] );
+	}
+
+	public function test_disabled_duplicate_local_callbacks_preserve_success_and_indeterminate_authority(): void
+	{
+		$original_settings = get_option( 'sentient_forms_plugin_settings', false );
+		try
+		{
+			foreach ( [ 'success', 'indeterminate' ] as $terminal_status )
+			{
+				$request_id = 'globally-disabled-terminal-local-' . $terminal_status;
+				$context    = [
+					'form_source'          => 'gravity_forms',
+					'form_id'              => 321,
+					'entry_id'             => 654,
+					'execution_request_id' => $request_id,
+				];
+				$this->assertTrue(
+					$this->plugin->get_async_handler()->schedule_local_mapping(
+						77,
+						[ 'id' => 321 ],
+						[ 'id' => 654 ],
+						$context
+					)
+				);
+				$job     = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+				$payload = $job['args'][0] ?? [];
+				$request = $this->plugin->get_async_request_store()->get( $request_id );
+				$this->assertSame(
+					'claimed',
+					$this->plugin->get_async_request_store()->claim_queued_execution(
+						$request_id,
+						'job',
+						(string) ( $request['payload_digest'] ?? '' )
+					)['state'] ?? null
+				);
+				$this->assertTrue( $this->plugin->get_async_request_store()->finish_execution( $request_id, $terminal_status ) );
+				$metadata_before = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] ?? '' );
+
+				update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => true ], false );
+				$this->plugin->get_async_handler()->process_local_mapping( $payload );
+				update_option( 'sentient_forms_plugin_settings', [ 'execution_global_disabled' => false ], false );
+
+				$request_after  = $this->plugin->get_async_request_store()->get( $request_id );
+				$metadata_after = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] ?? '' );
+				$this->assertSame( $terminal_status, $request_after['status'] ?? null );
+				$this->assertSame( $metadata_before['status'] ?? null, $metadata_after['status'] ?? null );
+				$this->assertFalse(
+					$this->plugin->get_async_handler()->schedule_local_mapping(
+						77,
+						[ 'id' => 321 ],
+						[ 'id' => 654 ],
+						$context
+					)
+				);
+			}
+		}
+		finally
+		{
+			if ( false === $original_settings )
+			{
+				delete_option( 'sentient_forms_plugin_settings' );
+			}
+			else
+			{
+				update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+			}
+		}
 	}
 
     public function test_bulk_local_mapping_scheduling_preserves_identifier_only_payloads_under_backlog(): void

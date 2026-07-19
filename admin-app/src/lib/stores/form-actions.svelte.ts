@@ -284,7 +284,7 @@ async function create(
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
 		formActionsState.items = [...formActionsState.items, created];
 		notifications.success('Action mapping created');
-		await refresh(formSourceSlug, formId);
+		await refresh(formSourceSlug, formId, { forceRefresh: true });
 	} catch (error) {
 		console.error('formActionsStore.create failed', error);
 		const message = friendlyMessageFromError(error, 'Failed to create action mapping');

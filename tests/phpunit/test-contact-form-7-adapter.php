@@ -838,6 +838,561 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
     }
 
+    public function test_synchronous_claim_rechecks_global_disable_inside_the_authority_fence(): void
+    {
+        global $wpdb;
+
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+
+        $calls     = 0;
+        $action_id = 'fixture_disable_race';
+        $action    = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static function () use ( &$calls ): array {
+                ++$calls;
+                return [ 'classification' => 'must-not-run' ];
+            }
+        );
+        $configured = $this->configure_accepted_mapping( $action_id, $action );
+        $disable_at_claim = static function ( mixed $settings ): mixed {
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if ( 'execute_claimed_synchronous_mapping' === ( $frame['function'] ?? '' ) )
+                {
+                    $settings = is_array( $settings ) ? $settings : [];
+                    $settings['execution_global_disabled'] = true;
+                    return $settings;
+                }
+            }
+
+            return $settings;
+        };
+        add_filter( 'option_sentient_forms_plugin_settings', $disable_at_claim );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'disable-race' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'option_sentient_forms_plugin_settings', $disable_at_claim );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+        }
+
+        $this->assertSame( 0, $calls );
+        $this->assertSame( 'failed', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertSame(
+            [],
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->list(
+                [ 'record_type' => 'accepted_sync', 'limit' => 5 ]
+            )
+        );
+    }
+
+    public function test_synchronous_success_becomes_indeterminate_when_terminal_authority_cannot_be_persisted(): void
+    {
+        global $wpdb;
+
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+
+        $calls             = 0;
+        $execution_context = [];
+        $action_id         = 'fixture_terminal_authority_failure';
+        $action            = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static function ( array $form_data ) use ( &$calls, &$execution_context ): array {
+                ++$calls;
+                $execution_context = is_array( $form_data['execution_context'] ?? null )
+                    ? $form_data['execution_context']
+                    : [];
+                return [ 'classification' => 'effect-applied' ];
+            }
+        );
+        $configured = $this->configure_accepted_mapping( $action_id, $action );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $failed_success_transition = false;
+        $fail_success_transition = static function ( string $query ) use ( $request_table, &$failed_success_transition ): string {
+            if (
+                ! $failed_success_transition
+                && str_contains( $query, $request_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'success'/", $query )
+            )
+            {
+                $failed_success_transition = true;
+                return 'SENTIENT FORMS FORCED SYNCHRONOUS TERMINAL AUTHORITY FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_success_transition );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'terminal-authority-failure' ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_success_transition );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+        }
+
+        $request_id = (string) ( $execution_context['execution_request_id'] ?? '' );
+        $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
+        $this->assertTrue( $failed_success_transition );
+        $this->assertSame( 1, $calls );
+        $this->assertSame( 'failed', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
+
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+        try
+        {
+            $replay = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'terminal-authority-failure-replay' ]
+            );
+        }
+        finally
+        {
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+        }
+        $this->assertSame( 1, $calls );
+        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+    }
+
+    public function test_synchronous_terminal_authority_and_action_log_share_one_reset_fence(): void
+    {
+        global $wpdb;
+
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+        delete_option( 'sentient_forms_action_log' );
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+
+        $calls             = 0;
+        $execution_context = [];
+        $action_id         = 'fixture_sync_reset_log_fence';
+        $action            = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static function ( array $form_data ) use ( &$calls, &$execution_context ): array {
+                ++$calls;
+                $execution_context = is_array( $form_data['execution_context'] ?? null )
+                    ? $form_data['execution_context']
+                    : [];
+                return [ 'classification' => 'effect-applied' ];
+            }
+        );
+        $configured = $this->configure_accepted_mapping( $action_id, $action );
+        $reset_result = null;
+        $reset_at_unfenced_log_acquisition = static function ( mixed $timeout ) use ( &$reset_result ): mixed {
+            if ( null !== $reset_result )
+            {
+                return $timeout;
+            }
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if (
+                    'Sentient_Forms_Action_Log_Controller' === ( $frame['class'] ?? '' )
+                    && 'log_execution' === ( $frame['function'] ?? '' )
+                )
+                {
+                    $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                    $settings = is_array( $settings ) ? $settings : [];
+                    $settings['execution_global_disabled'] = true;
+                    update_option( 'sentient_forms_plugin_settings', $settings, false );
+                    $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                        Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                        get_current_user_id()
+                    );
+                    break;
+                }
+            }
+
+            return $timeout;
+        };
+        $reset_inside_log_write = static function ( mixed $value ) use ( &$reset_result ): mixed {
+            if ( null === $reset_result )
+            {
+                $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                $settings = is_array( $settings ) ? $settings : [];
+                $settings['execution_global_disabled'] = true;
+                update_option( 'sentient_forms_plugin_settings', $settings, false );
+                $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                    Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                    get_current_user_id()
+                );
+            }
+
+            return $value;
+        };
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_log_acquisition );
+        add_filter( 'pre_update_option_sentient_forms_action_log', $reset_inside_log_write );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'sync-reset-log-fence' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_log_acquisition );
+            remove_filter( 'pre_update_option_sentient_forms_action_log', $reset_inside_log_write );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+        }
+
+        $request_id = (string) ( $execution_context['execution_request_id'] ?? '' );
+        $this->assertSame( 1, $calls );
+        $this->assertSame( 'succeeded', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $reset_result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $reset_result->get_error_code() );
+        $this->assertSame(
+            'success',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
+        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
+
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_queued_accepted_identity_and_pending_log_share_one_reset_fence(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+        delete_option( 'sentient_forms_action_log' );
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+
+        $action_id  = 'fixture_queued_reset_log_fence';
+        $action     = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static fn (): array => [ 'classification' => 'queued-effect' ]
+        );
+        $configured = $this->configure_accepted_mapping(
+            $action_id,
+            $action,
+            [ 'execution_mode' => 'async' ]
+        );
+        $reset_result = null;
+        $reset_at_unfenced_log_acquisition = static function ( mixed $timeout ) use ( &$reset_result ): mixed {
+            if ( null !== $reset_result )
+            {
+                return $timeout;
+            }
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if (
+                    'Sentient_Forms_Action_Log_Controller' === ( $frame['class'] ?? '' )
+                    && 'log_execution' === ( $frame['function'] ?? '' )
+                )
+                {
+                    $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                    $settings = is_array( $settings ) ? $settings : [];
+                    $settings['execution_global_disabled'] = true;
+                    update_option( 'sentient_forms_plugin_settings', $settings, false );
+                    $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                        Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                        get_current_user_id()
+                    );
+                    break;
+                }
+            }
+
+            return $timeout;
+        };
+        $reset_inside_log_write = static function ( mixed $value ) use ( &$reset_result ): mixed {
+            if ( null === $reset_result )
+            {
+                $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                $settings = is_array( $settings ) ? $settings : [];
+                $settings['execution_global_disabled'] = true;
+                update_option( 'sentient_forms_plugin_settings', $settings, false );
+                $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                    Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                    get_current_user_id()
+                );
+            }
+
+            return $value;
+        };
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_log_acquisition );
+        add_filter( 'pre_update_option_sentient_forms_action_log', $reset_inside_log_write );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'queued-reset-log-fence' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_at_unfenced_log_acquisition );
+            remove_filter( 'pre_update_option_sentient_forms_action_log', $reset_inside_log_write );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+            if ( is_array( $reset_result ) && 'completed' === ( $reset_result['status'] ?? null ) )
+            {
+                Sentient_Forms_Installer::maybe_upgrade( true );
+            }
+        }
+
+        $requests   = Sentient_Forms_Plugin::instance()->get_async_request_store()->list(
+            [ 'record_type' => 'job', 'limit' => 5 ]
+        );
+        $request_id = (string) ( $requests[0]['request_hash'] ?? '' );
+        $this->assertSame( 'queued', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $reset_result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $reset_result->get_error_code() );
+        $this->assertSame(
+            'queued',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'job' )['status'] ?? null
+        );
+        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
+
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_synchronous_claim_sql_failure_is_reported_as_failed_not_active_replay(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+        $wpdb->delete(
+            $wpdb->prefix . 'sentient_async_requests',
+            [ 'record_type' => 'accepted_sync' ],
+            [ '%s' ]
+        );
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+        $calls     = 0;
+        $action_id = 'fixture_claim_sql_failure';
+        $action    = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static function () use ( &$calls ): array {
+                ++$calls;
+                return [ 'classification' => 'must-not-run' ];
+            }
+        );
+        $configured = $this->configure_accepted_mapping( $action_id, $action );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $failed_insert = false;
+        $fail_request_insert = static function ( string $query ) use ( $request_table, &$failed_insert ): string {
+            if (
+                ! $failed_insert
+                && str_starts_with( ltrim( $query ), 'INSERT IGNORE' )
+                && str_contains( $query, $request_table )
+            )
+            {
+                $failed_insert = true;
+                return 'SENTIENT FORMS FORCED ACCEPTED REQUEST INSERT FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_request_insert );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'claim-sql-failure' ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_request_insert );
+        }
+
+        $execution_result = $result->get_execution_result( $configured['runtime_mapping_id'] );
+        $this->assertTrue( $failed_insert );
+        $this->assertSame( 0, $calls );
+        $this->assertSame( 'failed', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $execution_result );
+        $this->assertSame( 'sentient_forms_async_request_persistence_failed', $execution_result->get_error_code() );
+    }
+
+    public function test_async_enqueue_and_failure_status_sql_errors_are_not_reported_as_active_replay(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+
+        $original_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_settings  = is_array( $original_settings ) ? $original_settings : [];
+        $enabled_settings['execution_global_disabled'] = false;
+        $enabled_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_settings, false );
+
+        $action_id  = 'fixture_async_enqueue_status_failure';
+        $action     = new Sentient_Forms_Test_Context_Tracking_Action(
+            $action_id,
+            static fn (): array => [ 'classification' => 'must-not-run-synchronously' ]
+        );
+        $configured = $this->configure_accepted_mapping(
+            $action_id,
+            $action,
+            [ 'execution_mode' => 'async' ]
+        );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $failed_status_write = false;
+        $reject_local_mapping_schedule = static function ( mixed $pre, int $timestamp, string $hook ): mixed {
+            return 'sentient_forms_process_local_mapping' === $hook ? 0 : $pre;
+        };
+        $fail_status_write = static function ( string $query ) use ( $request_table, &$failed_status_write ): string {
+            if (
+                ! $failed_status_write
+                && str_contains( $query, $request_table )
+                && 1 === preg_match( "/`?status`?\\s*=\\s*'failed'/", $query )
+            )
+            {
+                $failed_status_write = true;
+                return 'SENTIENT FORMS FORCED ASYNC FAILURE STATUS WRITE FAILURE';
+            }
+
+            return $query;
+        };
+
+        add_filter( 'pre_as_schedule_single_action', $reject_local_mapping_schedule, 10, 3 );
+        add_filter( 'query', $fail_status_write );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $result = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'enqueue-status-write-failure' ]
+            );
+            $replay = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'enqueue-status-write-failure-retry' ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'pre_as_schedule_single_action', $reject_local_mapping_schedule, 10 );
+            remove_filter( 'query', $fail_status_write );
+            if ( false === $original_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_settings, false );
+            }
+        }
+
+        $runtime_mapping_id = $configured['runtime_mapping_id'];
+        $execution_result   = $result->get_execution_result( $runtime_mapping_id );
+        $requests = Sentient_Forms_Plugin::instance()->get_async_request_store()->list(
+            [ 'record_type' => 'job', 'limit' => 5 ]
+        );
+        $this->assertTrue( $failed_status_write );
+        $this->assertSame( 'failed', $result->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $execution_result );
+        $this->assertSame( 'sentient_forms_async_request_persistence_failed', $execution_result->get_error_code() );
+        $this->assertSame( 'failed', $replay->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+        $this->assertNotSame( 'replayed_active', $replay->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+        $this->assertSame( 'failed', $requests[0]['status'] ?? null );
+    }
+
     public function test_synchronous_success_replay_preserves_stored_effect_outcomes_over_current_preflight(): void
     {
         global $wpdb;

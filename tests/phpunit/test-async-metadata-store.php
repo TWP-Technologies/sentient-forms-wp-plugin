@@ -15,8 +15,41 @@ class AsyncMetadataStoreTest extends WP_UnitTestCase
     protected function tearDown(): void
     {
         remove_all_filters( 'sentient_forms_async_metadata_action_scheduler_status' );
+        remove_all_filters( 'sentient_forms_action_authority_writer_lock_timeout' );
         $this->store->clear();
         parent::tearDown();
+    }
+
+    public function test_record_job_propagates_writer_barrier_errors_without_stale_persistence(): void
+    {
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $acquired         = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+        $job_id = wp_generate_uuid4();
+
+        try
+        {
+            $result = $this->store->record_job(
+                $job_id,
+                'sentient_forms_process_local_mapping',
+                [ 'context' => [ 'action_id' => 'metadata-barrier-fixture' ] ],
+                time()
+            );
+        }
+        finally
+        {
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            $competitor->close();
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertNull( $this->store->get( $job_id ) );
     }
 
     public function test_reconcile_with_action_scheduler_reports_drift_in_dry_run(): void

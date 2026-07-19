@@ -3315,12 +3315,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * @param mixed $form_id  The form ID.
      * @param array $settings The settings to update.
      *
-     * @return bool Whether the update was successful.
+     * @return bool|WP_Error Whether the update was successful, or a concurrency error.
      */
-    public function update_form_settings( mixed $form_id, array $settings ): bool
+    public function update_form_settings( mixed $form_id, array $settings ): bool | WP_Error
     {
         $option_name = $this->get_form_option_name( $form_id );
-        return update_option( $option_name, $settings, false );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option( $option_name, $settings );
     }
 
     /**

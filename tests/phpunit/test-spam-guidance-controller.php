@@ -745,9 +745,23 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
             ]
         );
 
-        $response = rest_get_server()->dispatch( $request );
+        $nested_migration = null;
+        $run_migration_before_stale_write = static function ( mixed $value ) use ( &$nested_migration ): mixed {
+            $nested_migration = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_actions_gravity_forms_7', $run_migration_before_stale_write );
+        try
+        {
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_actions_gravity_forms_7', $run_migration_before_stale_write );
+        }
         $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
         $this->assertSame( 1, $this->rationale_generation_calls );
+        $this->assertSame( 0, $nested_migration['migration_complete'] ?? null );
 
         $stored  = get_option( 'sentient_forms_actions_gravity_forms_7', [] );
         $mapping = $stored['actions']['playwright_spam'] ?? null;

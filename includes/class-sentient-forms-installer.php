@@ -11,6 +11,8 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
+    private const OPTION_FORM_MAPPINGS_ENGINE_VERSION = 'sentient_forms_form_mappings_engine_version';
+    private const FORM_MAPPINGS_ENGINE_VERSION = '2026.07.19.v1';
     private const OPTION_SETTINGS = 'sentient_forms_settings';
     private const OPTION_ACTION_RESULTS_RETIREMENT_VERSION = 'sentient_forms_action_results_retirement_version';
     private const ACTION_RESULTS_RETIREMENT_VERSION = '2026.07.18.v1';
@@ -127,6 +129,11 @@ class Sentient_Forms_Installer
             return;
         }
 
+        if ( ! self::ensure_form_mappings_transactional_storage() )
+        {
+            return;
+        }
+
         $submission_ledger_retention_backfill_complete = self::backfill_submission_ledger_retention();
 
         $action_results_retirement_complete = self::retire_option_backed_action_results();
@@ -176,7 +183,7 @@ class Sentient_Forms_Installer
             }
         }
         self::repair_local_first_action_integrity();
-        Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+        Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
 
         if (
             $needs_db_version_update
@@ -1086,6 +1093,61 @@ class Sentient_Forms_Installer
         return true;
     }
 
+    /**
+     * Upgrade legacy mapping tables to the transactional engine required by
+     * mapping-graph mutations before any authority migration can run.
+     */
+    private static function ensure_form_mappings_transactional_storage(): bool
+    {
+        if ( self::FORM_MAPPINGS_ENGINE_VERSION === get_option( self::OPTION_FORM_MAPPINGS_ENGINE_VERSION, '' ) )
+        {
+            return true;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_form_mappings';
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned installer must verify the physical engine of its mapping table before enabling transactional graph mutations.
+        $definition = $wpdb->get_row(
+            $wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+            ARRAY_N
+        );
+        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+
+        if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+        {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- One versioned schema repair converts legacy plugin-owned mapping tables to the engine required by repository transactions.
+            $converted = $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            if ( false === $converted )
+            {
+                $wpdb->suppress_errors( $previous_suppress_errors );
+                return false;
+            }
+
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Read back the physical engine before recording the migration marker.
+            $definition = $wpdb->get_row(
+                $wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+                ARRAY_N
+            );
+            $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+        }
+        $wpdb->suppress_errors( $previous_suppress_errors );
+
+        if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+        {
+            return false;
+        }
+
+        $updated = update_option(
+            self::OPTION_FORM_MAPPINGS_ENGINE_VERSION,
+            self::FORM_MAPPINGS_ENGINE_VERSION,
+            false
+        );
+
+        return $updated
+            || self::FORM_MAPPINGS_ENGINE_VERSION === get_option( self::OPTION_FORM_MAPPINGS_ENGINE_VERSION, '' );
+    }
+
     private static function create_local_first_tables(): void
     {
         global $wpdb;
@@ -1184,7 +1246,7 @@ class Sentient_Forms_Installer
                 KEY action_idx (action_kind, action_id),
                 KEY hook_idx (hook),
                 KEY enabled_idx (enabled)
-            ) {$charset_collate};",
+            ) ENGINE=InnoDB {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_submission_ledger_settings (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 form_source VARCHAR(100) NOT NULL,

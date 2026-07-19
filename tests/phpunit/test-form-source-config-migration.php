@@ -106,6 +106,47 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'gform_after_submission', $stored['map_spam']['settings']['trigger_sources'] ?? [] );
     }
 
+    public function test_option_backed_config_migration_cannot_race_action_authority_cutover(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_216';
+        $this->option_keys[] = $option_key;
+
+        update_option(
+            $option_key,
+            [
+                'map_summary' => [
+                    'local_mapping_id' => 'map_summary',
+                    'central_action_id' => 'entry_summary_v1',
+                    'trigger_hooks'     => [ 'gform_after_submission' ],
+                    'settings'          => [],
+                ],
+            ],
+            false
+        );
+
+        $nested_migration = null;
+        $run_migration_before_stale_write = static function ( mixed $value ) use ( &$nested_migration ): mixed {
+            $nested_migration = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            return $value;
+        };
+        add_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        try
+        {
+            $summary = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_' . $option_key, $run_migration_before_stale_write );
+        }
+
+        $this->assertSame( 0, $nested_migration['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame(
+            [ 'after_submission' ],
+            get_option( $option_key )['map_summary']['trigger_hooks'] ?? null
+        );
+    }
+
     public function test_option_backed_elementor_config_migrates_legacy_new_record_hook(): void
     {
         $legacy_key          = 'sentient_forms_actions_elementor_forms_301_legacyhook';
@@ -292,6 +333,66 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         $this->assertSame( [ 'source' => 'legacy-config' ], get_option( $canonical_config_key ) );
         $this->assertSame( 1, $summary['form_source_options_renamed'] ?? null );
         $this->assertSame( 1, $summary['form_source_option_collisions'] ?? null );
+    }
+
+    public function test_pending_action_authority_journal_blocks_elementor_option_key_rename_until_resume(): void
+    {
+        global $wpdb;
+
+        $legacy_key    = 'sentient_forms_actions_elementor_forms_302_formabc';
+        $canonical_key = 'sentient_forms_actions_elementor_pro_forms_302_formabc';
+        $journal_key   = 'sentient_forms_action_authority_migration_journal';
+        $this->option_keys = array_merge( $this->option_keys, [ $legacy_key, $canonical_key, $journal_key ] );
+        $mapping = [
+            'local_mapping_id'           => 'pending_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        update_option( $legacy_key, [ 'pending_summary' => $mapping ], false );
+        $raw_option_value = (string) $wpdb->get_var(
+            $wpdb->prepare( 'SELECT option_value FROM %i WHERE option_name = %s', $wpdb->options, $legacy_key )
+        );
+        update_option(
+            $journal_key,
+            [
+                'option_key'   => $legacy_key,
+                'option_value' => $raw_option_value,
+                'wrapped'      => false,
+                'mappings'     => [
+                    [
+                        'key'    => 'pending_summary',
+                        'hash'   => hash( 'sha256', wp_json_encode( $mapping ) ),
+                        'copies' => [
+                            [
+                                'scope' => 'root',
+                                'key'   => 'pending_summary',
+                                'hash'  => hash( 'sha256', wp_json_encode( $mapping ) ),
+                            ],
+                        ],
+                    ],
+                ],
+                'rows'         => [],
+            ],
+            false
+        );
+
+        $blocked = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+
+        $this->assertSame( 0, $blocked['migration_complete'] ?? null );
+        $this->assertSame( 1, $blocked['active_config_option_failures'] ?? null );
+        $this->assertSame( [ 'pending_summary' => $mapping ], get_option( $legacy_key ) );
+        $this->assertFalse( get_option( $canonical_key, false ) );
+
+        $resumed = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        $this->assertSame( 1, $resumed['migration_complete'] ?? null );
+        $this->assertFalse( get_option( $journal_key, false ) );
+        $this->assertSame( [], get_option( $legacy_key ) );
+
+        $completed = Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+        $this->assertSame( 1, $completed['migration_complete'] ?? null );
     }
 
     public function test_installer_migrates_elementor_action_log_identity_without_rewriting_nested_content(): void

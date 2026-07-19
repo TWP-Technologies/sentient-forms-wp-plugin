@@ -974,6 +974,14 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function update_action_config( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): WP_Error | WP_REST_Response => $this->update_action_config_locked( $request )
+        );
+    }
+
+    /** Update one form Action config after the shared local-state fence is held. */
+    private function update_action_config_locked( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
         $form_source = (string) $request->get_param( 'form_source' );
         $form_id     = $this->get_request_form_id( $request );
         $action_id   = (string) $request->get_param( 'action_id' );
@@ -1065,6 +1073,14 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      * @return WP_REST_Response|WP_Error
      */
     public function delete_action_config( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): WP_Error | WP_REST_Response => $this->delete_action_config_locked( $request )
+        );
+    }
+
+    /** Delete one form Action config after the shared local-state fence is held. */
+    private function delete_action_config_locked( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $form_source = (string) $request->get_param( 'form_source' );
         $form_id     = $this->get_request_form_id( $request );
@@ -1206,6 +1222,16 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      * @return WP_REST_Response|WP_Error
      */
     public function update_action_defaults( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): WP_Error | WP_REST_Response => $this->update_action_defaults_locked( $request )
+        );
+    }
+
+    /**
+     * Update Action defaults after the shared local-state writer fence is held.
+     */
+    private function update_action_defaults_locked( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $action_id = $request->get_param( 'action_id' );
         $option_key = $this->get_action_defaults_key( $action_id );

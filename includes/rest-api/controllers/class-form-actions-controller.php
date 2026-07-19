@@ -3507,32 +3507,43 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      *
      * @param WP_REST_Request $request Request object.
      *
-     * @return WP_REST_Response
+     * @return WP_Error|WP_REST_Response
      */
-    public function toggle_form_disabled( WP_REST_Request $request ): WP_REST_Response
+    public function toggle_form_disabled( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );
         $sf_disabled      = (bool) $request->get_param( 'sf_disabled' );
 
         $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $options    = $this->get_actions_option( $form_source_slug, $form_id );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $form_source_slug, $form_id, $sf_disabled, $option_key ): WP_Error | WP_REST_Response {
+                $options                = $this->get_actions_option( $form_source_slug, $form_id );
+                $options['sf_disabled'] = $sf_disabled;
+                $updated                = update_option( $option_key, $options, false );
+                if ( ! $updated && $options !== get_option( $option_key, [] ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_form_disabled_update_failed',
+                        __( 'The form execution setting could not be saved.', 'sentient-forms' ),
+                        500
+                    );
+                }
 
-        $options['sf_disabled'] = $sf_disabled;
-        update_option( $option_key, $options, false );
+                $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
+                $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
 
-        $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
-        $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
-
-        return $this->prepare_item_for_response( [
-            'sf_disabled'       => $sf_disabled,
-            'global_disabled'   => $execution_disable['global_disabled'],
-            'provider_disabled' => $execution_disable['provider_disabled'],
-            'effective_disabled'=> $effective_disabled,
-            'message'           => $sf_disabled
-                ? __( 'Sentient Forms disabled for this form.', 'sentient-forms' )
-                : __( 'Sentient Forms enabled for this form.', 'sentient-forms' ),
-        ] );
+                return $this->prepare_item_for_response( [
+                    'sf_disabled'       => $sf_disabled,
+                    'global_disabled'   => $execution_disable['global_disabled'],
+                    'provider_disabled' => $execution_disable['provider_disabled'],
+                    'effective_disabled'=> $effective_disabled,
+                    'message'           => $sf_disabled
+                        ? __( 'Sentient Forms disabled for this form.', 'sentient-forms' )
+                        : __( 'Sentient Forms enabled for this form.', 'sentient-forms' ),
+                ] );
+            }
+        );
     }
 
     /**
@@ -4854,6 +4865,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $updated = $this->local_custom_actions->update_status( $action_id, 'active' );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
         if ( ! $updated )
         {
             return $this->prepare_error_response(
@@ -4866,7 +4881,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return true;
     }
 
-    /** Reject duplication of legacy option-backed mappings. */
+    /** Duplicate a local-first mapping and atomically insert it into the dependency graph. */
     public function duplicate_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $form_source_slug = $request->get_param( 'form_source_slug' );
@@ -4879,11 +4894,460 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return $this->legacy_action_mapping_read_only_response();
         }
 
-        return $this->prepare_error_response(
-            'rest_action_not_found',
-            __( 'Action linkage not found to duplicate.', 'sentient-forms' ),
-            404
+        $source_row = $this->get_local_first_mapping_row_for_request( $request );
+        if ( ! is_array( $source_row ) || ! $this->local_form_mappings )
+        {
+            return $this->prepare_error_response(
+                'rest_action_not_found',
+                __( 'Action linkage not found to duplicate.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        $parent = $this->sanitize_duplicate_parent_request( $request->get_param( 'parent' ) );
+        if ( is_wp_error( $parent ) )
+        {
+            return $this->prepare_error_response( $parent->get_error_code(), $parent->get_error_message(), 400 );
+        }
+
+        $source_mapping = $this->transform_local_first_mapping_to_linkage( $source_row );
+        if ( null === $source_mapping )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_invalid',
+                __( 'Local form mapping could not be normalized for duplication.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $source_trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $source_mapping['trigger_hooks'] ?? [] ) );
+        $target_hook          = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $parent['hook'] ?? null ) ?? '';
+        if ( ! in_array( $target_hook, $source_trigger_hooks, true ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_duplicate_parent_hook',
+                __( 'Duplicate insertion hook is not configured on the source mapping.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $current_rows    = $this->local_form_mappings->list_for_form( sanitize_key( (string) $form_source_slug ), $form_id );
+        $current_actions = $this->option_backed_dependency_actions_for_form( sanitize_key( (string) $form_source_slug ), $form_id );
+        foreach ( $current_rows as $current_row )
+        {
+            $current_linkage = $this->transform_local_first_mapping_to_linkage( $current_row );
+            if ( null !== $current_linkage )
+            {
+                $current_actions[ (string) $current_linkage['local_mapping_id'] ] = $current_linkage;
+            }
+        }
+
+        if ( 'mapping' === $parent['type'] )
+        {
+            $parent_mapping_id = sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) );
+            if ( ! isset( $current_actions[ $parent_mapping_id ] ) || ! is_array( $current_actions[ $parent_mapping_id ] ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_duplicate_parent',
+                    __( 'Selected parent mapping does not exist.', 'sentient-forms' ),
+                    400
+                );
+            }
+            if ( $this->parse_local_first_mapping_id( $parent_mapping_id ) <= 0 )
+            {
+                return $this->prepare_error_response(
+                    'rest_legacy_duplicate_parent_read_only',
+                    __( 'A new local mapping cannot depend on a retired legacy mapping.', 'sentient-forms' ),
+                    409
+                );
+            }
+
+            $parent_hooks = $this->sanitize_trigger_hooks( (array) ( $current_actions[ $parent_mapping_id ]['trigger_hooks'] ?? [] ) );
+            if ( ! $this->dependency_satisfies_hook( $target_hook, $parent_hooks ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_duplicate_parent_hooks',
+                    __( 'Selected parent mapping does not satisfy the selected hook.', 'sentient-forms' ),
+                    400
+                );
+            }
+            if (
+                Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $target_hook
+                && $this->is_mapping_async( $current_actions[ $parent_mapping_id ] )
+                && ! $this->is_mapping_async( $source_mapping )
+            )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_duplicate_parent_execution_mode',
+                    __( 'Selected parent mapping runs in Background, but the source mapping does not.', 'sentient-forms' ),
+                    400
+                );
+            }
+        }
+
+        $contract_validation = $this->validate_action_source_compatibility(
+            sanitize_key( (string) $form_source_slug ),
+            $source_trigger_hooks,
+            $source_mapping['central_action_id'] ?? '',
+            is_array( $source_mapping['settings'] ?? null ) ? $source_mapping['settings'] : [],
+            $this->local_custom_actions
+                ? $this->local_custom_actions->get( absint( $source_row['action_id'] ?? 0 ) )
+                : null
         );
+        if ( is_wp_error( $contract_validation ) )
+        {
+            return $contract_validation;
+        }
+
+        $parent_source = 'mapping' === $parent['type']
+            ? [ 'type' => 'mapping', 'mapping_id' => sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) ) ]
+            : [ 'type' => 'hook_root' ];
+        $duplicate = $this->set_mapping_trigger_source_for_hook( $source_mapping, $target_hook, $parent_source );
+        if ( is_wp_error( $duplicate ) )
+        {
+            return $this->prepare_error_response( $duplicate->get_error_code(), $duplicate->get_error_message(), 400 );
+        }
+
+        $pending_id                           = 'local_first_pending_duplicate';
+        $duplicate['local_mapping_id']        = $pending_id;
+        $duplicate['local_form_mapping_id']   = 0;
+        $candidate                            = $current_actions;
+        $candidate[ $pending_id ]             = $duplicate;
+        $duplicate_validation                 = $this->validate_mapping_dependencies( $candidate );
+        if ( is_wp_error( $duplicate_validation ) )
+        {
+            return $this->prepare_error_response(
+                $duplicate_validation->get_error_code(),
+                $duplicate_validation->get_error_message(),
+                400
+            );
+        }
+
+        $transaction = $this->local_form_mappings->transaction(
+            function () use (
+                $source_id,
+                $parent,
+                $form_source_slug,
+                $form_id
+            ): array | WP_Error {
+                $normalized_form_source = sanitize_key( (string) $form_source_slug );
+                $locked_rows = $this->local_form_mappings->list_for_form_for_update( $normalized_form_source, $form_id );
+                $source_row_id = $this->parse_local_first_mapping_id( $source_id );
+                $source_row    = null;
+                $current_actions = $this->option_backed_dependency_actions_for_form( $normalized_form_source, $form_id );
+                foreach ( $locked_rows as $locked_row )
+                {
+                    $locked_linkage = $this->transform_local_first_mapping_to_linkage( $locked_row );
+                    if ( null !== $locked_linkage )
+                    {
+                        $current_actions[ (string) $locked_linkage['local_mapping_id'] ] = $locked_linkage;
+                    }
+                    if ( absint( $locked_row['id'] ?? 0 ) === $source_row_id )
+                    {
+                        $source_row = $locked_row;
+                    }
+                }
+
+                $source_mapping = is_array( $source_row )
+                    ? $this->transform_local_first_mapping_to_linkage( $source_row )
+                    : null;
+                if ( null === $source_mapping )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_conflict',
+                        __( 'The source mapping changed before duplication could begin.', 'sentient-forms' ),
+                        409
+                    );
+                }
+
+                $source_trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $source_mapping['trigger_hooks'] ?? [] ) );
+                $target_hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $parent['hook'] ?? null ) ?? '';
+                if ( ! in_array( $target_hook, $source_trigger_hooks, true ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_conflict',
+                        __( 'The source mapping hooks changed before duplication could begin.', 'sentient-forms' ),
+                        409
+                    );
+                }
+
+                if ( 'mapping' === $parent['type'] )
+                {
+                    $parent_mapping_id = sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) );
+                    if (
+                        $this->parse_local_first_mapping_id( $parent_mapping_id ) <= 0
+                        || ! isset( $current_actions[ $parent_mapping_id ] )
+                        || ! is_array( $current_actions[ $parent_mapping_id ] )
+                    )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_duplicate_transaction_conflict',
+                            __( 'The selected parent changed before duplication could begin.', 'sentient-forms' ),
+                            409
+                        );
+                    }
+
+                    $parent_hooks = $this->sanitize_trigger_hooks(
+                        (array) ( $current_actions[ $parent_mapping_id ]['trigger_hooks'] ?? [] )
+                    );
+                    if ( ! $this->dependency_satisfies_hook( $target_hook, $parent_hooks ) )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_duplicate_transaction_conflict',
+                            __( 'The selected parent hooks changed before duplication could begin.', 'sentient-forms' ),
+                            409
+                        );
+                    }
+                    if (
+                        Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $target_hook
+                        && $this->is_mapping_async( $current_actions[ $parent_mapping_id ] )
+                        && ! $this->is_mapping_async( $source_mapping )
+                    )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_duplicate_transaction_conflict',
+                            __( 'The selected parent execution mode changed before duplication could begin.', 'sentient-forms' ),
+                            409
+                        );
+                    }
+                }
+
+                $contract_validation = $this->validate_action_source_compatibility(
+                    $normalized_form_source,
+                    $source_trigger_hooks,
+                    $source_mapping['central_action_id'] ?? '',
+                    is_array( $source_mapping['settings'] ?? null ) ? $source_mapping['settings'] : [],
+                    $this->local_custom_actions
+                        ? $this->local_custom_actions->get( absint( $source_row['action_id'] ?? 0 ) )
+                        : null
+                );
+                if ( is_wp_error( $contract_validation ) )
+                {
+                    return $contract_validation;
+                }
+
+                $parent_source = 'mapping' === $parent['type']
+                    ? [ 'type' => 'mapping', 'mapping_id' => sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) ) ]
+                    : [ 'type' => 'hook_root' ];
+                $duplicate = $this->set_mapping_trigger_source_for_hook( $source_mapping, $target_hook, $parent_source );
+                if ( is_wp_error( $duplicate ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_conflict',
+                        $duplicate->get_error_message(),
+                        409
+                    );
+                }
+
+                $pending_id                         = 'local_first_pending_duplicate';
+                $duplicate['local_mapping_id']      = $pending_id;
+                $duplicate['local_form_mapping_id'] = 0;
+                $candidate                          = $current_actions;
+                $candidate[ $pending_id ]           = $duplicate;
+                $duplicate_validation               = $this->validate_mapping_dependencies( $candidate );
+                if ( is_wp_error( $duplicate_validation ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_conflict',
+                        $duplicate_validation->get_error_message(),
+                        409
+                    );
+                }
+
+                $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+                $children_to_move = $this->find_parent_children_for_hook(
+                    $current_actions,
+                    $parent,
+                    $target_hook,
+                    $planner
+                );
+
+                $create_payload                  = $source_row;
+                $create_payload['external_id']   = null;
+                $create_payload['settings_json'] = $this->local_first_settings_from_linkage( $source_row, $duplicate );
+                $new_row_id = $this->local_form_mappings->create( $create_payload );
+                if ( is_wp_error( $new_row_id ) || $new_row_id <= 0 )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_failed',
+                        __( 'The duplicate mapping could not be created.', 'sentient-forms' ),
+                        500
+                    );
+                }
+
+                $new_row = $this->local_form_mappings->get( $new_row_id );
+                $new_linkage = is_array( $new_row ) ? $this->transform_local_first_mapping_to_linkage( $new_row ) : null;
+                if ( null === $new_linkage )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_failed',
+                        __( 'The duplicate mapping could not be normalized.', 'sentient-forms' ),
+                        500
+                    );
+                }
+
+                $new_mapping_id                = (string) $new_linkage['local_mapping_id'];
+                $working                       = $current_actions;
+                $working[ $new_mapping_id ]    = $new_linkage;
+                $moved_children                = [];
+                $skipped_children              = [];
+
+                foreach ( $children_to_move as $child_id )
+                {
+                    $child_row_id = $this->parse_local_first_mapping_id( $child_id );
+                    if ( $child_row_id <= 0 )
+                    {
+                        $skipped_children[] = [
+                            'child_id' => $child_id,
+                            'hook'     => $target_hook,
+                            'code'     => 'legacy_read_only',
+                            'message'  => __( 'Legacy option-backed children are read-only and were not rewired.', 'sentient-forms' ),
+                        ];
+                        continue;
+                    }
+
+                    $child_row = $this->get_local_first_mapping_row( $child_id, sanitize_key( (string) $form_source_slug ), $form_id );
+                    $child_linkage = is_array( $child_row ) ? $this->transform_local_first_mapping_to_linkage( $child_row ) : null;
+                    if ( null === $child_linkage )
+                    {
+                        $skipped_children[] = [
+                            'child_id' => $child_id,
+                            'hook'     => $target_hook,
+                            'code'     => 'missing_dependency',
+                            'message'  => __( 'The child mapping no longer exists.', 'sentient-forms' ),
+                        ];
+                        continue;
+                    }
+
+                    $next_child = $this->set_mapping_trigger_source_for_hook(
+                        $child_linkage,
+                        $target_hook,
+                        [ 'type' => 'mapping', 'mapping_id' => $new_mapping_id ]
+                    );
+                    if ( is_wp_error( $next_child ) )
+                    {
+                        $skipped_children[] = [
+                            'child_id' => $child_id,
+                            'hook'     => $target_hook,
+                            'code'     => 'policy_violation',
+                            'message'  => $next_child->get_error_message(),
+                        ];
+                        continue;
+                    }
+
+                    $child_candidate              = $working;
+                    $child_candidate[ $child_id ] = $next_child;
+                    $child_validation             = $this->validate_mapping_dependencies( $child_candidate );
+                    if ( is_wp_error( $child_validation ) )
+                    {
+                        $skipped_children[] = [
+                            'child_id' => $child_id,
+                            'hook'     => $target_hook,
+                            'code'     => $this->map_dependency_validation_error_to_skip_code( $child_validation->get_error_code() ),
+                            'message'  => $child_validation->get_error_message(),
+                        ];
+                        continue;
+                    }
+
+                    $updated = $this->local_form_mappings->update(
+                        $child_row_id,
+                        [ 'settings_json' => $this->local_first_settings_from_linkage( $child_row, $next_child ) ]
+                    );
+                    if ( is_wp_error( $updated ) )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_duplicate_transaction_failed',
+                            __( 'The duplicate graph could not be rewired atomically.', 'sentient-forms' ),
+                            500
+                        );
+                    }
+
+                    $working[ $child_id ] = $next_child;
+                    $moved_children[]      = $child_id;
+                }
+
+                $final_validation = $this->validate_mapping_dependencies( $working );
+                if ( is_wp_error( $final_validation ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_duplicate_transaction_failed',
+                        $final_validation->get_error_message(),
+                        500
+                    );
+                }
+
+                return [
+                    'duplicate'        => $new_linkage,
+                    'moved_children'   => array_values( $moved_children ),
+                    'skipped_children' => array_values( $skipped_children ),
+                ];
+            }
+        );
+
+        if ( is_wp_error( $transaction ) )
+        {
+            if (
+                in_array(
+                    $transaction->get_error_code(),
+                    [ 'rest_duplicate_transaction_failed', 'rest_duplicate_transaction_conflict' ],
+                    true
+                )
+            )
+            {
+                return $transaction;
+            }
+            return $this->prepare_error_response(
+                'rest_duplicate_transaction_failed',
+                __( 'The duplicate graph transaction failed.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $warnings = [];
+        if ( ! empty( $transaction['skipped_children'] ) )
+        {
+            $warnings[] = __( 'Some parent children could not be rewired due to dependency policy constraints.', 'sentient-forms' );
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'duplicate' => $transaction['duplicate'],
+                'insertion' => [
+                    'parent'           => $parent,
+                    'moved_children'   => $transaction['moved_children'],
+                    'skipped_children' => $transaction['skipped_children'],
+                    'warnings'         => $warnings,
+                ],
+            ],
+            201
+        );
+    }
+
+    /**
+     * Copy only dependency graph settings from a normalized linkage into a row.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $linkage
+     * @return array<string, mixed>|null
+     */
+    private function local_first_settings_from_linkage( array $row, array $linkage ): ?array
+    {
+        $settings         = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
+        $linkage_settings = is_array( $linkage['settings'] ?? null ) ? $linkage['settings'] : [];
+
+        foreach ( [ 'trigger_sources', 'dependency_ids' ] as $field )
+        {
+            if ( array_key_exists( $field, $linkage_settings ) )
+            {
+                $settings[ $field ] = $linkage_settings[ $field ];
+            }
+            else
+            {
+                unset( $settings[ $field ] );
+            }
+        }
+
+        return [] === $settings ? null : $settings;
     }
 
     /**
@@ -5071,6 +5535,14 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     /** Delete an action linkage. */
     public function delete_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn (): WP_Error | WP_REST_Response => $this->delete_form_action_item_locked( $request )
+        );
+    }
+
+    /** Delete an action linkage while the legacy option authority is fenced. */
+    private function delete_form_action_item_locked( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = $this->get_request_form_id( $request );

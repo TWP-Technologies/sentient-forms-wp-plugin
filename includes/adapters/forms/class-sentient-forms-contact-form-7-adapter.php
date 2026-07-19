@@ -623,9 +623,12 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         return $this->get_workflow_runner()->get_form_settings( $this->get_id(), $form_id );
     }
 
-    public function update_form_settings( mixed $form_id, array $settings ): bool
+    public function update_form_settings( mixed $form_id, array $settings ): bool | WP_Error
     {
-        return update_option( $this->get_form_actions_option_key( absint( $form_id ) ), $settings, false );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+            $this->get_form_actions_option_key( absint( $form_id ) ),
+            $settings
+        );
     }
 
     private function get_form_actions_option_key( int $form_id ): string

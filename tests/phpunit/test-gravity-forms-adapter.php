@@ -1787,6 +1787,59 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->truncate_local_first_runtime_tables();
     }
 
+    public function test_synchronous_accepted_claim_lock_conflict_fails_instead_of_replaying_active(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 783;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_lock_conflict',
+            'after_submission',
+            [ 'async' => false ]
+        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [ 'ok' => true ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $acquired         = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+
+        try
+        {
+            $outcome = $runner->run_accepted_submission_with_outcome(
+                $this->adapter,
+                [
+                    'entry' => [ 'id' => 1705, 'form_id' => $form_id, 'status' => 'active' ],
+                    'form'  => [ 'id' => $form_id, 'title' => 'Synchronous lock conflict', 'fields' => [] ],
+                ]
+            );
+        }
+        finally
+        {
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+        }
+
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $result = $outcome->get_execution_result( $fixture['runtime_key'] );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertSame( [], $local_execution->calls );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
     public function test_active_async_replay_keeps_synchronous_dependents_blocked(): void
     {
         Sentient_Forms_Installer::maybe_upgrade();
@@ -2278,6 +2331,130 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->truncate_local_first_runtime_tables();
     }
 
+    public function test_skipped_accepted_event_does_not_repopulate_state_after_reset(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id         = 7891;
+        $dependent_calls = 0;
+        $spam = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ],
+            null,
+            [
+                'spam' => [
+                    'skip_downstream_on_spam' => true,
+                ],
+            ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'local_reset_race_spam_dependent',
+            'after_submission',
+            [
+                'async'           => false,
+                'dependency_ids'  => [ $spam['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
+                    ],
+                ],
+            ]
+        );
+
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $spam['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'Reset-race structured spam fixture.',
+                'indicators'     => [],
+            ],
+        ];
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$dependent_calls ): array {
+            ++$dependent_calls;
+            return [ 'summary' => 'Dependent should not run.' ];
+        };
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+        $reset_result = null;
+        $reset_before_skipped_event_lock = static function ( mixed $timeout ) use ( &$reset_result ): mixed {
+            if ( null !== $reset_result )
+            {
+                return $timeout;
+            }
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if ( 'record_skipped_accepted_mapping' === ( $frame['function'] ?? '' ) )
+                {
+                    $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                    $settings = is_array( $settings ) ? $settings : [];
+                    $settings['execution_global_disabled'] = true;
+                    update_option( 'sentient_forms_plugin_settings', $settings, false );
+                    $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                        Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                        get_current_user_id()
+                    );
+                    break;
+                }
+            }
+
+            return $timeout;
+        };
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_before_skipped_event_lock );
+        try
+        {
+            $submission_uuid = $adapter->handle_accepted_submission(
+                [ 'id' => 17111, 'form_id' => $form_id, 'status' => 'active' ],
+                [ 'id' => $form_id, 'title' => 'Skipped reset race', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_before_skipped_event_lock );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+            Sentient_Forms_Installer::maybe_upgrade( true );
+        }
+
+        $this->assertIsArray( $reset_result );
+        $this->assertSame( 'completed', $reset_result['status'] ?? null );
+        $this->assertSame( 0, $dependent_calls );
+        global $wpdb;
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( $submission_uuid );
+        $dependent_events = array_values(
+            array_filter(
+                $events,
+                static fn ( array $event ): bool => $dependent['runtime_key'] === ( $event['mapping_key'] ?? null )
+            )
+        );
+        $this->assertSame( [], $dependent_events );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
     public function test_sync_local_first_failure_preserves_executor_terminal_evidence(): void
     {
         $form_id    = 790;
@@ -2373,7 +2550,17 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
         $this->assertSame( 'failed', $event['status'] ?? null );
         $this->assertSame( 'sentient_forms_executor_terminal_status_mismatch', $event['error_code'] ?? null );
-        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Mismatched local execution', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }
@@ -2454,9 +2641,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 3, $event_updates );
         $this->assertSame( 'failed', $event['status'] ?? null );
         $this->assertSame( 'sentient_forms_executor_terminal_enrichment_failed', $event['error_code'] ?? null );
-        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
         $this->assertSame( 'sentient_managed', $event['provider'] ?? null );
         $this->assertSame( 'provider-payload-digest', $event['payload_digest'] ?? null );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1714, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Enrichment write failure', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }
@@ -2603,9 +2800,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
         $this->assertSame( 2, $event_updates );
         $this->assertCount( 1, $local_execution->calls );
-        $this->assertSame( 'failed', $requests[0]['status'] ?? null );
+        $this->assertSame( 'indeterminate', $requests[0]['status'] ?? null );
         $this->assertSame( 'failed', $event['status'] ?? null );
         $this->assertSame( 'sentient_forms_runner_terminal_persistence_failed', $event['error_code'] ?? null );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1716, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Fallback event failure', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }

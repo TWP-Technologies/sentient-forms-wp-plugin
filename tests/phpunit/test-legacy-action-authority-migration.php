@@ -18,6 +18,8 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
     {
         global $wpdb;
 
+        remove_all_filters( 'sentient_forms_action_authority_lock_database' );
+        remove_all_filters( 'sentient_forms_action_authority_writer_lock_timeout' );
         parent::tearDown();
 
         foreach ( $this->option_keys as $option_key )
@@ -54,6 +56,14 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'gravity_forms', '9930' ],
                 [ 'gravity_forms', '9931' ],
                 [ 'gravity_forms', '9932' ],
+                [ 'gravity_forms', '9933' ],
+                [ 'gravity_forms', '9934' ],
+                [ 'gravity_forms', '9935' ],
+                [ 'gravity_forms', '9936' ],
+                [ 'gravity_forms', '9937' ],
+                [ 'gravity_forms', '9938' ],
+                [ 'gravity_forms', '9939' ],
+                [ 'gravity_forms', '9940' ],
                 [ 'elementor_pro_forms', '321:opaque-form' ],
             ] as [ $form_source, $form_id ]
         )
@@ -535,6 +545,509 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         );
     }
 
+    public function test_migrates_existing_site_owned_custom_action_without_rewriting_it(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_actions_gravity_forms_9933';
+        $this->option_keys[] = $option_key;
+        $actions             = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id           = $actions->create(
+            [
+                'code'                 => 'route_lead_custom_migration',
+                'display_name'         => 'Route Lead Custom Migration',
+                'definition_json'      => [
+                    'action_kind'     => 'custom_definition',
+                    'prompt_template' => 'Route {{entry}}.',
+                    'response_format' => [ 'type' => 'json_object' ],
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'primary'  => 'openrouter/auto',
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $before = $actions->get( $action_id );
+
+        update_option(
+            $option_key,
+            [
+                'custom_route' => [
+                    'local_mapping_id'           => 'custom_route',
+                    'central_action_id'          => 'route_lead_custom_migration',
+                    'action_id'                  => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'input_mapping' => [
+                            'mode'             => 'selected',
+                            'field_ids'        => [ '2' ],
+                            'include_metadata' => false,
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['mappings_migrated'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+        $this->assertSame( $before, $actions->get( $action_id ) );
+
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9933' );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( $action_id, absint( $rows[0]['action_id'] ?? 0 ) );
+        $this->assertSame( 'after_submission', $rows[0]['hook'] ?? null );
+        $this->assertTrue( $rows[0]['enabled'] ?? false );
+        $this->assertSame(
+            [ 'mode' => 'selected', 'field_ids' => [ '2' ], 'include_metadata' => false ],
+            $rows[0]['settings_json']['input_mapping'] ?? null
+        );
+    }
+
+    public function test_wrapped_migration_uses_top_level_precedence_and_removes_every_alias(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9934';
+        $this->option_keys[] = $option_key;
+        $nested = [
+            'local_mapping_id'           => 'wrapped_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => false,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [
+                'input_mapping' => [
+                    'mode'             => 'selected',
+                    'field_ids'        => [ '1' ],
+                    'include_metadata' => false,
+                ],
+            ],
+        ];
+        $top_level = $nested;
+        $top_level['is_action_enabled_for_form'] = true;
+        $top_level['settings']['input_mapping']['field_ids'] = [ '2' ];
+
+        update_option(
+            $option_key,
+            [
+                'actions'         => [ 'wrapped_summary' => $nested ],
+                'sf_disabled'     => false,
+                'fixture_metadata' => 'preserve-me',
+                'wrapped_summary' => $top_level,
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['mappings_migrated'] ?? null );
+        $this->assertSame(
+            [
+                'actions'          => [],
+                'sf_disabled'      => false,
+                'fixture_metadata' => 'preserve-me',
+            ],
+            get_option( $option_key )
+        );
+
+        global $wpdb;
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9934' );
+        $this->assertCount( 1, $rows );
+        $this->assertTrue( $rows[0]['enabled'] ?? false );
+        $this->assertSame( [ '2' ], $rows[0]['settings_json']['input_mapping']['field_ids'] ?? null );
+    }
+
+    public function test_wrapped_migration_preserves_all_aliases_for_failed_mapping(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9935';
+        $this->option_keys[] = $option_key;
+        $failed_nested = [
+            'local_mapping_id'           => 'failed_alias',
+            'central_action_id'          => 'removed_cps_only_action',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'fixture' => 'nested' ],
+        ];
+        $failed_top = $failed_nested;
+        $failed_top['settings']['fixture'] = 'top-level';
+        $successful = [
+            'local_mapping_id'           => 'successful_alias',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+
+        update_option(
+            $option_key,
+            [
+                'actions'          => [
+                    'failed_alias'     => $failed_nested,
+                    'successful_alias' => $successful,
+                ],
+                'failed_alias'     => $failed_top,
+                'successful_alias' => $successful,
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 0, $summary['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['mappings_failed'] ?? null );
+        $this->assertSame( 1, $summary['mappings_migrated'] ?? null );
+        $remaining = get_option( $option_key );
+        $this->assertSame( $failed_nested, $remaining['actions']['failed_alias'] ?? null );
+        $this->assertSame( $failed_top, $remaining['failed_alias'] ?? null );
+        $this->assertArrayNotHasKey( 'successful_alias', $remaining['actions'] ?? [] );
+        $this->assertArrayNotHasKey( 'successful_alias', $remaining );
+
+        global $wpdb;
+        $this->assertCount(
+            1,
+            ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9935' )
+        );
+    }
+
+    public function test_migrates_disabled_archived_custom_action_without_reactivating_it(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9936';
+        $this->option_keys[] = $option_key;
+
+        global $wpdb;
+        $actions   = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code'                 => 'archived_custom_migration',
+                'display_name'         => 'Archived custom migration',
+                'definition_json'      => [ 'prompt_template' => 'Preserve {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                'status'               => 'archived',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $before = $actions->get( $action_id );
+
+        update_option(
+            $option_key,
+            [
+                'archived_route' => [
+                    'local_mapping_id'           => 'archived_route',
+                    'central_action_id'          => 'archived_custom_migration',
+                    'action_id'                  => $action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => false,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( 1, $summary['mappings_migrated'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+        $this->assertSame( $before, $actions->get( $action_id ) );
+
+        $rows = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9936' );
+        $this->assertCount( 1, $rows );
+        $this->assertFalse( $rows[0]['enabled'] ?? true );
+        $this->assertSame( $action_id, absint( $rows[0]['action_id'] ?? 0 ) );
+    }
+
+    public function test_old_wrapped_journal_never_enables_stale_row_before_top_level_rebuild(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9937';
+        $this->option_keys[] = $option_key;
+        $nested = [
+            'local_mapping_id'           => 'wrapped_resume',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [ 'input_mapping' => [ 'mode' => 'selected', 'field_ids' => [ '1' ] ] ],
+        ];
+        $top_level = $nested;
+        $top_level['is_action_enabled_for_form'] = false;
+        $top_level['settings']['input_mapping']['field_ids'] = [ '2' ];
+
+        update_option( $option_key, [ 'actions' => [ 'nested_slot' => $nested ] ], false );
+        Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        global $wpdb;
+        $rows       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored_rows = $rows->list_for_form( 'gravity_forms', '9937' );
+        $this->assertCount( 1, $stored_rows );
+        $row_id = absint( $stored_rows[0]['id'] ?? 0 );
+        $this->assertNotWPError( $rows->update( $row_id, [ 'enabled' => false ] ) );
+
+        update_option(
+            $option_key,
+            [
+                'actions'  => [ 'nested_slot' => $nested ],
+                'top_slot' => $top_level,
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_action_authority_migration_journal',
+            [
+                'option_key' => $option_key,
+                'wrapped'    => true,
+                'mappings'   => [
+                    [
+                        'key'  => 'nested_slot',
+                        'hash' => hash( 'sha256', wp_json_encode( $nested ) ),
+                    ],
+                ],
+                'rows'       => [ $row_id => true ],
+            ],
+            false
+        );
+
+        $stale_enable_seen = false;
+        $observe_updates   = static function ( string $query ) use ( $wpdb, &$stale_enable_seen ): string {
+            if (
+                str_contains( $query, 'UPDATE `' . $wpdb->prefix . 'sentient_form_mappings`' )
+                && preg_match( '/`enabled`\s*=\s*1/', $query )
+            )
+            {
+                $stale_enable_seen = true;
+            }
+            return $query;
+        };
+        add_filter( 'query', $observe_updates );
+        try
+        {
+            $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        }
+        finally
+        {
+            remove_filter( 'query', $observe_updates );
+        }
+
+        $this->assertFalse( $stale_enable_seen );
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( [ 'actions' => [] ], get_option( $option_key ) );
+        $row = $rows->get( $row_id );
+        $this->assertFalse( $row['enabled'] ?? true );
+        $this->assertSame( [ '2' ], $row['settings_json']['input_mapping']['field_ids'] ?? null );
+    }
+
+    public function test_concurrent_alias_addition_keeps_rows_disabled_until_snapshot_rebuild(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9938';
+        $this->option_keys[] = $option_key;
+        $original = [
+            'local_mapping_id'           => 'original_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        $concurrent = $original;
+        $concurrent['local_mapping_id']  = 'concurrent_summary';
+        update_option( $option_key, [ 'original_summary' => $original ], false );
+
+        global $wpdb;
+        $mutated = false;
+        $add_alias = static function ( mixed $value ) use ( $wpdb, $option_key, $original, $concurrent, &$mutated ): mixed {
+            if ( $mutated )
+            {
+                return $value;
+            }
+            $mutated = true;
+            $wpdb->update(
+                $wpdb->options,
+                [ 'option_value' => maybe_serialize( [ 'original_summary' => $original, 'concurrent_summary' => $concurrent ] ) ],
+                [ 'option_name' => $option_key ],
+                [ '%s' ],
+                [ '%s' ]
+            );
+            wp_cache_delete( $option_key, 'options' );
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_action_authority_migration_journal', $add_alias );
+        try
+        {
+            $first = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_action_authority_migration_journal', $add_alias );
+        }
+
+        $this->assertSame( 0, $first['migration_complete'] ?? null );
+        $this->assertSame(
+            [ 'original_summary', 'concurrent_summary' ],
+            array_keys( get_option( $option_key ) )
+        );
+        $rows = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $first_rows = $rows->list_for_form( 'gravity_forms', '9938' );
+        $this->assertCount( 1, $first_rows );
+        $this->assertFalse( $first_rows[0]['enabled'] ?? true );
+
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $second['migration_complete'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+        $second_rows = $rows->list_for_form( 'gravity_forms', '9938' );
+        $this->assertCount( 2, $second_rows );
+        foreach ( $second_rows as $row )
+        {
+            $this->assertTrue( $row['enabled'] ?? false );
+        }
+    }
+
+    public function test_concurrent_unrelated_option_mutation_is_preserved_across_snapshot_rebuild(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9939';
+        $this->option_keys[] = $option_key;
+        $mapping = [
+            'local_mapping_id'           => 'metadata_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        update_option( $option_key, [ 'metadata_summary' => $mapping, 'fixture_metadata' => 'before' ], false );
+
+        global $wpdb;
+        $mutated = false;
+        $change_metadata = static function ( mixed $value ) use ( $wpdb, $option_key, $mapping, &$mutated ): mixed {
+            if ( $mutated )
+            {
+                return $value;
+            }
+            $mutated = true;
+            $wpdb->update(
+                $wpdb->options,
+                [ 'option_value' => maybe_serialize( [ 'metadata_summary' => $mapping, 'fixture_metadata' => 'after' ] ) ],
+                [ 'option_name' => $option_key ],
+                [ '%s' ],
+                [ '%s' ]
+            );
+            wp_cache_delete( $option_key, 'options' );
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_action_authority_migration_journal', $change_metadata );
+        try
+        {
+            $first = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_action_authority_migration_journal', $change_metadata );
+        }
+
+        $this->assertSame( 0, $first['migration_complete'] ?? null );
+        $this->assertSame( 'after', get_option( $option_key )['fixture_metadata'] ?? null );
+        $rows = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $first_rows = $rows->list_for_form( 'gravity_forms', '9939' );
+        $this->assertCount( 1, $first_rows );
+        $this->assertFalse( $first_rows[0]['enabled'] ?? true );
+
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $second['migration_complete'] ?? null );
+        $this->assertSame( [ 'fixture_metadata' => 'after' ], get_option( $option_key ) );
+        $this->assertTrue( $rows->list_for_form( 'gravity_forms', '9939' )[0]['enabled'] ?? false );
+    }
+
+    public function test_case_only_concurrent_option_mutation_is_not_overwritten_by_collated_cas(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9940';
+        $this->option_keys[] = $option_key;
+        $mapping = [
+            'local_mapping_id'           => 'case_sensitive_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        update_option(
+            $option_key,
+            [
+                'case_sensitive_summary' => $mapping,
+                'operator_label'         => 'Case Sensitive',
+            ],
+            false
+        );
+
+        global $wpdb;
+        $mutated    = false;
+        $change_case = null;
+        $change_case = static function ( string $query ) use ( $wpdb, $option_key, $mapping, &$mutated, &$change_case ): string {
+            if (
+                $mutated
+                || ! str_starts_with( $query, 'UPDATE `' . $wpdb->options . '` SET `option_value`' )
+                || ! str_contains( $query, $option_key )
+            )
+            {
+                return $query;
+            }
+            $mutated = true;
+            remove_filter( 'query', $change_case );
+            $wpdb->update(
+                $wpdb->options,
+                [
+                    'option_value' => maybe_serialize(
+                        [
+                            'case_sensitive_summary' => $mapping,
+                            'operator_label'         => 'case sensitive',
+                        ]
+                    ),
+                ],
+                [ 'option_name' => $option_key ],
+                [ '%s' ],
+                [ '%s' ]
+            );
+            wp_cache_delete( $option_key, 'options' );
+            return $query;
+        };
+        add_filter( 'query', $change_case );
+        try
+        {
+            $first = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        }
+        finally
+        {
+            remove_filter( 'query', $change_case );
+        }
+
+        $this->assertTrue( $mutated );
+        $this->assertSame( 0, $first['migration_complete'] ?? null );
+        $this->assertSame( 'case sensitive', get_option( $option_key )['operator_label'] ?? null );
+        $this->assertArrayHasKey( 'case_sensitive_summary', get_option( $option_key ) );
+
+        $rows = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $first_rows = $rows->list_for_form( 'gravity_forms', '9940' );
+        $this->assertCount( 1, $first_rows );
+        $this->assertFalse( $first_rows[0]['enabled'] ?? true );
+
+        $second = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $second['migration_complete'] ?? null );
+        $this->assertSame( [ 'operator_label' => 'case sensitive' ], get_option( $option_key ) );
+        $second_rows = $rows->list_for_form( 'gravity_forms', '9940' );
+        $this->assertCount( 1, $second_rows );
+        $this->assertTrue( $second_rows[0]['enabled'] ?? false );
+    }
+
     public function test_installer_normalizes_stored_mapping_before_advancing_db_version(): void
     {
         $option_key          = 'sentient_forms_actions_gravity_forms_9919';
@@ -901,48 +1414,278 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $this->assertCount( 1, $repository->list_for_form( 'elementor_pro_forms', '321:opaque-form' ) );
     }
 
-    public function test_stale_lock_takeover_does_not_delete_a_newer_competing_lock(): void
+    public function test_stale_diagnostic_lock_cannot_steal_an_active_database_lock(): void
     {
-        global $wpdb;
-
         $lock_option = 'sentient_forms_action_authority_migration_lock';
         $stale_lock  = [ 'token' => 'stale-owner', 'created_at' => time() - 600 ];
-        $newer_lock  = [ 'token' => 'newer-owner', 'created_at' => time() ];
-        add_option( $lock_option, $stale_lock, '', false );
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $connection_id    = (int) $competitor->get_var( 'SELECT CONNECTION_ID()' );
+        $acquired         = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+        update_option( $lock_option, $stale_lock, false );
 
-        $competitor_installed = false;
-        $install_competitor = static function ( mixed $value ) use ( $wpdb, $lock_option, $newer_lock, &$competitor_installed ): mixed {
-            if ( $competitor_installed )
-            {
-                return $value;
-            }
-
-            $competitor_installed = true;
-            $wpdb->update(
-                $wpdb->options,
-                [ 'option_value' => maybe_serialize( $newer_lock ) ],
-                [ 'option_name' => $lock_option ],
-                [ '%s' ],
-                [ '%s' ]
-            );
-            wp_cache_delete( $lock_option, 'options' );
-
-            return $value;
-        };
-        add_filter( 'option_' . $lock_option, $install_competitor );
         try
         {
-            $method   = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'acquire_lock' );
-            $acquired = $method->invoke( null );
+            $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            $owner   = (int) $competitor->get_var(
+                $competitor->prepare( 'SELECT IS_USED_LOCK(%s)', $lock_name )
+            );
         }
         finally
         {
-            remove_filter( 'option_' . $lock_option, $install_competitor );
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
         }
 
-        wp_cache_delete( $lock_option, 'options' );
-        $this->assertFalse( $acquired );
-        $this->assertSame( $newer_lock, get_option( $lock_option ) );
+        $this->assertSame( 0, $summary['migration_complete'] ?? null );
+        $this->assertSame( $connection_id, $owner );
+
+        $completed = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        $this->assertSame( 1, $completed['migration_complete'] ?? null );
+    }
+
+    public function test_lost_database_lock_after_option_swap_preserves_disabled_rows_and_resumes(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_actions_gravity_forms_9940';
+        $this->option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'legacy_summary' => [
+                    'local_mapping_id'           => 'legacy_summary',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [],
+                ],
+            ],
+            false
+        );
+
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $lock_database    = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_filter      = static fn(): wpdb => $lock_database;
+        $released         = false;
+        $release_before_option_swap = static function ( string $query ) use ( $wpdb, $option_key, $lock_database, $lock_name, &$released ): string {
+            if (
+                ! $released
+                && str_starts_with( $query, 'UPDATE `' . $wpdb->options . '` SET `option_value`' )
+                && str_contains( $query, $option_key )
+            )
+            {
+                $released = true;
+                $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            }
+
+            return $query;
+        };
+        add_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10, 3 );
+        add_filter( 'query', $release_before_option_swap );
+        try
+        {
+            $first = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            remove_filter( 'query', $release_before_option_swap );
+
+            $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+            $first_rows = $repository->list_for_form( 'gravity_forms', '9940' );
+            $this->assertTrue( $released );
+            $this->assertSame( 0, $first['migration_complete'] ?? null );
+            $this->assertNotFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
+            $this->assertSame( [], get_option( $option_key ) );
+            $this->assertCount( 1, $first_rows );
+            $this->assertFalse( $first_rows[0]['enabled'] ?? true );
+
+            $second      = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+            $second_rows = $repository->list_for_form( 'gravity_forms', '9940' );
+            $this->assertSame( 1, $second['migration_complete'] ?? null );
+            $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
+            $this->assertCount( 1, $second_rows );
+            $this->assertTrue( $second_rows[0]['enabled'] ?? false );
+        }
+        finally
+        {
+            remove_filter( 'query', $release_before_option_swap );
+            remove_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10 );
+            $lock_database->close();
+        }
+    }
+
+    public function test_ordinary_writer_retains_lock_across_wordpress_database_reconnect(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_action_defaults_reconnect_fixture';
+        $this->option_keys[] = $option_key;
+        $reconnected         = false;
+        $reconnect_before_write = static function ( string $query ) use ( $wpdb, $option_key, &$reconnected ): string {
+            if ( ! $reconnected && str_contains( $query, $option_key ) && preg_match( '/^(?:INSERT|UPDATE)/i', ltrim( $query ) ) )
+            {
+                $reconnected = true;
+                $wpdb->close();
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $reconnect_before_write );
+        try
+        {
+            $result = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+                static fn(): bool => update_option( $option_key, [ 'model_override' => 'openrouter/auto' ], false )
+            );
+        }
+        finally
+        {
+            remove_filter( 'query', $reconnect_before_write );
+        }
+
+        $this->assertTrue( $reconnected );
+        $this->assertTrue( $result );
+        $this->assertSame( [ 'model_override' => 'openrouter/auto' ], get_option( $option_key ) );
+    }
+
+    public function test_ordinary_writer_uses_bounded_wait_for_benign_lock_contention(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_bounded_wait_fixture';
+        $this->option_keys[] = $option_key;
+        $lock_name_method    = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name           = $lock_name_method->invoke( null );
+        $competitor          = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $acquired            = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', static fn(): int => 1 );
+        $observed_timeout = null;
+        $avoid_wall_clock_wait = static function ( string $query ) use ( &$observed_timeout ): string {
+            if ( preg_match( '/GET_LOCK\(.+,\s*(\d+)\s*\)/i', $query, $matches ) )
+            {
+                $observed_timeout = (int) $matches[1];
+                return (string) preg_replace( '/,\s*\d+\s*\)$/', ', 0)', $query );
+            }
+            return $query;
+        };
+        add_filter( 'query', $avoid_wall_clock_wait );
+
+        try
+        {
+            $result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+                $option_key,
+                [ 'model_override' => 'openrouter/auto' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'query', $avoid_wall_clock_wait );
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            $competitor->close();
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 1, $observed_timeout );
+        $this->assertFalse( get_option( $option_key, false ) );
+    }
+
+    public function test_lock_database_factory_accepts_topology_compatible_connection(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_topology_fixture';
+        $this->option_keys[] = $option_key;
+        $provided            = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $factory_called      = false;
+        $factory             = static function ( mixed $candidate, wpdb $primary, string $mode ) use ( $provided, &$factory_called ): wpdb {
+            $factory_called = true;
+            return $provided;
+        };
+        add_filter( 'sentient_forms_action_authority_lock_database', $factory, 10, 3 );
+
+        try
+        {
+            $result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+                $option_key,
+                [ 'model_override' => 'openrouter/auto' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_lock_database', $factory, 10 );
+            $provided->close();
+        }
+
+        $this->assertTrue( $factory_called );
+        $this->assertTrue( $result );
+        $this->assertSame( [ 'model_override' => 'openrouter/auto' ], get_option( $option_key ) );
+    }
+
+    public function test_pending_journal_blocks_ordinary_legacy_option_writer(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9941';
+        $this->option_keys[] = $option_key;
+        update_option( 'sentient_forms_action_authority_migration_journal', [ 'pending' => true ], false );
+
+        $result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+            $option_key,
+            [ 'must_not_persist' => [ 'enabled' => true ] ]
+        );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertFalse( get_option( $option_key, false ) );
+        delete_option( 'sentient_forms_action_authority_migration_journal' );
+    }
+
+    public function test_abandoning_stale_journal_disables_rows_before_releasing_writer_barrier(): void
+    {
+        global $wpdb;
+
+        $actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $rows    = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code'            => 'stale_journal_fixture',
+                'display_name'    => 'Stale Journal Fixture',
+                'definition_json' => [ 'prompt_template' => 'Summarize {{entry}}.' ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $row_id = $rows->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '9942',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $row_id );
+
+        $option_key          = 'sentient_forms_stale_journal_fixture';
+        $this->option_keys[] = $option_key;
+        update_option( $option_key, [ 'concurrent' => 'writer' ], false );
+        update_option(
+            'sentient_forms_action_authority_migration_journal',
+            [
+                'option_key'   => $option_key,
+                'option_value' => maybe_serialize( [ 'original' => 'snapshot' ] ),
+                'wrapped'      => false,
+                'mappings'     => [],
+                'rows'         => [ $row_id => true ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
+        $this->assertFalse( $rows->get( $row_id )['enabled'] ?? true );
     }
 
     public function test_lock_release_does_not_delete_a_newer_competing_lock(): void

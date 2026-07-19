@@ -1130,16 +1130,19 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     continue;
                 }
 
-                $scheduled = $this->schedule_local_first_mapping(
+                $scheduled = $this->schedule_and_log_local_first_mapping(
                     $form_source,
                     $form_id,
+                    $native_entry_id,
                     $native_hook,
                     $form,
                     $entry,
                     (string) $mapping_id,
                     $action_settings,
                     $submission_uuid,
-                    $dependency_context
+                    $dependency_context,
+                    $execution_request_ids[ (string) $mapping_id ] ?? '',
+                    $mapping_native_effect_outcomes
                 );
                 $schedule_outcome = $this->async_schedule_outcome(
                     $scheduled,
@@ -1149,19 +1152,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 if ( is_wp_error( $scheduled ) )
                 {
                     $execution_results[ (string) $mapping_id ] = $scheduled;
-                }
-                if ( 'queued' === $schedule_outcome )
-                {
-                    $this->log_queued_accepted_mapping(
-                        $form_source,
-                        $form_id,
-                        $native_entry_id,
-                        (string) $mapping_id,
-                        $action_settings,
-                        $submission_uuid,
-                        $execution_request_ids[ (string) $mapping_id ] ?? '',
-                        $mapping_native_effect_outcomes
-                    );
                 }
                 continue;
             }
@@ -1280,16 +1270,37 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             )
         );
         $request_store = $this->plugin->get_async_request_store();
-        $claim         = $request_store->claim_execution(
-            $execution_request_id,
-            [
-                'action_id'      => $this->central_action_id( $mapping ),
-                'adapter'        => $form_source,
-                'payload_digest' => $digest,
-            ],
-            ! empty( $settings['synchronous_retry_safe'] ),
-            'accepted_sync'
+        $claim         = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $request_store, $execution_request_id, $mapping, $form_source, $digest, $settings ): array | WP_Error {
+                $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+                if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+                    );
+                }
+
+                return $request_store->claim_execution(
+                    $execution_request_id,
+                    [
+                        'action_id'      => $this->central_action_id( $mapping ),
+                        'adapter'        => $form_source,
+                        'payload_digest' => $digest,
+                    ],
+                    ! empty( $settings['synchronous_retry_safe'] ),
+                    'accepted_sync'
+                );
+            }
         );
+        if ( is_wp_error( $claim ) )
+        {
+            return [
+                'outcome'                => 'failed',
+                'result'                 => $claim,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
         $claim_state = sanitize_key( (string) ( $claim['state'] ?? 'conflict' ) );
 
         if ( 'digest_conflict' === $claim_state )
@@ -1369,18 +1380,29 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'sentient_forms_execution_event_initialization_failed',
                 $safe_error
             );
-            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
-            $this->log_synchronous_accepted_failure(
-                $form_source,
-                $form_id,
-                $entry_id,
-                $mapping_id,
-                $mapping,
-                $submission_uuid,
+            $request_transition = $this->finish_and_log_synchronous_request(
+                $request_store,
                 $execution_request_id,
-                $result,
-                $native_effect_outcomes
+                'failed',
+                $safe_error,
+                function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $result, $native_effect_outcomes ): void {
+                    $this->log_synchronous_accepted_failure(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $mapping,
+                        $submission_uuid,
+                        $execution_request_id,
+                        is_wp_error( $transition ) ? $transition : $result,
+                        $native_effect_outcomes
+                    );
+                }
             );
+            if ( is_wp_error( $request_transition ) )
+            {
+                $result = $request_transition;
+            }
 
             return [
                 'outcome'                => 'failed',
@@ -1426,18 +1448,29 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             {
                 $result = $terminal_event;
             }
-            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
-            $this->log_synchronous_accepted_failure(
-                $form_source,
-                $form_id,
-                $entry_id,
-                $mapping_id,
-                $mapping,
-                $submission_uuid,
+            $request_transition = $this->finish_and_log_synchronous_request(
+                $request_store,
                 $execution_request_id,
-                $result,
-                $native_effect_outcomes
+                'failed',
+                $safe_error,
+                function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $result, $native_effect_outcomes ): void {
+                    $this->log_synchronous_accepted_failure(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $mapping,
+                        $submission_uuid,
+                        $execution_request_id,
+                        is_wp_error( $transition ) ? $transition : $result,
+                        $native_effect_outcomes
+                    );
+                }
             );
+            if ( is_wp_error( $request_transition ) )
+            {
+                $result = $request_transition;
+            }
 
             return [
                 'outcome'                => 'failed',
@@ -1478,18 +1511,29 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( is_wp_error( $terminal_event ) )
         {
             $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
-            $request_store->mark_status( $execution_request_id, 'failed', $safe_error, 'accepted_sync' );
-            $this->log_synchronous_accepted_failure(
-                $form_source,
-                $form_id,
-                $entry_id,
-                $mapping_id,
-                $mapping,
-                $submission_uuid,
+            $request_transition = $this->finish_and_log_synchronous_request(
+                $request_store,
                 $execution_request_id,
-                $terminal_event,
-                $native_effect_outcomes
+                'indeterminate',
+                __( 'Synchronous accepted action crossed the effect boundary without durable terminal evidence.', 'sentient-forms' ),
+                function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $terminal_event, $native_effect_outcomes ): void {
+                    $this->log_synchronous_accepted_failure(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $mapping,
+                        $submission_uuid,
+                        $execution_request_id,
+                        is_wp_error( $transition ) ? $transition : $terminal_event,
+                        $native_effect_outcomes
+                    );
+                }
             );
+            if ( is_wp_error( $request_transition ) )
+            {
+                $terminal_event = $request_transition;
+            }
 
             return [
                 'outcome'                => 'failed',
@@ -1497,24 +1541,117 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'native_effect_outcomes' => $native_effect_outcomes,
             ];
         }
-        $request_store->mark_status( $execution_request_id, 'success', null, 'accepted_sync' );
-        $this->log_synchronous_accepted_success(
-            $form_source,
-            $form_id,
-            $entry_id,
-            $mapping_id,
-            $mapping,
-            $submission_uuid,
+        $request_transition = $this->finish_and_log_synchronous_request(
+            $request_store,
             $execution_request_id,
-            $result_payload,
-            $native_effect_outcomes
+            'success',
+            null,
+            function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $result_payload, $native_effect_outcomes ): void {
+                if ( is_wp_error( $transition ) )
+                {
+                    $this->log_synchronous_accepted_failure(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $mapping,
+                        $submission_uuid,
+                        $execution_request_id,
+                        $transition,
+                        $native_effect_outcomes
+                    );
+                    return;
+                }
+
+                $this->log_synchronous_accepted_success(
+                    $form_source,
+                    $form_id,
+                    $entry_id,
+                    $mapping_id,
+                    $mapping,
+                    $submission_uuid,
+                    $execution_request_id,
+                    $result_payload,
+                    $native_effect_outcomes
+                );
+            }
         );
+        if ( is_wp_error( $request_transition ) )
+        {
+            return [
+                'outcome'                => 'failed',
+                'result'                 => $request_transition,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
 
         return [
             'outcome'                => 'succeeded',
             'result'                 => is_array( $result ) ? $result_payload : $result,
             'native_effect_outcomes' => $native_effect_outcomes,
         ];
+    }
+
+    private function finish_synchronous_request(
+        Sentient_Forms_Async_Request_Store $request_store,
+        string $execution_request_id,
+        string $status,
+        ?string $safe_error
+    ): true | WP_Error
+    {
+        $finished = $request_store->finish_execution(
+            $execution_request_id,
+            $status,
+            $safe_error,
+            'accepted_sync'
+        );
+        if ( ! is_wp_error( $finished ) )
+        {
+            return true;
+        }
+
+        if ( 'indeterminate' !== $status )
+        {
+            $request_store->finish_execution(
+                $execution_request_id,
+                'indeterminate',
+                __( 'Synchronous accepted action terminal authority could not be persisted.', 'sentient-forms' ),
+                'accepted_sync'
+            );
+        }
+
+        return new WP_Error(
+            'sentient_forms_synchronous_request_authority_failed',
+            __( 'Synchronous accepted action terminal authority could not be persisted.', 'sentient-forms' )
+        );
+    }
+
+    /**
+     * Persist terminal request authority and its audit row under one reset fence.
+     *
+     * @param callable(true|WP_Error):void $log_terminal_outcome
+     */
+    private function finish_and_log_synchronous_request(
+        Sentient_Forms_Async_Request_Store $request_store,
+        string $execution_request_id,
+        string $status,
+        ?string $safe_error,
+        callable $log_terminal_outcome
+    ): true | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $request_store, $execution_request_id, $status, $safe_error, $log_terminal_outcome ): true | WP_Error {
+                $transition = $this->finish_synchronous_request(
+                    $request_store,
+                    $execution_request_id,
+                    $status,
+                    $safe_error
+                );
+                $log_terminal_outcome( $transition );
+
+                return $transition;
+            }
+        );
     }
 
     /**
@@ -1628,7 +1765,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
     /**
      * Preserve executor evidence while making a terminal invariant failure
-     * explicit and retryable at the orchestration boundary.
+     * explicit and non-replayable at the orchestration boundary.
      *
      * @param array<string, mixed> $event
      */
@@ -1718,27 +1855,45 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             )
         );
 
-        global $wpdb;
-        $recorded = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
-            [
-                'execution_request_id' => $execution_request_id,
-                'mapping_id'           => isset( $mapping['local_form_mapping_id'] ) ? absint( $mapping['local_form_mapping_id'] ) : null,
-                'mapping_key'          => $mapping_id,
-                'action_code'          => $this->central_action_id( $mapping ),
-                'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
-                'form_source'          => $form_source,
-                'form_id'              => $form_id,
-                'entry_id'             => $entry_id,
-                'submission_uuid'      => $submission_uuid,
-                'provider'             => 'local',
-                'model'                => 'not_applicable',
-                'status'               => 'skipped',
-                'result_json'          => $result,
-                'payload_digest'       => $payload_digest,
-            ]
+        $recorded = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $execution_request_id, $mapping, $mapping_id, $form_source, $form_id, $entry_id, $submission_uuid, $result, $payload_digest ): int | WP_Error {
+                $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+                if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+                    );
+                }
+
+                global $wpdb;
+                return ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+                    [
+                        'execution_request_id' => $execution_request_id,
+                        'mapping_id'           => isset( $mapping['local_form_mapping_id'] ) ? absint( $mapping['local_form_mapping_id'] ) : null,
+                        'mapping_key'          => $mapping_id,
+                        'action_code'          => $this->central_action_id( $mapping ),
+                        'action_label'         => $mapping['action_name_label'] ?? $this->central_action_id( $mapping ),
+                        'form_source'          => $form_source,
+                        'form_id'              => $form_id,
+                        'entry_id'             => $entry_id,
+                        'submission_uuid'      => $submission_uuid,
+                        'provider'             => 'local',
+                        'model'                => 'not_applicable',
+                        'status'               => 'skipped',
+                        'result_json'          => $result,
+                        'payload_digest'       => $payload_digest,
+                    ]
+                );
+            }
         );
         if ( is_wp_error( $recorded ) )
         {
+            if ( 'sentient_forms_execution_globally_disabled' === $recorded->get_error_code() )
+            {
+                return $recorded;
+            }
+
             return new WP_Error(
                 'sentient_forms_skipped_execution_event_failed',
                 __( 'Skipped action evidence could not be recorded.', 'sentient-forms' )
@@ -2866,6 +3021,71 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     ? $action_settings['settings']
                     : [],
             ] + $async_context
+        );
+    }
+
+    /**
+     * Keep the durable queue identity and its pending audit row on one reset fence.
+     *
+     * @param array<string, mixed> $form
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $action_settings
+     * @param array<string, mixed> $async_context
+     * @param array<int, array{effect: string, status: string, reason: string}> $native_effect_outcomes
+     */
+    private function schedule_and_log_local_first_mapping(
+        string $form_source,
+        string $form_id,
+        ?string $entry_id,
+        string $native_hook,
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $action_settings,
+        string $submission_uuid,
+        array $async_context,
+        string $execution_request_id,
+        array $native_effect_outcomes
+    ): bool | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $form_source, $form_id, $entry_id, $native_hook, $form, $entry, $mapping_id, $action_settings, $submission_uuid, $async_context, $execution_request_id, $native_effect_outcomes ): bool | WP_Error {
+                $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+                if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_execution_globally_disabled',
+                        __( 'Sentient Forms execution is globally disabled.', 'sentient-forms' )
+                    );
+                }
+
+                $scheduled = $this->schedule_local_first_mapping(
+                    $form_source,
+                    $form_id,
+                    $native_hook,
+                    $form,
+                    $entry,
+                    $mapping_id,
+                    $action_settings,
+                    $submission_uuid,
+                    $async_context
+                );
+                if ( 'queued' === $this->async_schedule_outcome( $scheduled, $execution_request_id ) )
+                {
+                    $this->log_queued_accepted_mapping(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $action_settings,
+                        $submission_uuid,
+                        $execution_request_id,
+                        $native_effect_outcomes
+                    );
+                }
+
+                return $scheduled;
+            }
         );
     }
 
