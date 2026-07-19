@@ -52,6 +52,8 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'gravity_forms', '9928' ],
                 [ 'gravity_forms', '9929' ],
                 [ 'gravity_forms', '9930' ],
+                [ 'gravity_forms', '9931' ],
+                [ 'gravity_forms', '9932' ],
                 [ 'elementor_pro_forms', '321:opaque-form' ],
             ] as [ $form_source, $form_id ]
         )
@@ -437,6 +439,75 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         );
     }
 
+    public function test_remaps_validation_dependencies_for_after_submission_rows(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9931';
+        $this->option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'actions' => [
+                    'legacy_validation' => [
+                        'local_mapping_id'           => 'legacy_validation',
+                        'central_action_id'          => 'content_validation_v1',
+                        'action_type_indicator'      => 'master',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'validation' ],
+                        'settings'                   => [
+                            'execution_mode'  => 'validation',
+                            'trigger_sources' => [
+                                'validation' => [ 'type' => 'hook_root' ],
+                            ],
+                        ],
+                    ],
+                    'legacy_after_submission' => [
+                        'local_mapping_id'           => 'legacy_after_submission',
+                        'central_action_id'          => 'spam_detection_v1',
+                        'action_type_indicator'      => 'master',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'after_submission' ],
+                        'settings'                   => [
+                            'dependency_ids'  => [ 'legacy_validation' ],
+                            'trigger_sources' => [
+                                'after_submission' => [
+                                    'type'       => 'mapping',
+                                    'mapping_id' => 'legacy_validation',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( [ 'actions' => [] ], get_option( $option_key ) );
+
+        global $wpdb;
+        $rows           = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9931' );
+        $actions        = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $rows_by_action = [];
+        foreach ( $rows as $row )
+        {
+            $action = $actions->get( absint( $row['action_id'] ?? 0 ) );
+            $rows_by_action[ $action['code'] ?? '' ] = $row;
+        }
+
+        $parent = $rows_by_action['bundled__content_validation_v1'];
+        $child  = $rows_by_action['bundled__spam_detection_v1'];
+        $parent_runtime_id = 'local_first_' . absint( $parent['id'] ?? 0 );
+        $this->assertSame( 'validation', $parent['hook'] ?? null );
+        $this->assertSame( 'after_submission', $child['hook'] ?? null );
+        $this->assertSame( [ $parent_runtime_id ], $child['settings_json']['dependency_ids'] ?? null );
+        $this->assertSame(
+            [ 'type' => 'mapping', 'mapping_id' => $parent_runtime_id ],
+            $child['settings_json']['trigger_sources']['after_submission'] ?? null
+        );
+    }
+
     public function test_preserves_unconvertible_mapping_and_fails_closed(): void
     {
         $option_key          = 'sentient_forms_actions_gravity_forms_9918';
@@ -634,6 +705,119 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $this->assertCount( 2, $rows );
         $this->assertFalse( $rows_by_action['bundled__spam_detection_v1']['enabled'] ?? true );
         $this->assertTrue( $rows_by_action['bundled__entry_summary_v1']['enabled'] ?? false );
+    }
+
+    public function test_partial_multi_hook_failure_keeps_transitive_dependants_legacy_and_disabled(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9932';
+        $this->option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'failing_parent' => [
+                    'local_mapping_id'           => 'failing_parent',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation', 'after_submission' ],
+                    'settings'                   => [],
+                ],
+                'dependent' => [
+                    'local_mapping_id'           => 'dependent',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids'  => [ 'failing_parent' ],
+                        'trigger_sources' => [
+                            'after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'failing_parent',
+                            ],
+                        ],
+                    ],
+                ],
+                'transitive_dependent' => [
+                    'local_mapping_id'           => 'transitive_dependent',
+                    'central_action_id'          => 'sentiment_urgency_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids'  => [ 'dependent' ],
+                        'trigger_sources' => [
+                            'after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'dependent',
+                            ],
+                        ],
+                    ],
+                ],
+                'successful' => [
+                    'local_mapping_id'           => 'successful',
+                    'central_action_id'          => 'missing_information_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [],
+                ],
+            ],
+            false
+        );
+
+        global $wpdb;
+        $failed_external_id = 'legacy_action_authority_' . substr( hash( 'sha256', $option_key . '|failing_parent|after_submission' ), 0, 40 );
+        $fail_parent_after_submission_insert = static function ( string $query ) use ( $wpdb, $failed_external_id ): string {
+            if (
+                str_contains( $query, 'INSERT INTO `' . $wpdb->prefix . 'sentient_form_mappings`' )
+                && str_contains( $query, $failed_external_id )
+            )
+            {
+                return str_replace(
+                    '`' . $wpdb->prefix . 'sentient_form_mappings`',
+                    '`' . $wpdb->prefix . 'sentient_form_mappings_missing_fixture`',
+                    $query
+                );
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_parent_after_submission_insert );
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        try
+        {
+            $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $previous_suppress_errors );
+            remove_filter( 'query', $fail_parent_after_submission_insert );
+        }
+
+        $this->assertSame( 0, $summary['migration_complete'] ?? null );
+        $this->assertSame( 3, $summary['mappings_failed'] ?? null );
+        $this->assertSame( 1, $summary['mappings_migrated'] ?? null );
+        $remaining = get_option( $option_key );
+        $this->assertArrayHasKey( 'failing_parent', $remaining );
+        $this->assertArrayHasKey( 'dependent', $remaining );
+        $this->assertArrayHasKey( 'transitive_dependent', $remaining );
+        $this->assertArrayNotHasKey( 'successful', $remaining );
+
+        $rows           = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', '9932' );
+        $actions        = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $rows_by_action = [];
+        foreach ( $rows as $row )
+        {
+            $action = $actions->get( absint( $row['action_id'] ?? 0 ) );
+            $rows_by_action[ $action['code'] ?? '' ] = $row;
+        }
+
+        $this->assertCount( 4, $rows );
+        $this->assertFalse( $rows_by_action['bundled__spam_detection_v1']['enabled'] ?? true );
+        $this->assertFalse( $rows_by_action['bundled__entry_summary_v1']['enabled'] ?? true );
+        $this->assertFalse( $rows_by_action['bundled__sentiment_urgency_v1']['enabled'] ?? true );
+        $this->assertTrue( $rows_by_action['bundled__missing_information_v1']['enabled'] ?? false );
     }
 
     public function test_cutover_preserves_custom_uuid_mapping_and_holds_db_version_for_operator_remediation(): void

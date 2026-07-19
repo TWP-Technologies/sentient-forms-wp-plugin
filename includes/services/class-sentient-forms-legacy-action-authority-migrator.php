@@ -120,12 +120,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             return;
         }
 
-        $dependency_error_ids = self::dependency_error_ids( $mappings );
-        foreach ( $dependency_error_ids as $mapping_id )
-        {
-            unset( $mappings[ $mapping_id ] );
-            $summary['mappings_failed']++;
-        }
+        self::prune_dependency_errors( $mappings, $summary );
         if ( [] === $mappings )
         {
             return;
@@ -185,6 +180,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
         unset( $mapping );
 
+        self::prune_dependency_errors( $mappings, $summary );
         if ( [] === $mappings )
         {
             return;
@@ -213,6 +209,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             }
         }
 
+        self::prune_dependency_errors( $mappings, $summary );
         if ( [] === $mappings )
         {
             return;
@@ -362,7 +359,10 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
                     {
                         continue;
                     }
-                    if ( ! isset( $mappings[ $dependency_id ] ) || ! in_array( $hook, $mappings[ $dependency_id ]['prepared']['hooks'], true ) )
+                    if (
+                        ! isset( $mappings[ $dependency_id ] )
+                        || null === self::dependency_hook_for( $hook, $mappings[ $dependency_id ]['prepared']['hooks'] )
+                    )
                     {
                         $errors[] = $mapping_id;
                         break 2;
@@ -372,6 +372,80 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         }
 
         return array_values( array_unique( $errors ) );
+    }
+
+    /**
+     * Remove invalid dependency chains to a stable fixpoint while rows are disabled.
+     *
+     * @param array<string, array<string, mixed>> $mappings
+     * @param array<string, int>                  $summary
+     */
+    private static function prune_dependency_errors( array &$mappings, array &$summary ): void
+    {
+        do
+        {
+            $dependency_error_ids = self::dependency_error_ids( $mappings );
+            foreach ( $dependency_error_ids as $mapping_id )
+            {
+                if ( ! isset( $mappings[ $mapping_id ] ) )
+                {
+                    continue;
+                }
+
+                unset( $mappings[ $mapping_id ] );
+                $summary['mappings_failed']++;
+            }
+        }
+        while ( [] !== $dependency_error_ids && [] !== $mappings );
+    }
+
+    /**
+     * Resolve the dependency lifecycle that satisfies a required runtime hook.
+     *
+     * Validation dependencies can satisfy after-submission dependants because
+     * synchronous validation completes before asynchronous submission work begins.
+     * An exact lifecycle match always takes precedence when both rows exist.
+     *
+     * @param array<int, mixed> $dependency_hooks
+     */
+    private static function dependency_hook_for( string $required_hook, array $dependency_hooks ): ?string
+    {
+        $required_hook = sanitize_key( $required_hook );
+        $normalized_dependency_hooks = Sentient_Forms_Form_Source_Lifecycles::normalize_many( $dependency_hooks );
+
+        if ( in_array( $required_hook, $normalized_dependency_hooks, true ) )
+        {
+            return $required_hook;
+        }
+
+        if (
+            Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $required_hook
+            && in_array( Sentient_Forms_Form_Source_Lifecycles::VALIDATION, $normalized_dependency_hooks, true )
+        )
+        {
+            return Sentient_Forms_Form_Source_Lifecycles::VALIDATION;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, array<string, int>> $row_index
+     */
+    private static function dependency_row_id( array $row_index, string $mapping_id, string $required_hook ): int
+    {
+        if ( ! isset( $row_index[ $mapping_id ] ) || ! is_array( $row_index[ $mapping_id ] ) )
+        {
+            return 0;
+        }
+
+        $dependency_hook = self::dependency_hook_for( $required_hook, array_keys( $row_index[ $mapping_id ] ) );
+        if ( null === $dependency_hook )
+        {
+            return 0;
+        }
+
+        return absint( $row_index[ $mapping_id ][ $dependency_hook ] ?? 0 );
     }
 
     /**
@@ -577,7 +651,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
                     $dependency_ids[] = $dependency_id;
                     continue;
                 }
-                $row_id = absint( $row_index[ $dependency_id ][ $hook ] ?? 0 );
+                $row_id = self::dependency_row_id( $row_index, $dependency_id, $hook );
                 if ( $row_id <= 0 )
                 {
                     return new WP_Error( 'sentient_forms_unresolved_legacy_dependency' );
@@ -605,7 +679,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
         {
             return [ 'type' => 'mapping', 'mapping_id' => $mapping_id ];
         }
-        $row_id = absint( $row_index[ $mapping_id ][ $hook ] ?? 0 );
+        $row_id = self::dependency_row_id( $row_index, $mapping_id, $hook );
         if ( $row_id <= 0 )
         {
             return new WP_Error( 'sentient_forms_unresolved_legacy_trigger_source' );
