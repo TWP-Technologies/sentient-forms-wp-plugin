@@ -672,6 +672,49 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_prefers_authoritative_local_event_over_matching_legacy_pending_row(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event();
+
+        update_option(
+            self::OPTION_KEY,
+            [
+                [
+                    'id'                   => 'legacy-pending-duplicate',
+                    'form_source'          => 'contact_form_7',
+                    'form_id'              => 7,
+                    'entry_id'             => 77,
+                    'action_code'          => 'contact_spam_triage',
+                    'action_label'         => 'Contact Spam Triage',
+                    'status'               => 'pending',
+                    'result_summary'       => 'Queued for background execution.',
+                    'execution_request_id' => 'req-local-log-1',
+                    'mapping_id'           => 'local_first_' . $mapping_id,
+                    'created_at'           => '2030-01-01T00:00:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'req-local-log-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'success', $data['entries'][0]['status'] );
+        $this->assertSame( 'local_execution_events', $data['entries'][0]['details']['source'] );
+
+        $pending_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $pending_request->set_param( 'status', 'pending' );
+        $pending_response = $this->controller->get_log_entries( $pending_request );
+        $pending_data     = $pending_response->get_data();
+
+        $this->assertSame( 0, $pending_data['total'] );
+        $this->assertSame( [], $pending_data['entries'] );
+    }
+
     public function test_get_log_entries_presents_durable_upstream_spam_skips_as_blocked(): void
     {
         $mapping_id = $this->seed_local_custom_action_mapping_and_event();

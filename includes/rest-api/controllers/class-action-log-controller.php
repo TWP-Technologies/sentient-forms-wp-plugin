@@ -1344,6 +1344,14 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
+            $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
+                ? sanitize_text_field( (string) $entry['execution_request_id'] )
+                : '';
+            if ( '' !== $execution_request_id && isset( $events_by_request_id[ $execution_request_id ] ) )
+            {
+                continue;
+            }
+
             if ( $this->is_untrusted_local_first_success_legacy_entry( $entry, $events_by_request_id ) )
             {
                 continue;
