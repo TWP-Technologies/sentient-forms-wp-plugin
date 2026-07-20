@@ -210,7 +210,7 @@ function write_runtime_composer_manifest( string $source, string $target ): void
         throw new RuntimeException( 'Unable to encode runtime Composer manifest.' );
     }
 
-    copy_file_contents( $encoded . PHP_EOL, $target );
+    copy_file_contents( $encoded . "\n", $target );
 }
 
 /**
