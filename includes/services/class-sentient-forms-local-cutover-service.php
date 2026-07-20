@@ -14,6 +14,10 @@ class Sentient_Forms_Local_Cutover_Service
     public const CONFIRMATION_PHRASE = 'RESET LOCAL-FIRST CUTOVER';
 
     private const SOURCE = 'local_first_cutover';
+    private const RUNTIME_HOOKS = [
+        'sentient_forms_process_local_mapping',
+        'sentient_forms_evaluate_action',
+    ];
 
     private const RESET_TABLE_SUFFIXES = [
         'sentient_action_templates',
@@ -39,6 +43,7 @@ class Sentient_Forms_Local_Cutover_Service
         'sentient_forms_proxy_api_key',
         '_transient_sentient_forms_cps_version',
         '_transient_timeout_sentient_forms_cps_version',
+        'sentient_forms_async_jobs',
     ];
 
     private const LEGACY_EXACT_OPTIONS_TO_RESET = [
@@ -46,6 +51,7 @@ class Sentient_Forms_Local_Cutover_Service
         'sentient_forms_proxy_api_key',
         '_transient_sentient_forms_cps_version',
         '_transient_timeout_sentient_forms_cps_version',
+        'sentient_forms_async_jobs',
     ];
 
     private const LEGACY_OPTION_PREFIXES_TO_REPORT = [
@@ -76,12 +82,22 @@ class Sentient_Forms_Local_Cutover_Service
     /**
      * Build a non-mutating report for the current local-first cutover state.
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|WP_Error
      */
-    public function build_readiness_report(): array
+    public function build_readiness_report(): array | WP_Error
     {
-        $local_tables   = $this->table_counts( Sentient_Forms_Local_Data_Governance::local_table_suffixes() );
+        $local_tables = $this->table_counts( Sentient_Forms_Local_Data_Governance::local_table_suffixes() );
+        if ( is_wp_error( $local_tables ) )
+        {
+            return $local_tables;
+        }
+
         $runtime_tables = $this->table_counts( [ 'sentient_async_requests' ] );
+        if ( is_wp_error( $runtime_tables ) )
+        {
+            return $runtime_tables;
+        }
+
         $legacy_options = $this->legacy_option_report();
         $settings       = $this->settings_summary();
         $warnings       = $this->build_warnings( $local_tables, $runtime_tables, $legacy_options, $settings );
@@ -123,6 +139,11 @@ class Sentient_Forms_Local_Cutover_Service
     public function record_dry_run( ?int $actor_user_id = null ): array | WP_Error
     {
         $report = $this->build_readiness_report();
+        if ( is_wp_error( $report ) )
+        {
+            return $report;
+        }
+
         $run_id = $this->migration_runs->create(
             [
                 'source'         => self::SOURCE,
@@ -183,7 +204,40 @@ class Sentient_Forms_Local_Cutover_Service
             );
         }
 
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_exclusive_reset_lock(
+            fn(): array | WP_Error => $this->approved_reset_locked( $actor_user_id )
+        );
+    }
+
+    /**
+     * Run the destructive reset while the shared legacy Action write fence is held.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function approved_reset_locked( ?int $actor_user_id = null ): array | WP_Error
+    {
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $plugin_settings ) || empty( $plugin_settings['execution_global_disabled'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_local_cutover_execution_not_quiesced',
+                __( 'Disable all Sentient Forms execution before running the local-first cutover reset.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        $quiesced_jobs = $this->quiesce_local_mapping_jobs();
+        if ( is_wp_error( $quiesced_jobs ) )
+        {
+            return $quiesced_jobs;
+        }
+
         $before = $this->build_readiness_report();
+        if ( is_wp_error( $before ) )
+        {
+            return $before;
+        }
+
         $run_id = $this->migration_runs->create(
             [
                 'source'         => self::SOURCE,
@@ -220,14 +274,89 @@ class Sentient_Forms_Local_Cutover_Service
         }
 
         $deleted_options = $this->delete_legacy_options();
-        $after           = $this->build_readiness_report();
-        $summary         = [
+        if ( is_wp_error( $deleted_options ) )
+        {
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                [
+                    'error_code'    => $deleted_options->get_error_code(),
+                    'error_message' => $deleted_options->get_error_message(),
+                    'before'        => $this->summarize_report( $before ),
+                    'deleted_tables' => $deleted_tables,
+                ]
+            );
+            return $deleted_options;
+        }
+
+        $after = $this->build_readiness_report();
+        if ( is_wp_error( $after ) )
+        {
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                [
+                    'error_code'     => $after->get_error_code(),
+                    'error_message'  => $after->get_error_message(),
+                    'before'         => $this->summarize_report( $before ),
+                    'deleted_tables' => $deleted_tables,
+                    'deleted_options' => $deleted_options,
+                ]
+            );
+            return $after;
+        }
+
+        $summary = [
             'before'          => $this->summarize_report( $before ),
             'after'           => $this->summarize_report( $after ),
             'deleted_tables'  => $deleted_tables,
             'deleted_options' => $deleted_options,
             'preserved'       => self::PRESERVED_TABLE_SUFFIXES,
+            'quiesced_jobs'   => $quiesced_jobs,
         ];
+
+        if ( ! $this->reset_postconditions_hold( $after ) )
+        {
+            $error = new WP_Error(
+                'sentient_forms_local_cutover_postcondition_failed',
+                __( 'Local-first cutover reset state changed during final verification. Keep execution disabled and retry.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                array_merge(
+                    $summary,
+                    [
+                        'error_code'    => $error->get_error_code(),
+                        'error_message' => $error->get_error_message(),
+                    ]
+                )
+            );
+
+            return $error;
+        }
+
+        $final_quiescence = $this->quiesce_local_mapping_jobs();
+        if ( is_wp_error( $final_quiescence ) )
+        {
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                array_merge(
+                    $summary,
+                    [
+                        'error_code'    => $final_quiescence->get_error_code(),
+                        'error_message' => $final_quiescence->get_error_message(),
+                    ]
+                )
+            );
+            return $final_quiescence;
+        }
+        foreach ( $final_quiescence as $key => $count )
+        {
+            $summary['quiesced_jobs'][ $key ] = (int) ( $summary['quiesced_jobs'][ $key ] ?? 0 ) + $count;
+        }
 
         $finished = $this->migration_runs->mark_finished( $run_id, 'completed', $summary );
         if ( is_wp_error( $finished ) )
@@ -243,32 +372,254 @@ class Sentient_Forms_Local_Cutover_Service
             'deleted_tables'  => $deleted_tables,
             'deleted_options' => $deleted_options,
             'preserved'       => self::PRESERVED_TABLE_SUFFIXES,
+            'quiesced_jobs'   => $summary['quiesced_jobs'],
         ];
     }
 
     /**
-     * @param array<int, string> $suffixes
-     * @return array<string, int|null>
+     * Cancel pending local work and reject reset while any local mapping worker is active.
+     *
+     * @return array{pending_actions_canceled:int,wp_cron_events_canceled:int,metadata_jobs_cleared:int}|WP_Error
      */
-    private function table_counts( array $suffixes ): array
+    private function quiesce_local_mapping_jobs(): array | WP_Error
+    {
+        $active_requests = ( new Sentient_Forms_Async_Request_Store( $this->wpdb ) )->has_active_executions();
+        if ( is_wp_error( $active_requests ) )
+        {
+            return $active_requests;
+        }
+        if ( $active_requests )
+        {
+            return $this->execution_not_quiesced_error();
+        }
+
+        $metadata = get_option( 'sentient_forms_async_jobs', [] );
+        $metadata = is_array( $metadata ) ? $metadata : [];
+        foreach ( $metadata as $job )
+        {
+            if (
+                is_array( $job )
+                && in_array( (string) ( $job['hook'] ?? '' ), self::RUNTIME_HOOKS, true )
+                && in_array( sanitize_key( (string) ( $job['status'] ?? '' ) ), [ 'running', 'in-progress' ], true )
+            )
+            {
+                return $this->execution_not_quiesced_error();
+            }
+        }
+
+        $pending_action_ids = [];
+        if ( function_exists( 'as_get_scheduled_actions' ) && class_exists( 'ActionScheduler_Store' ) )
+        {
+            foreach ( self::RUNTIME_HOOKS as $runtime_hook )
+            {
+                $running_action_ids = as_get_scheduled_actions(
+                    [
+                        'hook'     => $runtime_hook,
+                        'status'   => ActionScheduler_Store::STATUS_RUNNING,
+                        'per_page' => -1,
+                    ],
+                    'ids'
+                );
+                if ( [] !== $running_action_ids )
+                {
+                    return $this->execution_not_quiesced_error();
+                }
+
+                $claimed_pending_ids = as_get_scheduled_actions(
+                    [
+                        'hook'     => $runtime_hook,
+                        'status'   => ActionScheduler_Store::STATUS_PENDING,
+                        'claimed'  => true,
+                        'per_page' => -1,
+                    ],
+                    'ids'
+                );
+                if ( [] !== $claimed_pending_ids )
+                {
+                    return $this->execution_not_quiesced_error();
+                }
+
+                $hook_pending_ids = as_get_scheduled_actions(
+                    [
+                        'hook'     => $runtime_hook,
+                        'status'   => ActionScheduler_Store::STATUS_PENDING,
+                        'per_page' => -1,
+                    ],
+                    'ids'
+                );
+                $pending_action_ids = array_merge( $pending_action_ids, $hook_pending_ids );
+                if ( function_exists( 'as_unschedule_all_actions' ) )
+                {
+                    as_unschedule_all_actions( $runtime_hook );
+                }
+
+                $remaining_pending_ids = as_get_scheduled_actions(
+                    [
+                        'hook'     => $runtime_hook,
+                        'status'   => ActionScheduler_Store::STATUS_PENDING,
+                        'per_page' => -1,
+                    ],
+                    'ids'
+                );
+                $remaining_running_ids = as_get_scheduled_actions(
+                    [
+                        'hook'     => $runtime_hook,
+                        'status'   => ActionScheduler_Store::STATUS_RUNNING,
+                        'per_page' => -1,
+                    ],
+                    'ids'
+                );
+                if ( [] !== $remaining_pending_ids || [] !== $remaining_running_ids )
+                {
+                    return $this->execution_not_quiesced_error();
+                }
+            }
+        }
+
+        $wp_cron_events_canceled = $this->clear_wp_cron_runtime_jobs();
+        if ( is_wp_error( $wp_cron_events_canceled ) )
+        {
+            return $wp_cron_events_canceled;
+        }
+
+        return [
+            'pending_actions_canceled' => count( $pending_action_ids ),
+            'wp_cron_events_canceled'  => $wp_cron_events_canceled,
+            'metadata_jobs_cleared'    => count( $metadata ),
+        ];
+    }
+
+    /** Cancel every WP-Cron fallback for the plugin-unique local mapping hook. */
+    private function clear_wp_cron_runtime_jobs(): int | WP_Error
+    {
+        $cron = _get_cron_array();
+        if ( ! is_array( $cron ) )
+        {
+            return 0;
+        }
+
+        $canceled = 0;
+        foreach ( $cron as $timestamp => $hooks )
+        {
+            foreach ( self::RUNTIME_HOOKS as $runtime_hook )
+            {
+                $events = is_array( $hooks[ $runtime_hook ] ?? null ) ? $hooks[ $runtime_hook ] : [];
+                foreach ( $events as $event )
+                {
+                    $args   = is_array( $event['args'] ?? null ) ? $event['args'] : [];
+                    $result = wp_unschedule_event( (int) $timestamp, $runtime_hook, $args, true );
+                    if ( is_wp_error( $result ) || false === $result )
+                    {
+                        return is_wp_error( $result )
+                            ? $result
+                            : new WP_Error(
+                                'sentient_forms_local_cutover_wp_cron_cancel_failed',
+                                __( 'Could not cancel queued Sentient Forms WP-Cron work.', 'sentient-forms' ),
+                                [ 'status' => 500 ]
+                            );
+                    }
+                    $canceled++;
+                }
+            }
+        }
+
+        $remaining = _get_cron_array();
+        foreach ( is_array( $remaining ) ? $remaining : [] as $hooks )
+        {
+            foreach ( self::RUNTIME_HOOKS as $runtime_hook )
+            {
+                if ( ! empty( $hooks[ $runtime_hook ] ) )
+                {
+                    return $this->execution_not_quiesced_error();
+                }
+            }
+        }
+
+        return $canceled;
+    }
+
+    private function execution_not_quiesced_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_local_cutover_execution_not_quiesced',
+            __( 'Sentient Forms local mapping execution is still active. Keep execution disabled and retry after active work exits.', 'sentient-forms' ),
+            [ 'status' => 409 ]
+        );
+    }
+
+    /**
+     * The reset is complete only when every reset-owned row and option remains absent.
+     *
+     * @param array<string, mixed> $report
+     */
+    private function reset_postconditions_hold( array $report ): bool
+    {
+        foreach ( self::RESET_TABLE_SUFFIXES as $suffix )
+        {
+            $count = $report['local_tables'][ $suffix ] ?? $report['runtime_tables'][ $suffix ] ?? null;
+            if ( null !== $count && 0 !== (int) $count )
+            {
+                return false;
+            }
+        }
+
+        foreach ( self::LEGACY_EXACT_OPTIONS_TO_RESET as $option_name )
+        {
+            if ( ! empty( $report['legacy_options']['exact_options'][ $option_name ]['exists'] ) )
+            {
+                return false;
+            }
+        }
+
+        foreach ( self::LEGACY_OPTION_PREFIXES_TO_RESET as $prefix )
+        {
+            if ( 0 !== (int) ( $report['legacy_options']['option_prefixes'][ $prefix ]['count'] ?? 0 ) )
+            {
+                return false;
+            }
+        }
+
+        return 0 === (int) ( $report['settings']['legacy_action_results_count'] ?? 0 );
+    }
+
+    /**
+     * @param array<int, string> $suffixes
+     * @return array<string, int|null>|WP_Error
+     */
+    private function table_counts( array $suffixes ): array | WP_Error
     {
         $counts = [];
         $wpdb   = $this->wpdb;
         foreach ( $suffixes as $suffix )
         {
             $table_name = $wpdb->prefix . $suffix;
-            if ( ! $this->table_exists( $table_name ) )
+            $table_exists = $this->table_exists( $table_name );
+            if ( is_wp_error( $table_exists ) )
+            {
+                return $table_exists;
+            }
+            if ( ! $table_exists )
             {
                 $counts[ $suffix ] = null;
                 continue;
             }
 
-            $counts[ $suffix ] = (int) $wpdb->get_var(
+            $suppress_errors = $wpdb->suppress_errors();
+            $count = $wpdb->get_var(
                 $wpdb->prepare(
                     'SELECT COUNT(*) FROM %i',
                     $table_name
                 )
             );
+            $last_error = (string) $wpdb->last_error;
+            $wpdb->suppress_errors( $suppress_errors );
+
+            if ( '' !== $last_error || null === $count )
+            {
+                return $this->table_probe_error( $table_name );
+            }
+
+            $counts[ $suffix ] = (int) $count;
         }
 
         return $counts;
@@ -489,7 +840,12 @@ class Sentient_Forms_Local_Cutover_Service
         foreach ( $suffixes as $suffix )
         {
             $table_name = $wpdb->prefix . $suffix;
-            if ( ! $this->table_exists( $table_name ) )
+            $table_exists = $this->table_exists( $table_name );
+            if ( is_wp_error( $table_exists ) )
+            {
+                return $table_exists;
+            }
+            if ( ! $table_exists )
             {
                 $deleted[ $suffix ] = null;
                 continue;
@@ -521,9 +877,9 @@ class Sentient_Forms_Local_Cutover_Service
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<string, mixed>|WP_Error
      */
-    private function delete_legacy_options(): array
+    private function delete_legacy_options(): array | WP_Error
     {
         $deleted = [
             'exact_options'   => [],
@@ -533,28 +889,118 @@ class Sentient_Forms_Local_Cutover_Service
 
         foreach ( self::LEGACY_EXACT_OPTIONS_TO_RESET as $option_name )
         {
-            $existed = null !== get_option( $option_name, null );
+            $existed = $this->option_exists( $option_name );
+            if ( is_wp_error( $existed ) )
+            {
+                return $existed;
+            }
             delete_option( $option_name );
+            $still_exists = $this->option_exists( $option_name );
+            if ( is_wp_error( $still_exists ) )
+            {
+                return $still_exists;
+            }
+            if ( $still_exists )
+            {
+                return $this->option_delete_error( $option_name );
+            }
+            wp_cache_delete( $option_name, 'options' );
+
             $deleted['exact_options'][ $option_name ] = $existed;
         }
 
         foreach ( self::LEGACY_OPTION_PREFIXES_TO_RESET as $prefix )
         {
-            $option_names = $this->option_names_for_prefix( $prefix, 5000 );
-            foreach ( $option_names as $option_name )
+            $count  = 0;
+            $sample = [];
+            do
             {
-                delete_option( $option_name );
+                $option_names = $this->option_names_for_prefix( $prefix, 5000 );
+                if ( '' !== $this->wpdb->last_error )
+                {
+                    return $this->option_verification_error( $prefix );
+                }
+                foreach ( $option_names as $option_name )
+                {
+                    if ( count( $sample ) < 10 )
+                    {
+                        $sample[] = $option_name;
+                    }
+                    delete_option( $option_name );
+                    $still_exists = $this->option_exists( $option_name );
+                    if ( is_wp_error( $still_exists ) )
+                    {
+                        return $still_exists;
+                    }
+                    if ( $still_exists )
+                    {
+                        return $this->option_delete_error( $option_name );
+                    }
+                    wp_cache_delete( $option_name, 'options' );
+                    $count++;
+                }
             }
+            while ( count( $option_names ) >= 5000 );
 
             $deleted['option_prefixes'][ $prefix ] = [
-                'count'  => count( $option_names ),
-                'sample' => array_slice( $option_names, 0, 10 ),
+                'count'  => $count,
+                'sample' => $sample,
             ];
         }
 
-        $deleted['settings_keys'] = $this->delete_legacy_settings_keys();
+        $settings_keys = $this->delete_legacy_settings_keys();
+        if ( is_wp_error( $settings_keys ) )
+        {
+            return $settings_keys;
+        }
+        $deleted['settings_keys'] = $settings_keys;
 
         return $deleted;
+    }
+
+    private function option_delete_error( string $option_name ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_local_cutover_option_delete_failed',
+            sprintf(
+                /* translators: %s: WordPress option name. */
+                __( 'Could not remove legacy option %s during local-first cutover reset.', 'sentient-forms' ),
+                $option_name
+            ),
+            [ 'status' => 500, 'option_name' => $option_name ]
+        );
+    }
+
+    private function option_exists( string $option_name ): bool | WP_Error
+    {
+        $query = $this->wpdb->prepare(
+            'SELECT 1 FROM %i WHERE option_name = %s LIMIT 1',
+            $this->wpdb->options,
+            $option_name
+        );
+        $exists = $this->wpdb->get_var(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+            $query
+        );
+        if ( '' !== $this->wpdb->last_error )
+        {
+            return $this->option_verification_error( $option_name );
+        }
+
+        return null !== $exists;
+    }
+
+    private function option_verification_error( string $option_name ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_local_cutover_option_verification_failed',
+            sprintf(
+                /* translators: %s: WordPress option name or prefix. */
+                __( 'Could not verify legacy option %s during local-first cutover reset.', 'sentient-forms' ),
+                $option_name
+            ),
+            [ 'status' => 500, 'option_name' => $option_name ]
+        );
     }
 
     /**
@@ -581,9 +1027,9 @@ class Sentient_Forms_Local_Cutover_Service
     }
 
     /**
-     * @return array<string, bool>
+     * @return array<string, bool>|WP_Error
      */
-    private function delete_legacy_settings_keys(): array
+    private function delete_legacy_settings_keys(): array | WP_Error
     {
         $legacy_settings = get_option( 'sentient_forms_settings', [] );
         $legacy_settings = is_array( $legacy_settings ) ? $legacy_settings : [];
@@ -595,7 +1041,17 @@ class Sentient_Forms_Local_Cutover_Service
             unset( $legacy_settings[ $key ] );
         }
 
-        update_option( 'sentient_forms_settings', $legacy_settings );
+        if (
+            ! update_option( 'sentient_forms_settings', $legacy_settings, false )
+            && $legacy_settings !== get_option( 'sentient_forms_settings', null )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_local_cutover_settings_update_failed',
+                __( 'Could not remove legacy Action result settings during local-first cutover reset.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
 
         return $deleted;
     }
@@ -618,11 +1074,37 @@ class Sentient_Forms_Local_Cutover_Service
         return array_values( array_map( 'strval', is_array( $rows ) ? $rows : [] ) );
     }
 
-    private function table_exists( string $table_name ): bool
+    private function table_exists( string $table_name ): bool | WP_Error
     {
-        $query = $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name );
+        $query           = $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $this->wpdb->esc_like( $table_name ) );
+        $suppress_errors = $this->wpdb->suppress_errors();
         // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above for a dynamic plugin-owned table existence check.
-        return $table_name === $this->wpdb->get_var( $query );
+        $found      = $this->wpdb->get_var( $query );
+        $last_error = (string) $this->wpdb->last_error;
+        $this->wpdb->suppress_errors( $suppress_errors );
+
+        if ( '' !== $last_error )
+        {
+            return $this->table_probe_error( $table_name );
+        }
+
+        return $table_name === $found;
+    }
+
+    private function table_probe_error( string $table_name ): WP_Error
+    {
+        $table_suffix = str_starts_with( $table_name, $this->wpdb->prefix )
+            ? substr( $table_name, strlen( $this->wpdb->prefix ) )
+            : $table_name;
+
+        return new WP_Error(
+            'sentient_forms_local_cutover_table_probe_failed',
+            __( 'Could not verify a local-first table during cutover. Keep execution disabled and retry.', 'sentient-forms' ),
+            [
+                'status'       => 500,
+                'table_suffix' => $table_suffix,
+            ]
+        );
     }
 
     private function describe_value_shape( mixed $value ): string

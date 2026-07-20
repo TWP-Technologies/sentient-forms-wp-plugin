@@ -2,7 +2,7 @@
 
 if ( ! class_exists( 'Sentient_Forms_Test_WPForms_Validation_Action' ) )
 {
-    final class Sentient_Forms_Test_WPForms_Validation_Action implements Sentient_Forms_Action_Interface
+    final class Sentient_Forms_Test_WPForms_Validation_Action extends Sentient_Forms_Local_Action_Execution_Service
     {
         /** @var callable */
         private $on_execute;
@@ -22,49 +22,22 @@ if ( ! class_exists( 'Sentient_Forms_Test_WPForms_Validation_Action' ) )
             return 'WPForms validation fixture';
         }
 
-        public function get_description(): string
+        public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
         {
-            return 'Exercises the public WPForms validation hook.';
-        }
-
-        public function get_icon(): string
-        {
-            return 'dashicons-shield';
-        }
-
-        public function get_settings(): array
-        {
-            return [];
-        }
-
-        public function get_hooks(): array
-        {
-            return [ 'wpforms_process' ];
-        }
-
-        public function get_compatibility(): array
-        {
-            return [ 'wpforms' ];
-        }
-
-        public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
-        {
-            return call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
-        }
-
-        public function estimate_cost( array $data, array $settings ): int
-        {
-            return 0;
-        }
-
-        public function get_settings_fields(): array
-        {
-            return [];
-        }
-
-        public function validate_settings( array $settings ): array
-        {
-            return $settings;
+            return call_user_func(
+                $this->on_execute,
+                [
+                    'form'              => $form,
+                    'entry'             => $entry,
+                    'hook'              => $context['hook'] ?? '',
+                    'native_hook'       => $context['native_hook'] ?? '',
+                    'form_source'       => $context['form_source'] ?? '',
+                    'execution_context' => $context,
+                ],
+                [],
+                $entry['id'] ?? '',
+                $form['id'] ?? ''
+            );
         }
     }
 }
@@ -149,8 +122,6 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_content_validation_writes_matching_field_and_header_errors_through_three_argument_hook(): void
     {
         $form_id    = 7956;
-        $action_id  = 'wpforms_content_validation_fixture';
-        $option_key = 'sentient_forms_actions_wpforms_' . $form_id;
         $executions = 0;
         $seen       = [];
         $process    = (object) [ 'errors' => [] ];
@@ -159,15 +130,16 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $form_data  = $this->validation_form_data( $form_id );
         $untrusted_form_error = 'Please <strong>review</strong> <script>alert(1)</script> your submission.';
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_WPForms_Validation_Action(
-                $action_id,
-                static function ( array $form_data ) use ( &$executions, &$seen, $untrusted_form_error ): array {
-                    ++$executions;
-                    $seen = $form_data;
+        $action = new Sentient_Forms_Test_WPForms_Validation_Action(
+            'imported_content_validation_v1_wpforms_fixture',
+            static function ( array $form_data ) use ( &$executions, &$seen, $untrusted_form_error ): array {
+                ++$executions;
+                $seen = $form_data;
 
-                    return [
-                        'validation' => [
+                return [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
                             'is_valid' => false,
                             'message'  => $untrusted_form_error,
                             'fields'   => [
@@ -178,12 +150,12 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                                 ],
                             ],
                         ],
-                    ];
-                }
-            )
+                    ],
+                ];
+            }
         );
-        $this->configure_validation_mapping( $form_id, $action_id );
-        $adapter = $this->initialize_validation_adapter( $process );
+        $runner  = $this->configure_validation_mapping( $form_id, $action );
+        $adapter = $this->initialize_validation_adapter( $process, false, $runner );
 
         global $wp_filter;
         $accepted_args = null;
@@ -239,23 +211,23 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_validation_blocks_priority_ten_payment_callbacks_before_they_charge(): void
     {
         $form_id       = 7960;
-        $action_id     = 'wpforms_payment_order_validation_fixture';
         $process       = (object) [ 'errors' => [] ];
         $payment_count = 0;
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_WPForms_Validation_Action(
-                $action_id,
-                static fn(): array => [
-                    'validation' => [
+        $action = new Sentient_Forms_Test_WPForms_Validation_Action(
+            'imported_content_validation_v1_wpforms_payment_fixture',
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
                         'is_valid' => false,
                         'message'  => 'Payment must not run for an invalid submission.',
                         'fields'   => [],
                     ],
-                ]
-            )
+                ],
+            ]
         );
-        $this->configure_validation_mapping( $form_id, $action_id );
+        $runner = $this->configure_validation_mapping( $form_id, $action );
 
         add_action(
             'wpforms_process',
@@ -269,7 +241,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
             3
         );
 
-        $adapter = $this->initialize_validation_adapter( $process );
+        $adapter = $this->initialize_validation_adapter( $process, false, $runner );
 
         do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
 
@@ -282,37 +254,34 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
     public function test_wpforms_spam_validation_blocks_with_header_error_without_native_spam_state(): void
     {
         $form_id    = 7957;
-        $action_id  = 'spam_analysis';
         $process    = (object) [ 'errors' => [] ];
         $executions = 0;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_WPForms_Validation_Action(
-                $action_id,
-                static function () use ( &$executions ): array {
-                    ++$executions;
+        $action = new Sentient_Forms_Test_WPForms_Validation_Action(
+            'spam_analysis',
+            static function () use ( &$executions ): array {
+                ++$executions;
 
-                    return [
-                        'result_data' => [
-                            'structured_output_valid' => true,
-                            'structured_output'       => [
-                                'classification' => 'spam',
-                                'confidence'     => 0.99,
-                                'justification'  => 'Known spam fixture.',
-                                'indicators'     => [
-                                    [
-                                        'type'     => 'commercial_solicitation',
-                                        'evidence' => 'Known spam fixture.',
-                                        'weight'   => 'high',
-                                    ],
+                return [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'Known spam fixture.',
+                            'indicators'     => [
+                                [
+                                    'type'     => 'commercial_solicitation',
+                                    'evidence' => 'Known spam fixture.',
+                                    'weight'   => 'high',
                                 ],
                             ],
                         ],
-                    ];
-                }
-            )
+                    ],
+                ];
+            }
         );
-        $this->configure_validation_mapping( $form_id, $action_id );
-        $adapter = $this->initialize_validation_adapter( $process, true );
+        $runner  = $this->configure_validation_mapping( $form_id, $action );
+        $adapter = $this->initialize_validation_adapter( $process, true, $runner );
 
         do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
         $descriptor = $adapter->get_capability_descriptor();
@@ -364,15 +333,12 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
             remove_all_filters( 'sentient_forms_wpforms_is_active' );
             remove_all_filters( 'sentient_forms_wpforms_object' );
             $process   = (object) [ 'errors' => [ $form_id => [ 9 => 'Existing WPForms error.' ] ] ];
-            $action_id = 'wpforms_fail_open_' . $form_id;
-            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-                new Sentient_Forms_Test_WPForms_Validation_Action(
-                    $action_id,
-                    static fn(): WP_Error | array => $action_result
-                )
+            $action = new Sentient_Forms_Test_WPForms_Validation_Action(
+                'wpforms_fail_open_' . $form_id,
+                static fn(): WP_Error | array => $action_result
             );
-            $this->configure_validation_mapping( $form_id, $action_id );
-            $adapter = $this->initialize_validation_adapter( $process );
+            $runner  = $this->configure_validation_mapping( $form_id, $action );
+            $adapter = $this->initialize_validation_adapter( $process, false, $runner );
             $before  = $process->errors;
 
             do_action( 'wpforms_process', $this->validation_fields(), [], $this->validation_form_data( $form_id ) );
@@ -934,7 +900,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $events->list_recent( 1 ) );
     }
 
-    public function test_process_complete_schedules_option_backed_after_submission_mapping(): void
+    public function test_process_complete_ignores_option_backed_after_submission_mapping(): void
     {
         global $wpdb;
 
@@ -1003,27 +969,10 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $scheduled_jobs );
 
         do_action( 'wpforms_process_complete', $fields, [], $form_data, 781 );
-        $submission_uuid = $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null;
+        $this->assertSame( [], $scheduled_jobs );
 
-        $this->assertNotNull( $submission_uuid );
-        $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
-        $this->assertSame( 'sentient_forms_async', $scheduled_jobs[0]['group'] ?? null );
-
-        $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
-        $this->assertSame( 'wpforms', $job_context['form_source'] ?? null );
-        $this->assertSame( 'wpforms_process_complete', $job_context['hook'] ?? null );
-        $this->assertSame( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION, Sentient_Forms_Form_Source_Lifecycles::normalize_id( $job_context['hook'] ?? null ) );
-        $this->assertSame( '48', $job_context['form_id'] ?? null );
-        $this->assertSame( '781', $job_context['entry_id'] ?? null );
-        $this->assertSame( 'map_summary', $job_context['local_mapping_id'] ?? null );
-        $this->assertSame( 'entry_evaluation', $job_context['central_action_id'] ?? null );
-        $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
-
-        $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
-        $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
-        $this->assertSame( '781', $job_entry['id'] ?? null );
-        $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
+        $submissions = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )->list_for_form( 'wpforms', '48' );
+        $this->assertCount( 1, $submissions );
     }
 
     public function test_process_complete_honors_form_disabled_state_before_scheduling_local_first_mapping(): void
@@ -1545,26 +1494,50 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         ];
     }
 
-    private function configure_validation_mapping( int $form_id, string $action_id ): void
+    private function configure_validation_mapping(
+        int $form_id,
+        Sentient_Forms_Test_WPForms_Validation_Action $action
+    ): Sentient_Forms_Form_Source_Workflow_Runner
     {
-        update_option(
-            'sentient_forms_actions_wpforms_' . $form_id,
+        global $wpdb;
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
             [
-                'map_validation' => [
-                    'local_mapping_id'           => 'map_validation',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'action_name_label'          => 'WPForms validation',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
+                'code'                 => $action->get_id(),
+                'display_name'         => $action->get_name(),
+                'definition_json'      => [ 'prompt' => 'Validation fixture.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => (string) $form_id,
+                'hook'                => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        return new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $action
         );
     }
 
-    private function initialize_validation_adapter( object $process, bool $spy = false ): Sentient_Forms_WPForms_Adapter
+    private function initialize_validation_adapter(
+        object $process,
+        bool $spy = false,
+        ?Sentient_Forms_Form_Source_Workflow_Runner $runner = null
+    ): Sentient_Forms_WPForms_Adapter
     {
         add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
         add_filter(
@@ -1574,8 +1547,8 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
             2
         );
         $adapter = $spy
-            ? new Sentient_Forms_Test_WPForms_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() )
-            : new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+            ? new Sentient_Forms_Test_WPForms_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner )
+            : new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->init();
 
         return $adapter;

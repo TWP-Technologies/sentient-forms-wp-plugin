@@ -64,6 +64,134 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], array_column( $index, 'Column_name' ) );
     }
 
+    public function test_form_mapping_transactions_are_reentrant_with_independent_savepoints(): void
+    {
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $this->wpdb );
+        $create = static function ( string $form_id ) use ( $repository ): int | WP_Error {
+            return $repository->create(
+                [
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => $form_id,
+                    'hook'                => 'after_submission',
+                    'action_kind'         => 'custom_action',
+                    'action_id'           => 1,
+                    'input_bindings_json' => [],
+                    'execution_mode'      => 'async',
+                    'settings_json'       => [],
+                    'enabled'             => true,
+                ]
+            );
+        };
+
+        $outer = $repository->transaction(
+            function () use ( $repository, $create ): int | WP_Error {
+                $outer_id = $create( 'nested-outer' );
+                if ( is_wp_error( $outer_id ) )
+                {
+                    return $outer_id;
+                }
+
+                $inner = $repository->transaction(
+                    function () use ( $create ): WP_Error {
+                        $inner_id = $create( 'nested-inner' );
+                        if ( is_wp_error( $inner_id ) )
+                        {
+                            return $inner_id;
+                        }
+                        return new WP_Error( 'sentient_forms_nested_fixture_rollback' );
+                    }
+                );
+                $this->assertWPError( $inner );
+                $this->assertSame( 'sentient_forms_nested_fixture_rollback', $inner->get_error_code() );
+                return $outer_id;
+            }
+        );
+
+        $this->assertIsInt( $outer );
+        $this->assertCount( 1, $repository->list_for_form( 'gravity_forms', 'nested-outer' ) );
+        $this->assertSame( [], $repository->list_for_form( 'gravity_forms', 'nested-inner' ) );
+    }
+
+    public function test_form_mapping_transaction_rejects_nontransactional_storage_before_callback(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_form_mappings_myisam_fixture';
+        $this->wpdb->query( 'DROP TEMPORARY TABLE IF EXISTS `' . esc_sql( $table ) . '`' );
+        $this->wpdb->query(
+            'CREATE TEMPORARY TABLE `' . esc_sql( $table ) . '` ENGINE=MyISAM AS SELECT * FROM `'
+            . esc_sql( $this->wpdb->prefix . 'sentient_form_mappings' )
+            . '` WHERE 1 = 0'
+        );
+        $repository = new class( $this->wpdb, $table ) extends Sentient_Forms_Form_Mappings_Repository {
+            public function __construct( wpdb $wpdb, private string $fixture_table )
+            {
+                parent::__construct( $wpdb );
+            }
+
+            protected function table_name(): string
+            {
+                return $this->fixture_table;
+            }
+        };
+        $callback_ran = false;
+
+        try
+        {
+            $result = $repository->transaction(
+                static function () use ( &$callback_ran ): bool {
+                    $callback_ran = true;
+                    return true;
+                }
+            );
+        }
+        finally
+        {
+            $this->wpdb->query( 'DROP TEMPORARY TABLE IF EXISTS `' . esc_sql( $table ) . '`' );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_nontransactional_mapping_store', $result->get_error_code() );
+        $this->assertFalse( $callback_ran );
+    }
+
+    public function test_maybe_upgrade_converts_existing_form_mapping_table_to_innodb(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_form_mappings';
+        $previous_engine_version = get_option( 'sentient_forms_form_mappings_engine_version', null );
+        $this->assertNotFalse( $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $table ) ) );
+        delete_option( 'sentient_forms_form_mappings_engine_version' );
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $this->wpdb );
+        $before = $repository->transaction( static fn(): bool => true );
+        $this->assertWPError( $before );
+        $this->assertSame( 'sentient_forms_nontransactional_mapping_store', $before->get_error_code() );
+
+        try
+        {
+            update_option( 'sentient_forms_db_version', SENTIENT_FORMS_DB_VERSION, false );
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $definition = $this->wpdb->get_row(
+                $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+                ARRAY_N
+            );
+            $this->assertIsArray( $definition );
+            $this->assertMatchesRegularExpression( '/\bENGINE=InnoDB\b/i', (string) ( $definition[1] ?? '' ) );
+            $this->assertSame( '2026.07.19.v1', get_option( 'sentient_forms_form_mappings_engine_version' ) );
+            $this->assertTrue( $repository->transaction( static fn(): bool => true ) );
+        }
+        finally
+        {
+            $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            if ( null === $previous_engine_version )
+            {
+                delete_option( 'sentient_forms_form_mappings_engine_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_form_mappings_engine_version', $previous_engine_version, false );
+            }
+        }
+    }
+
     public function test_submission_ledger_tables_and_execution_submission_uuid_index_exist(): void
     {
         $settings_table = $this->wpdb->prefix . 'sentient_submission_ledger_settings';
@@ -485,6 +613,48 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertIsInt( $legacy_id );
         $this->assertSame( $submission_uuid, $events->get_by_request_id( 'req-ledger-linked' )['submission_uuid'] ?? null );
         $this->assertNull( $events->get_by_request_id( 'req-ledger-legacy' )['submission_uuid'] ?? null );
+    }
+
+    public function test_execution_events_repository_preserves_action_identity_across_lifecycle_updates(): void
+    {
+        $events = new Sentient_Forms_Execution_Events_Repository( $this->wpdb );
+
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'req-preserve-action-identity',
+                'mapping_id'           => 112,
+                'mapping_key'          => 'entry-summary-mapping',
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'status'               => 'queued',
+            ]
+        );
+
+        $updated_event_id = $events->record(
+            [
+                'execution_request_id' => 'req-preserve-action-identity',
+                'mapping_id'           => 112,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'result_json'          => [ 'summary' => 'Qualified browser result.' ],
+            ]
+        );
+
+        $event = $events->get_by_request_id( 'req-preserve-action-identity' );
+
+        $this->assertSame( $event_id, $updated_event_id );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertSame( 'entry-summary-mapping', $event['mapping_key'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $event['action_code'] ?? null );
+        $this->assertSame( 'Entry Summary', $event['action_label'] ?? null );
     }
 
     public function test_template_custom_action_mapping_and_execution_event_repositories_round_trip(): void

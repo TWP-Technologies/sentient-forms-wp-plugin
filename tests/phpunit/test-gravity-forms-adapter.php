@@ -176,139 +176,24 @@ if ( ! class_exists( 'GFAPI' ) )
     }
 }
 
-final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action_Interface
-{
-    /** @var callable */
-    private $on_execute;
-    private string $id;
-    /** @var array<int, string> */
-    private array $hooks;
-
-    public function __construct( string $id, callable $on_execute, array $hooks = [ 'gform_after_submission' ] )
-    {
-        $this->id         = $id;
-        $this->on_execute = $on_execute;
-        $this->hooks      = $hooks;
-    }
-
-    public function get_id(): string
-    {
-        return $this->id;
-    }
-
-    public function get_name(): string
-    {
-        return 'Tracking Action';
-    }
-
-    public function get_description(): string
-    {
-        return 'Test action that records executions.';
-    }
-
-    public function get_icon(): string
-    {
-        return 'dashicons-admin-tools';
-    }
-
-    public function get_settings(): array
-    {
-        return [];
-    }
-
-    public function get_hooks(): array
-    {
-        return $this->hooks;
-    }
-
-    public function get_compatibility(): array
-    {
-        return [ 'gravity_forms' ];
-    }
-
-    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
-    {
-        $result = call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
-
-        return null === $result ? [ 'ok' => true ] : $result;
-    }
-
-    public function estimate_cost( array $data, array $settings ): int
-    {
-        return 0;
-    }
-
-    public function get_settings_fields(): array
-    {
-        return [];
-    }
-
-    public function validate_settings( array $settings ): array
-    {
-        return $settings;
-    }
-}
-
-final class Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action extends Sentient_Forms_Spam_Analysis_Action
-{
-    public int $action_owned_notes = 0;
-    public ?array $response_result_data = null;
-    public array $response_result_data_sequence = [];
-    public array $seen_settings = [];
-
-    public function use_action_id( string $action_id ): void
-    {
-        $this->id = $action_id;
-    }
-
-    public function process_result_data( array $result_data ): array
-    {
-        return $this->process_response( [ 'result_data' => $result_data ], [], [] );
-    }
-
-    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
-    {
-        $this->seen_settings[] = $settings;
-        $result_data = ! empty( $this->response_result_data_sequence )
-            ? array_shift( $this->response_result_data_sequence )
-            : ( $this->response_result_data ?? [
-                'classification' => 'spam',
-                'confidence'     => 0.99,
-                'justification'  => 'Production-faithful bundled spam result.',
-            ] );
-
-        return $this->process_response(
-            [
-                'result_data' => $result_data,
-            ],
-            [
-                'form'  => [ 'id' => $form_id ],
-                'entry' => [ 'id' => $entry_id ],
-            ],
-            $settings
-        );
-    }
-
-    protected function add_entry_note( int $entry_id, array $result_data, string $classification, bool $is_spam, array $settings ): void
-    {
-        ++$this->action_owned_notes;
-    }
-}
-
-final class Sentient_Forms_Test_Validation_Action_Executor extends Sentient_Forms_Action_Executor
+final class Sentient_Forms_Test_Validation_Local_Execution_Service extends Sentient_Forms_Local_Action_Execution_Service
 {
     /** @var callable */
     private $on_execute;
 
     public function __construct( Sentient_Forms_Plugin $plugin, callable $on_execute )
     {
-        parent::__construct( $plugin, null );
         $this->on_execute = $on_execute;
     }
 
     public function execute( string $central_action_id, array $form, array $entry, array $context = array() )
     {
         return call_user_func( $this->on_execute, $central_action_id, $form, $entry, $context );
+    }
+
+    public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+    {
+        return $this->execute( (string) ( $context['central_action_id'] ?? $mapping_id ), $form, $entry, $context );
     }
 }
 
@@ -439,17 +324,17 @@ final class Sentient_Forms_Test_Selective_Failure_Async_Handler extends Sentient
     /** @var array<int, string> */
     public array $failed_mapping_ids = [];
 
-    public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
+    public function schedule_local_mapping( int $local_mapping_id, array $form, array $entry, array $context = [], ?int $run_at = null ): bool | WP_Error
     {
         $mapping_id = isset( $context['mapping_id'] ) && is_scalar( $context['mapping_id'] )
             ? (string) $context['mapping_id']
-            : '';
+            : 'local_first_' . $local_mapping_id;
         if ( in_array( $mapping_id, $this->failed_mapping_ids, true ) )
         {
             return false;
         }
 
-        return parent::schedule_action( $action_id, $data, $settings, $context, $run_at );
+        return parent::schedule_local_mapping( $local_mapping_id, $form, $entry, $context, $run_at );
     }
 }
 
@@ -506,6 +391,107 @@ final class Sentient_Forms_Test_Spy_Local_Action_Execution_Service extends Senti
     }
 }
 
+final class Sentient_Forms_Test_Configurable_Local_Action_Execution_Service extends Sentient_Forms_Local_Action_Execution_Service
+{
+    /** @var array<int, array<string, mixed>> */
+    public array $calls = [];
+
+    /** @var array<int, array<string, mixed>|WP_Error|callable> */
+    public array $results = [];
+
+    public bool $record_execution_events = false;
+
+    public bool $apply_result_effects = false;
+
+    public bool $return_execution_wrapper = false;
+
+    public function __construct()
+    {
+    }
+
+    public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+    {
+        $this->calls[] = compact( 'mapping_id', 'form', 'entry', 'context' );
+        $result        = $this->results[ $mapping_id ] ?? [ 'result_data' => [ 'summary' => 'Fixture completed.' ] ];
+        $result        = is_callable( $result ) ? $result( $form, $entry, $context ) : $result;
+
+        if ( $this->apply_result_effects && ! $result instanceof WP_Error )
+        {
+            global $wpdb;
+
+            $mapping = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( $mapping_id );
+            $action  = is_array( $mapping )
+                ? ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->get( absint( $mapping['action_id'] ?? 0 ) )
+                : null;
+            if ( is_array( $mapping ) )
+            {
+                $execution_result = [
+                    'execution_request_id' => $context['execution_request_id'] ?? '',
+                    'status'               => 'succeeded',
+                    'provider'             => 'openrouter',
+                    'model'                => 'test/local-fixture',
+                    'cached'               => false,
+                    'result'               => $result,
+                ];
+                $effects = ( new Sentient_Forms_Local_Result_Applier() )->apply(
+                    $mapping,
+                    $form,
+                    $entry,
+                    $execution_result,
+                    is_array( $action ) ? $action : []
+                );
+                if ( ! is_wp_error( $effects ) )
+                {
+                    $result['effects'] = $effects;
+                }
+            }
+        }
+
+        if ( $this->record_execution_events )
+        {
+            global $wpdb;
+
+            $event = [
+                'execution_request_id' => $context['execution_request_id'] ?? '',
+                'mapping_id'           => $mapping_id,
+                'form_source'          => $context['form_source'] ?? 'gravity_forms',
+                'form_id'              => $context['form_id'] ?? ( $form['id'] ?? null ),
+                'entry_id'             => $context['entry_id'] ?? ( $entry['id'] ?? null ),
+                'submission_uuid'      => $context['submission_uuid'] ?? null,
+                'provider'             => 'openrouter',
+                'model'                => 'test/local-fixture',
+                'status'               => $result instanceof WP_Error ? 'failed' : 'succeeded',
+                'payload_digest'       => hash( 'sha256', $mapping_id . ':' . (string) ( $context['execution_request_id'] ?? '' ) ),
+            ];
+            if ( $result instanceof WP_Error )
+            {
+                $event['error_code']    = $result->get_error_code();
+                $event['error_message'] = $result->get_error_message();
+            }
+            else
+            {
+                $event['result_json'] = $result;
+            }
+            ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record( $event );
+        }
+
+        if ( $this->return_execution_wrapper && ! $result instanceof WP_Error )
+        {
+            return [
+                'execution_request_id' => $context['execution_request_id'] ?? '',
+                'status'               => 'succeeded',
+                'provider'             => 'openrouter',
+                'model'                => 'test/local-fixture',
+                'cached'               => false,
+                'result'               => $result,
+                'effects'              => is_array( $result['effects'] ?? null ) ? $result['effects'] : [],
+            ];
+        }
+
+        return $result;
+    }
+}
+
 class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 {
     private Sentient_Forms_Gravity_Forms_Adapter $adapter;
@@ -539,24 +525,28 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         {
             GFAPI::$maybe_process_feeds_calls = [];
         }
+        if ( class_exists( 'GFFormsModel' ) && property_exists( 'GFFormsModel', 'notes' ) )
+        {
+            GFFormsModel::$notes = [];
+        }
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
 
     protected function tearDown(): void
     {
         unset( $_POST['gform_unique_id'] );
-        $this->set_action_executor( null );
         $this->set_async_handler( null );
         Sentient_Forms_Plugin::instance()->clear_license_data();
         parent::tearDown();
     }
 
-    private function set_action_executor( ?Sentient_Forms_Action_Executor $executor ): void
+    private function set_local_execution_service( ?Sentient_Forms_Local_Action_Execution_Service $execution_service ): void
     {
-        $reflection = new ReflectionClass( Sentient_Forms_Plugin::instance() );
-        $property   = $reflection->getProperty( 'action_executor' );
-        $property->setAccessible( true );
-        $property->setValue( Sentient_Forms_Plugin::instance(), $executor );
+        $plugin = Sentient_Forms_Plugin::instance();
+        $runner = null === $execution_service
+            ? null
+            : new Sentient_Forms_Form_Source_Workflow_Runner( $plugin, null, null, $execution_service );
+        $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( $plugin, $runner );
     }
 
     private function set_async_handler( ?Sentient_Forms_Async_Handler $handler ): void
@@ -692,52 +682,35 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_gravity_forms_validation_hook_uses_shared_runner_with_actual_context_and_native_content_errors(): void
     {
-        $form_id    = 7901;
-        $action_id  = 'shared_validation_context';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $seen       = [];
-        $executions = 0;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function ( array $form_data ) use ( &$seen, &$executions ): array {
-                    $seen = $form_data;
-                    ++$executions;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        delete_option( 'sentient_forms_action_log' );
 
-                    return [
-                        'result_data' => [
-                            'structured_output_valid' => true,
-                            'structured_output'       => [
-                                'is_valid' => false,
-                                'message'  => 'Please describe a real project.',
-                                'fields'   => [
-                                    [
-                                        'field_id' => '3',
-                                        'is_valid' => false,
-                                        'message'  => 'Tell us what you need built.',
-                                    ],
-                                ],
-                            ],
-                        ],
-                    ];
-                },
-                [ 'gform_validation' ]
-            )
+        $form_id = 7901;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_content' => [
-                    'local_mapping_id'           => 'map_content',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [
+                    'is_valid' => false,
+                    'message'  => 'Please describe a real project.',
+                    'fields'   => [
+                        [
+                            'field_id' => '3',
+                            'is_valid' => false,
+                            'message'  => 'Tell us what you need built.',
+                        ],
+                    ],
                 ],
             ],
-            false
-        );
+        ];
+        $this->set_local_execution_service( $local_execution );
         $field = (object) [
             'id'                 => 3,
             'failed_validation'  => false,
@@ -771,51 +744,51 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertInstanceOf( Sentient_Forms_Validation_Adapter_Interface::class, $this->adapter );
         $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $this->adapter );
         $this->assertSame( 2, $accepted_args );
-        $this->assertSame( 'validation', $seen['hook'] ?? null );
-        $this->assertSame( 'gform_validation', $seen['native_hook'] ?? null );
-        $this->assertSame( 'gravity_forms', $seen['form_source'] ?? null );
-        $this->assertSame( $native_context, $seen['execution_context']['native_validation_context'] ?? null );
-        $this->assertSame( 1, $executions );
+        global $wpdb;
+        $this->assertCount(
+            1,
+            $local_execution->calls,
+            (string) wp_json_encode(
+                [
+                    'mappings' => ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->list_for_form( 'gravity_forms', (string) $form_id ),
+                    'logs'     => get_option( 'sentient_forms_action_log', [] ),
+                    'result'   => $result,
+                ]
+            )
+        );
+        $context = $local_execution->calls[0]['context'];
+        $this->assertSame( 'validation', $context['hook'] ?? null );
+        $this->assertSame( 'gform_validation', $context['native_hook'] ?? null );
+        $this->assertSame( 'gravity_forms', $context['form_source'] ?? null );
+        $this->assertSame( $native_context, $context['native_validation_context'] ?? null );
         $this->assertFalse( $result['is_valid'] );
         $this->assertTrue( $result['form']['failed_validation'] );
         $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
         $this->assertFalse( $replay['is_valid'] );
 
-        delete_option( $option_key );
     }
 
     public function test_shared_validation_blocks_when_invalid_payload_has_no_usable_message(): void
     {
-        $form_id    = 79011;
-        $action_id  = 'shared_validation_empty_message';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'validation' => [
-                        'is_valid' => false,
-                        'message'  => '',
-                        'fields'   => [],
-                    ],
-                ],
-                [ 'gform_validation' ]
-            )
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 79011;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_empty_message' => [
-                    'local_mapping_id'           => 'map_empty_message',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'validation' => [
+                'is_valid' => false,
+                'message'  => '',
+                'fields'   => [],
             ],
-            false
-        );
+        ];
+        $this->set_local_execution_service( $local_execution );
 
         $result = $this->adapter->handle_validation(
             [
@@ -833,182 +806,136 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $result['form']['failed_validation'] );
         $this->assertNotSame( '', trim( (string) ( $result['form']['validation_message'] ?? '' ) ) );
 
-        delete_option( $option_key );
     }
 
     public function test_shared_validation_result_fails_open_and_blocks_dependents_without_exposing_provider_error(): void
     {
-        $form_id      = 7902;
-        $failing_id   = 'shared_validation_timeout';
-        $dependent_id = 'shared_validation_dependent';
-        $option_key   = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls        = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 7902;
         delete_option( 'sentient_forms_action_log' );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $failing_id,
-                static function () use ( &$calls ): WP_Error {
-                    $calls[] = 'failing';
-
-                    return new WP_Error( 'provider_TIMEOUT!', 'RAW_PROVIDER_TIMEOUT_7902 with submitted private content.' );
-                },
-                [ 'gform_validation' ]
-            )
+        $failure = $this->create_local_mapping_fixture(
+            $form_id,
+            'validation_timeout_fixture',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $dependent_id,
-                static function () use ( &$calls ): array {
-                    $calls[] = 'dependent';
-
-                    return [ 'validation' => [ 'is_valid' => false, 'message' => 'Must never be shown.' ] ];
-                },
-                [ 'gform_validation' ]
-            )
-        );
-        update_option(
-            $option_key,
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'validation_dependent_fixture',
+            'gform_validation',
             [
-                'map_failure' => [
-                    'local_mapping_id'           => 'map_failure',
-                    'central_action_id'          => $failing_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'fail_open'                  => false,
-                    'settings'                   => [ 'async' => false ],
-                ],
-                'map_dependent' => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => $dependent_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'async'          => false,
-                        'dependency_ids' => [ 'map_failure' ],
+                'async'          => false,
+                'dependency_ids' => [ $failure['runtime_key'] ],
+                'trigger_sources' => [
+                    'validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $failure['runtime_key'],
                     ],
                 ],
-            ],
-            false
+            ]
         );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $failure['mapping_id'] ] = new WP_Error(
+            'provider_TIMEOUT!',
+            'RAW_PROVIDER_TIMEOUT_7902 with submitted private content.'
+        );
+        $local_execution->results[ $dependent['mapping_id'] ] = [
+            'validation' => [ 'is_valid' => false, 'message' => 'Must never be shown.' ],
+        ];
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
         ];
 
-        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $local_execution ) )
             ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
         $native_result = $this->adapter->apply_validation_result( $validation, $outcome );
         $logs          = get_option( 'sentient_forms_action_log', [] );
 
         $this->assertInstanceOf( Sentient_Forms_Validation_Run_Result::class, $outcome );
-        $this->assertSame( [ 'failing' ], $calls );
-        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['map_failure'] ?? null );
-        $this->assertSame( 'skipped', $outcome->get_mapping_outcomes()['map_dependent'] ?? null );
-        $this->assertSame( 'provider_timeout', $outcome->get_errors()['map_failure']['code'] ?? null );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame( $failure['mapping_id'], $local_execution->calls[0]['mapping_id'] );
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()[ $failure['runtime_key'] ] ?? null );
+        $this->assertSame( 'skipped', $outcome->get_mapping_outcomes()[ $dependent['runtime_key'] ] ?? null );
+        $this->assertSame( 'provider_timeout', $outcome->get_errors()[ $failure['runtime_key'] ]['code'] ?? null );
         $this->assertSame( $validation, $native_result );
         $this->assertCount( 1, $logs );
         $this->assertSame( 'Validation action failed open.', $logs[0]['error_message'] ?? null );
         $this->assertStringNotContainsString( 'RAW_PROVIDER_TIMEOUT_7902', (string) wp_json_encode( $logs ) );
 
-        delete_option( $option_key );
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_shared_validation_exception_fails_open_without_exposing_provider_details(): void
     {
-        $form_id    = 79021;
-        $action_id  = 'shared_validation_exception';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $secret     = 'RAW_PROVIDER_EXCEPTION_79021';
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 79021;
+        $secret  = 'RAW_PROVIDER_EXCEPTION_79021';
         delete_option( 'sentient_forms_action_log' );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function () use ( $secret ): array {
-                    throw new RuntimeException( $secret );
-                },
-                [ 'validation' ]
-            )
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'validation_exception_fixture',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_exception' => [
-                    'local_mapping_id'           => 'map_exception',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = static function () use ( $secret ): array {
+            throw new RuntimeException( $secret );
+        };
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
         ];
 
-        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+        $outcome = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $local_execution ) )
             ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
         $native_result = $this->adapter->apply_validation_result( $validation, $outcome );
         $logs          = get_option( 'sentient_forms_action_log', [] );
 
-        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()['map_exception'] ?? null );
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
         $this->assertSame(
             'sentient_forms_validation_execution_exception',
-            $outcome->get_errors()['map_exception']['code'] ?? null
+            $outcome->get_errors()[ $fixture['runtime_key'] ]['code'] ?? null
         );
         $this->assertSame( $validation, $native_result );
         $this->assertCount( 1, $logs );
         $this->assertStringNotContainsString( $secret, (string) wp_json_encode( $logs ) );
 
-        delete_option( $option_key );
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_identical_anonymous_validation_submissions_receive_distinct_request_ids(): void
     {
-        $form_id     = 79022;
-        $action_id   = 'shared_validation_request_identity';
-        $option_key  = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $request_ids = [];
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function ( array $form_data ) use ( &$request_ids ): array {
-                    $request_ids[] = $form_data['execution_context']['execution_request_id'] ?? null;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-                    return [ 'validation' => [ 'is_valid' => true, 'message' => '', 'fields' => [] ] ];
-                },
-                [ 'validation' ]
-            )
+        $form_id     = 79022;
+        $request_ids = [];
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'validation_request_identity_fixture',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_identity' => [
-                    'local_mapping_id'           => 'map_identity',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = static function ( array $form, array $entry, array $context ) use ( &$request_ids ): array {
+            $request_ids[] = $context['execution_request_id'] ?? null;
+
+            return [ 'validation' => [ 'is_valid' => true, 'message' => '', 'fields' => [] ] ];
+        };
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
         ];
 
-        $first_runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $first_runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $local_execution );
         $first_result = $first_runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
         $replay_result = $first_runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
-        $second_result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+        $second_result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $local_execution ) )
             ->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
 
         $this->assertCount( 2, $request_ids );
@@ -1016,40 +943,28 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( $first_result->get_execution_request_ids(), $replay_result->get_execution_request_ids() );
         $this->assertNotSame( $first_result->get_execution_request_ids(), $second_result->get_execution_request_ids() );
 
-        delete_option( $option_key );
     }
 
     public function test_validation_log_marks_unrecognized_fail_open_completion_as_structurally_invalid(): void
     {
-        $form_id    = 7904;
-        $action_id  = 'shared_validation_unstructured';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $secret     = 'RAW_PROVIDER_UNSTRUCTURED_7904';
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 7904;
+        $secret  = 'RAW_PROVIDER_UNSTRUCTURED_7904';
         delete_option( 'sentient_forms_action_log' );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'content'          => $secret,
-                    'provider_payload' => [ 'raw' => $secret ],
-                ],
-                [ 'gform_validation' ]
-            )
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'validation_unstructured_fixture',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_unstructured' => [
-                    'local_mapping_id'           => 'map_unstructured',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'content'          => $secret,
+            'provider_payload' => [ 'raw' => $secret ],
+        ];
+        $this->set_local_execution_service( $local_execution );
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
@@ -1064,43 +979,31 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $logs[0]['structured_output_valid'] ?? true );
         $this->assertStringNotContainsString( $secret, (string) wp_json_encode( $logs ) );
 
-        delete_option( $option_key );
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_validation_log_marks_recognized_content_schema_as_structurally_valid(): void
     {
-        $form_id    = 7905;
-        $action_id  = 'shared_validation_recognized';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 7905;
         delete_option( 'sentient_forms_action_log' );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'validation' => [
-                        'is_valid' => true,
-                        'message'  => '',
-                        'fields'   => [],
-                    ],
-                ],
-                [ 'gform_validation' ]
-            )
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_recognized' => [
-                    'local_mapping_id'           => 'map_recognized',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'validation' => [
+                'is_valid' => true,
+                'message'  => '',
+                'fields'   => [],
             ],
-            false
-        );
+        ];
+        $this->set_local_execution_service( $local_execution );
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
@@ -1114,7 +1017,6 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'success', $logs[0]['status'] ?? null );
         $this->assertTrue( $logs[0]['structured_output_valid'] ?? false );
 
-        delete_option( $option_key );
         delete_option( 'sentient_forms_action_log' );
     }
 
@@ -1123,38 +1025,45 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
      */
     public function test_valid_spam_classification_bridges_once_to_saved_gravity_entry( array $response_result_data ): void
     {
-        $form_id    = 7903;
-        $entry_id   = 17903;
-        $action_id  = 'spam_analysis';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $adapter->entries[ $entry_id ] = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $action                       = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $action->response_result_data = $response_result_data;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
-        update_option(
-            $option_key,
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        delete_option( 'sentient_forms_action_log' );
+
+        $form_id  = 7903;
+        $entry_id = 17903;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'async'                          => false,
-                        'mark_as_spam'                   => true,
-                        'spam_confidence_threshold'      => 0.95,
-                        'spam_indicators_display'        => 'detailed',
-                        'spam_result_display_mode'       => 'all_results',
-                        'suppress_notifications_on_spam' => true,
-                        'suppress_webhooks_on_spam'      => true,
-                    ],
-                ],
+                'async'                          => false,
+                'spam_confidence_threshold'      => 0.95,
+                'spam_indicators_display'        => 'detailed',
+                'spam_result_display_mode'       => 'all_results',
+                'suppress_notifications_on_spam' => true,
+                'suppress_webhooks_on_spam'      => true,
             ],
-            false
+            null,
+            [ 'mark_as_spam' => true ]
         );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $structured_output = true === ( $response_result_data['structured_output_valid'] ?? false )
+            ? $response_result_data['structured_output']
+            : array_merge( [ 'indicators' => [] ], $response_result_data );
+        $local_execution->record_execution_events = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => $structured_output,
+        ];
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+        $adapter->entries[ $entry_id ] = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        GFAPI::$entries[ $entry_id ]   = $adapter->entries[ $entry_id ];
         $validation = [
             'is_valid' => true,
             'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
@@ -1167,13 +1076,15 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $adapter->handle_validation_entry_post_save( $entry, $form );
 
         $this->assertSame( $validation, $result );
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] );
-        $this->assertSame( 1, $adapter->spam_marks );
+        $this->assertSame( 'spam', GFAPI::$entries[ $entry_id ]['status'] ?? null );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
         $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
+        delete_option( 'sentient_forms_action_log' );
     }
 
     public static function provide_production_faithful_spam_result_shapes(): array
@@ -1299,10 +1210,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( '2026-07-10 11:35:00', $normalized['source_submitted_at'] ?? null );
     }
 
-    public function test_gravity_forms_schedules_once_from_exact_accepted_hook_with_shared_submission_uuid(): void
+    public function test_gravity_forms_schedules_local_mapping_once_from_exact_accepted_hook_without_raw_payload(): void
     {
         global $wpdb;
 
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
@@ -1311,19 +1224,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $form_id         = 779;
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'gravity_forms', (string) $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
-        update_option(
-            'sentient_forms_actions_gravity_forms_' . $form_id,
-            [
-                'map_summary' => [
-                    'local_mapping_id'           => 'map_summary',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Summarize Gravity submission',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-            ],
-            false
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ]
         );
 
         $scheduled_jobs = [];
@@ -1363,49 +1268,48 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $second_uuid = $this->adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertCount( 1, $scheduled_jobs );
-        $job_context    = $scheduled_jobs[0]['args']['context'] ?? [];
-        $job_entry      = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
+        $job_payload    = $scheduled_jobs[0]['args'][0] ?? [];
+        $job_context    = $job_payload['context'] ?? [];
         $submission_uuid = $job_context['submission_uuid'] ?? null;
         $this->assertSame( $first_uuid, $second_uuid );
         $this->assertSame( $first_uuid, $submission_uuid );
         $this->assertIsString( $submission_uuid );
         $this->assertTrue( wp_is_uuid( $submission_uuid ) );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
         $this->assertSame( 'gform_after_submission', $job_context['hook'] ?? null );
         $this->assertSame( 'gravity_forms', $job_context['form_source'] ?? null );
         $this->assertSame( '1701', $job_context['entry_id'] ?? null );
-        $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
-        $this->assertSame( 'Accepted once', $job_entry['1'] ?? null );
+        $this->assertSame( $fixture['mapping_id'], $job_payload['local_mapping_id'] ?? null );
+        $this->assertSame( $submission_uuid, $job_payload['submission_uuid'] ?? null );
+        $this->assertArrayNotHasKey( 'data', $job_payload );
+        $this->assertStringNotContainsString( 'Accepted once', wp_json_encode( $job_payload ) );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $stored = $ledger->get_by_submission_uuid( $submission_uuid );
         $this->assertIsArray( $stored );
         $this->assertSame( '1701', $stored['native_entry_id'] ?? null );
         $this->assertCount( 1, $ledger->list_for_form( 'gravity_forms', (string) $form_id ) );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_gravity_forms_accepted_execution_without_ledger_uses_stable_idempotent_correlation(): void
     {
         global $wpdb;
 
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
         $form_id = 780;
-        update_option(
-            'sentient_forms_actions_gravity_forms_' . $form_id,
-            [
-                'map_summary' => [
-                    'local_mapping_id'           => 'map_summary',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Summarize native Gravity entry',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-            ],
-            false
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ]
         );
 
         $scheduled_jobs = [];
@@ -1473,8 +1377,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( wp_is_uuid( $first_uuid ) );
         $this->assertSame( $first_uuid, $second_uuid );
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
-        $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['data']['entry']['submission_uuid'] ?? null );
+        $job_payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( $first_uuid, $job_payload['context']['submission_uuid'] ?? null );
+        $this->assertSame( $first_uuid, $job_payload['submission_uuid'] ?? null );
+        $this->assertSame( $fixture['mapping_id'], $job_payload['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'data', $job_payload );
         $this->assertSame( [], $logger->error_messages );
         $this->assertSame(
             [ 'submission ledger capture skipped' ],
@@ -1483,31 +1390,27 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertSame( [], $ledger->list_for_form( 'gravity_forms', (string) $form_id ) );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_gravity_forms_accepted_execution_continues_when_optional_ledger_capture_fails(): void
     {
         global $wpdb;
 
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
         $form_id = 789;
-        update_option(
-            'sentient_forms_actions_gravity_forms_' . $form_id,
-            [
-                'map_summary' => [
-                    'local_mapping_id'           => 'map_summary',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Summarize native Gravity entry',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-            ],
-            false
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ]
         );
 
         $capture_service = new class( $wpdb ) extends Sentient_Forms_Submission_Ledger_Capture_Service {
@@ -1553,10 +1456,15 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( wp_is_uuid( $first_uuid ) );
         $this->assertSame( $first_uuid, $second_uuid );
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( $first_uuid, $scheduled_jobs[0]['args']['context']['submission_uuid'] ?? null );
+        $job_payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( $first_uuid, $job_payload['context']['submission_uuid'] ?? null );
+        $this->assertSame( $fixture['mapping_id'], $job_payload['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'data', $job_payload );
 
         $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $this->assertSame( [], $ledger->list_for_form( 'gravity_forms', (string) $form_id ) );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_gravity_forms_accepted_execution_fails_closed_on_ledger_identity_conflict(): void
@@ -1646,31 +1554,30 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_duplicate_accepted_callback_keeps_notification_held_for_existing_async_spam_request(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
-        $form_id    = 790;
-        $entry_id   = 1712;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        update_option(
-            $option_key,
+        $form_id  = 790;
+        $entry_id = 1712;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                          => true,
-                        'suppress_notifications_on_spam' => true,
-                    ],
-                ],
+                'async'                          => true,
+                'suppress_notifications_on_spam' => true,
             ],
-            false
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
+                ],
+            ]
         );
 
         $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
@@ -1697,9 +1604,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertSame( [], $replay->dispatched_notifications );
         $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
-        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertSame( [ $fixture['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_accepted_submission_replays_deferred_webhooks_when_no_spam_mapping_is_queued(): void
@@ -1759,31 +1666,30 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_duplicate_accepted_callback_keeps_webhook_held_for_existing_async_spam_request(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
-        $form_id    = 791;
-        $entry_id   = 1713;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        update_option(
-            $option_key,
+        $form_id  = 791;
+        $entry_id = 1713;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                    => true,
-                        'suppress_webhooks_on_spam' => true,
-                    ],
-                ],
+                'async'                       => true,
+                'suppress_webhooks_on_spam' => true,
             ],
-            false
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
+                ],
+            ]
         );
 
         $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
@@ -1811,59 +1717,140 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertSame( [], $replay->dispatched_webhooks );
         $this->assertSame( [ 'feed_crm' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
-        $this->assertSame( [ 'map_spam' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame( [ $fixture['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
-    public function test_accepted_submission_executes_sync_mappings_inline_in_dependency_order(): void
+    public function test_replayed_indeterminate_async_request_keeps_deferred_delivery_held(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
-        $form_id    = 782;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $executed   = [];
-        foreach ( [ 'sync_prerequisite', 'sync_dependent' ] as $action_id )
+        $form_id  = 795;
+        $entry_id = 1717;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [
+                'async'                          => true,
+                'suppress_notifications_on_spam' => true,
+                'suppress_webhooks_on_spam'      => true,
+            ],
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
+                ],
+            ]
+        );
+
+        $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form  = [ 'id' => $form_id, 'title' => 'Indeterminate deferred delivery', 'fields' => [] ];
+        $first = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $first->webhook_controls_supported = true;
+        $first->entries[ $entry_id ] = $entry;
+        $first->forms[ $form_id ]    = $form;
+
+        $this->assertTrue(
+            $first->maybe_defer_async_spam_notification(
+                false,
+                [ 'id' => 'notif_admin', 'event' => 'form_submission' ],
+                $form,
+                $entry,
+                []
+            )
+        );
+        $this->assertSame(
+            [],
+            $first->maybe_defer_async_spam_webhooks(
+                [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ],
+                $entry,
+                $form
+            )
+        );
+        $first->handle_accepted_submission( $entry, $form );
+
+        $request_store = Sentient_Forms_Plugin::instance()->get_async_request_store();
+        $requests      = $request_store->list( [ 'record_type' => 'job', 'limit' => 10 ] );
+        $this->assertCount( 1, $requests );
+        $request_id = (string) ( $requests[0]['request_hash'] ?? '' );
+        $digest     = (string) ( $requests[0]['payload_digest'] ?? '' );
+        $claim      = $request_store->claim_queued_execution( $request_id, 'job', $digest );
+        $this->assertSame( 'claimed', $claim['state'] ?? null );
+        $this->assertTrue(
+            $request_store->finish_execution(
+                $request_id,
+                'indeterminate',
+                'Terminal event persistence is uncertain.',
+                'job'
+            )
+        );
+
+        $replay = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $replay->webhook_controls_supported = true;
+        $replay->entries[ $entry_id ] = $entry;
+        $replay->forms[ $form_id ]    = $form;
+        $replay->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( [], $replay->dispatched_notifications );
+        $this->assertSame( [], $replay->dispatched_webhooks );
+        $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [ $fixture['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertSame( [ 'feed_crm' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( [ $fixture['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_accepted_submission_executes_sync_mappings_inline_in_dependency_order(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
-            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-                new Sentient_Forms_Test_Tracking_Action(
-                    $action_id,
-                    static function () use ( &$executed, $action_id ): array {
-                        $executed[] = $action_id;
-                        return [ 'ok' => true ];
-                    }
-                )
-            );
+            sentient_forms_tests_reset_async_state();
         }
 
-        update_option(
-            $option_key,
+        $form_id      = 782;
+        $executed     = [];
+        $prerequisite = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_prerequisite',
+            'after_submission',
+            [ 'async' => false ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_dependent',
+            'after_submission',
             [
-                'map_prerequisite' => [
-                    'local_mapping_id'           => 'map_prerequisite',
-                    'central_action_id'          => 'sync_prerequisite',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-                'map_dependent'    => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => 'sync_dependent',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => false,
-                        'dependency_ids' => [ 'map_prerequisite' ],
+                'async'          => false,
+                'dependency_ids' => [ $prerequisite['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $prerequisite['runtime_key'],
                     ],
                 ],
-            ],
-            false
+            ]
         );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $prerequisite['mapping_id'] ] = static function () use ( &$executed ): array {
+            $executed[] = 'sync_prerequisite';
+            return [ 'ok' => true ];
+        };
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$executed ): array {
+            $executed[] = 'sync_dependent';
+            return [ 'ok' => true ];
+        };
+        $this->set_local_execution_service( $local_execution );
 
         $scheduled_jobs = [];
         add_action(
@@ -1884,11 +1871,66 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( [ 'sync_prerequisite', 'sync_dependent' ], $executed );
         $this->assertSame( [], $scheduled_jobs );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_synchronous_accepted_claim_lock_conflict_fails_instead_of_replaying_active(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 783;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_lock_conflict',
+            'after_submission',
+            [ 'async' => false ]
+        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [ 'ok' => true ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $acquired         = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+
+        try
+        {
+            $outcome = $runner->run_accepted_submission_with_outcome(
+                $this->adapter,
+                [
+                    'entry' => [ 'id' => 1705, 'form_id' => $form_id, 'status' => 'active' ],
+                    'form'  => [ 'id' => $form_id, 'title' => 'Synchronous lock conflict', 'fields' => [] ],
+                ]
+            );
+        }
+        finally
+        {
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+        }
+
+        $this->assertSame( 'failed', $outcome->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $result = $outcome->get_execution_result( $fixture['runtime_key'] );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertSame( [], $local_execution->calls );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_active_async_replay_keeps_synchronous_dependents_blocked(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
@@ -1896,43 +1938,33 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $form_id              = 799;
         $entry_id             = 1799;
-        $option_key           = 'sentient_forms_actions_gravity_forms_' . $form_id;
         $dependent_executions = 0;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                'sync_replay_dependent',
-                static function () use ( &$dependent_executions ): array {
-                    ++$dependent_executions;
-
-                    return [ 'ok' => true ];
-                }
-            )
+        $prerequisite = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_evaluation',
+            'after_submission',
+            [ 'async' => true ]
         );
-        update_option(
-            $option_key,
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_replay_dependent',
+            'after_submission',
             [
-                'map_prerequisite' => [
-                    'local_mapping_id'           => 'map_prerequisite',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-                'map_dependent'    => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => 'sync_replay_dependent',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => false,
-                        'dependency_ids' => [ 'map_prerequisite' ],
+                'async'          => false,
+                'dependency_ids' => [ $prerequisite['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $prerequisite['runtime_key'],
                     ],
                 ],
-            ],
-            false
+            ]
         );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$dependent_executions ): array {
+            ++$dependent_executions;
+            return [ 'ok' => true ];
+        };
 
         $scheduled_jobs = [];
         add_action(
@@ -1946,46 +1978,55 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
         $form  = [ 'id' => $form_id, 'title' => 'Active replay dependency', 'fields' => [] ];
-        ( new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() ) )->handle_accepted_submission( $entry, $form );
-        ( new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() ) )->handle_accepted_submission( $entry, $form );
+        foreach ( [ 1, 2 ] as $attempt )
+        {
+            $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+                Sentient_Forms_Plugin::instance(),
+                null,
+                null,
+                $local_execution
+            );
+            ( new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner ) )
+                ->handle_accepted_submission( $entry, $form );
+        }
 
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( 0, $dependent_executions );
+        $this->assertSame(
+            0,
+            $dependent_executions,
+            wp_json_encode(
+                [
+                    'scheduled_jobs'        => $scheduled_jobs,
+                    'local_execution_calls' => $local_execution->calls,
+                    'action_log'            => get_option( 'sentient_forms_action_log', [] ),
+                ]
+            )
+        );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_synchronous_accepted_success_is_visible_in_linked_action_log(): void
     {
-        $form_id    = 792;
-        $entry_id   = 1714;
-        $action_id  = 'sync_action_log_success';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id   = 792;
+        $entry_id  = 1714;
+        $action_id = 'sync_action_log_success';
         delete_option( 'sentient_forms_action_log' );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'result_data' => [ 'summary' => 'Accepted action completed.' ],
-                ]
-            )
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            $action_id,
+            'after_submission',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_logged' => [
-                    'local_mapping_id'           => 'map_logged',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Logged accepted action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [ 'summary' => 'Accepted action completed.' ],
+        ];
+        $this->set_local_execution_service( $local_execution );
 
         $submission_uuid = $this->adapter->handle_accepted_submission(
             [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ],
@@ -1997,42 +2038,32 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'success', $logs[0]['status'] ?? null );
         $this->assertSame( $submission_uuid, $logs[0]['submission_uuid'] ?? null );
         $this->assertSame( $entry_id, $logs[0]['entry_id'] ?? null );
-        $this->assertSame( 'map_logged', $logs[0]['mapping_id'] ?? null );
+        $this->assertSame( $fixture['runtime_key'], $logs[0]['mapping_id'] ?? null );
         $this->assertNotEmpty( $logs[0]['execution_request_id'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_synchronous_accepted_failure_is_visible_in_linked_action_log(): void
     {
-        $form_id    = 793;
-        $entry_id   = 1715;
-        $action_id  = 'sync_action_log_failure';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id   = 793;
+        $entry_id  = 1715;
+        $action_id = 'sync_action_log_failure';
         delete_option( 'sentient_forms_action_log' );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): WP_Error => new WP_Error( 'accepted_sync_failed', 'Accepted action failed safely.' )
-            )
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            $action_id,
+            'after_submission',
+            [ 'async' => false ]
         );
-        update_option(
-            $option_key,
-            [
-                'map_failed' => [
-                    'local_mapping_id'           => 'map_failed',
-                    'central_action_id'          => $action_id,
-                    'action_name_label'          => 'Failed accepted action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $fixture['mapping_id'] ] = new WP_Error( 'accepted_sync_failed', 'Accepted action failed safely.' );
+        $this->set_local_execution_service( $local_execution );
 
         $submission_uuid = $this->adapter->handle_accepted_submission(
             [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ],
@@ -2045,38 +2076,30 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'accepted_sync_failed', $logs[0]['error_code'] ?? null );
         $this->assertSame( 'Synchronous accepted action failed.', $logs[0]['error_message'] ?? null );
         $this->assertSame( $submission_uuid, $logs[0]['submission_uuid'] ?? null );
-        $this->assertSame( 'map_failed', $logs[0]['mapping_id'] ?? null );
+        $this->assertSame( $fixture['runtime_key'], $logs[0]['mapping_id'] ?? null );
         $this->assertNotEmpty( $logs[0]['execution_request_id'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_queued_accepted_run_is_visible_as_pending_in_linked_action_log(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
-        $form_id    = 794;
-        $entry_id   = 1716;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $form_id  = 794;
+        $entry_id = 1716;
         delete_option( 'sentient_forms_action_log' );
-        update_option(
-            $option_key,
-            [
-                'map_pending' => [
-                    'local_mapping_id'           => 'map_pending',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_name_label'          => 'Pending accepted action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
-                ],
-            ],
-            false
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ]
         );
 
         $submission_uuid = $this->adapter->handle_accepted_submission(
@@ -2089,10 +2112,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'pending', $logs[0]['status'] ?? null );
         $this->assertSame( $submission_uuid, $logs[0]['submission_uuid'] ?? null );
         $this->assertSame( $entry_id, $logs[0]['entry_id'] ?? null );
-        $this->assertSame( 'map_pending', $logs[0]['mapping_id'] ?? null );
+        $this->assertSame( $fixture['runtime_key'], $logs[0]['mapping_id'] ?? null );
         $this->assertNotEmpty( $logs[0]['execution_request_id'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
@@ -2262,21 +2285,20 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->truncate_local_first_runtime_tables();
     }
 
-    public function test_accepted_submission_reads_legacy_gravity_form_settings(): void
+    public function test_accepted_submission_ignores_legacy_gravity_settings_when_canonical_settings_are_absent(): void
     {
         $form_id          = 786;
         $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
         $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $execution_calls  = 0;
-        $action_id        = 'legacy_gravity_accepted_action';
+        $local_execution  = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
 
         delete_option( $canonical_option );
         update_option(
             $legacy_option,
             [
-                $action_id => [
-                    'local_mapping_id'           => $action_id,
-                    'central_action_id'          => $action_id,
+                'stale_legacy_gravity_action' => [
+                    'local_mapping_id'           => 'stale_legacy_gravity_action',
+                    'central_action_id'          => 'stale_legacy_gravity_action',
                     'action_type_indicator'      => 'custom',
                     'is_action_enabled_for_form' => true,
                     'trigger_hooks'              => [ 'gform_after_submission' ],
@@ -2285,138 +2307,15 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             ],
             false
         );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function () use ( &$execution_calls ): array {
-                    ++$execution_calls;
-
-                    return [ 'summary' => 'Legacy Gravity settings executed.' ];
-                }
-            )
-        );
+        $this->set_local_execution_service( $local_execution );
 
         $this->adapter->handle_accepted_submission(
             [ 'id' => 1708, 'form_id' => $form_id, 'status' => 'active' ],
-            [ 'id' => $form_id, 'title' => 'Legacy Gravity settings', 'fields' => [] ]
+            [ 'id' => $form_id, 'title' => 'Retired Gravity settings', 'fields' => [] ]
         );
 
-        $this->assertSame( 1, $execution_calls );
-
-        delete_option( $legacy_option );
-        delete_option( $canonical_option );
-    }
-
-    public function test_accepted_submission_does_not_revive_legacy_action_when_canonical_settings_are_empty(): void
-    {
-        $form_id          = 790;
-        $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
-        $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $execution_calls  = 0;
-        $action_id        = 'stale_legacy_gravity_action';
-
-        update_option( $canonical_option, [], false );
-        update_option(
-            $legacy_option,
-            [
-                $action_id => [
-                    'local_mapping_id'           => $action_id,
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function () use ( &$execution_calls ): array {
-                    ++$execution_calls;
-
-                    return [ 'summary' => 'Stale legacy action should not execute.' ];
-                }
-            )
-        );
-
-        $this->adapter->handle_accepted_submission(
-            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
-            [ 'id' => $form_id, 'title' => 'Canonical tombstone', 'fields' => [] ]
-        );
-
-        $this->assertSame( 0, $execution_calls );
         $this->assertSame( [], $this->adapter->get_form_settings( $form_id )['actions'] ?? null );
-
-        delete_option( $legacy_option );
-        delete_option( $canonical_option );
-    }
-
-    public function test_accepted_submission_prefers_canonical_settings_over_legacy_gravity_settings(): void
-    {
-        $form_id          = 785;
-        $legacy_option    = 'sentient_forms_gravity_forms_' . $form_id;
-        $canonical_option = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $legacy_calls     = 0;
-        $canonical_calls  = 0;
-
-        update_option(
-            $legacy_option,
-            [
-                'legacy_gravity_action' => [
-                    'local_mapping_id'           => 'legacy_gravity_action',
-                    'central_action_id'          => 'legacy_gravity_action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-        update_option(
-            $canonical_option,
-            [
-                'canonical_gravity_action' => [
-                    'local_mapping_id'           => 'canonical_gravity_action',
-                    'central_action_id'          => 'canonical_gravity_action',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                'legacy_gravity_action',
-                static function () use ( &$legacy_calls ): array {
-                    ++$legacy_calls;
-
-                    return [];
-                }
-            )
-        );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                'canonical_gravity_action',
-                static function () use ( &$canonical_calls ): array {
-                    ++$canonical_calls;
-
-                    return [];
-                }
-            )
-        );
-
-        $this->adapter->handle_validation_entry_post_save(
-            [ 'id' => 1707, 'form_id' => $form_id, 'status' => 'active' ],
-            [ 'id' => $form_id, 'title' => 'Canonical Gravity settings', 'fields' => [] ]
-        );
-
-        $this->assertSame( 1, $canonical_calls );
-        $this->assertSame( 0, $legacy_calls );
+        $this->assertSame( [], $local_execution->calls );
 
         delete_option( $legacy_option );
         delete_option( $canonical_option );
@@ -2424,67 +2323,59 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_sync_local_first_structured_spam_skips_dependent_mapping(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
         $form_id         = 789;
-        $option_key      = 'sentient_forms_actions_gravity_forms_' . $form_id;
         $dependent_calls = 0;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                'local_structured_spam_dependent',
-                static function () use ( &$dependent_calls ): array {
-                    ++$dependent_calls;
-
-                    return [ 'summary' => 'Dependent should not run.' ];
-                }
-            )
-        );
-        update_option(
-            $option_key,
+        $spam = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ],
+            null,
             [
-                'local_first_92' => [
-                    'local_mapping_id'           => 'local_first_92',
-                    'local_form_mapping_id'      => 92,
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'local_first',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                   => false,
-                        'skip_downstream_on_spam' => true,
+                'spam' => [
+                    'skip_downstream_on_spam' => true,
+                ],
+            ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'local_structured_spam_dependent',
+            'after_submission',
+            [
+                'async'           => false,
+                'dependency_ids'  => [ $spam['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
-                'local_structured_spam_dependent' => [
-                    'local_mapping_id'           => 'local_structured_spam_dependent',
-                    'central_action_id'          => 'local_structured_spam_dependent',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'          => false,
-                        'dependency_ids' => [ 'local_first_92' ],
-                    ],
-                ],
-            ],
-            false
+            ]
         );
 
-        $local_execution = new Sentient_Forms_Test_Spy_Local_Action_Execution_Service();
-        $local_execution->result = [
-            'result' => [
-                'structured_output_valid' => true,
-                'structured'              => [
-                    'classification' => 'spam',
-                    'confidence'     => 0.99,
-                    'justification'  => 'Known structured local spam fixture.',
-                    'indicators'     => [
-                        [
-                            'type'     => 'commercial_solicitation',
-                            'evidence' => 'Known structured local spam fixture.',
-                            'weight'   => 'high',
-                        ],
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $spam['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'Known structured local spam fixture.',
+                'indicators'     => [
+                    [
+                        'type'     => 'commercial_solicitation',
+                        'evidence' => 'Known structured local spam fixture.',
+                        'weight'   => 'high',
                     ],
                 ],
             ],
         ];
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$dependent_calls ): array {
+            ++$dependent_calls;
+            return [ 'summary' => 'Dependent should not run.' ];
+        };
         $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
             Sentient_Forms_Plugin::instance(),
             null,
@@ -2493,7 +2384,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
         $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
 
-        $adapter->handle_accepted_submission(
+        $submission_uuid = $adapter->handle_accepted_submission(
             [ 'id' => 1711, 'form_id' => $form_id, 'status' => 'active' ],
             [ 'id' => $form_id, 'title' => 'Structured local spam', 'fields' => [] ]
         );
@@ -2501,7 +2392,154 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertCount( 1, $local_execution->calls );
         $this->assertSame( 0, $dependent_calls );
 
-        delete_option( $option_key );
+        global $wpdb;
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( $submission_uuid );
+        $dependent_events = array_values(
+            array_filter(
+                $events,
+                static fn ( array $event ): bool => $dependent['runtime_key'] === ( $event['mapping_key'] ?? null )
+            )
+        );
+        $this->assertCount( 1, $dependent_events );
+        $this->assertNotSame( '', (string) ( $dependent_events[0]['execution_request_id'] ?? '' ) );
+        $this->assertSame( 'skipped', $dependent_events[0]['status'] ?? null );
+        $this->assertSame( 'upstream_spam', $dependent_events[0]['result_json']['skip_reason'] ?? null );
+        $this->assertSame(
+            [
+                [
+                    'effect' => 'workflow_execution',
+                    'status' => 'skipped',
+                    'reason' => 'upstream_spam',
+                ],
+            ],
+            $dependent_events[0]['result_json']['native_effect_outcomes'] ?? null
+        );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_skipped_accepted_event_does_not_repopulate_state_after_reset(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id         = 7891;
+        $dependent_calls = 0;
+        $spam = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ],
+            null,
+            [
+                'spam' => [
+                    'skip_downstream_on_spam' => true,
+                ],
+            ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'local_reset_race_spam_dependent',
+            'after_submission',
+            [
+                'async'           => false,
+                'dependency_ids'  => [ $spam['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
+                    ],
+                ],
+            ]
+        );
+
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $spam['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'Reset-race structured spam fixture.',
+                'indicators'     => [],
+            ],
+        ];
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$dependent_calls ): array {
+            ++$dependent_calls;
+            return [ 'summary' => 'Dependent should not run.' ];
+        };
+        $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+
+        $original_plugin_settings = get_option( 'sentient_forms_plugin_settings', false );
+        $enabled_plugin_settings  = is_array( $original_plugin_settings ) ? $original_plugin_settings : [];
+        $enabled_plugin_settings['execution_global_disabled'] = false;
+        $enabled_plugin_settings['execution_provider_disabled'] = [];
+        update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
+        $reset_result = null;
+        $reset_before_skipped_event_lock = static function ( mixed $timeout ) use ( &$reset_result ): mixed {
+            if ( null !== $reset_result )
+            {
+                return $timeout;
+            }
+            foreach ( debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS ) as $frame )
+            {
+                if ( 'record_skipped_accepted_mapping' === ( $frame['function'] ?? '' ) )
+                {
+                    $settings = get_option( 'sentient_forms_plugin_settings', [] );
+                    $settings = is_array( $settings ) ? $settings : [];
+                    $settings['execution_global_disabled'] = true;
+                    update_option( 'sentient_forms_plugin_settings', $settings, false );
+                    $reset_result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                        Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                        get_current_user_id()
+                    );
+                    break;
+                }
+            }
+
+            return $timeout;
+        };
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_before_skipped_event_lock );
+        try
+        {
+            $submission_uuid = $adapter->handle_accepted_submission(
+                [ 'id' => 17111, 'form_id' => $form_id, 'status' => 'active' ],
+                [ 'id' => $form_id, 'title' => 'Skipped reset race', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', $reset_before_skipped_event_lock );
+            if ( false === $original_plugin_settings )
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_plugin_settings', $original_plugin_settings, false );
+            }
+            Sentient_Forms_Installer::maybe_upgrade( true );
+        }
+
+        $this->assertIsArray( $reset_result );
+        $this->assertSame( 'completed', $reset_result['status'] ?? null );
+        $this->assertSame( 0, $dependent_calls );
+        global $wpdb;
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( $submission_uuid );
+        $dependent_events = array_values(
+            array_filter(
+                $events,
+                static fn ( array $event ): bool => $dependent['runtime_key'] === ( $event['mapping_key'] ?? null )
+            )
+        );
+        $this->assertSame( [], $dependent_events );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_sync_local_first_failure_preserves_executor_terminal_evidence(): void
@@ -2557,7 +2595,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
-    public function test_sync_local_first_fails_closed_on_executor_terminal_status_mismatch(): void
+    public function test_sync_local_first_preserves_executor_evidence_on_terminal_status_mismatch(): void
     {
         $form_id    = 791;
         $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
@@ -2587,24 +2625,41 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $local_execution
         );
         $adapter                                = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        delete_option( 'sentient_forms_action_log' );
 
-        $adapter->handle_accepted_submission(
-            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
-            [ 'id' => $form_id, 'title' => 'Mismatched local execution', 'fields' => [] ]
+        $outcome = $runner->run_accepted_submission_with_outcome(
+            $adapter,
+            [
+                'entry' => [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
+                'form'  => [ 'id' => $form_id, 'title' => 'Mismatched local execution', 'fields' => [] ],
+            ]
         );
 
         global $wpdb;
         $request_id = (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' );
         $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
         $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
+        $runtime_mapping_id = 'local_first_mismatch';
+        $this->assertSame( 'indeterminate', $outcome->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
         $this->assertSame( 'failed', $event['status'] ?? null );
-        $this->assertSame( 'sentient_forms_executor_terminal_status_mismatch', $event['error_code'] ?? null );
-        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertNull( $event['error_code'] ?? null );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
+        $this->assertSame( [], get_option( 'sentient_forms_action_log', [] ) );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1713, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Mismatched local execution', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }
 
-    public function test_sync_local_first_fails_closed_when_terminal_enrichment_cannot_be_persisted(): void
+    public function test_sync_local_first_preserves_terminal_event_when_enrichment_cannot_be_persisted(): void
     {
         global $wpdb;
 
@@ -2644,6 +2699,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $local_execution
         );
         $adapter                            = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        delete_option( 'sentient_forms_action_log' );
 
         $event_updates = 0;
         $fail_enrichment_update = static function ( string $query ) use ( &$event_updates ): string
@@ -2663,9 +2719,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $suppress_errors = $wpdb->suppress_errors( true );
         try
         {
-            $adapter->handle_accepted_submission(
-                [ 'id' => 1714, 'form_id' => $form_id, 'status' => 'active' ],
-                [ 'id' => $form_id, 'title' => 'Enrichment write failure', 'fields' => [] ]
+            $outcome = $runner->run_accepted_submission_with_outcome(
+                $adapter,
+                [
+                    'entry' => [ 'id' => 1714, 'form_id' => $form_id, 'status' => 'active' ],
+                    'form'  => [ 'id' => $form_id, 'title' => 'Enrichment write failure', 'fields' => [] ],
+                ]
             );
         }
         finally
@@ -2677,12 +2736,25 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $request_id = (string) ( $local_execution->calls[0]['context']['execution_request_id'] ?? '' );
         $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
         $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
-        $this->assertSame( 3, $event_updates );
-        $this->assertSame( 'failed', $event['status'] ?? null );
-        $this->assertSame( 'sentient_forms_executor_terminal_enrichment_failed', $event['error_code'] ?? null );
-        $this->assertSame( 'failed', $request['status'] ?? null );
+        $this->assertSame( 'indeterminate', $outcome->get_mapping_outcomes()['local_first_enrichment_failure'] ?? null );
+        $this->assertSame( 2, $event_updates );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertNull( $event['error_code'] ?? null );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
         $this->assertSame( 'sentient_managed', $event['provider'] ?? null );
         $this->assertSame( 'provider-payload-digest', $event['payload_digest'] ?? null );
+        $this->assertTrue( $event['result_json']['executor_owned'] ?? false );
+        $this->assertSame( [], get_option( 'sentient_forms_action_log', [] ) );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1714, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Enrichment write failure', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }
@@ -2761,7 +2833,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
-    public function test_sync_local_first_fails_closed_when_fallback_terminal_event_cannot_be_persisted(): void
+    public function test_sync_local_first_leaves_running_event_when_runner_terminal_write_fails(): void
     {
         global $wpdb;
 
@@ -2792,6 +2864,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $local_execution
         );
         $adapter         = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance(), $runner );
+        delete_option( 'sentient_forms_action_log' );
 
         $event_updates = 0;
         $fail_terminal_update = static function ( string $query ) use ( &$event_updates ): string
@@ -2811,9 +2884,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $suppress_errors = $wpdb->suppress_errors( true );
         try
         {
-            $adapter->handle_accepted_submission(
-                [ 'id' => 1716, 'form_id' => $form_id, 'status' => 'active' ],
-                [ 'id' => $form_id, 'title' => 'Fallback event failure', 'fields' => [] ]
+            $outcome = $runner->run_accepted_submission_with_outcome(
+                $adapter,
+                [
+                    'entry' => [ 'id' => 1716, 'form_id' => $form_id, 'status' => 'active' ],
+                    'form'  => [ 'id' => $form_id, 'title' => 'Fallback event failure', 'fields' => [] ],
+                ]
             );
         }
         finally
@@ -2827,233 +2903,279 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
         $request_id = (string) ( $requests[0]['request_hash'] ?? '' );
         $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
-        $this->assertSame( 2, $event_updates );
+        $this->assertSame( 'indeterminate', $outcome->get_mapping_outcomes()['local_first_fallback_event_failure'] ?? null );
+        $this->assertSame( 1, $event_updates );
         $this->assertCount( 1, $local_execution->calls );
-        $this->assertSame( 'failed', $requests[0]['status'] ?? null );
-        $this->assertSame( 'failed', $event['status'] ?? null );
-        $this->assertSame( 'sentient_forms_runner_terminal_persistence_failed', $event['error_code'] ?? null );
+        $this->assertSame( 'indeterminate', $requests[0]['status'] ?? null );
+        $this->assertSame( 'running', $event['status'] ?? null );
+        $this->assertNull( $event['error_code'] ?? null );
+        $this->assertSame( [], get_option( 'sentient_forms_action_log', [] ) );
+
+        $adapter->handle_accepted_submission(
+            [ 'id' => 1716, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'title' => 'Fallback event failure', 'fields' => [] ]
+        );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'indeterminate',
+            Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' )['status'] ?? null
+        );
 
         delete_option( $option_key );
     }
 
     public function test_accepted_submission_applies_sync_spam_delivery_native_effect(): void
     {
-        $form_id    = 786;
-        $entry_id   = 1708;
-        $action_id  = 'sync_spam_native_effect';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static fn (): array => [
-                    'result_data' => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.99,
-                    ],
-                ]
-            )
-        );
-        update_option(
-            $option_key,
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id  = 786;
+        $entry_id = 1708;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                          => false,
-                        'suppress_notifications_on_spam' => true,
-                        'effect_mapping_json'            => [
-                            'spam' => [
-                                'enabled'             => true,
-                                'classification_path' => 'result_data.classification',
-                            ],
-                        ],
-                    ],
-                ],
+                'async'                          => false,
+                'suppress_notifications_on_spam' => true,
             ],
-            false
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
+                ],
+            ]
+        );
+        $local_execution                       = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+            ],
+        ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
         );
 
         $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
         $form    = [ 'id' => $form_id, 'title' => 'Sync spam native effect', 'fields' => [] ];
-        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->entries[ $entry_id ] = $entry;
         $adapter->forms[ $form_id ]    = $form;
+        GFAPI::$entries[ $entry_id ]   = $entry;
 
         $adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', GFAPI::$entries[ $entry_id ]['status'] ?? null );
         $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
-        $this->assertSame( 1, $adapter->spam_status_updates );
-        $this->assertCount( 1, $adapter->notes );
+        $this->assertCount( 1, $local_execution->calls );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
-    public function test_registered_action_native_spam_finalization_is_idempotent(): void
+    public function test_local_spam_native_finalization_is_idempotent(): void
     {
-        $form_id    = 797;
-        $entry_id   = 1797;
-        $action_id  = 'self_applying_spam_action';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form       = [ 'id' => $form_id, 'title' => 'Self-applying spam action', 'fields' => [] ];
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $adapter->entries[ $entry_id ] = $entry;
-        $adapter->forms[ $form_id ]    = $form;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function ( array $data, array $settings, int | string $native_entry_id ) use ( $adapter ): array {
-                    $adapter->mark_entry_as_spam( $native_entry_id );
-
-                    return [
-                        'result_data' => [
-                            'classification' => 'spam',
-                            'confidence'     => 0.99,
-                            'justification'  => 'The Action already applied the native spam status.',
-                        ],
-                    ];
-                }
-            )
-        );
-        update_option(
-            $option_key,
+        $form_id  = 797;
+        $entry_id = 1797;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ],
+            null,
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
-            ],
-            false
-        );
-
-        $adapter->handle_accepted_submission( $entry, $form );
-
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
-        $this->assertSame( 1, $adapter->spam_status_updates );
-        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
-        $this->assertCount( 1, $adapter->notes );
-
-        delete_option( $option_key );
-    }
-
-    public function test_bundled_spam_action_leaves_native_note_ownership_to_the_adapter(): void
-    {
-        $form_id    = 796;
-        $entry_id   = 1796;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form       = [ 'id' => $form_id, 'title' => 'Bundled spam action', 'fields' => [] ];
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $adapter->entries[ $entry_id ] = $entry;
-        $adapter->forms[ $form_id ]    = $form;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
-        update_option(
-            $option_key,
-            [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_analysis',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                   => false,
-                        'mark_as_spam'            => true,
-                        'spam_indicators_display' => 'simple',
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'structured.classification',
+                    'confidence_path'     => 'structured.confidence',
+                    'note'                => [
+                        'result_display_mode' => 'all_results',
                     ],
                 ],
-            ],
-            false
+            ]
         );
+        $local_execution                       = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->return_execution_wrapper = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'structured' => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'The local result applier owns the native spam state.',
+            ],
+        ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Idempotent local spam effect', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        GFAPI::$entries[ $entry_id ]   = $entry;
+
+        $adapter->handle_accepted_submission( $entry, $form );
+        $adapter->handle_accepted_submission( $entry, $form );
+
+        $this->assertSame( 'spam', GFAPI::$entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertCount( 1, GFFormsModel::$notes );
+        $this->assertStringContainsString( 'local result applier owns', strtolower( GFFormsModel::$notes[0]['note'] ?? '' ) );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_bundled_spam_native_note_is_owned_by_local_result_applier(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id  = 796;
+        $entry_id = 1796;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ],
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'structured.classification',
+                    'confidence_path'     => 'structured.confidence',
+                    'note'                => [
+                        'result_display_mode' => 'all_results',
+                        'indicators_display'  => 'simple',
+                    ],
+                ],
+            ]
+        );
+        $local_execution                       = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->return_execution_wrapper = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'structured' => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'The bundled local result produced this note.',
+            ],
+        ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Bundled spam action', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        GFAPI::$entries[ $entry_id ]   = $entry;
 
         $adapter->handle_accepted_submission( $entry, $form );
 
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
-        $this->assertSame( 1, $adapter->spam_status_updates );
-        $this->assertSame( 0, $action->action_owned_notes );
-        $this->assertCount( 1, $adapter->notes );
-        $this->assertStringContainsString( 'Production-faithful bundled spam result.', $adapter->notes[0]['note_content'] ?? '' );
+        $this->assertSame( 'spam', GFAPI::$entries[ $entry_id ]['status'] ?? null );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertCount( 1, GFFormsModel::$notes );
+        $this->assertStringContainsString( 'bundled local result produced this note', strtolower( GFFormsModel::$notes[0]['note'] ?? '' ) );
+        $this->assertSame( 'sentient_forms_local_action', GFFormsModel::$notes[0]['note_type'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
-    public function test_canonicalized_legacy_spam_respects_native_confidence_threshold(): void
+    public function test_local_spam_effect_respects_native_confidence_threshold(): void
     {
-        $form_id    = 7963;
-        $entry_id   = 17963;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form       = [ 'id' => $form_id, 'title' => 'Low-confidence spam action', 'fields' => [] ];
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $action->response_result_data = [
-            'classification' => 'spam',
-            'confidence'     => 0.40,
-            'justification'  => 'Suspicious, but below the configured threshold.',
-            'indicators'     => [
-                [
-                    'type'     => 'suspicious_links',
-                    'evidence' => 'A shortened URL.',
-                    'weight'   => 'medium',
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id  = 7963;
+        $entry_id = 17963;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [
+                'async'                    => false,
+                'spam_confidence_threshold' => 0.95,
+                'spam_result_display_mode'  => 'all_results',
+            ],
+            null,
+            [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'structured.classification',
+                    'confidence_path'     => 'structured.confidence',
+                    'min_confidence'      => 0.95,
+                    'note'                => [
+                        'result_display_mode' => 'all_results',
+                        'indicators_display'  => 'detailed',
+                    ],
+                ],
+            ]
+        );
+        $local_execution                       = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->return_execution_wrapper = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'structured' => [
+                'classification' => 'spam',
+                'confidence'     => 0.40,
+                'justification'  => 'Suspicious, but below the configured threshold.',
+                'indicators'     => [
+                    [
+                        'type'     => 'suspicious_links',
+                        'evidence' => 'A shortened URL.',
+                        'weight'   => 'medium',
+                    ],
                 ],
             ],
         ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Low-confidence spam action', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->entries[ $entry_id ] = $entry;
         $adapter->forms[ $form_id ]    = $form;
         $adapter->webhook_controls_supported = true;
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
-        update_option(
-            $option_key,
-            [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_analysis',
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                    => false,
-                        'mark_as_spam'             => true,
-                        'spam_confidence_threshold' => 0.95,
-                        'spam_result_display_mode'  => 'all_results',
-                    ],
-                ],
-            ],
-            false
-        );
+        GFAPI::$entries[ $entry_id ] = $entry;
 
         gform_update_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
         gform_update_meta( $entry_id, 'sentient_forms_spam_notification_preference', 'suppress' );
         $adapter->handle_accepted_submission( $entry, $form );
         $notification = [ 'id' => 'notification-low-confidence', 'name' => 'Low-confidence notification' ];
 
-        $this->assertSame( 'active', $adapter->entries[ $entry_id ]['status'] ?? null );
-        $this->assertSame( 0, $adapter->spam_status_updates );
+        $this->assertSame( 'active', GFAPI::$entries[ $entry_id ]['status'] ?? null );
         $this->assertSame( 'reviewed', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
         $this->assertSame( 'allow', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
         $this->assertSame( 'allow', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
         $this->assertSame( $notification, $adapter->maybe_suppress_spam_notification( $notification, $form, $entry ) );
-        $this->assertCount( 1, $adapter->notes );
-        $this->assertStringContainsString( '40% spam confidence', $adapter->notes[0]['note_content'] ?? '' );
-        $this->assertStringContainsString( '95% threshold', $adapter->notes[0]['note_content'] ?? '' );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertCount( 1, GFFormsModel::$notes );
+        $this->assertStringContainsString( '40% confidence', GFFormsModel::$notes[0]['note'] ?? '' );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     /**
@@ -3061,62 +3183,90 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
      */
     public function test_mixed_spam_mapping_confidence_reduces_monotonically( array $confidences ): void
     {
-        $form_id    = 7964;
-        $entry_id   = 17964;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form       = [ 'id' => $form_id, 'title' => 'Mixed-confidence spam actions', 'fields' => [] ];
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $action     = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $adapter->entries[ $entry_id ] = $entry;
-        $adapter->forms[ $form_id ]    = $form;
-        $adapter->webhook_controls_supported = true;
-        $action->response_result_data_sequence = array_map(
-            static fn ( float $confidence ): array => [
-                'classification' => 'spam',
-                'confidence'     => $confidence,
-                'justification'  => 'Confidence-specific production-shaped result.',
-            ],
-            $confidences
-        );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        $mappings = [];
-        foreach ( array_keys( $confidences ) as $index )
+        $low_first      = ( $confidences[0] ?? 0.0 ) < ( $confidences[1] ?? 0.0 );
+        $form_id        = $low_first ? 79641 : 79640;
+        $entry_id       = $low_first ? 179641 : 179640;
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->return_execution_wrapper = true;
+        foreach ( $confidences as $confidence )
         {
-            $mapping_id = 'map_spam_' . $index;
-            $mappings[ $mapping_id ] = [
-                'local_mapping_id'           => $mapping_id,
-                'central_action_id'          => 'spam_analysis',
-                'action_type_indicator'      => 'custom',
-                'is_action_enabled_for_form' => true,
-                'mark_as_spam'               => true,
-                'trigger_hooks'              => [ 'after_submission' ],
-                'settings'                   => [
+            $fixture = $this->create_local_mapping_fixture(
+                $form_id,
+                'spam_detection_v1',
+                'after_submission',
+                [
                     'async'                          => false,
-                    'mark_as_spam'                   => true,
                     'spam_confidence_threshold'      => 0.95,
                     'suppress_notifications_on_spam' => true,
                     'suppress_webhooks_on_spam'      => true,
                 ],
+                null,
+                [
+                    'spam' => [
+                        'enabled'             => true,
+                        'classification_path' => 'structured.classification',
+                        'confidence_path'     => 'structured.confidence',
+                        'min_confidence'      => 0.95,
+                        'note'                => [
+                            'result_display_mode' => 'all_results',
+                        ],
+                    ],
+                ]
+            );
+            $local_execution->results[ $fixture['mapping_id'] ] = [
+                'structured' => [
+                    'classification' => 'spam',
+                    'confidence'     => $confidence,
+                    'justification'  => 'Confidence-specific local result.',
+                ],
             ];
         }
-        update_option( $option_key, $mappings, false );
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+
+        $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+        $form    = [ 'id' => $form_id, 'title' => 'Mixed-confidence spam actions', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+        $adapter->entries[ $entry_id ] = $entry;
+        $adapter->forms[ $form_id ]    = $form;
+        $adapter->webhook_controls_supported = true;
+        GFAPI::$entries[ $entry_id ] = $entry;
 
         $adapter->handle_accepted_submission( $entry, $form );
         $notification = [ 'id' => 'notification-mixed-confidence', 'name' => 'Mixed-confidence notification' ];
 
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame(
+            'spam',
+            GFAPI::$entries[ $entry_id ]['status'] ?? null,
+            (string) wp_json_encode(
+                [
+                    'calls'   => wp_list_pluck( $local_execution->calls, 'mapping_id' ),
+                    'results' => $local_execution->results,
+                    'meta'    => [
+                        'classification' => gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ),
+                        'notifications'  => gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ),
+                        'webhooks'       => gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ),
+                    ],
+                ]
+            )
+        );
         $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
         $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ) );
         $this->assertFalse( $adapter->maybe_suppress_spam_notification( $notification, $form, $entry ) );
-        $this->assertSame( [], $action->response_result_data_sequence );
-        $notes = implode( "\n", wp_list_pluck( $adapter->notes, 'note_content' ) );
-        $this->assertStringContainsString( '40% spam confidence', $notes );
-        $this->assertStringNotContainsString( 'Entry remains active', $notes );
+        $this->assertCount( count( $confidences ), $local_execution->calls );
+        $notes = implode( "\n", wp_list_pluck( GFFormsModel::$notes, 'note' ) );
+        $this->assertStringContainsString( '40% confidence', $notes );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public static function provide_mixed_spam_mapping_orders(): array
@@ -3129,197 +3279,95 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_non_spam_action_classification_cannot_mutate_native_spam_state(): void
     {
-        $form_id    = 7965;
-        $entry_id   = 17965;
-        $action_id  = 'classification_report';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $entry      = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form       = [ 'id' => $form_id, 'title' => 'Non-spam classification action', 'fields' => [] ];
-        $adapter    = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $adapter->entries[ $entry_id ] = $entry;
-        $adapter->forms[ $form_id ]    = $form;
-        $action = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $action->use_action_id( $action_id );
-        $action->response_result_data = [
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id  = 7965;
+        $entry_id = 17965;
+        $fixture  = $this->create_local_mapping_fixture(
+            $form_id,
+            'classification_report',
+            'after_submission',
+            [ 'async' => false ]
+        );
+        $local_execution                       = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects = true;
+        $local_execution->return_execution_wrapper = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
             'classification' => 'spam',
             'confidence'     => 0.99,
             'justification'  => 'A non-spam action happened to use a classification field.',
         ];
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action( $action );
-        update_option(
-            $option_key,
-            [
-                'map_classification' => [
-                    'local_mapping_id'           => 'map_classification',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async' => false,
-                    ],
-                ],
-            ],
-            false
-        );
-
-        $adapter->handle_accepted_submission( $entry, $form );
-
-        $this->assertSame( 'active', $adapter->entries[ $entry_id ]['status'] ?? null );
-        $this->assertSame( 0, $adapter->spam_status_updates );
-        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
-        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
-        $this->assertCount( 0, $adapter->notes );
-
-        delete_option( $option_key );
-    }
-
-    public function test_legacy_spam_action_attests_only_catalog_valid_output(): void
-    {
-        $action = new Sentient_Forms_Test_Production_Faithful_Spam_Analysis_Action( Sentient_Forms_Plugin::instance() );
-        $valid  = $action->process_result_data(
-            [
-                'classification' => 'likely_spam',
-                'confidence'     => 0.92,
-                'reasoning'      => 'The submission contains a suspicious link.',
-                'spam_indicators' => [
-                    [
-                        'type'     => 'suspicious_links',
-                        'evidence' => 'A shortened URL.',
-                        'weight'   => 'high',
-                    ],
-                ],
-            ]
-        );
-        $invalid = $action->process_result_data(
-            [
-                'classification' => 'spam',
-                'confidence'     => '0.99',
-                'justification'  => 'Numeric strings are not contract-valid confidence values.',
-                'is_spam'        => true,
-            ]
-        );
-
-        $this->assertTrue( $valid['result_data']['structured_output_valid'] ?? false );
-        $this->assertSame( 'likely_spam', $valid['result_data']['structured_output']['classification'] ?? null );
-        $this->assertSame( 'The submission contains a suspicious link.', $valid['result_data']['structured_output']['justification'] ?? null );
-        $this->assertSame( 'suspicious_links', $valid['result_data']['structured_output']['indicators'][0]['type'] ?? null );
-        $this->assertFalse( $invalid['result_data']['structured_output_valid'] ?? true );
-        $this->assertArrayNotHasKey( 'structured_output', $invalid['result_data'] );
-        $this->assertArrayNotHasKey( 'classification', $invalid['result_data'] );
-        $this->assertArrayNotHasKey( 'confidence', $invalid['result_data'] );
-        $this->assertArrayNotHasKey( 'justification', $invalid['result_data'] );
-        $this->assertArrayNotHasKey( 'is_spam', $invalid['result_data'] );
-        $this->assertSame( '', $invalid['classification'] ?? null );
-        $this->assertFalse( $invalid['is_spam'] ?? true );
-        $this->assertArrayNotHasKey( 'classification', $invalid['evaluation_payload']['result_data'] ?? [] );
-        $this->assertArrayNotHasKey( 'is_spam', $invalid['evaluation_payload']['result_data'] ?? [] );
-    }
-
-    public function test_synchronous_managed_spam_result_updates_the_native_entry_once(): void
-    {
-        $form_id    = 798;
-        $entry_id   = 1798;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $executions = 0;
-        update_option(
-            $option_key,
-            [
-                'map_managed_spam' => [
-                    'local_mapping_id'           => 'map_managed_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_name_label'          => 'Managed spam detection',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                    => false,
-                        'spam_result_display_mode' => 'all_results',
-                    ],
-                ],
-            ],
-            false
-        );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
-                Sentient_Forms_Plugin::instance(),
-                static function () use ( &$executions ): array {
-                    ++$executions;
-
-                    return [
-                        'result_data' => [
-                            'classification' => 'spam',
-                            'confidence'     => 0.99,
-                            'justification'  => 'Managed synchronous result should apply Gravity spam state.',
-                        ],
-                    ];
-                }
-            )
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
         );
 
         $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
-        $form    = [ 'id' => $form_id, 'title' => 'Managed synchronous spam', 'fields' => [] ];
-        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $form    = [ 'id' => $form_id, 'title' => 'Non-spam classification action', 'fields' => [] ];
+        $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
         $adapter->entries[ $entry_id ] = $entry;
         $adapter->forms[ $form_id ]    = $form;
+        GFAPI::$entries[ $entry_id ]   = $entry;
 
         $adapter->handle_accepted_submission( $entry, $form );
-        $adapter->handle_accepted_submission( $entry, $form );
 
-        $this->assertSame( 1, $executions );
-        $this->assertSame( 'spam', $adapter->entries[ $entry_id ]['status'] ?? null );
-        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
-        $this->assertCount( 1, $adapter->notes );
-        $this->assertStringContainsString( 'Managed synchronous result should apply Gravity spam state.', $adapter->notes[0]['note_content'] ?? '' );
+        $this->assertSame( 'active', GFAPI::$entries[ $entry_id ]['status'] ?? null );
+        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+        $this->assertEmpty( gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertCount( 0, GFFormsModel::$notes );
+        $this->assertCount( 1, $local_execution->calls );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_synchronous_spam_suppresses_notification_in_real_gravity_hook_order_without_double_execution(): void
     {
-        $form_id    = 789;
-        $entry_id   = 1711;
-        $action_id  = 'sync_spam_hook_order';
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id    = 7891;
+        $entry_id   = 17111;
         $executions = 0;
-
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $action_id,
-                static function () use ( &$executions ): array {
-                    ++$executions;
-
-                    return [
-                        'result_data' => [
-                            'classification' => 'spam',
-                            'confidence'     => 0.99,
-                        ],
-                    ];
-                }
-            )
-        );
-        update_option(
-            $option_key,
+        $fixture    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [
-                        'async'                          => false,
-                        'suppress_notifications_on_spam' => true,
-                    ],
-                ],
+                'async'                          => false,
+                'suppress_notifications_on_spam' => true,
             ],
-            false
+            null,
+            [
+                'spam' => [
+                    'enabled'                        => true,
+                    'classification_path'            => 'structured.classification',
+                    'confidence_path'                => 'structured.confidence',
+                    'suppress_notifications_on_spam' => true,
+                ],
+            ]
         );
+        $local_execution                           = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->apply_result_effects     = true;
+        $local_execution->return_execution_wrapper = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = static function () use ( &$executions ): array {
+            ++$executions;
+
+            return [
+                'structured' => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                ],
+            ];
+        };
+        $this->set_local_execution_service( $local_execution );
 
         $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
         $form  = [ 'id' => $form_id, 'title' => 'Hook-order spam', 'fields' => [] ];
+        GFAPI::$entries[ $entry_id ] = $entry;
+        GFAPI::$forms[ $form_id ]    = $form;
         $this->adapter->register_hooks();
 
         apply_filters( 'gform_entry_post_save', $entry, $form );
@@ -3333,43 +3381,51 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertFalse( $notification );
         $this->assertSame( 1, $executions );
+        $this->assertCount( 1, $local_execution->calls );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_accepted_submission_keeps_only_spam_mappings_that_were_actually_queued(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
         }
 
-        $form_id    = 783;
-        $entry_id   = 1705;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $mapping = static fn ( string $mapping_id ): array => [
-            'local_mapping_id'           => $mapping_id,
-            'central_action_id'          => 'spam_detection_v1',
-            'action_type_indicator'      => 'master',
-            'is_action_enabled_for_form' => true,
-            'mark_as_spam'               => true,
-            'trigger_hooks'              => [ 'after_submission' ],
-            'settings'                   => [
-                'async'                          => true,
-                'suppress_notifications_on_spam' => true,
+        $form_id  = 783;
+        $entry_id = 1705;
+        $settings = [
+            'async'                          => true,
+            'suppress_notifications_on_spam' => true,
+        ];
+        $effects = [
+            'spam' => [
+                'enabled'             => true,
+                'classification_path' => 'result_data.classification',
             ],
         ];
-        update_option(
-            $option_key,
-            [
-                'map_spam_queued' => $mapping( 'map_spam_queued' ),
-                'map_spam_failed' => $mapping( 'map_spam_failed' ),
-            ],
-            false
+        $queued = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            $settings,
+            null,
+            $effects
+        );
+        $failed = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            $settings,
+            null,
+            $effects
         );
 
         $handler                     = new Sentient_Forms_Test_Selective_Failure_Async_Handler( Sentient_Forms_Plugin::instance() );
-        $handler->failed_mapping_ids = [ 'map_spam_failed' ];
+        $handler->failed_mapping_ids = [ $failed['runtime_key'] ];
         $this->set_async_handler( $handler );
 
         $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
@@ -3390,14 +3446,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertSame( [], $adapter->dispatched_notifications );
-        $this->assertSame( [ 'map_spam_queued' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+        $this->assertSame( [ $queued['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
         $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_accepted_submission_resolves_action_defaults_before_deferral_and_queueing(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
@@ -3405,22 +3463,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $form_id      = 784;
         $entry_id     = 1706;
-        $actions_key  = 'sentient_forms_actions_gravity_forms_' . $form_id;
         $defaults_key = 'sentient_forms_action_defaults_spam_detection_v1';
-        update_option(
-            $actions_key,
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => true ],
+            null,
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
                 ],
-            ],
-            false
+            ]
         );
         update_option(
             $defaults_key,
@@ -3457,18 +3512,22 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertCount( 1, $scheduled_jobs );
-        $settings = $scheduled_jobs[0]['args']['settings']['settings'] ?? [];
+        $job_payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $settings    = $job_payload['context']['settings'] ?? [];
+        $this->assertSame( $fixture['mapping_id'], $job_payload['local_mapping_id'] ?? null );
         $this->assertTrue( $settings['suppress_notifications_on_spam'] ?? false );
         $this->assertSame( 'sf_balanced', $settings['model_selection']['primary'] ?? null );
         $this->assertSame( 'all_results', $settings['spam_result_display_mode'] ?? null );
         $this->assertSame( 'simple', $settings['spam_indicators_display'] ?? null );
 
-        delete_option( $actions_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( $defaults_key );
     }
 
     public function test_accepted_submission_resolves_form_config_before_deferral_and_queueing(): void
     {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
         {
             sentient_forms_tests_reset_async_state();
@@ -3476,22 +3535,19 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $form_id     = 785;
         $entry_id    = 1707;
-        $actions_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
         $config_key  = 'sentient_forms_form_config_gravity_forms_' . $form_id;
-        update_option(
-            $actions_key,
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => true ],
+            null,
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'after_submission' ],
-                    'settings'                   => [ 'async' => true ],
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'result_data.classification',
                 ],
-            ],
-            false
+            ]
         );
         update_option(
             $config_key,
@@ -3528,11 +3584,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertCount( 1, $scheduled_jobs );
-        $settings = $scheduled_jobs[0]['args']['settings']['settings'] ?? [];
+        $job_payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $settings    = $job_payload['context']['settings'] ?? [];
+        $this->assertSame( $fixture['mapping_id'], $job_payload['local_mapping_id'] ?? null );
         $this->assertTrue( $settings['suppress_notifications_on_spam'] ?? false );
         $this->assertTrue( $settings['include_site_context'] ?? false );
 
-        delete_option( $actions_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( $config_key );
     }
 
@@ -5603,31 +5661,23 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     }
 
     /**
-     * Test the validation hook blocks when CPS returns content_validation_v1 structured output.
+     * Test the validation hook blocks when local execution returns content_validation_v1 structured output.
      */
     public function test_handle_validation_blocks_content_validation_structured_output_without_top_level_validation(): void
     {
-        $form_id    = 99024;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
-            [
-                'sf_disabled' => false,
-                'map_content_quality' => [
-                    'local_mapping_id'           => 'map_content_quality',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-            ]
+        $form_id = 99024;
+        $calls   = [];
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation'
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -5691,7 +5741,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $result['form']['fields'][1]->failed_validation );
         $this->assertSame( '', $result['form']['fields'][1]->validation_message );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     // =========================================================================
@@ -6185,49 +6235,48 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_handle_after_submission_enqueues_mapping_when_conditions_match(): void
     {
-        $form_id    = 994;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
 
-        update_option(
-            $option_key,
-            [
-                'sf_disabled' => false,
-                'map_conditional' => [
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'conditions' => [
-                            'enabled' => true,
-                            'root'    => [
-                                'type'  => 'group',
-                                'logic' => 'all',
-                                'rules' => [
-                                    [
-                                        'type'     => 'rule',
-                                        'field_id' => '7',
-                                        'operator' => 'contains',
-                                        'value'    => 'approved',
-                                    ],
-                                ],
-                            ],
-                        ],
+        $form_id    = 994;
+        $conditions = [
+            'enabled' => true,
+            'root'    => [
+                'type'  => 'group',
+                'logic' => 'all',
+                'rules' => [
+                    [
+                        'type'     => 'rule',
+                        'field_id' => '7',
+                        'operator' => 'contains',
+                        'value'    => 'approved',
                     ],
                 ],
-            ]
+            ],
+        ];
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ],
+            $conditions
         );
 
-        $scheduled_jobs = 0;
-        $listener = static function () use ( &$scheduled_jobs ): void {
-            $scheduled_jobs++;
+        $scheduled_jobs = [];
+        $listener = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
         };
 
         add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
 
         $entry = [
-            'id' => 142,
-            '7'  => 'approved by reviewer',
+            'id'      => 142,
+            'form_id' => $form_id,
+            '7'       => 'approved by reviewer',
         ];
         $form = [
             'id'     => $form_id,
@@ -6244,49 +6293,49 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
 
-        $this->assertGreaterThanOrEqual( 1, $scheduled_jobs );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( $fixture['mapping_id'], $scheduled_jobs[0]['args'][0]['local_mapping_id'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_after_submission_enqueues_mapping_when_conditions_disabled(): void
     {
-        $form_id    = 993;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
 
-        update_option(
-            $option_key,
+        $form_id = 993;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ],
             [
-                'sf_disabled' => false,
-                'map_conditional' => [
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'conditions' => [
-                            'enabled' => false,
-                            'root'    => [
-                                'type'  => 'group',
-                                'logic' => 'all',
-                                'rules' => [],
-                            ],
-                        ],
-                    ],
+                'enabled' => false,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [],
                 ],
             ]
         );
 
-        $scheduled_jobs = 0;
-        $listener = static function () use ( &$scheduled_jobs ): void {
-            $scheduled_jobs++;
+        $scheduled_jobs = [];
+        $listener = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
         };
 
         add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
 
         $entry = [
-            'id' => 143,
-            '1'  => 'anything',
+            'id'      => 143,
+            'form_id' => $form_id,
+            '1'       => 'anything',
         ];
         $form = [ 'id' => $form_id ];
 
@@ -6294,9 +6343,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
 
-        $this->assertGreaterThanOrEqual( 1, $scheduled_jobs );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( $fixture['mapping_id'], $scheduled_jobs[0]['args'][0]['local_mapping_id'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_skips_dependent_mapping_when_prerequisite_is_skipped(): void
@@ -6363,38 +6414,34 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_handle_validation_skips_spam_gated_dependent_mapping_when_upstream_classifies_spam(): void
     {
-        $form_id    = 9902;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
+        $form_id = 9902;
+        $calls   = [];
+        $spam    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
+        );
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-                'map_child' => [
-                    'local_mapping_id'           => 'map_child',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'dependency_ids'        => [ 'map_spam' ],
-                        'skip_on_upstream_spam' => true,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -6439,44 +6486,40 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertEmpty( $result['form']['validation_message'] ?? '' );
         $this->assertStringNotContainsString( 'Downstream should not run.', (string) ( $result['form']['validation_message'] ?? '' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_does_not_block_downstream_for_spam_below_configured_confidence(): void
     {
-        $form_id    = 99022;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
+        $form_id = 99022;
+        $calls   = [];
+        $spam    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation',
+            [ 'spam_confidence_threshold' => 0.95 ]
+        );
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'spam_confidence_threshold' => 0.95,
-                    ],
-                ],
-                'map_child' => [
-                    'local_mapping_id'           => 'map_child',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'dependency_ids'        => [ 'map_spam' ],
-                        'skip_on_upstream_spam' => true,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -6524,33 +6567,25 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $result['is_valid'] );
         $this->assertEmpty( $result['form']['validation_message'] ?? '' );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_logs_blocking_spam_result_to_action_log(): void
     {
-        $form_id    = 99021;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 99021;
         delete_option( 'sentient_forms_action_log' );
 
-        update_option(
-            $option_key,
-            [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-            ]
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function (): array {
                     return [
@@ -6594,7 +6629,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $entries[0]['structured_output_valid'] ?? true );
         $this->assertSame( 3, $entries[0]['credits_used'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
@@ -6618,8 +6653,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 ],
             ]
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static fn(): array => [
                     'result_data' => [
@@ -6659,25 +6694,18 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_content_validation_action_cannot_release_spam_classification_side_effects(): void
     {
-        $form_id    = 99025;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 99025;
         delete_option( 'sentient_forms_action_log' );
-        update_option(
-            $option_key,
-            [
-                'map_content' => [
-                    'local_mapping_id'           => 'map_content',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Content Quality',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-            ]
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation'
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static fn(): array => [
                     'result_data' => [
@@ -6706,31 +6734,24 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $entries[0]['structured_output_valid'] ?? true );
         $this->assertSame( 'success', $entries[0]['status'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_spam_action_cannot_release_content_validation_side_effects(): void
     {
-        $form_id    = 99026;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 99026;
         delete_option( 'sentient_forms_action_log' );
-        update_option(
-            $option_key,
-            [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-            ]
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static fn(): array => [
                     'result_data' => [
@@ -6758,68 +6779,40 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $entries[0]['structured_output_valid'] ?? true );
         $this->assertSame( 'success', $entries[0]['status'] ?? null );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_conflicting_attested_spam_wrappers_fail_open_without_releasing_a_classification(): void
     {
-        $form_id    = 99027;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        delete_option( 'sentient_forms_action_log' );
-        update_option(
-            $option_key,
+        [ $incoming, $result, $entries ] = $this->run_attested_validation_payload_case(
+            99027,
+            'spam_detection_v1',
             [
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
+                'structured_output_valid' => true,
+                'structured'              => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'Conflicting root payload.',
+                    'indicators'     => [],
+                ],
+                'result_data'            => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'classification' => 'ham',
+                        'confidence'     => 0.99,
+                        'justification'  => 'Conflicting nested payload.',
+                        'indicators'     => [],
+                    ],
                 ],
             ]
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
-                Sentient_Forms_Plugin::instance(),
-                static fn(): array => [
-                    'structured_output_valid' => true,
-                    'structured'              => [
-                        'classification' => 'spam',
-                        'confidence'     => 0.99,
-                        'justification'  => 'Conflicting root payload.',
-                        'indicators'     => [],
-                    ],
-                    'result_data'            => [
-                        'structured_output_valid' => true,
-                        'structured_output'       => [
-                            'classification' => 'ham',
-                            'confidence'     => 0.99,
-                            'justification'  => 'Conflicting nested payload.',
-                            'indicators'     => [],
-                        ],
-                    ],
-                ]
-            )
-        );
-        $incoming = [
-            'is_valid' => true,
-            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
-        ];
-
-        $result  = $this->adapter->handle_validation( $incoming );
-        $entries = get_option( 'sentient_forms_action_log', [] );
 
         $this->assertSame( $incoming, $result );
         $this->assertCount( 1, $entries );
         $this->assertNull( $entries[0]['classification'] ?? null );
         $this->assertFalse( $entries[0]['structured_output_valid'] ?? true );
         $this->assertSame( 'success', $entries[0]['status'] ?? null );
-
-        delete_option( $option_key );
-        delete_option( 'sentient_forms_action_log' );
     }
 
     public function test_spam_attestation_cannot_authenticate_a_candidate_in_another_container(): void
@@ -6967,8 +6960,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 ],
             ]
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static fn(): array => [
                     'validation' => [
@@ -7019,8 +7012,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function (): array {
                     return [
@@ -7075,38 +7068,34 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_handle_validation_skips_spam_gated_dependent_mapping_when_upstream_classifies_likely_spam(): void
     {
-        $form_id    = 9903;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
+        $form_id = 9903;
+        $calls   = [];
+        $spam    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
+        );
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-                'map_child' => [
-                    'local_mapping_id'           => 'map_child',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'dependency_ids'        => [ 'map_spam' ],
-                        'skip_on_upstream_spam' => true,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -7156,43 +7145,39 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $result['is_valid'] );
         $this->assertEmpty( $result['form']['validation_message'] ?? '' );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_runs_spam_gated_dependent_mapping_when_upstream_classifies_ham(): void
     {
-        $form_id    = 9904;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
+        $form_id = 9904;
+        $calls   = [];
+        $spam    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
+        );
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-                'map_child' => [
-                    'local_mapping_id'           => 'map_child',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'dependency_ids'        => [ 'map_spam' ],
-                        'skip_on_upstream_spam' => true,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -7240,43 +7225,39 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $result['is_valid'] );
         $this->assertStringContainsString( 'Tell us more.', (string) ( $result['form']['validation_message'] ?? '' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_runs_spam_gated_dependent_mapping_when_upstream_has_no_classification(): void
     {
-        $form_id    = 9905;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $calls      = [];
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        update_option(
-            $option_key,
+        $form_id = 9905;
+        $calls   = [];
+        $spam    = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'gform_validation'
+        );
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'content_validation_v1',
+            'gform_validation',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-                'map_child' => [
-                    'local_mapping_id'           => 'map_child',
-                    'central_action_id'          => 'content_validation_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [
-                        'dependency_ids'        => [ 'map_spam' ],
-                        'skip_on_upstream_spam' => true,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
 
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static function ( string $central_action_id ) use ( &$calls ): array {
                     $calls[] = $central_action_id;
@@ -7318,7 +7299,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertFalse( $result['is_valid'] );
         $this->assertStringContainsString( 'Tell us more.', (string) ( $result['form']['validation_message'] ?? '' ) );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_after_submission_skips_dependent_mapping_when_prerequisite_disabled(): void
@@ -7365,28 +7346,31 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     public function test_handle_after_submission_passes_dependency_context_for_dependent_mapping(): void
     {
-        $form_id    = 990;
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
 
-        update_option(
-            $option_key,
+        $form_id      = 990;
+        $prerequisite = $this->create_local_mapping_fixture(
+            $form_id,
+            'entry_summary_v1',
+            'after_submission',
+            [ 'async' => true ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'dependency_context_action',
+            'after_submission',
             [
-                'sf_disabled' => false,
-                'map_prereq' => [
-                    'local_mapping_id'           => 'map_prereq',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                ],
-                'map_dependent' => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => 'entry_evaluation',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'dependency_ids' => [ 'map_prereq' ],
+                'async'           => true,
+                'dependency_ids'  => [ $prerequisite['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $prerequisite['runtime_key'],
                     ],
                 ],
             ]
@@ -7401,189 +7385,152 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         };
 
         add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
-        $this->adapter->handle_accepted_submission( [ 'id' => 304 ], [ 'id' => $form_id ] );
+        $this->adapter->handle_accepted_submission( [ 'id' => 304, 'form_id' => $form_id ], [ 'id' => $form_id ] );
         remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
 
-        $dependent = null;
+        $dependent_context = null;
         foreach ( $captured_jobs as $job )
         {
-            $context = $job['args']['context'] ?? [];
-            if ( ( $context['local_mapping_id'] ?? '' ) === 'map_dependent' )
+            $context = $job['args'][0]['context'] ?? [];
+            if ( ( $context['local_mapping_id'] ?? '' ) === $dependent['runtime_key'] )
             {
-                $dependent = $context;
+                $dependent_context = $context;
                 break;
             }
         }
 
-        $this->assertNotNull( $dependent );
-        $this->assertSame( [ 'map_prereq' ], $dependent['dependency_mapping_ids'] ?? [] );
-        $this->assertArrayHasKey( 'map_prereq', $dependent['dependency_execution_request_ids'] ?? [] );
+        $this->assertCount( 2, $captured_jobs );
+        $this->assertNotNull( $dependent_context );
+        $this->assertSame( [ $prerequisite['runtime_key'] ], $dependent_context['dependency_mapping_ids'] ?? [] );
+        $this->assertArrayHasKey( $prerequisite['runtime_key'], $dependent_context['dependency_execution_request_ids'] ?? [] );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_after_submission_defaults_to_skip_dependent_mapping_after_upstream_spam(): void
     {
-        $form_id            = 982;
-        $option_key         = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $tracking_action_id = 'test_upstream_spam_skip_action';
-        $execution_calls    = 0;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $tracking_action_id,
-                static function () use ( &$execution_calls ): void {
-                    $execution_calls++;
-                }
-            )
+        $form_id         = 982;
+        $execution_calls = 0;
+        $spam             = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => false ]
         );
-
-        update_option(
-            $option_key,
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'test_upstream_spam_skip_action',
+            'after_submission',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'execution_mode' => 'validation',
-                    ],
-                ],
-                'map_dependent' => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => $tracking_action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'dependency_ids' => [ 'map_spam' ],
-                        'execution_mode' => 'validation',
+                'async'           => false,
+                'dependency_ids'  => [ $spam['runtime_key'] ],
+                'trigger_sources' => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
-
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
-                Sentient_Forms_Plugin::instance(),
-                static function (): array {
-                    return [
-                        'result_data' => [
-                            'structured_output_valid' => true,
-                            'structured_output'       => [
-                                'classification' => 'spam',
-                                'confidence'     => 0.98,
-                                'justification'  => 'Upstream spam classification should stop downstream work.',
-                                'indicators'     => [
-                                    [
-                                        'type'     => 'commercial_solicitation',
-                                        'evidence' => 'Upstream spam classification should stop downstream work.',
-                                        'weight'   => 'high',
-                                    ],
-                                ],
-                            ],
-                        ],
-                    ];
-                }
-            )
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $spam['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => [
+                'classification' => 'spam',
+                'confidence'     => 0.98,
+                'justification'  => 'Upstream spam classification should stop downstream work.',
+                'indicators'     => [
+                    [
+                        'type'     => 'commercial_solicitation',
+                        'evidence' => 'Upstream spam classification should stop downstream work.',
+                        'weight'   => 'high',
+                    ],
+                ],
+            ],
+        ];
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$execution_calls ): array {
+            ++$execution_calls;
+            return [ 'summary' => 'Dependent should not execute.' ];
+        };
+        $this->set_local_execution_service( $local_execution );
 
         $this->adapter->handle_accepted_submission(
-            [ 'id' => 313, 'status' => 'active' ],
-            [ 'id' => $form_id ]
+            [ 'id' => 313, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'fields' => [] ]
         );
 
+        $this->assertCount( 1, $local_execution->calls );
         $this->assertSame( 0, $execution_calls );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_after_submission_honors_dependent_skip_on_upstream_spam_opt_in(): void
     {
-        $form_id            = 983;
-        $option_key         = 'sentient_forms_actions_gravity_forms_' . $form_id;
-        $tracking_action_id = 'test_dependent_spam_skip_action';
-        $execution_calls    = 0;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Tracking_Action(
-                $tracking_action_id,
-                static function () use ( &$execution_calls ): void {
-                    $execution_calls++;
-                }
-            )
-        );
-
-        update_option(
-            $option_key,
+        $form_id         = 983;
+        $execution_calls = 0;
+        $spam             = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
             [
-                'sf_disabled' => false,
-                'map_spam' => [
-                    'local_mapping_id'           => 'map_spam',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Spam Detection',
-                    'is_action_enabled_for_form' => true,
-                    'mark_as_spam'               => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'execution_mode'          => 'validation',
-                        'skip_downstream_on_spam' => false,
-                    ],
-                ],
-                'map_dependent' => [
-                    'local_mapping_id'           => 'map_dependent',
-                    'central_action_id'          => $tracking_action_id,
-                    'action_type_indicator'      => 'custom',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_after_submission' ],
-                    'settings'                   => [
-                        'dependency_ids'      => [ 'map_spam' ],
-                        'execution_mode'      => 'validation',
-                        'skip_on_upstream_spam' => true,
+                'async'                   => false,
+                'skip_downstream_on_spam' => false,
+            ]
+        );
+        $dependent = $this->create_local_mapping_fixture(
+            $form_id,
+            'test_dependent_spam_skip_action',
+            'after_submission',
+            [
+                'async'                 => false,
+                'dependency_ids'        => [ $spam['runtime_key'] ],
+                'skip_on_upstream_spam' => true,
+                'trigger_sources'       => [
+                    'after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $spam['runtime_key'],
                     ],
                 ],
             ]
         );
-
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
-                Sentient_Forms_Plugin::instance(),
-                static function (): array {
-                    return [
-                        'result_data' => [
-                            'structured_output_valid' => true,
-                            'structured_output'       => [
-                                'classification' => 'spam',
-                                'confidence'     => 0.98,
-                                'justification'  => 'Dependent opt-in should stop downstream work.',
-                                'indicators'     => [
-                                    [
-                                        'type'     => 'commercial_solicitation',
-                                        'evidence' => 'Dependent opt-in should stop downstream work.',
-                                        'weight'   => 'high',
-                                    ],
-                                ],
-                            ],
-                        ],
-                    ];
-                }
-            )
-        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->results[ $spam['mapping_id'] ] = [
+            'structured_output_valid' => true,
+            'structured'              => [
+                'classification' => 'spam',
+                'confidence'     => 0.98,
+                'justification'  => 'Dependent opt-in should stop downstream work.',
+                'indicators'     => [
+                    [
+                        'type'     => 'commercial_solicitation',
+                        'evidence' => 'Dependent opt-in should stop downstream work.',
+                        'weight'   => 'high',
+                    ],
+                ],
+            ],
+        ];
+        $local_execution->results[ $dependent['mapping_id'] ] = static function () use ( &$execution_calls ): array {
+            ++$execution_calls;
+            return [ 'summary' => 'Dependent should not execute.' ];
+        };
+        $this->set_local_execution_service( $local_execution );
 
         $this->adapter->handle_accepted_submission(
-            [ 'id' => 314, 'status' => 'active' ],
-            [ 'id' => $form_id ]
+            [ 'id' => 314, 'form_id' => $form_id, 'status' => 'active' ],
+            [ 'id' => $form_id, 'fields' => [] ]
         );
 
+        $this->assertCount( 1, $local_execution->calls );
         $this->assertSame( 0, $execution_calls );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_handle_validation_includes_complex_gravity_inputs_in_local_prompt(): void
@@ -8984,6 +8931,100 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertTrue( $method->invoke( $this->adapter, $node, 'gform_after_submission' ) );
     }
 
+    /**
+     * @param array<string, mixed>      $settings
+     * @param array<string, mixed>|null $conditions
+     * @param array<string, mixed>|null $effects
+     *
+     * @return array{action_id:int,mapping_id:int,runtime_key:string}
+     */
+    private function create_local_mapping_fixture(
+        int $form_id,
+        string $action_code,
+        string $hook = 'after_submission',
+        array $settings = [],
+        ?array $conditions = null,
+        ?array $effects = null,
+        bool $enabled = true
+    ): array
+    {
+        global $wpdb;
+
+        $stored_code = Sentient_Forms_Bundled_Action_Templates::has( $action_code )
+            ? Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $action_code )
+            : $action_code;
+        $action_data = [
+            'code'                 => $stored_code,
+            'display_name'         => 'Local ' . $action_code,
+            'definition_json'      => [ 'template_code' => $action_code, 'prompt' => 'Fixture prompt.' ],
+            'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+            'status'               => 'active',
+        ];
+        if ( Sentient_Forms_Bundled_Action_Templates::has( $action_code ) )
+        {
+            $action_data['template_id']     = $this->create_bundled_template_fixture( $action_code );
+            $action_data['definition_json'] = [ 'template_code' => $action_code ];
+        }
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->upsert_by_code( $action_data );
+        $this->assertIsInt( $action_id );
+
+        $mapping_data = [
+            'form_source'         => 'gravity_forms',
+            'form_id'             => (string) $form_id,
+            'hook'                => $hook,
+            'action_kind'         => 'custom_action',
+            'action_id'           => $action_id,
+            'input_bindings_json' => [],
+            'execution_mode'      => 'validation' === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook ) || false === ( $settings['async'] ?? true )
+                ? 'sync'
+                : 'async',
+            'settings_json'       => $settings,
+            'enabled'             => $enabled,
+        ];
+        if ( null !== $conditions )
+        {
+            $mapping_data['conditions_json'] = $conditions;
+        }
+        if ( null !== $effects )
+        {
+            $mapping_data['effect_mapping_json'] = $effects;
+        }
+
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create( $mapping_data );
+        $this->assertIsInt( $mapping_id );
+
+        return [
+            'action_id'   => $action_id,
+            'mapping_id'  => $mapping_id,
+            'runtime_key' => 'local_first_' . $mapping_id,
+        ];
+    }
+
+    private function create_bundled_template_fixture( string $action_code ): int
+    {
+        global $wpdb;
+
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+        $this->assertIsArray( $catalog );
+        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => $action_code,
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        return $template_id;
+    }
+
     private function truncate_local_first_runtime_tables(): void
     {
         global $wpdb;
@@ -9014,24 +9055,16 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
      */
     private function run_attested_validation_payload_case( int $form_id, string $action_code, array $payload ): array
     {
-        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
-        update_option(
-            $option_key,
-            [
-                'map_validation' => [
-                    'local_mapping_id'           => 'map_validation',
-                    'central_action_id'          => $action_code,
-                    'action_type_indicator'      => 'master',
-                    'action_name_label'          => 'Validation Action',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'gform_validation' ],
-                    'settings'                   => [],
-                ],
-            ]
+        $this->create_local_mapping_fixture(
+            $form_id,
+            $action_code,
+            'gform_validation'
         );
-        $this->set_action_executor(
-            new Sentient_Forms_Test_Validation_Action_Executor(
+        $this->set_local_execution_service(
+            new Sentient_Forms_Test_Validation_Local_Execution_Service(
                 Sentient_Forms_Plugin::instance(),
                 static fn(): array => $payload
             )
@@ -9044,7 +9077,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $result  = $this->adapter->handle_validation( $incoming );
         $entries = get_option( 'sentient_forms_action_log', [] );
 
-        delete_option( $option_key );
+        $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
 
         return [ $incoming, $result, is_array( $entries ) ? $entries : [] ];

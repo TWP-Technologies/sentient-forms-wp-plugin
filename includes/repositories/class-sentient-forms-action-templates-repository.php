@@ -18,6 +18,14 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
 
     public function upsert_by_code( array $data ): int | WP_Error
     {
+        return $this->with_local_state_write_lock(
+            fn(): int | WP_Error => $this->upsert_by_code_locked( $data )
+        );
+    }
+
+    /** Upsert after the shared local-state fence is held. */
+    private function upsert_by_code_locked( array $data ): int | WP_Error
+    {
         $code = sanitize_key( (string) ( $data['code'] ?? '' ) );
         if ( '' === $code )
         {

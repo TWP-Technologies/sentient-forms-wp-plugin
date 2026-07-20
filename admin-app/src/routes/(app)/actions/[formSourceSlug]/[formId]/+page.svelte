@@ -11,7 +11,6 @@
 		SelectField,
 		FieldSelector,
 		ConditionBuilder,
-		TemplateLibrary,
 		ModelSelector,
 		Toggle,
 		MappingDependencyGraph,
@@ -26,6 +25,11 @@
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import {
+		DEFAULT_INPUT_MAPPING,
+		parseInputMapping,
+		validateInputMappingForSave
+	} from '$lib/utils/input-mapping';
+	import {
 		createInitialMappingModalSectionExpansion,
 		toggleMappingModalSectionExpansion,
 		type MappingModalSectionExpansion,
@@ -39,6 +43,7 @@
 		getMappingTriggerHooks,
 		getMappingTriggerSources,
 		normalizeDependencyIds,
+		normalizeTriggerSources,
 		serializeTriggerSources,
 		validateMappingDependencies
 	} from '$lib/utils/mapping-dependencies';
@@ -47,7 +52,6 @@
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { notifications } from '$lib/stores/notifications';
 	import { licenseState } from '$lib/stores/license.svelte';
-	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
@@ -398,6 +402,21 @@
 		gform_after_submission: '📝 After Submission (Background)',
 		real_time: 'Realtime (Form Page)'
 	};
+	const GRAVITY_FALLBACK_HOOK_KEYS = new Set([
+		...Object.keys(FALLBACK_HOOK_LABELS),
+		'validation',
+		'after_submission'
+	]);
+	const GRAVITY_FALLBACK_HOOK_BY_LIFECYCLE: Record<string, string> = {
+		validation: 'gform_validation',
+		after_submission: 'gform_after_submission',
+		real_time: 'real_time'
+	};
+	const FALLBACK_LIFECYCLE_LABELS: Record<string, string> = {
+		validation: 'During validation',
+		after_submission: 'After submission',
+		real_time: 'Realtime'
+	};
 	const actionsState = formActionsState;
 	const customState = customActionsState;
 	const providerClient = createClientFromConfig();
@@ -410,8 +429,15 @@
 		() =>
 			runtimeFormSources.find((source) => source.slug === data.formSourceSlug)?.descriptor ?? null
 	);
+	const currentRouteBootstrap = $derived.by(() => {
+		const bootstrap = actionsState.bootstrap;
+		if (!bootstrap) return null;
+		if (bootstrap.form_source !== data.formSourceSlug) return null;
+		if (String(bootstrap.form_id) !== String(data.formId)) return null;
+		return bootstrap;
+	});
 	const formSourceDescriptor = $derived(
-		actionsState.bootstrap?.form_source_descriptor ?? runtimeFormSourceDescriptor
+		currentRouteBootstrap?.form_source_descriptor ?? runtimeFormSourceDescriptor
 	);
 	const currentFormAdapterLabel = $derived(
 		currentFormSummary?.adapter_name?.trim() ||
@@ -518,7 +544,6 @@
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
 	let showAddPanel = $state(false);
-	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
 	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
 	let localBuilderCredentialId = $state('');
@@ -542,6 +567,7 @@
 	let mappingSectionExpansion = $state<MappingModalSectionExpansion>(
 		createInitialMappingModalSectionExpansion(false)
 	);
+	let inputMappingSaveError = $state<string | null>(null);
 	let editBaselineSignature = $state<string | null>(null);
 	type DraftTriggerSource = { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
 	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
@@ -617,6 +643,13 @@
 	function lifecycleIdForHook(hook: string): string | null {
 		const normalized = hook.trim();
 		if (!normalized) return null;
+		if (
+			normalized === 'validation' ||
+			normalized === 'after_submission' ||
+			normalized === 'real_time'
+		) {
+			return normalized;
+		}
 
 		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
 			if (lifecycle.native_hook === normalized || lifecycleId === normalized) {
@@ -624,20 +657,38 @@
 			}
 		}
 
-		if (normalized === 'gform_validation') return 'validation';
-		if (normalized === 'gform_after_submission' || normalized === 'wpcf7_mail_sent') {
+		if (
+			normalized === 'gform_validation' ||
+			normalized === 'wpcf7_validate' ||
+			normalized === 'wpforms_process' ||
+			normalized === 'elementor_pro/forms/validation'
+		) {
+			return 'validation';
+		}
+		if (
+			normalized === 'gform_after_submission' ||
+			normalized === 'wpcf7_mail_sent' ||
+			normalized === 'wpforms_process_complete' ||
+			normalized === 'elementor_pro/forms/new_record'
+		) {
 			return 'after_submission';
 		}
-		if (normalized === 'real_time') return 'real_time';
-
 		return null;
 	}
 
 	function adaptHookForCurrentSource(hook: string): string | null {
-		if (!formSourceDescriptor) return hook;
-
-		const lifecycleId = lifecycleIdForHook(hook);
+		const normalized = hook.trim();
+		const lifecycleId = lifecycleIdForHook(normalized);
 		if (!lifecycleId) return null;
+		if (!formSourceDescriptor) {
+			if (
+				data.formSourceSlug !== 'gravity_forms' ||
+				!GRAVITY_FALLBACK_HOOK_KEYS.has(normalized)
+			) {
+				return null;
+			}
+			return GRAVITY_FALLBACK_HOOK_BY_LIFECYCLE[lifecycleId] ?? null;
+		}
 
 		const lifecycle = formSourceDescriptor.lifecycles?.[lifecycleId];
 		return lifecycle?.supported ? lifecycleId : null;
@@ -651,17 +702,14 @@
 		return normalizeHookIds(adapted);
 	}
 
-	function hookEntriesForAction(actionId: string | null | undefined): [string, string][] {
+	function hookEntriesForDefinition(
+		definition: ActionDefinition | null | undefined,
+		actionId: string | null | undefined = definition?.id
+	): [string, string][] {
 		const availableHookKeys = new Set(hookEntries.map(([hookKey]) => hookKey));
 		const fallbackEntries = hookEntries.filter(
 			([hookKey]) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId)
 		);
-
-		if (!actionId) return fallbackEntries;
-
-		const definition =
-			(actionsState.definitions ?? []).find((item) => item.id === actionId) ??
-			DOCUMENTED_BUILT_IN_DEFINITIONS.find((item) => item.id === actionId);
 		const definitionHooks = normalizeDefinitionHooks(definition?.hooks);
 		const allowedHooks =
 			definitionHooks.length > 0
@@ -676,8 +724,24 @@
 			.filter((hookKey) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId))
 			.map((hookKey) => [
 				hookKey,
-				entryByHook.get(hookKey) ?? FALLBACK_HOOK_LABELS[hookKey] ?? hookKey
+				formSourceDescriptor?.lifecycles?.[hookKey]?.label ??
+					entryByHook.get(hookKey) ??
+					FALLBACK_HOOK_LABELS[hookKey] ??
+					hookKey
 			]);
+	}
+
+	function hookEntriesForAction(actionId: string | null | undefined): [string, string][] {
+		if (!actionId) return hookEntriesForDefinition(null, null);
+
+		const definition =
+			(actionsState.definitions ?? []).find((item) => item.id === actionId) ??
+			DOCUMENTED_BUILT_IN_DEFINITIONS.find((item) => item.id === actionId);
+		return hookEntriesForDefinition(definition, actionId);
+	}
+
+	function definitionHasCompatibleLifecycle(definition: ActionDefinition): boolean {
+		return hookEntriesForDefinition(definition).length > 0;
 	}
 
 	function sanitizeHooksForAction(
@@ -962,7 +1026,12 @@
 	let formLevelConfigByActionId = $state<Record<string, FormActionConfig>>({});
 	let actionDefaultsByActionId = $state<Record<string, FormActionConfig>>({});
 	let appliedBootstrapKey = $state<string | null>(null);
+	let activeRouteKey = $state<string | null>(null);
 	const actionDefaultPreloadIds = new Set<string>();
+
+	function formRouteKey(formSourceSlug: string, formId: string | number): string {
+		return `${formSourceSlug}:${String(formId)}`;
+	}
 
 	function formDetailBootstrapKey(bootstrap: {
 		form_source: string;
@@ -974,11 +1043,15 @@
 	}
 
 	async function loadFormActionConfigIndex() {
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
 		try {
 			const client = createClientFromConfig();
-			const configs = await client.getFormActionConfigs(data.formSourceSlug, data.formId, {
+			const configs = await client.getFormActionConfigs(formSourceSlug, formId, {
 				showNotifications: false
 			});
+			if (activeRouteKey !== routeKey) return;
 			const normalized = Object.fromEntries(
 				Object.entries(configs).map(([actionId, config]) => [
 					actionId,
@@ -990,6 +1063,7 @@
 				...normalized
 			};
 		} catch (error) {
+			if (activeRouteKey !== routeKey) return;
 			console.warn('[FormLevelConfig] Failed to preload form-level config index:', error);
 		}
 	}
@@ -1049,6 +1123,9 @@
 		actionId: string,
 		options: { openModal?: boolean; force?: boolean } = {}
 	): Promise<FormActionConfig> {
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
 		const shouldOpenModal = options.openModal ?? true;
 		if (!canConfigureFormSource) {
 			if (shouldOpenModal) {
@@ -1084,7 +1161,7 @@
 							)
 						}
 					: formLevelConfigByActionId[actionId];
-				if (shouldOpenModal) {
+				if (shouldOpenModal && activeRouteKey === routeKey) {
 					formLevelConfig = cachedConfig;
 				}
 				return cachedConfig;
@@ -1093,7 +1170,7 @@
 			const client = createClientFromConfig();
 			const [actionDefaults, rawConfig] = await Promise.all([
 				actionDefaultsPromise,
-				client.getFormActionConfig(data.formSourceSlug, data.formId, actionId)
+				client.getFormActionConfig(formSourceSlug, formId, actionId)
 			]);
 			const normalizedConfig = normalizeFormActionConfig(rawConfig);
 			const config = isRealtimeEligibleActionId(actionId)
@@ -1106,6 +1183,7 @@
 						)
 					}
 				: normalizedConfig;
+			if (activeRouteKey !== routeKey) return config;
 			formLevelConfigByActionId = {
 				...formLevelConfigByActionId,
 				[actionId]: config
@@ -1115,13 +1193,14 @@
 			}
 			return config;
 		} catch (error) {
+			if (activeRouteKey !== routeKey) return createBlankFormActionConfig();
 			console.warn('[FormLevelConfig] Failed to load form-level config:', error);
 			if (shouldOpenModal) {
 				notifications.warning('Could not load saved config. Starting with defaults.');
 			}
 			return createBlankFormActionConfig();
 		} finally {
-			formLevelConfigLoading = false;
+			if (activeRouteKey === routeKey) formLevelConfigLoading = false;
 		}
 	}
 
@@ -1264,32 +1343,42 @@
 
 	async function loadFormFields() {
 		if (fieldsLoading) return;
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
 		fieldsLoading = true;
 		try {
 			const client = createClientFromConfig();
-			formFields = await client.getFormFields(data.formSourceSlug, data.formId);
+			const nextFields = await client.getFormFields(formSourceSlug, formId);
+			if (activeRouteKey !== routeKey) return;
+			formFields = nextFields;
 		} catch (error) {
+			if (activeRouteKey !== routeKey) return;
 			console.warn('[FormMapping] Failed to load form fields:', error);
 			formFields = []; // Graceful fallback
 		} finally {
-			fieldsLoading = false;
+			if (activeRouteKey === routeKey) fieldsLoading = false;
 		}
 	}
 
 	async function loadCurrentFormSummary() {
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
 		currentFormSummaryLoading = true;
 		currentFormSummaryError = null;
 
 		try {
-			const forms = await providerClient.getForms(data.formSourceSlug, { showNotifications: false });
-			currentFormSummary =
-				forms.find((form) => String(form.id) === String(data.formId)) ?? null;
+			const forms = await providerClient.getForms(formSourceSlug, { showNotifications: false });
+			if (activeRouteKey !== routeKey) return;
+			currentFormSummary = forms.find((form) => String(form.id) === String(formId)) ?? null;
 		} catch (error) {
+			if (activeRouteKey !== routeKey) return;
 			currentFormSummary = null;
 			currentFormSummaryError =
 				error instanceof Error ? error.message : 'Unable to load form title.';
 		} finally {
-			currentFormSummaryLoading = false;
+			if (activeRouteKey === routeKey) currentFormSummaryLoading = false;
 		}
 	}
 
@@ -1311,7 +1400,7 @@
 	}
 
 	function hydrateFormDetailBootstrap() {
-		const bootstrap = actionsState.bootstrap;
+		const bootstrap = currentRouteBootstrap;
 		if (!bootstrap) return;
 
 		const bootstrapKey = formDetailBootstrapKey(bootstrap);
@@ -1506,11 +1595,14 @@
 		}, {})
 	);
 
-	let hookOptions = $state<Record<string, string>>({ ...FALLBACK_HOOK_LABELS });
-
-	$effect(() => {
+	const allowsDescriptorlessGravityHooks = $derived(data.formSourceSlug === 'gravity_forms');
+	const hookOptions = $derived.by<Record<string, string>>(() => {
 		const hasSourceDescriptor = formSourceDescriptor !== null;
-		const next: Record<string, string> = hasSourceDescriptor ? {} : { ...FALLBACK_HOOK_LABELS };
+		const next: Record<string, string> = hasSourceDescriptor
+			? {}
+			: allowsDescriptorlessGravityHooks
+				? { ...FALLBACK_HOOK_LABELS }
+				: {};
 		const descriptorHookKeys = new Set<string>();
 		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
 			if (!lifecycle.supported) continue;
@@ -1523,19 +1615,28 @@
 
 			if (Array.isArray(definition.hooks)) {
 				for (const hook of definition.hooks) {
-					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook?.toString() ?? '') : hook?.toString();
-					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
-					if (key) next[key] = next[key] ?? key;
+					const rawHook = hook?.toString() ?? '';
+					const lifecycleId = lifecycleIdForHook(rawHook);
+					const key = adaptHookForCurrentSource(rawHook);
+					if (!key) continue;
+					if (hasSourceDescriptor && !descriptorHookKeys.has(key)) continue;
+					next[key] = next[key] ?? FALLBACK_LIFECYCLE_LABELS[lifecycleId ?? ''] ?? key;
 				}
 			} else if (typeof definition.hooks === 'object') {
 				for (const [hook, label] of Object.entries(definition.hooks)) {
-					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook) : hook;
-					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
-					if (key) next[key] = label?.toString() ?? next[key] ?? key;
+					const lifecycleId = lifecycleIdForHook(hook);
+					const key = adaptHookForCurrentSource(hook);
+					if (!key) continue;
+					if (hasSourceDescriptor && !descriptorHookKeys.has(key)) continue;
+					next[key] =
+						next[key] ??
+						FALLBACK_LIFECYCLE_LABELS[lifecycleId ?? ''] ??
+						label?.toString() ??
+						key;
 				}
 			}
 		}
-		hookOptions = next;
+		return next;
 	});
 
 	const hookEntries = $derived<[string, string][]>(Object.entries(hookOptions));
@@ -1546,7 +1647,21 @@
 		return actionsState.items.find((item) => item.local_mapping_id === editingLinkageId) ?? null;
 	});
 	const editingActionId = $derived(editingLinkage?.central_action_id ?? null);
-	const mappingHookEntries = $derived(hookEntriesForAction(editingActionId));
+	const allowedMappingHookEntries = $derived(hookEntriesForAction(editingActionId));
+	const unsupportedMappingHookEntries = $derived.by<[string, string][]>(() => {
+		if (!editingLinkage) return [];
+		return unsupportedHooksForLinkage(editingLinkage).map((hook) => [
+			hook,
+			`${FALLBACK_LIFECYCLE_LABELS[hook] ?? hookOptions[hook] ?? hook} (unsupported for ${currentFormAdapterLabel}; remove to repair)`
+		]);
+	});
+	const mappingHookEntries = $derived.by<[string, string][]>(() => {
+		const entries = new Map<string, string>(allowedMappingHookEntries);
+		for (const [hook, label] of unsupportedMappingHookEntries) {
+			entries.set(hook, label);
+		}
+		return Array.from(entries.entries());
+	});
 	const currentActionDefaults = $derived.by<FormActionConfig>(() => {
 		if (!editingLinkage?.central_action_id) {
 			return createBlankFormActionConfig();
@@ -1791,10 +1906,10 @@
 		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${webhookPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
-		const mapping = (draftSettings.input_mapping ?? {
-			mode: 'selected',
-			include_metadata: false
-		}) as InputMapping;
+		const mapping = parseInputMapping(draftSettings.input_mapping);
+		if (!mapping) {
+			return 'Invalid configuration · review required';
+		}
 		if (mapping.mode === 'all') {
 			return mapping.include_metadata ? 'All fields + metadata' : 'All fields';
 		}
@@ -1878,11 +1993,11 @@
 	const graphRenderLinkages = $derived.by<FormActionLinkage[]>(() =>
 		actionsState.items.map((item) => {
 			const draft = graphDraftByMappingId[item.local_mapping_id];
-			const nextHooks = draft?.triggerHooks ?? item.trigger_hooks ?? [];
+			const nextHooks = draft?.triggerHooks ?? normalizeHookIds(item.trigger_hooks ?? []);
 			const nextDependencyIds =
 				draft?.dependencyIds ?? normalizeDependencyIds(item.settings?.dependency_ids);
 			const nextTriggerSources =
-				draft?.triggerSources ?? serializeTriggerSources(getMappingTriggerSources(item));
+				draft?.triggerSources ?? serializeTriggerSources(normalizedMappingTriggerSources(item));
 			const nextSettings: Record<string, unknown> = {
 				...(item.settings ?? {})
 			};
@@ -1914,9 +2029,13 @@
 	const builtInDefinitions = $derived(
 		definitions.filter((definition) => (definition.source ?? 'bundled') === 'bundled')
 	);
-	const providerPathPolicy = $derived(actionsState.bootstrap?.provider_path_policy ?? null);
+	const providerPathPolicy = $derived(currentRouteBootstrap?.provider_path_policy ?? null);
 	const selectableBuiltInDefinitions = $derived(
-		builtInDefinitions.filter((definition) => !providerPolicyIsBlocked(providerPolicyForDefinition(definition)))
+		builtInDefinitions.filter(
+			(definition) =>
+				definitionHasCompatibleLifecycle(definition) &&
+				!providerPolicyIsBlocked(providerPolicyForDefinition(definition))
+		)
 	);
 	const hasDefinitions = $derived(builtInDefinitions.length > 0);
 	const hasBuiltInDefinitions = $derived(builtInDefinitions.length > 0);
@@ -1931,7 +2050,7 @@
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
 	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_pro_forms');
-	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
+	const submissionLedgerSettings = $derived(currentRouteBootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
 	const submissionLedgerRequired = $derived(
@@ -2110,8 +2229,8 @@
 
 		const allowedHooks = new Set(createHookEntries.map(([hookKey]) => hookKey));
 		const nextHooks = new Set([...selectedHooks].filter((hookKey) => allowedHooks.has(hookKey)));
-		if (nextHooks.size === 0) {
-			const firstHook = createHookEntries[0]?.[0] ?? 'gform_validation';
+		const firstHook = createHookEntries[0]?.[0];
+		if (nextHooks.size === 0 && firstHook) {
 			nextHooks.add(firstHook);
 		}
 
@@ -2239,10 +2358,43 @@
 		}
 	}
 
-	onMount(() => {
-		formActionsStore.load(data.formSourceSlug, data.formId);
-		restoreLastHooks();
+	function resetRouteScopedState() {
+		stopRefreshInterval();
+		clearRootAttachUndoState();
+		currentFormSummary = null;
+		currentFormSummaryLoading = false;
+		currentFormSummaryError = null;
+		formFields = [];
+		fieldsLoading = false;
+		formLevelConfigByActionId = {};
+		configuringActionId = null;
+		formLevelConfig = createBlankFormActionConfig();
+		formLevelConfigLoading = false;
+		formLevelConfigSaving = false;
+		appliedBootstrapKey = null;
+		showAddPanel = false;
+		createError = null;
+		creating = false;
+		selectedCreateDependencyIds = new Set();
+		localBuilderResult = null;
+		editingLinkageId = null;
+		showMappingConfigModal = false;
+		draftHooks = new Set();
+		draftSettings = {};
+		inputMappingSaveError = null;
+		editBaselineSignature = null;
+		graphDraftByMappingId = {};
+		pendingRemovalId = null;
+		workflowPlan = null;
+		workflowPlanLoading = false;
+		workflowPlanError = null;
+		workflowPlanScope = 'all';
+		lastWorkflowPlanSignature = '';
+		entryLookupId = '';
+		checkedEntryStatus = null;
+	}
 
+	onMount(() => {
 		visibilityHandler = () => {
 			if (document.visibilityState === 'hidden') {
 				stopRefreshInterval();
@@ -2259,12 +2411,25 @@
 				document.removeEventListener('visibilitychange', visibilityHandler);
 			}
 			clearRootAttachUndoState();
+			activeRouteKey = null;
 			formActionsStore.reset();
 		};
 	});
 
 	$effect(() => {
-		actionsState.bootstrap;
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
+		if (activeRouteKey === routeKey) return;
+
+		activeRouteKey = routeKey;
+		resetRouteScopedState();
+		void formActionsStore.load(formSourceSlug, formId);
+		restoreLastHooks();
+	});
+
+	$effect(() => {
+		currentRouteBootstrap;
 		hydrateFormDetailBootstrap();
 	});
 
@@ -2291,7 +2456,7 @@
 		definitions;
 		customActions;
 		if (actionsState.loading) return;
-		const bootstrap = actionsState.bootstrap;
+		const bootstrap = currentRouteBootstrap;
 		if (!bootstrap || appliedBootstrapKey !== formDetailBootstrapKey(bootstrap)) return;
 		preloadActionDefaultsForVisibleActions();
 	});
@@ -2315,13 +2480,11 @@
 		return normalizeDefinitionHooks(definition.hooks);
 	}
 
-	function summarizeDefinitionHooks(hooks?: Record<string, string> | string[]): string {
-		if (!hooks) return 'Default (gform_validation)';
-		if (Array.isArray(hooks)) {
-			return hooks.length > 0 ? hooks.join(', ') : 'Default (gform_validation)';
-		}
-		const labels = Object.values(hooks);
-		return labels.length > 0 ? labels.join(', ') : 'Default (gform_validation)';
+	function summarizeDefinitionHooks(definition: ActionDefinition): string {
+		const entries = hookEntriesForDefinition(definition);
+		return entries.length > 0
+			? entries.map(([, label]) => label).join(', ')
+			: 'Not available for this Form Source';
 	}
 
 	const statusBadgeVariant = (status: FormExecutionStatus) => {
@@ -2484,12 +2647,35 @@
 		formatActionModelSummary(definition.id, definition.modelHint ?? null);
 	function invalidHooksForLinkage(linkage: FormActionLinkage): string[] {
 		const triggerHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
-		const triggerSources = getMappingTriggerSources(linkage);
+		const triggerSources = normalizedMappingTriggerSources(linkage);
 		return triggerHooks.filter((hook) => triggerSources[hook]?.type === 'unbound');
 	}
 
+	function unsupportedHooksForAction(
+		actionId: string | null | undefined,
+		hooks: Iterable<string>
+	): string[] {
+		const allowedHooks = new Set(hookEntriesForAction(actionId).map(([hook]) => hook));
+		return normalizeHookIds(hooks).filter((hook) => !allowedHooks.has(hook));
+	}
+
+	function unsupportedHooksForLinkage(linkage: FormActionLinkage): string[] {
+		return unsupportedHooksForAction(
+			linkage.central_action_id,
+			getMappingTriggerHooks(linkage)
+		);
+	}
+
+	function unsupportedLifecycleMessage(hooks: string[]): string {
+		const labels = hooks.map((hook) => FALLBACK_LIFECYCLE_LABELS[hook] ?? hook);
+		return `Unsupported lifecycle${labels.length === 1 ? '' : 's'}: ${labels.join(', ')}. Remove ${labels.length === 1 ? 'it' : 'them'} to repair this mapping before saving.`;
+	}
+
 	function isLinkageInvalid(linkage: FormActionLinkage): boolean {
-		return invalidHooksForLinkage(linkage).length > 0;
+		return (
+			invalidHooksForLinkage(linkage).length > 0 ||
+			unsupportedHooksForLinkage(linkage).length > 0
+		);
 	}
 
 	function statusVariant(linkage: FormActionLinkage) {
@@ -2660,15 +2846,117 @@
 		closeMappingConfigModal();
 	}
 
+	function normalizeHookIdForCurrentSource(hook: string): string | null {
+		const normalized = hook?.toString().trim();
+		if (!normalized) return null;
+		if (formSourceDescriptor) {
+			return lifecycleIdForHook(normalized) ?? normalized;
+		}
+		if (data.formSourceSlug === 'gravity_forms' && GRAVITY_FALLBACK_HOOK_KEYS.has(normalized)) {
+			return adaptHookForCurrentSource(normalized) ?? normalized;
+		}
+		return normalized;
+	}
+
 	function normalizeHookIds(hooks: Iterable<string>): string[] {
 		return Array.from(
 			new Set(
 				Array.from(hooks)
-					.map((hook) => hook?.toString().trim())
-					.map((hook) => (formSourceDescriptor && hook ? (lifecycleIdForHook(hook) ?? hook) : hook))
+					.map((hook) => normalizeHookIdForCurrentSource(hook))
 					.filter((hook): hook is string => Boolean(hook))
 			)
 		).sort();
+	}
+
+	function triggerSourceAliasPriority(rawHook: string): number {
+		const normalizedRawHook = rawHook.trim();
+		const lifecycleId = lifecycleIdForHook(normalizedRawHook);
+		if (!lifecycleId) return 1;
+		if (normalizedRawHook === lifecycleId) return 3;
+
+		const currentNativeHook =
+			formSourceDescriptor?.lifecycles?.[lifecycleId]?.native_hook ??
+			(data.formSourceSlug === 'gravity_forms'
+				? GRAVITY_FALLBACK_HOOK_BY_LIFECYCLE[lifecycleId]
+				: null);
+		return currentNativeHook === normalizedRawHook ? 2 : 1;
+	}
+
+	function shouldReplaceNormalizedTriggerSource(
+		hook: string,
+		rawHook: string,
+		priority: number,
+		priorities: Record<string, number>,
+		sourceKeys: Record<string, string>
+	): boolean {
+		const currentPriority = priorities[hook];
+		if (typeof currentPriority === 'undefined') return true;
+		if (priority !== currentPriority) return priority > currentPriority;
+		return rawHook.localeCompare(sourceKeys[hook] ?? '') < 0;
+	}
+
+	function normalizedMappingTriggerSources(
+		linkage: FormActionLinkage
+	): ReturnType<typeof getMappingTriggerSources> {
+		const hooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+		const rawSettings = linkage.settings as Record<string, unknown> | undefined;
+		const explicitSources = normalizeTriggerSources(rawSettings?.trigger_sources);
+		if (Object.keys(explicitSources).length === 0) {
+			const synthesized = {} as ReturnType<typeof getMappingTriggerSources>;
+			const priorities: Record<string, number> = {};
+			const sourceKeys: Record<string, string> = {};
+			for (const [rawHook, source] of Object.entries(getMappingTriggerSources(linkage))) {
+				const hook = normalizeHookIdForCurrentSource(rawHook);
+				if (!hook) continue;
+				const priority = triggerSourceAliasPriority(rawHook);
+				if (!shouldReplaceNormalizedTriggerSource(hook, rawHook, priority, priorities, sourceKeys)) {
+					continue;
+				}
+				synthesized[hook] = source;
+				priorities[hook] = priority;
+				sourceKeys[hook] = rawHook;
+			}
+			return synthesized;
+		}
+
+		const normalized = {} as ReturnType<typeof getMappingTriggerSources>;
+		const priorities: Record<string, number> = {};
+		const sourceKeys: Record<string, string> = {};
+		for (const [rawHook, source] of Object.entries(explicitSources)) {
+			const hook = normalizeHookIdForCurrentSource(rawHook);
+			if (!hook) continue;
+			const priority = triggerSourceAliasPriority(rawHook);
+			if (!shouldReplaceNormalizedTriggerSource(hook, rawHook, priority, priorities, sourceKeys)) {
+				continue;
+			}
+			normalized[hook] = source;
+			priorities[hook] = priority;
+			sourceKeys[hook] = rawHook;
+		}
+
+		return Object.fromEntries(
+			hooks.map((hook) => [hook, normalized[hook] ?? { type: 'hook_root' as const }])
+		);
+	}
+
+	function normalizeLinkageForCurrentSource(linkage: FormActionLinkage): FormActionLinkage {
+		const hooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+		const triggerSources = normalizedMappingTriggerSources(linkage);
+		const dependencyIds = deriveDependencyIdsFromTriggerSources(triggerSources);
+		const settings: Record<string, unknown> = {
+			...(linkage.settings ?? {}),
+			trigger_sources: serializeTriggerSources(triggerSources)
+		};
+		if (dependencyIds.length > 0) {
+			settings.dependency_ids = dependencyIds;
+		} else {
+			delete settings.dependency_ids;
+		}
+		return {
+			...linkage,
+			trigger_hooks: hooks,
+			settings: settings as FormActionLinkage['settings']
+		};
 	}
 
 	function dependencySupportsSelectedHooks(
@@ -2694,17 +2982,29 @@
 		}
 
 		const normalized: DraftTriggerSourceRecord = {};
-		for (const [hook, rawSource] of Object.entries(value as Record<string, unknown>)) {
+		const priorities: Record<string, number> = {};
+		const sourceKeys: Record<string, string> = {};
+		for (const [rawHook, rawSource] of Object.entries(value as Record<string, unknown>)) {
+			const hook = normalizeHookIdForCurrentSource(rawHook);
+			if (!hook) continue;
 			if (!hookSet.has(hook)) continue;
+			const priority = triggerSourceAliasPriority(rawHook);
+			if (!shouldReplaceNormalizedTriggerSource(hook, rawHook, priority, priorities, sourceKeys)) {
+				continue;
+			}
 			if (!rawSource || typeof rawSource !== 'object' || Array.isArray(rawSource)) continue;
 			const source = rawSource as Record<string, unknown>;
 			const type = typeof source.type === 'string' ? source.type.trim().toLowerCase() : '';
 			if (type === 'hook_root' || type === 'root') {
 				normalized[hook] = { type: 'hook_root' };
+				priorities[hook] = priority;
+				sourceKeys[hook] = rawHook;
 				continue;
 			}
 			if (type === 'unbound' || type === 'detached') {
 				normalized[hook] = { type: 'unbound' };
+				priorities[hook] = priority;
+				sourceKeys[hook] = rawHook;
 				continue;
 			}
 			if (type !== 'mapping') continue;
@@ -2716,6 +3016,8 @@
 						: '';
 			if (!mappingId) continue;
 			normalized[hook] = { type: 'mapping', mapping_id: mappingId };
+			priorities[hook] = priority;
+			sourceKeys[hook] = rawHook;
 		}
 		return normalized;
 	}
@@ -2803,7 +3105,7 @@
 		}
 
 		const hooks = normalizeHookIds(getMappingTriggerHooks(linkage));
-		const baseSources = getMappingTriggerSources(linkage);
+		const baseSources = normalizedMappingTriggerSources(linkage);
 		const normalizedSources: DraftTriggerSourceRecord = {};
 		for (const hook of hooks) {
 			const source = baseSources[hook];
@@ -2837,7 +3139,7 @@
 		const linkage = getLinkageById(mappingId);
 		if (!linkage) return false;
 		const baseHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
-		const baseSourceMap = getMappingTriggerSources(linkage);
+		const baseSourceMap = normalizedMappingTriggerSources(linkage);
 		const baseTriggerSources: DraftTriggerSourceRecord = {};
 		for (const hook of baseHooks) {
 			const source = baseSourceMap[hook];
@@ -3155,7 +3457,7 @@
 				hooks: normalizeHookIds(getMappingTriggerHooks(item)),
 				enabled: item.is_action_enabled_for_form !== false,
 				dependency_ids: normalizeDependencyIds(item.settings?.dependency_ids),
-				trigger_sources: serializeTriggerSources(getMappingTriggerSources(item)),
+				trigger_sources: serializeTriggerSources(normalizedMappingTriggerSources(item)),
 				scope: hookScope
 			}))
 		);
@@ -3168,10 +3470,11 @@
 		>
 	): FormActionLinkage[] {
 		return actionsState.items.map((item) => {
+			const normalizedItem = normalizeLinkageForCurrentSource(item);
 			const draft = draftMap[item.local_mapping_id];
-			if (!draft) return item;
+			if (!draft) return normalizedItem;
 			const nextSettings: Record<string, unknown> = {
-				...(item.settings ?? {})
+				...(normalizedItem.settings ?? {})
 			};
 			if (draft.dependencyIds.length > 0) {
 				nextSettings.dependency_ids = draft.dependencyIds;
@@ -3181,7 +3484,7 @@
 			nextSettings.trigger_sources = draft.triggerSources;
 
 			return {
-				...item,
+				...normalizedItem,
 				trigger_hooks: draft.triggerHooks,
 				settings: nextSettings as FormActionLinkage['settings']
 			};
@@ -3264,6 +3567,9 @@
 	}
 
 	async function loadWorkflowPlan(hookScope: 'all' | string = workflowPlanScope) {
+		const formSourceSlug = data.formSourceSlug;
+		const formId = data.formId;
+		const routeKey = formRouteKey(formSourceSlug, formId);
 		workflowPlanScope = hookScope;
 		const signature = createWorkflowPlanSignature(actionsState.items ?? [], hookScope);
 		if (signature === lastWorkflowPlanSignature && workflowPlan && !workflowPlanError) {
@@ -3274,22 +3580,26 @@
 		workflowPlanError = null;
 		try {
 			const client = createClientFromConfig();
-			workflowPlan = await client.getWorkflowPlan(data.formSourceSlug, data.formId, hookScope, {
+			const nextWorkflowPlan = await client.getWorkflowPlan(formSourceSlug, formId, hookScope, {
 				showNotifications: false
 			});
+			if (activeRouteKey !== routeKey) return;
+			workflowPlan = nextWorkflowPlan;
 			lastWorkflowPlanSignature = signature;
 		} catch (error) {
+			if (activeRouteKey !== routeKey) return;
 			workflowPlanError =
 				error instanceof Error
 					? error.message
 					: 'Workflow plan unavailable; using local fallback preview.';
 			workflowPlan = null;
 		} finally {
-			workflowPlanLoading = false;
+			if (activeRouteKey === routeKey) workflowPlanLoading = false;
 		}
 	}
 
 	async function startEditingAction(linkage: FormActionLinkage, openModal = true) {
+		const routeKey = formRouteKey(data.formSourceSlug, data.formId);
 		const draftSnapshot = readEffectiveDraftForMapping(linkage.local_mapping_id);
 		const initialHooks =
 			draftSnapshot.triggerHooks.length > 0
@@ -3301,6 +3611,7 @@
 			loadActionDefaultsForAction(linkage.central_action_id, { force: false }),
 			loadFormLevelConfig(linkage.central_action_id, { openModal: false, force: false })
 		]);
+		if (activeRouteKey !== routeKey) return;
 		const inheritedFormConfig =
 			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const inheritedActionConfig =
@@ -3347,6 +3658,7 @@
 			conditions: cloneDraftValue(baseSettings.conditions ?? createDefaultConditionConfig())
 		};
 		draftSettings = nextDraftSettings;
+		inputMappingSaveError = null;
 		editingLinkageId = linkage.local_mapping_id;
 		resetMappingSectionExpansion(linkage);
 		showMappingConfigModal = openModal;
@@ -3360,6 +3672,7 @@
 		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		inputMappingSaveError = null;
 		if (cancelledMappingId && graphDraftByMappingId[cancelledMappingId]) {
 			const nextDraftMap = { ...graphDraftByMappingId };
 			delete nextDraftMap[cancelledMappingId];
@@ -3461,13 +3774,19 @@
 			return;
 		}
 		const next = new Set(draftHooks);
-		next.has(hook) ? next.delete(hook) : next.add(hook);
+		const isAddingHook = !next.has(hook);
+		isAddingHook ? next.add(hook) : next.delete(hook);
 		draftHooks = new Set(sanitizeHooksForAction(next, editingActionId));
 		const nextHooks = normalizeHookIds(draftHooks);
+		const existingSources = normalizeDraftTriggerSources(draftSettings.trigger_sources, nextHooks);
+		const normalizedHook = normalizeHookIdForCurrentSource(hook);
+		if (isAddingHook && normalizedHook && nextHooks.includes(normalizedHook)) {
+			existingSources[normalizedHook] ??= { type: 'hook_root' };
+		}
 		const nextSources = deriveTriggerSourcesForDraft(
 			nextHooks,
 			normalizeDependencyIds(draftSettings.dependency_ids),
-			normalizeDraftTriggerSources(draftSettings.trigger_sources, nextHooks)
+			existingSources
 		);
 		const executionMode = deriveExecutionModeForHooks(nextHooks, draftSettings.execution_mode);
 		draftSettings = {
@@ -3702,7 +4021,7 @@
 			return;
 		}
 		const introducedIssues = findIntroducedDependencyIssues(
-			validateMappingDependencies(actionsState.items),
+			validateMappingDependencies(buildLinkagesFromDraftMap({})),
 			candidateIssues
 		);
 		if (introducedIssues.length > 0) {
@@ -3786,6 +4105,14 @@
 			notifications.error('Select at least one trigger hook.');
 			return;
 		}
+		const unsupportedHooks = unsupportedHooksForAction(
+			linkage.central_action_id,
+			normalizedHooks
+		);
+		if (unsupportedHooks.length > 0) {
+			notifications.error(unsupportedLifecycleMessage(unsupportedHooks));
+			return;
+		}
 		if (
 			(normalizedHooks.includes('real_time') || draftSettings.execution_mode === 'real_time') &&
 			!isRealtimeEligibleActionId(linkage.central_action_id)
@@ -3795,6 +4122,18 @@
 			);
 			return;
 		}
+
+		const inputMappingError = validateInputMappingForSave(
+			draftSettings.input_mapping,
+			formFields.map((field) => field.id)
+		);
+		if (inputMappingError) {
+			mappingSectionExpansion = { ...mappingSectionExpansion, input_mapping: true };
+			inputMappingSaveError = inputMappingError;
+			notifications.error(inputMappingError);
+			return;
+		}
+		inputMappingSaveError = null;
 
 		// Ensure types are correct for spam settings
 		if (isSpamActionCode(linkage.central_action_id)) {
@@ -3871,11 +4210,14 @@
 			trigger_hooks: normalizedHooks,
 			settings: nextSettings as FormActionLinkage['settings']
 		};
-		const candidateItems = actionsState.items.map((item) =>
-			item.local_mapping_id === linkage.local_mapping_id ? updatedLinkage : item
+		const baselineItems = actionsState.items.map((item) => normalizeLinkageForCurrentSource(item));
+		const candidateItems = baselineItems.map((item) =>
+			item.local_mapping_id === linkage.local_mapping_id
+				? normalizeLinkageForCurrentSource(updatedLinkage)
+				: item
 		);
 		const introducedIssues = findIntroducedDependencyIssues(
-			validateMappingDependencies(actionsState.items),
+			validateMappingDependencies(baselineItems),
 			validateMappingDependencies(candidateItems)
 		);
 		if (introducedIssues.length > 0) {
@@ -4074,68 +4416,6 @@
 		void loadCurrentFormSummary();
 		void loadProviderCredentials();
 		void loadFormActionConfigIndex();
-	}
-
-	// Phase 7 CSM: Save current action config as a template
-	let savingTemplate = $state(false);
-	async function saveAsTemplate(linkage: FormActionLinkage) {
-		if (!licenseState.siteId) {
-			notifications.error('Site not activated. Please activate your license first.');
-			return;
-		}
-
-		savingTemplate = true;
-		try {
-			const displayName = linkage.action_name_label ?? `Template from form ${data.formId}`;
-
-			// Create a portable template mapping through the current API contract.
-			// The API expects UUIDs for action_template_id, but string codes for action_template_code.
-			// For master templates (codes like 'spam_detection_v1'), we use action_template_code.
-			const isMasterTemplate = linkage.action_type_indicator === 'master';
-
-			// CSM-006: Extract portable field references from current form fields
-			// This enables smart field re-mapping when importing template to different sites
-			const inputMapping = linkage.settings?.input_mapping;
-			let portableFields: Array<{ label: string; type: string }> = [];
-
-			if (inputMapping?.mode === 'selected' && inputMapping.field_ids) {
-				// Only include fields that were explicitly selected
-				portableFields = formFields
-					.filter((f) => inputMapping.field_ids!.includes(f.id))
-					.map((f) => ({ label: f.label, type: f.type }));
-			} else if (inputMapping?.mode !== 'exclude') {
-				// Include all fields for 'all' mode or no mapping specified
-				portableFields = formFields.map((f) => ({ label: f.label, type: f.type }));
-			}
-
-			const result = await formMappingsStore.createMapping({
-				form_source: data.formSourceSlug,
-				display_name: displayName,
-				// UUID field - leave undefined for code-based templates
-				action_template_id: undefined,
-				// String code field for master templates like 'spam_detection_v1'
-				action_template_code: isMasterTemplate ? linkage.central_action_id : undefined,
-				custom_action_id:
-					linkage.action_type_indicator === 'custom' ? linkage.central_action_id : undefined,
-				is_template: true,
-				settings: {
-					trigger_hooks: getMappingTriggerHooks(linkage),
-					portable_fields: portableFields, // CSM-006: field labels for cross-site portability
-					...(linkage.settings ?? {})
-				}
-			});
-
-			if (result) {
-				notifications.success(`Saved "${displayName}" as template`);
-			} else {
-				notifications.error('Failed to save as template');
-			}
-		} catch (error) {
-			console.error('Failed to save as template', error);
-			notifications.error('Failed to save as template');
-		} finally {
-			savingTemplate = false;
-		}
 	}
 
 	async function checkEntryStatus(event?: SubmitEvent | Event) {
@@ -4503,12 +4783,6 @@
 			{/if}
 			<Button variant="secondary" onclick={() => void refresh()} data-testid="actions-refresh">Refresh</Button>
 			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
-			<Button
-				variant="secondary"
-				onclick={() => (showTemplateLibrary = true)}
-				disabled={!canConfigureFormSource}
-				>Import from Library</Button
-			>
 			{#if supportsNativeEntryLookup}
 				<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
 			{/if}
@@ -4751,7 +5025,7 @@
 												{definition.label ?? definition.id}
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Hooks: {summarizeDefinitionHooks(definition.hooks)}
+											Hooks: {summarizeDefinitionHooks(definition)}
 											</p>
 											<p class="sf:break-words sf:text-xs sf:text-slate-500">
 												Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
@@ -5076,8 +5350,8 @@
 								</td>
 								<td class="sf:px-4 sf:py-3">
 									<div class="sf:flex sf:flex-wrap sf:gap-2">
-										{#if getMappingTriggerHooks(linkage).length > 0}
-											{#each getMappingTriggerHooks(linkage) as hook (hook)}
+										{#if normalizeHookIds(getMappingTriggerHooks(linkage)).length > 0}
+											{#each normalizeHookIds(getMappingTriggerHooks(linkage)) as hook (hook)}
 												<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
 											{/each}
 										{:else}
@@ -5087,14 +5361,6 @@
 									<div class="sf:mt-2 sf:space-x-2">
 										<Button size="sm" variant="ghost" onclick={() => startEditingAction(linkage)}>
 											Configure
-										</Button>
-										<Button
-											size="sm"
-											variant="ghost"
-											onclick={() => saveAsTemplate(linkage)}
-											disabled={savingTemplate || !licenseState.siteId}
-										>
-											{savingTemplate ? 'Saving...' : 'Save as Template'}
 										</Button>
 									</div>
 									{#if editingLinkageId === linkage.local_mapping_id}
@@ -5108,9 +5374,14 @@
 								</td>
 								<td class="sf:px-4 sf:py-3">
 									<Badge variant={statusVariant(linkage)}>{statusLabel(linkage)}</Badge>
-									{#if isLinkageInvalid(linkage)}
+									{#if invalidHooksForLinkage(linkage).length > 0}
 										<p class="sf:mt-2 sf:text-xs sf:text-rose-700">
 											Missing upstream source for {invalidHooksForLinkage(linkage).join(', ')}.
+										</p>
+									{/if}
+									{#if unsupportedHooksForLinkage(linkage).length > 0}
+										<p class="sf:mt-2 sf:text-xs sf:text-rose-700">
+											{unsupportedLifecycleMessage(unsupportedHooksForLinkage(linkage))}
 										</p>
 									{/if}
 									{#if linkageNeedsRepair(linkage)}
@@ -5425,6 +5696,15 @@
 												This mapping has a legacy realtime trigger. Realtime is now reserved for
 												Realtime Clarification Assistant, so choose Blocking or Background before
 												saving.
+											</p>
+										</Alert>
+									{/if}
+									{#if unsupportedMappingHookEntries.length > 0}
+										<Alert variant="warning" data-testid="unsupported-lifecycle-repair-alert">
+											<p class="sf:text-sm">
+												{unsupportedLifecycleMessage(
+													unsupportedMappingHookEntries.map(([hook]) => hook)
+												)}
 											</p>
 										</Alert>
 									{/if}
@@ -5765,14 +6045,22 @@
 							hidden={!mappingSectionExpansion.input_mapping}
 						>
 							{#if mappingSectionExpansion.input_mapping}
+								{#if inputMappingSaveError}
+									<Alert
+										variant="danger"
+										role="alert"
+										class="sf:mb-4"
+										data-testid="input-mapping-save-error"
+									>
+										{inputMappingSaveError}
+									</Alert>
+								{/if}
 								<FieldSelector
 									fields={formFields}
-									value={draftSettings.input_mapping ?? {
-										mode: 'selected',
-										include_metadata: false
-									}}
+									value={parseInputMapping(draftSettings.input_mapping) ?? DEFAULT_INPUT_MAPPING}
 									onchange={(mapping) => {
 										draftSettings = { ...draftSettings, input_mapping: mapping };
+										inputMappingSaveError = null;
 									}}
 								/>
 							{/if}
@@ -6294,18 +6582,22 @@
 								}) as definition (definition.id)}
 									{@const definitionProviderPolicy = providerPolicyForDefinition(definition)}
 									{@const definitionProviderBlocked = providerPolicyIsBlocked(definitionProviderPolicy)}
+									{@const definitionLifecycleBlocked = !definitionHasCompatibleLifecycle(definition)}
+									{@const definitionBlocked = definitionProviderBlocked || definitionLifecycleBlocked}
 									<label
-										class={builtInOptionClass(definitionProviderPolicy)}
+										class={`${builtInOptionClass(definitionProviderPolicy)} ${
+											definitionLifecycleBlocked ? 'sf:cursor-not-allowed sf:opacity-60' : ''
+										}`}
 										data-testid={`built-in-action-option-${definition.id}`}
 									>
 										<input
 											type="radio"
 											name="template-choice"
 											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={!definitionProviderBlocked && selectedTemplateId === definition.id}
-											disabled={definitionProviderBlocked}
+											checked={!definitionBlocked && selectedTemplateId === definition.id}
+											disabled={definitionBlocked}
 											onchange={() => {
-												if (!definitionProviderBlocked) {
+												if (!definitionBlocked) {
 													selectedTemplateId = definition.id;
 												}
 											}}
@@ -6331,10 +6623,14 @@
 												)}
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Hooks: {summarizeDefinitionHooks(definition.hooks)}
+												Hooks: {summarizeDefinitionHooks(definition)}
 											</p>
-											{#if definitionProviderBlocked}
-												<p class="sf:text-xs sf:font-medium sf:text-amber-800">
+										{#if definitionLifecycleBlocked}
+											<p class="sf:text-xs sf:font-medium sf:text-amber-800">
+												No supported {currentFormAdapterLabel} lifecycle is available for this action.
+											</p>
+										{:else if definitionProviderBlocked}
+											<p class="sf:text-xs sf:font-medium sf:text-amber-800">
 													{providerPolicyBlockedMessage(definitionProviderPolicy)}
 												</p>
 											{/if}
@@ -6658,7 +6954,7 @@
 													ID: {linkage.local_mapping_id}
 												</p>
 												<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
-													{#each getMappingTriggerHooks(linkage) as hook (hook)}
+											{#each normalizeHookIds(getMappingTriggerHooks(linkage)) as hook (hook)}
 														<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
 													{/each}
 												</div>
@@ -6735,16 +7031,4 @@
 		</div>
 	{/if}
 
-	<!-- Phase 7 CSM: Template Library Modal -->
-	<TemplateLibrary
-		bind:open={showTemplateLibrary}
-		siteId={licenseState.siteId ?? ''}
-		formSource={data.formSourceSlug}
-		formId={data.formId}
-		{formFields}
-		onImport={(mapping) => {
-			notifications.success(`Imported template: ${mapping.display_name}`);
-			formActionsStore.refresh(data.formSourceSlug, data.formId);
-		}}
-	/>
 </Section>

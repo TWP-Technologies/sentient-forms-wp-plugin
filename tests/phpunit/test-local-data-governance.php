@@ -29,6 +29,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         delete_option( 'sentient_forms_store_full_ai_outputs' );
         delete_option( 'sentient_forms_privacy_setup_profile' );
         delete_option( 'sentient_forms_privacy_setup_completed_at' );
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
         Sentient_Forms_Installer::maybe_upgrade();
 
         parent::tearDown();
@@ -670,6 +671,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         );
 
         update_option( 'sentient_forms_db_version', '2026.05.10.lead_value_workflows' );
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
         $deny_cursor_persist = static fn (): bool => false;
         add_filter( 'sentient_forms_submission_ledger_retention_backfill_allow_cursor_persist', $deny_cursor_persist );
         try
@@ -930,6 +932,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             );
             Sentient_Forms_Plugin::invalidate_options_cache();
             update_option( 'sentient_forms_db_version', $pending_db_version );
+            delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
 
             $now = current_time( 'mysql' );
             $this->assertNotFalse(
@@ -1104,6 +1107,333 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'provider_payload', $event['result_json'] );
     }
 
+    public function test_completed_managed_usage_scrub_skips_advisory_lock(): void
+    {
+        update_option( 'sentient_forms_managed_usage_sanitizer_version', '1', false );
+        $lock_filter_calls = 0;
+        $capture_lock_filter = static function ( mixed $candidate ) use ( &$lock_filter_calls ): mixed {
+            ++$lock_filter_calls;
+            return $candidate;
+        };
+        add_filter( 'sentient_forms_action_authority_lock_database', $capture_lock_filter, 10, 3 );
+
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_lock_database', $capture_lock_filter, 10 );
+        }
+
+        $this->assertTrue( $result['skipped'] ?? false );
+        $this->assertSame( 0, $lock_filter_calls );
+    }
+
+    public function test_managed_usage_scrub_rechecks_completion_after_lock(): void
+    {
+        $marker_reads = 0;
+        $candidate_reads = 0;
+        $complete_after_lock = static function ( mixed $value ) use ( &$marker_reads ): mixed {
+            ++$marker_reads;
+            return 1 === $marker_reads ? '' : '1';
+        };
+        $capture_candidate_read = static function ( string $query ) use ( &$candidate_reads ): string {
+            if ( str_contains( $query, 'SELECT id, cost_json, result_json' ) )
+            {
+                ++$candidate_reads;
+            }
+            return $query;
+        };
+        add_filter( 'pre_option_sentient_forms_managed_usage_sanitizer_version', $complete_after_lock );
+        add_filter( 'query', $capture_candidate_read );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            remove_filter( 'pre_option_sentient_forms_managed_usage_sanitizer_version', $complete_after_lock );
+            remove_filter( 'query', $capture_candidate_read );
+        }
+
+        $this->assertTrue( $result['skipped'] ?? false );
+        $this->assertSame( 2, $marker_reads );
+        $this->assertSame( 0, $candidate_reads );
+    }
+
+    public function test_managed_usage_scrub_covers_every_managed_alias_and_private_key_candidate(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+        $this->assertNotFalse(
+            $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => 'managed-alias-private-key-only',
+                    'provider'             => 'sentient_forms_metering',
+                    'status'               => 'succeeded',
+                    'cost_json'            => wp_json_encode( [ 'provider_cost' => 0.0042, 'debited_credits' => 2 ] ),
+                    'result_json'          => wp_json_encode( [ 'safe' => true ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            )
+        );
+
+        $summary = Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+        $event   = $this->events->get_by_request_id( 'managed-alias-private-key-only' );
+
+        $this->assertIsArray( $summary );
+        $this->assertSame( 1, $summary['execution_events_scanned'] );
+        $this->assertArrayNotHasKey( 'provider_cost', $event['cost_json'] );
+        $this->assertSame( 2, $event['cost_json']['debited_credits'] ?? null );
+    }
+
+    public function test_managed_usage_scrub_read_failure_does_not_checkpoint(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $rewrite_candidate_read = static function ( string $query ): string {
+            if ( str_contains( $query, 'SELECT id, cost_json, result_json' ) )
+            {
+                return 'SELECT id, cost_json, result_json FROM sentient_forms_missing_sanitizer_table';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_candidate_read );
+        $previous_suppression = $this->wpdb->suppress_errors( true );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            $this->wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_candidate_read );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+    }
+
+    public function test_managed_usage_scrub_update_failure_does_not_checkpoint(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+        $this->assertNotFalse(
+            $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => 'managed-sanitizer-update-failure',
+                    'provider'             => 'sentient_managed',
+                    'status'               => 'succeeded',
+                    'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'debited_credits' => 1 ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            )
+        );
+        $rewrite_event_update = static function ( string $query ) use ( $table ): string {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE `' . $table . '`' ) )
+            {
+                return 'UPDATE sentient_forms_missing_sanitizer_table SET cost_json = NULL';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_event_update );
+        $previous_suppression = $this->wpdb->suppress_errors( true );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            $this->wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_event_update );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+    }
+
+    public function test_managed_usage_scrub_zero_row_update_does_not_checkpoint(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+        $this->assertNotFalse(
+            $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => 'managed-sanitizer-zero-row-update',
+                    'provider'             => 'sentient_managed',
+                    'status'               => 'succeeded',
+                    'cost_json'            => wp_json_encode( [ 'currency' => 'USD', 'debited_credits' => 1 ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            )
+        );
+        $rewrite_event_update = static function ( string $query ) use ( $table ): string {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE `' . $table . '`' ) )
+            {
+                return 'UPDATE `' . $table . '` SET cost_json = cost_json WHERE id = -1';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_event_update );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            remove_filter( 'query', $rewrite_event_update );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+    }
+
+    public function test_managed_usage_scrub_malformed_candidate_json_does_not_checkpoint(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+        $this->assertNotFalse(
+            $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => 'managed-sanitizer-malformed-json',
+                    'provider'             => 'sentient_managed',
+                    'status'               => 'succeeded',
+                    'cost_json'            => '{"currency":"USD"',
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            )
+        );
+
+        $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_managed_usage_sanitizer_invalid_json', $result->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+        $this->wpdb->delete(
+            $table,
+            [ 'execution_request_id' => 'managed-sanitizer-malformed-json' ],
+            [ '%s' ]
+        );
+    }
+
+    public function test_managed_usage_scrub_site_context_write_failure_does_not_checkpoint(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        update_option(
+            'sentient_forms_site_context',
+            [
+                'metadata' => [
+                    'route'    => 'sentient_managed',
+                    'metering' => [ 'currency' => 'USD', 'debited_credits' => 1 ],
+                ],
+            ],
+            false
+        );
+        $rewrite_context_update = static function ( string $query ): string {
+            if ( str_starts_with( ltrim( $query ), 'UPDATE ' ) && str_contains( $query, 'sentient_forms_site_context' ) )
+            {
+                return 'UPDATE sentient_forms_missing_sanitizer_table SET option_value = NULL';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_context_update );
+        $previous_suppression = $this->wpdb->suppress_errors( true );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            $this->wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_context_update );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+        $this->assertSame( 'USD', get_option( 'sentient_forms_site_context' )['metadata']['metering']['currency'] ?? null );
+    }
+
+    public function test_managed_usage_scrub_checkpoint_write_failure_remains_retryable(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $rewrite_checkpoint = static function ( string $query ): string {
+            if ( str_contains( $query, 'sentient_forms_managed_usage_sanitizer_version' ) )
+            {
+                return 'INSERT INTO sentient_forms_missing_sanitizer_table (value) VALUES (1)';
+            }
+            return $query;
+        };
+        add_filter( 'query', $rewrite_checkpoint );
+        $previous_suppression = $this->wpdb->suppress_errors( true );
+        try
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        }
+        finally
+        {
+            $this->wpdb->suppress_errors( $previous_suppression );
+            remove_filter( 'query', $rewrite_checkpoint );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_managed_usage_sanitizer_checkpoint_failed', $result->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_managed_usage_sanitizer_version', false ) );
+        $this->assertIsArray( Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage() );
+        $this->assertSame( '1', get_option( 'sentient_forms_managed_usage_sanitizer_version' ) );
+    }
+
+    public function test_installer_managed_usage_scrub_runs_once_per_sanitizer_version(): void
+    {
+        delete_option( 'sentient_forms_managed_usage_sanitizer_version' );
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+        $insert_dirty_event = function ( string $request_id ) use ( $table, $now ): void {
+            $inserted = $this->wpdb->insert(
+                $table,
+                [
+                    'execution_request_id' => $request_id,
+                    'provider'             => 'sentient_managed',
+                    'status'               => 'succeeded',
+                    'result_json'          => wp_json_encode( [ 'provider_payload' => [ 'private' => true ] ] ),
+                    'created_at'           => $now,
+                    'updated_at'           => $now,
+                ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s' ]
+            );
+            $this->assertNotFalse( $inserted );
+        };
+        $insert_dirty_event( 'managed-sanitizer-version-first' );
+
+        $first = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        $insert_dirty_event( 'managed-sanitizer-version-second' );
+        $second = Sentient_Forms_Managed_Usage_Sanitizer::maybe_scrub_local_storage();
+        $second_row = $this->wpdb->get_row(
+            $this->wpdb->prepare( 'SELECT result_json FROM %i WHERE execution_request_id = %s', $table, 'managed-sanitizer-version-second' ),
+            ARRAY_A
+        );
+
+        $this->assertIsArray( $first );
+        $this->assertFalse( $first['skipped'] ?? true );
+        $this->assertTrue( $second['skipped'] ?? false );
+        $this->assertStringContainsString( 'provider_payload', (string) ( $second_row['result_json'] ?? '' ) );
+        $this->assertSame( '1', get_option( 'sentient_forms_managed_usage_sanitizer_version' ) );
+    }
+
     public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';
@@ -1150,6 +1480,9 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         update_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', [ 'pending' => true ] );
         update_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 42 );
         update_option( 'sentient_forms_action_results_retirement_version', '2026.07.18.v1', false );
+        update_option( 'sentient_forms_form_mappings_engine_version', '2026.07.19.v1', false );
+        update_option( 'sentient_forms_action_authority_migration_journal', [ 'phase' => 'prepared' ], false );
+        update_option( 'sentient_forms_action_authority_migration_lock', [ 'token' => 'stale' ], false );
         set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
         update_option( 'sentient_forms_delete_data_on_uninstall', true );
         remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
@@ -1192,6 +1525,9 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_snapshot_v1', false ) );
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
             $this->assertFalse( get_option( 'sentient_forms_action_results_retirement_version', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_form_mappings_engine_version', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_lock', false ) );
             $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
             $this->assertSame(
                 '0',

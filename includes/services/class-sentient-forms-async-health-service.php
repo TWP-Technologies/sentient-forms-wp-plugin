@@ -131,6 +131,23 @@ class Sentient_Forms_Async_Health_Service
             ];
         }
 
+        foreach ( $warnings as $warning )
+        {
+            /**
+             * Fires for each asynchronous queue health warning detected during evaluation.
+             *
+             * @param array $warning {
+             *     Detected warning payload.
+             *
+             *     @type string $code    Stable warning code.
+             *     @type string $level   Warning severity.
+             *     @type string $message Human-readable warning message.
+             *     @type array  $data    Warning-specific structured context.
+             * }
+             */
+            do_action( 'sentient_forms_async_health_warning', $warning );
+        }
+
         return [
             'queue_depth'            => $queue_depth,
             'oldest_run_at'          => $oldest_run,

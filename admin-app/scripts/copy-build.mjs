@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +69,43 @@ const assertManifestAssetsExist = async (outputRoot, manifest) => {
   if (missing.length > 0) {
     throw new Error(
       `Copied build assets do not match manifest references: ${missing.join(', ')}`
+    );
+  }
+};
+
+const assertCopiedBuildAssetsPreserved = async (sourceRoot, destinationRoot) => {
+  const altered = [];
+
+  const compareDirectory = async (sourceDirectory, destinationDirectory) => {
+    for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
+      const sourcePath = path.join(sourceDirectory, entry.name);
+      const destinationPath = path.join(destinationDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        await compareDirectory(sourcePath, destinationPath);
+        continue;
+      }
+
+      if (!entry.isFile() || !existsSync(destinationPath)) {
+        altered.push(path.relative(sourceRoot, sourcePath));
+        continue;
+      }
+
+      const [sourceContents, destinationContents] = await Promise.all([
+        readFile(sourcePath),
+        readFile(destinationPath)
+      ]);
+      if (!sourceContents.equals(destinationContents)) {
+        altered.push(path.relative(sourceRoot, sourcePath));
+      }
+    }
+  };
+
+  await compareDirectory(sourceRoot, destinationRoot);
+
+  if (altered.length > 0) {
+    throw new Error(
+      `Copied build assets must preserve Vite-emitted bytes: ${altered.join(', ')}`
     );
   }
 };
@@ -145,6 +182,7 @@ const main = async () => {
   await writeFile(manifestDest, manifest);
   await writeRuntimeMetadata();
   await writeSourceMetadata();
+  await assertCopiedBuildAssetsPreserved(clientDir, path.join(outputDir, '_app'));
   await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
   console.log('[copy-build] Assets copied to', outputDir);
 };

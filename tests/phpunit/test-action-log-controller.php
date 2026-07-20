@@ -672,6 +672,106 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_prefers_authoritative_local_event_over_matching_legacy_pending_row(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event();
+
+        update_option(
+            self::OPTION_KEY,
+            [
+                [
+                    'id'                   => 'legacy-pending-duplicate',
+                    'form_source'          => 'contact_form_7',
+                    'form_id'              => 7,
+                    'entry_id'             => 77,
+                    'action_code'          => 'contact_spam_triage',
+                    'action_label'         => 'Contact Spam Triage',
+                    'status'               => 'pending',
+                    'result_summary'       => 'Queued for background execution.',
+                    'execution_request_id' => 'req-local-log-1',
+                    'mapping_id'           => 'local_first_' . $mapping_id,
+                    'created_at'           => '2030-01-01T00:00:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'req-local-log-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'success', $data['entries'][0]['status'] );
+        $this->assertSame( 'local_execution_events', $data['entries'][0]['details']['source'] );
+
+        $pending_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $pending_request->set_param( 'status', 'pending' );
+        $pending_response = $this->controller->get_log_entries( $pending_request );
+        $pending_data     = $pending_response->get_data();
+
+        $this->assertSame( 0, $pending_data['total'] );
+        $this->assertSame( [], $pending_data['entries'] );
+    }
+
+    public function test_get_log_entries_presents_durable_upstream_spam_skips_as_blocked(): void
+    {
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event();
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $recorded = $events->record(
+            [
+                'execution_request_id' => 'req-local-upstream-spam-skip',
+                'mapping_id'           => $mapping_id,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'local',
+                'model'                => 'not_applicable',
+                'status'               => 'skipped',
+                'result_json'          => [
+                    'result_summary'        => 'Skipped because an upstream Action classified the submission as spam.',
+                    'skip_reason'           => 'upstream_spam',
+                    'native_effect_outcomes' => [
+                        [
+                            'effect' => 'workflow_execution',
+                            'status' => 'skipped',
+                            'reason' => 'upstream_spam',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $recorded );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $entries  = [];
+        foreach ( $response->get_data()['entries'] as $entry )
+        {
+            $entries[ $entry['execution_request_id'] ] = $entry;
+        }
+
+        $skipped = $entries['req-local-upstream-spam-skip'];
+        $this->assertSame( 'blocked', $skipped['status'] );
+        $this->assertSame( 'not_applicable', $skipped['usage_cost']['route'] );
+        $this->assertSame( 'Not run', $skipped['usage_cost']['label'] );
+        $this->assertSame( 'not_applicable', $skipped['usage_cost']['kind'] );
+        $this->assertTrue( $skipped['usage_cost']['known'] );
+        $this->assertSame( 0, $skipped['credits_used'] );
+        $this->assertSame(
+            'Skipped because an upstream Action classified the submission as spam.',
+            $skipped['result_summary']
+        );
+        $this->assertSame( 'upstream_spam', $skipped['details']['stored_result']['skip_reason'] );
+        $this->assertSame(
+            'skipped',
+            $skipped['details']['stored_result']['native_effect_outcomes'][0]['status']
+        );
+    }
+
     public function test_get_log_entries_prefers_provider_native_event_identity_for_elementor_cps_events(): void
     {
         global $wpdb;
@@ -1018,6 +1118,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Entry Summary', $entry['action_label'] );
         $this->assertNull( $entry['mapping_id'] );
         $this->assertSame( 'req-managed-cf7-summary', $entry['execution_request_id'] );
+    }
+
+    public function test_get_log_entries_prefers_durable_managed_action_identity_after_mapping_is_deleted(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-durable-action-identity',
+                'mapping_id'           => 987654,
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'entry_id'             => '1629',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'summary' => 'Durable managed result.',
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertCount( 1, $data['entries'] );
+        $this->assertSame( 'req-managed-durable-action-identity', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
     }
 
     public function test_get_log_entries_surfaces_managed_zdr_fallback_and_failure_messages(): void

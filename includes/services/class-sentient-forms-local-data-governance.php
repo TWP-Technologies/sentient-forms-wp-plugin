@@ -435,7 +435,7 @@ class Sentient_Forms_Local_Data_Governance
         }
 
         $filtered = [];
-        foreach ( [ 'provider_response_id', 'model', 'finish_reason', 'usage', 'metering', 'effects', 'native_effect_outcomes', 'structured_output_valid', 'structured_output_schema_source', 'privacy_route_assertion', 'privacy_route_fallback', 'privacy_route_failure', 'fallback' ] as $key )
+        foreach ( [ 'provider_response_id', 'model', 'finish_reason', 'usage', 'metering', 'effects', 'native_effect_outcomes', 'structured_output_valid', 'structured_output_schema_source', 'privacy_route_assertion', 'privacy_route_fallback', 'privacy_route_failure', 'fallback', 'input_manifest' ] as $key )
         {
             if ( array_key_exists( $key, $result ) )
             {
@@ -890,6 +890,9 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_forms_submission_ledger_retention_backfill_snapshot_v1',
             'sentient_forms_submission_ledger_retention_backfill_cursor_v1',
             'sentient_forms_action_results_retirement_version',
+            'sentient_forms_form_mappings_engine_version',
+            'sentient_forms_action_authority_migration_journal',
+            'sentient_forms_action_authority_migration_lock',
             self::OPTION_DELETE_ON_UNINSTALL,
             self::OPTION_STORE_FULL_AI_OUTPUTS,
             self::OPTION_PRIVACY_SETUP_PROFILE,

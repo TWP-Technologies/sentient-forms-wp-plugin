@@ -3236,14 +3236,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_form_settings( mixed $form_id ): array
     {
         $option_name = $this->get_form_option_name( $form_id );
-        $missing     = new stdClass();
-        $settings    = get_option( $option_name, $missing );
-
-        if ( $missing === $settings )
-        {
-            // Fallback to legacy option naming for backwards compatibility.
-            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, $missing );
-        }
+        $settings    = get_option( $option_name, [] );
 
         if ( ! is_array( $settings ) )
         {
@@ -3322,12 +3315,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * @param mixed $form_id  The form ID.
      * @param array $settings The settings to update.
      *
-     * @return bool Whether the update was successful.
+     * @return bool|WP_Error Whether the update was successful, or a concurrency error.
      */
-    public function update_form_settings( mixed $form_id, array $settings ): bool
+    public function update_form_settings( mixed $form_id, array $settings ): bool | WP_Error
     {
         $option_name = $this->get_form_option_name( $form_id );
-        return update_option( $option_name, $settings, false );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option( $option_name, $settings );
     }
 
     /**
@@ -3477,9 +3470,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $settings['local_form_mapping_id'] = $id;
         $settings['execution_mode']        = $execution_mode;
-        $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null )
-            ? $row['input_bindings_json']
-            : [];
+        if ( ! array_key_exists( 'input_mapping', $settings ) )
+        {
+            $settings['input_mapping'] = [
+                'mode'             => 'all',
+                'field_ids'        => [],
+                'include_metadata' => true,
+            ];
+        }
         if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
         {
             $settings['trigger_sources'] = [

@@ -82,7 +82,7 @@ $plugin = Sentient_Forms_Plugin::instance();
                         </div>
                         <div class="sentient-forms-stat">
                             <span class="sentient-forms-stat-value">
-                                <?php esc_html_e( count( $plugin->get_action_registry()->get_all_actions() ) ); ?>
+                                <?php echo esc_html( (string) count( Sentient_Forms_Bundled_Action_Templates::codes() ) ); ?>
                             </span><span class="sentient-forms-stat-label"><?php _e( 'Actions', 'sentient-forms' ); ?></span>
                         </div>
                     </div>
@@ -124,14 +124,14 @@ $plugin = Sentient_Forms_Plugin::instance();
                 <h3><?php _e( 'Available Actions', 'sentient-forms' ); ?></h3>
                 <div class="sentient-forms-dashboard-section-content">
                     <div class="sentient-forms-actions-list">
-                        <?php foreach ( $plugin->get_action_registry()->get_all_actions() as $action ): ?>
+                        <?php foreach ( Sentient_Forms_Bundled_Action_Templates::definitions() as $action ): ?>
                             <div class="sentient-forms-action-item">
                                 <div class="sentient-forms-action-icon">
-                                    <span class="dashicons <?php echo esc_attr( $action->get_icon() ); ?>"></span>
+                                    <span class="dashicons dashicons-admin-generic"></span>
                                 </div>
                                 <div class="sentient-forms-action-details">
-                                    <h4><?php echo esc_html( $action->get_name() ); ?></h4>
-                                    <p><?php echo esc_html( $action->get_description() ); ?></p>
+                                    <h4><?php echo esc_html( (string) ( $action['display_name'] ?? $action['code'] ?? '' ) ); ?></h4>
+                                    <p><?php echo esc_html( (string) ( $action['description'] ?? '' ) ); ?></p>
                                 </div>
                             </div>
                         <?php endforeach; ?>

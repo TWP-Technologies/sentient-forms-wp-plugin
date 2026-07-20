@@ -243,6 +243,14 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 
 		await page.getByTestId('action-log-details-uuid-managed').locator('summary').click();
 		const details = page.getByTestId('action-log-details-uuid-managed');
+		await expect(details.getByTestId('action-log-usage-policy-uuid-managed')).toHaveCSS(
+			'display',
+			'block'
+		);
+		await expect(details.getByTestId('action-log-usage-cost-uuid-managed')).toHaveCSS(
+			'display',
+			'block'
+		);
 		await expect(details).toContainText('debited_credits');
 		await expect(details).not.toContainText('billed_amount_microusd');
 		await expect(details).not.toContainText('amount_usd');

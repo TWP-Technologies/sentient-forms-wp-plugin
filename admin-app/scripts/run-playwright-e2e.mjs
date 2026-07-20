@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { preview as startVitePreview } from 'vite';
+import { startOwnedPreview } from './preview-runtime.mjs';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
-const DEFAULT_PREVIEW_PORT = 4175;
-const MIN_PORT = 1;
-const MAX_PORT = 65_535;
 
 function isBunNodeShim(candidate) {
 	if (typeof candidate !== 'string') return false;
@@ -55,6 +54,10 @@ function getPlaywrightCliPath() {
 	return path.resolve(process.cwd(), 'node_modules', 'playwright', 'cli.js');
 }
 
+function getBunCommand() {
+	return process.platform === 'win32' ? 'bun.exe' : 'bun';
+}
+
 function ensureArtifactDirs() {
 	mkdirSync(path.resolve(process.cwd(), 'playwright-report'), { recursive: true });
 	mkdirSync(path.resolve(process.cwd(), 'test-results'), { recursive: true });
@@ -75,22 +78,6 @@ function buildPlaywrightEnv() {
 	return env;
 }
 
-function parsePort(rawValue, fieldName) {
-	if (typeof rawValue !== 'string') return null;
-	const normalized = rawValue.trim();
-	if (normalized.length === 0) return null;
-	if (!/^\d+$/.test(normalized)) {
-		throw new Error(`${fieldName} must be a numeric port between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	const parsed = Number(normalized);
-	if (!Number.isInteger(parsed) || parsed < MIN_PORT || parsed > MAX_PORT) {
-		throw new Error(`${fieldName} must be between ${MIN_PORT} and ${MAX_PORT}.`);
-	}
-
-	return parsed;
-}
-
 function resolvePreviewHost() {
 	const rawHost = process.env.PREVIEW_HOST;
 	if (typeof rawHost !== 'string') return DEFAULT_PREVIEW_HOST;
@@ -98,47 +85,72 @@ function resolvePreviewHost() {
 	return normalized.length > 0 ? normalized : DEFAULT_PREVIEW_HOST;
 }
 
-function resolvePreviewPort() {
-	const requestedPort = parsePort(process.env.PREVIEW_PORT, 'PREVIEW_PORT');
-	if (requestedPort !== null) {
-		return { port: requestedPort, source: 'env' };
+function ensureExitCodeZero(command, args, env) {
+	const result = spawnSync(command, args, { stdio: 'inherit', env });
+	if (result.error) throw result.error;
+	if (result.signal) throw new Error(`${command} exited via signal ${result.signal}.`);
+	if (result.status !== 0) {
+		throw new Error(`${command} ${args.join(' ')} failed with exit code ${result.status ?? 1}.`);
 	}
-
-	return { port: DEFAULT_PREVIEW_PORT, source: 'default' };
 }
 
 function runPlaywrightTest(env, args) {
-	const result = spawnSync(resolveRealNodeCommand(), [getPlaywrightCliPath(), 'test', ...args], {
-		stdio: 'inherit',
-		env
+	return new Promise((resolve, reject) => {
+		const child = spawn(resolveRealNodeCommand(), [getPlaywrightCliPath(), 'test', ...args], {
+			stdio: 'inherit',
+			env
+		});
+
+		child.on('error', reject);
+		child.on('exit', (code, signal) => {
+			if (signal) {
+				reject(new Error(`Playwright exited via signal ${signal}.`));
+				return;
+			}
+			resolve(code ?? 1);
+		});
 	});
-
-	if (result.error) {
-		throw result.error;
-	}
-
-	if (result.signal) {
-		throw new Error(`Playwright exited via signal ${result.signal}.`);
-	}
-
-	return result.status ?? 1;
 }
 
-function main() {
+async function main() {
+	ensureArtifactDirs();
+	const baseEnv = buildPlaywrightEnv();
+	if (process.env.SENTIENT_RUN_WP_E2E === '1') {
+		process.exitCode = await runPlaywrightTest(baseEnv, process.argv.slice(2));
+		return;
+	}
+
 	const previewHost = resolvePreviewHost();
-	const { port: previewPort, source } = resolvePreviewPort();
-	const previewOrigin = `http://${previewHost}:${previewPort}`;
+	const previewEnv = {
+		...baseEnv,
+		SENTIENT_FORMS_ROUTER: process.env.SENTIENT_FORMS_ROUTER ?? 'pathname'
+	};
+	ensureExitCodeZero(getBunCommand(), ['run', 'build'], previewEnv);
+
+	const ownedPreview = await startOwnedPreview({
+		host: previewHost,
+		rawPort: process.env.PREVIEW_PORT,
+		startPreview: (config) =>
+			startVitePreview({
+				...config,
+				clearScreen: false,
+				root: process.cwd()
+			})
+	});
 	const env = {
-		...buildPlaywrightEnv(),
+		...previewEnv,
 		PREVIEW_HOST: previewHost,
-		PREVIEW_PORT: String(previewPort)
+		PREVIEW_PORT: String(ownedPreview.port),
+		PREVIEW_ORIGIN: ownedPreview.origin,
+		SENTIENT_FORMS_OWNED_PREVIEW: '1'
 	};
 
-	console.log(`[E2E] Preview origin ${previewOrigin} (${source})`);
-
-	ensureArtifactDirs();
-	const exitCode = runPlaywrightTest(env, process.argv.slice(2));
-	process.exit(exitCode);
+	console.log(`[E2E] Preview origin ${ownedPreview.origin} (owned)`);
+	try {
+		process.exitCode = await runPlaywrightTest(env, process.argv.slice(2));
+	} finally {
+		await ownedPreview.server.close();
+	}
 }
 
 main().catch((error) => {

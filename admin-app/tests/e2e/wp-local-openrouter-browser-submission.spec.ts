@@ -12,6 +12,16 @@ import {
 	runWpEval,
 	waitForGravityEntryNotes
 } from './utils/wp-e2e-helpers';
+import {
+	parseLocalExecutionEvent,
+	parseLocalExecutionEvents,
+	parseLocalOpenRouterRequests,
+	parseLocalOpenRouterSmokeUrls,
+	parseLocalSpamSummaryChainSeed,
+	type LocalExecutionEvent,
+	type LocalOpenRouterRequest,
+	type LocalSpamSummaryChainSeed
+} from './utils/local-runtime-schemas';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
 const runLocalOpenRouterBrowserSmoke =
@@ -27,15 +37,6 @@ const localOpenRouterBrowserSmokeActionName = 'Local OpenRouter spam filter';
 type LocalProviderSeed = {
 	credential_id: number;
 	consent_id: number;
-};
-
-type LocalExecutionEvent = {
-	id?: number;
-	status?: string;
-	mapping_id?: number;
-	entry_id?: string;
-	provider?: string;
-	model?: string;
 };
 
 type LocalCustomActionSeed = {
@@ -180,6 +181,7 @@ if (
 
 update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false );
 update_option( 'sentient_forms_local_openrouter_smoke_http_urls', [], false );
+update_option( 'sentient_forms_local_openrouter_smoke_requests', [], false );
 delete_option( 'sentient_forms_local_openrouter_smoke_response_json' );
 
 echo wp_json_encode(
@@ -223,6 +225,7 @@ update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false 
 update_option( 'sentient_forms_local_openrouter_smoke_mode', 'success', false );
 update_option( 'sentient_forms_local_openrouter_smoke_response_json', $payload, false );
 update_option( 'sentient_forms_local_openrouter_smoke_http_urls', [], false );
+update_option( 'sentient_forms_local_openrouter_smoke_requests', [], false );
 echo 'ok';
 `,
 		{
@@ -244,6 +247,7 @@ $mode = getenv( 'MOCK_MODE' ) ?: 'success';
 update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false );
 update_option( 'sentient_forms_local_openrouter_smoke_mode', $mode, false );
 update_option( 'sentient_forms_local_openrouter_smoke_http_urls', [], false );
+update_option( 'sentient_forms_local_openrouter_smoke_requests', [], false );
 delete_option( 'sentient_forms_local_openrouter_smoke_response_json' );
 echo 'ok';
 `,
@@ -263,10 +267,21 @@ function disableLocalOpenRouterMock(): void {
 delete_option( 'sentient_forms_local_openrouter_smoke_mock_enabled' );
 delete_option( 'sentient_forms_local_openrouter_smoke_mode' );
 delete_option( 'sentient_forms_local_openrouter_smoke_http_urls' );
+delete_option( 'sentient_forms_local_openrouter_smoke_requests' );
 delete_option( 'sentient_forms_local_openrouter_smoke_response_json' );
 echo 'ok';
 `
 	);
+}
+
+function getLocalOpenRouterSmokeRequests(): LocalOpenRouterRequest[] {
+	const output = runWpEval(
+		`
+$requests = get_option( 'sentient_forms_local_openrouter_smoke_requests', [] );
+echo wp_json_encode( is_array( $requests ) ? $requests : [] );
+`
+	);
+	return parseLocalOpenRouterRequests(output);
 }
 
 function ensureGravityFormPage(formId: number, pageTitle: string): string {
@@ -431,7 +446,31 @@ echo 'null';
 		}
 	);
 
-	return JSON.parse(output) as LocalExecutionEvent | null;
+	return parseLocalExecutionEvent(output);
+}
+
+function getLocalExecutionEvents(entryId: number): LocalExecutionEvent[] {
+	const output = runWpEval(
+		`
+global $wpdb;
+$entry_id = getenv( 'ENTRY_ID' ) ?: '';
+$events   = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+$matched  = [];
+
+foreach ( $events->list_recent( 100 ) as $event ) {
+    if ( (string) ( $event['entry_id'] ?? '' ) === (string) $entry_id ) {
+        $matched[] = $event;
+    }
+}
+
+echo wp_json_encode( $matched );
+`,
+		{
+			ENTRY_ID: String(entryId)
+		}
+	);
+
+	return parseLocalExecutionEvents(output);
 }
 
 function getLocalOpenRouterSmokeUrls(): string[] {
@@ -442,13 +481,212 @@ echo wp_json_encode( [ 'urls' => is_array( $urls ) ? $urls : [] ] );
 `
 	);
 
-	const parsed = JSON.parse(output) as { urls?: string[] };
-	return Array.isArray(parsed.urls) ? parsed.urls : [];
+	return parseLocalOpenRouterSmokeUrls(output);
+}
+
+function seedLocalSpamSummaryChain(
+	formId: number,
+	credentialId: number
+): LocalSpamSummaryChainSeed {
+	const output = runWpEval(
+		`
+if ( ! class_exists( 'Sentient_Forms_Installer' ) ) {
+    echo wp_json_encode([ 'error' => 'sentient_forms_not_loaded' ]);
+    return;
+}
+
+Sentient_Forms_Installer::maybe_upgrade();
+
+global $wpdb;
+$form_id       = (string) absint( getenv( 'FORM_ID' ) ?: 0 );
+$credential_id = absint( getenv( 'CREDENTIAL_ID' ) ?: 0 );
+
+if ( '' === $form_id || '0' === $form_id || $credential_id <= 0 ) {
+    echo wp_json_encode([ 'error' => 'invalid_seed_input' ]);
+    return;
+}
+
+$templates      = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+$model_cache    = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+$created        = [];
+$model_id       = 'google/gemini-3-flash-preview';
+
+$model_cache->upsert(
+    'openrouter',
+    $model_id,
+    [
+        'id'                   => $model_id,
+        'name'                 => 'Google: Gemini 3 Flash Preview',
+        'free'                 => false,
+        'context_length'       => 1048576,
+        'input_modalities'     => [ 'text' ],
+        'output_modalities'    => [ 'text' ],
+        'supported_parameters' => [ 'response_format', 'structured_outputs' ],
+        'pricing'              => [
+            'prompt'     => '0.0000005',
+            'completion' => '0.000003',
+        ],
+    ],
+    gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS )
+);
+
+foreach (
+    [
+        'spam' => [
+            'template_code' => 'spam_detection_v1',
+            'action_code'   => 'browser_chain_spam_' . $form_id,
+            'display_name'  => 'Browser chain spam',
+        ],
+        'summary' => [
+            'template_code' => 'entry_summary_v1',
+            'action_code'   => 'browser_chain_summary_' . $form_id,
+            'display_name'  => 'Browser chain summary',
+        ],
+    ] as $key => $seed
+) {
+    $definition = Sentient_Forms_Bundled_Action_Templates::get( $seed['template_code'] );
+    if ( ! is_array( $definition ) ) {
+        echo wp_json_encode([ 'error' => 'missing_' . $key . '_definition' ]);
+        return;
+    }
+
+    $template_id = $templates->upsert_by_code(
+        [
+            'source'                   => 'bundled',
+            'code'                     => $seed['template_code'],
+            'display_name'             => $definition['display_name'] ?? $seed['display_name'],
+            'description'              => $definition['description'] ?? null,
+            'prompt_template'          => $definition['prompt_template'] ?? '',
+            'default_model'            => $definition['default_model'] ?? 'openrouter/auto',
+            'structured_output_schema' => $definition['structured_output_schema'] ?? null,
+            'override_schema'          => $definition['override_schema'] ?? null,
+            'version'                  => $definition['version'] ?? '1',
+            'is_active'                => true,
+        ]
+    );
+    if ( is_wp_error( $template_id ) ) {
+        echo wp_json_encode([ 'error' => $template_id->get_error_message() ]);
+        return;
+    }
+
+    $action_id = $custom_actions->upsert_by_code(
+        [
+            'template_id'          => $template_id,
+            'code'                 => $seed['action_code'],
+            'display_name'         => $seed['display_name'],
+            'definition_json'      => array_merge(
+                is_array( $definition['definition_json'] ?? null ) ? $definition['definition_json'] : [],
+                [ 'template_code' => $seed['template_code'] ]
+            ),
+            'model_selection_json' => [
+                'provider'      => 'openrouter',
+                'model'         => $model_id,
+                'credential_id' => $credential_id,
+            ],
+            'status'               => 'active',
+        ]
+    );
+    if ( is_wp_error( $action_id ) ) {
+        echo wp_json_encode([ 'error' => $action_id->get_error_message() ]);
+        return;
+    }
+
+    $created[ $key ] = [
+        'action_id'  => (int) $action_id,
+        'definition' => $definition,
+    ];
+}
+
+$spam_effects = is_array( $created['spam']['definition']['effect_mapping_json'] ?? null )
+    ? $created['spam']['definition']['effect_mapping_json']
+    : [];
+$spam_effects['spam'] = array_merge(
+    is_array( $spam_effects['spam'] ?? null ) ? $spam_effects['spam'] : [],
+    [
+        'enabled'                 => true,
+        'skip_downstream_on_spam' => true,
+    ]
+);
+
+$spam_mapping_id = $mappings->create(
+    [
+        'form_source'         => 'gravity_forms',
+        'form_id'             => $form_id,
+        'hook'                => 'after_submission',
+        'action_kind'         => 'custom_action',
+        'action_id'           => $created['spam']['action_id'],
+        'input_bindings_json' => [],
+        'effect_mapping_json' => $spam_effects,
+        'execution_mode'      => 'sync',
+        'settings_json'       => [
+            'input_mapping' => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+        ],
+        'enabled'             => true,
+    ]
+);
+if ( is_wp_error( $spam_mapping_id ) ) {
+    echo wp_json_encode([ 'error' => $spam_mapping_id->get_error_message() ]);
+    return;
+}
+
+$spam_runtime_key = 'local_first_' . (int) $spam_mapping_id;
+$summary_mapping_id = $mappings->create(
+    [
+        'form_source'         => 'gravity_forms',
+        'form_id'             => $form_id,
+        'hook'                => 'after_submission',
+        'action_kind'         => 'custom_action',
+        'action_id'           => $created['summary']['action_id'],
+        'input_bindings_json' => [],
+        'effect_mapping_json' => is_array( $created['summary']['definition']['effect_mapping_json'] ?? null )
+            ? $created['summary']['definition']['effect_mapping_json']
+            : [ 'store_result' => true ],
+        'execution_mode'      => 'sync',
+        'settings_json'       => [
+            'input_mapping'  => [ 'mode' => 'all', 'field_ids' => [], 'include_metadata' => true ],
+            'dependency_ids' => [ $spam_runtime_key ],
+            'trigger_sources' => [
+                'after_submission' => [
+                    'type'       => 'mapping',
+                    'mapping_id' => $spam_runtime_key,
+                ],
+            ],
+        ],
+        'enabled'             => true,
+    ]
+);
+if ( is_wp_error( $summary_mapping_id ) ) {
+    echo wp_json_encode([ 'error' => $summary_mapping_id->get_error_message() ]);
+    return;
+}
+
+echo wp_json_encode(
+    [
+        'spam_mapping_id'    => (int) $spam_mapping_id,
+        'summary_mapping_id' => (int) $summary_mapping_id,
+    ]
+);
+`,
+		{
+			FORM_ID: String(formId),
+			CREDENTIAL_ID: String(credentialId)
+		}
+	);
+
+	const parsed = parseLocalSpamSummaryChainSeed(output);
+	if ('error' in parsed) {
+		throw new Error(`Failed to seed local spam-summary chain: ${parsed.error}`);
+	}
+
+	return parsed satisfies LocalSpamSummaryChainSeed;
 }
 
 function seedImportedEntrySummaryMappingWithoutCredential(
 	formId: number,
-	executionMode: 'sync' | 'async'
+	executionMode: 'sync' | 'async',
+	credentialId: number
 ): LocalCustomActionSeed {
 	const output = runWpEval(
 		`
@@ -462,9 +700,10 @@ Sentient_Forms_Installer::maybe_upgrade();
 global $wpdb;
 $form_id        = (string) absint( getenv( 'FORM_ID' ) ?: 0 );
 $execution_mode = sanitize_key( getenv( 'EXECUTION_MODE' ) ?: 'sync' );
+$credential_id  = absint( getenv( 'CREDENTIAL_ID' ) ?: 0 );
 $definition     = Sentient_Forms_Bundled_Action_Templates::get( 'entry_summary_v1' );
 
-if ( ! is_array( $definition ) || '' === $form_id || '0' === $form_id ) {
+if ( ! is_array( $definition ) || '' === $form_id || '0' === $form_id || $credential_id <= 0 ) {
     echo wp_json_encode([ 'error' => 'invalid_seed_input' ]);
     return;
 }
@@ -530,6 +769,13 @@ $mapping_id = $mappings->create(
         ],
         'effect_mapping_json' => $definition['effect_mapping_json'] ?? [ 'store_result' => true ],
         'execution_mode'      => in_array( $execution_mode, [ 'sync', 'async' ], true ) ? $execution_mode : 'sync',
+        'settings_json'       => [
+            'model_selection' => [
+                'provider'      => 'openrouter',
+                'primary'       => 'openrouter/auto',
+                'credential_id' => $credential_id,
+            ],
+        ],
         'enabled'             => true,
     ]
 );
@@ -550,7 +796,8 @@ echo wp_json_encode(
 `,
 		{
 			FORM_ID: String(formId),
-			EXECUTION_MODE: executionMode
+			EXECUTION_MODE: executionMode,
+			CREDENTIAL_ID: String(credentialId)
 		}
 	);
 
@@ -647,6 +894,11 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 			.getByTestId('local-builder-action-name')
 			.fill(localOpenRouterBrowserSmokeActionName);
 		await drawer
+			.getByTestId('local-builder-prompt-template')
+			.fill(
+				'Submission: {{entry}}\n\nReturn JSON shaped as {"classification":"ham|likely_spam|spam","confidence":0.0,"justification":"short reason"}.'
+			);
+		await drawer
 			.getByTestId('local-builder-execution-mode')
 			.selectOption(localOpenRouterBrowserExecutionMode);
 		const submitButton = drawer.getByTestId('link-action-submit');
@@ -654,11 +906,34 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await submitButton.click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
+		await drawer.getByRole('button', { name: 'Cancel' }).click();
+		await expect(drawer).toBeHidden();
+
+		const tableToggle = page.getByTestId('linked-actions-view-table');
+		if ((await tableToggle.count()) > 0) {
+			await tableToggle.first().click();
+		}
+		const table = page.getByTestId('form-actions-table');
+		await expect(table).toBeVisible();
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByText('Configure Action Mapping')).toBeVisible();
+		await modal.getByTestId('mapping-section-toggle-input_mapping').click();
+		const inputSection = modal.locator('#mapping-section-content-input-mapping');
+		await inputSection.locator('select').selectOption('selected');
+		await inputSection.locator('label').filter({ hasText: 'Email' }).getByRole('checkbox').check();
+		await inputSection
+			.locator('label')
+			.filter({ hasText: 'Include form metadata' })
+			.getByRole('checkbox')
+			.uncheck();
+		await modal.locator('footer').getByRole('button', { name: 'Save mapping' }).click();
+		await expect(modal).toBeHidden({ timeout: 15_000 });
+
 		const mappings = getLocalFormMappings(formId);
 		const expectedHook =
-			localOpenRouterBrowserExecutionMode === 'sync'
-				? 'validation'
-				: 'after_submission';
+			localOpenRouterBrowserExecutionMode === 'sync' ? 'validation' : 'after_submission';
 		expect(mappings).toHaveLength(1);
 		expect(mappings[0]).toMatchObject({
 			form_source: 'gravity_forms',
@@ -667,6 +942,11 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 			action_kind: 'custom_action',
 			execution_mode: localOpenRouterBrowserExecutionMode,
 			enabled: true
+		});
+		expect(mappings[0]?.input_bindings_json).toMatchObject({
+			mode: 'selected',
+			field_ids: ['2'],
+			include_metadata: false
 		});
 
 		const email = `browser-local-${token}@example.test`;
@@ -731,9 +1011,106 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const urls = getLocalOpenRouterSmokeUrls();
 		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);
 		expect(urls.filter((url) => url.includes('sentientforms.com'))).toHaveLength(0);
+
+		const requests = getLocalOpenRouterSmokeRequests();
+		expect(requests.length).toBeGreaterThan(0);
+		const requestMessages = JSON.stringify(requests.at(-1)?.body?.messages ?? []);
+		expect(requestMessages).toContain(email);
+		expect(requestMessages).not.toContain('Browser Local Lead');
+		expect(requestMessages).not.toContain(
+			'Claim your free prize now and reply with payment details immediately.'
+		);
+		expect(requestMessages).not.toContain(localOpenRouterBrowserSmokeFormTitle);
 	});
 
-	test('runs an imported bundled Entry Summary mapping that was saved before credential binding', async function ({
+	test('records a canonical dependent Action as skipped after upstream spam without a second provider call', async function ({
+		page
+	}) {
+		await requireWpRestHealthy(page);
+
+		const token = String(Date.now());
+		const formId = ensureGravityForm('Local spam-summary chain', [
+			{ type: 'text', id: 1, label: 'Name', isRequired: true },
+			{ type: 'email', id: 2, label: 'Email', isRequired: true },
+			{ type: 'textarea', id: 3, label: 'Message', isRequired: true }
+		]);
+		resetLocalFormFixture({
+			formId,
+			actionNames: ['Browser chain spam', 'Browser chain summary']
+		});
+		const formUrl = ensureGravityFormPage(formId, 'Local spam-summary chain page');
+		const provider = seedLocalOpenRouterProvider('Browser chain OpenRouter key', {
+			exclusive: true
+		});
+		const chain = seedLocalSpamSummaryChain(formId, provider.credential_id);
+		setLocalOpenRouterMockResponse({
+			classification: 'spam',
+			confidence: 0.99,
+			justification: 'Browser chain upstream spam result.',
+			indicators: []
+		});
+
+		await loginToWpAdmin(page);
+		const email = `browser-chain-${token}@example.test`;
+		const baselineEntryId = getLatestEntryId(formId);
+		await submitFrontEndGravityForm(page, formUrl, formId, {
+			name: 'Browser Chain Lead',
+			email,
+			message: 'This message should be classified as spam before summary generation.'
+		});
+		const entryId = await waitForEntryId(page, formId, baselineEntryId, email);
+
+		let events: LocalExecutionEvent[] = [];
+		await expect
+			.poll(function () {
+				events = getLocalExecutionEvents(entryId);
+				return events
+					.filter(
+						(event) =>
+							event.mapping_id === chain.spam_mapping_id ||
+							event.mapping_id === chain.summary_mapping_id
+					)
+					.map((event) => `${event.mapping_id}:${event.status}`)
+					.sort();
+			})
+			.toEqual(
+				[`${chain.spam_mapping_id}:succeeded`, `${chain.summary_mapping_id}:skipped`].sort()
+			);
+
+		const skippedEvent = events.find(
+			(event) => event.mapping_id === chain.summary_mapping_id && event.status === 'skipped'
+		);
+		expect(skippedEvent?.result_json?.skip_reason).toBe('upstream_spam');
+		expect(skippedEvent?.result_json?.native_effect_outcomes).toContainEqual({
+			effect: 'workflow_execution',
+			status: 'skipped',
+			reason: 'upstream_spam'
+		});
+		expect(getLocalOpenRouterSmokeRequests()).toHaveLength(1);
+		await expect(waitForSpamStatus(page, entryId)).resolves.toMatchObject({
+			status: 'spam',
+			classification: 'spam',
+			is_spam: true
+		});
+		await waitForGravityEntryNotes(
+			entryId,
+			page,
+			(notes) => notes.some((note) => note.value.includes('Browser chain upstream spam result.')),
+			{ description: 'the upstream spam chain note' }
+		);
+
+		await ensureSentientFormsSpa(page, '/actions/log');
+		await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
+		const skippedRow = page.getByTestId(`action-log-row-local-event-${skippedEvent?.id ?? 0}`);
+		await expect(skippedRow).toContainText('Browser chain summary');
+		await expect(skippedRow).toContainText('Blocked');
+		await expect(skippedRow).toContainText('Not run');
+		await expect(skippedRow).toContainText(
+			'Skipped because an upstream Action classified the submission as spam.'
+		);
+	});
+
+	test('runs an imported bundled Entry Summary through a mapping-scoped Direct route', async function ({
 		page
 	}) {
 		await requireWpRestHealthy(page);
@@ -755,7 +1132,8 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		});
 		const imported = seedImportedEntrySummaryMappingWithoutCredential(
 			formId,
-			localOpenRouterBrowserExecutionMode
+			localOpenRouterBrowserExecutionMode,
+			seed.credential_id
 		);
 		expect(imported.model_selection_json).toMatchObject({
 			provider: 'openrouter',
@@ -803,9 +1181,10 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 			'imported_entry_summary_v1_5cfa445eee8f'
 		);
 		expect(repairedSelection).toMatchObject({
-			provider: 'openrouter',
-			model: 'openrouter/auto',
-			credential_id: seed.credential_id
+			provider: 'sentient_managed',
+			backup_provider: 'openrouter',
+			backup_model: 'openrouter/auto',
+			backup_credential_id: seed.credential_id
 		});
 
 		const summary = getEntryMeta(entryId, 'sentient_forms_summary');
@@ -822,9 +1201,9 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 				runScheduler: localOpenRouterBrowserExecutionMode === 'async'
 			}
 		);
-		expect(notes.some((note) => note.value.includes('Provider credential could not be found'))).toBe(
-			false
-		);
+		expect(
+			notes.some((note) => note.value.includes('Provider credential could not be found'))
+		).toBe(false);
 
 		const urls = getLocalOpenRouterSmokeUrls();
 		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);
@@ -874,9 +1253,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
 		const mappings = getLocalFormMappings(formId);
 		const expectedHook =
-			localOpenRouterBrowserExecutionMode === 'sync'
-				? 'validation'
-				: 'after_submission';
+			localOpenRouterBrowserExecutionMode === 'sync' ? 'validation' : 'after_submission';
 		expect(mappings).toHaveLength(1);
 		expect(mappings[0]).toMatchObject({
 			form_source: 'gravity_forms',

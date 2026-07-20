@@ -2,7 +2,7 @@
 	import { run } from 'svelte/legacy';
 
 	import { onMount } from 'svelte';
-	import { telemetryStore } from '$lib/stores/telemetry.svelte';
+	import { localDiagnosticsStore } from '$lib/stores/telemetry.svelte';
 	import { asyncSettingsStore } from '$lib/stores/async-settings.svelte';
 	import { asyncHealthStore } from '$lib/stores/async-health.svelte';
 	import { loggingStore } from '$lib/stores/logging.svelte';
@@ -30,7 +30,7 @@
 		enableLogging: boolean;
 	}
 
-	const telemetry = telemetryStore;
+	const localDiagnostics = localDiagnosticsStore;
 	const asyncSettings = asyncSettingsStore;
 	const asyncHealth = asyncHealthStore;
 	const logging = loggingStore;
@@ -72,7 +72,7 @@
 	let privacySetupCompletedAt = $state<string | null>(null);
 	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
 	let siteContextLoading = $state(false);
-	let telemetryDetailsOpen = $state(false);
+	let diagnosticDetailsOpen = $state(false);
 
 	const privacyPresetDefinitions: Record<PrivacyPresetId, PrivacyPresetDefinition> = {
 		balanced: {
@@ -153,7 +153,7 @@
 	);
 
 	onMount(() => {
-		telemetry.load();
+		localDiagnostics.load();
 		asyncSettings.load();
 		asyncHealth.refresh();
 		logging.load();
@@ -266,7 +266,9 @@
 				{ showNotifications: false }
 			);
 			syncManagedZdrSetting(settings);
-			notifications.success(nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled');
+			notifications.success(
+				nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled'
+			);
 		} catch {
 			managedZdrRequired = previous;
 			notifications.error('Unable to update managed ZDR enforcement');
@@ -350,9 +352,9 @@
 		}
 	}
 
-	function toggle(event: Event) {
+	function toggleLocalDiagnostics(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
-		telemetry.setOptIn(target.checked);
+		localDiagnostics.setEnabled(target.checked);
 	}
 
 	function toggleLogging(event: Event) {
@@ -446,7 +448,7 @@
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
-		>
+	>
 		{#if !governanceLoaded && executionLoading}
 			<StateTemplate
 				variant="loading"
@@ -689,10 +691,9 @@
 			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
 		>
 			<div>
-				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
+				<p class="sf:font-medium sf:text-slate-900">Enable local diagnostic events</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share metadata-only reliability events with Sentient Forms after this site has a
-					connected Sentient identity.
+					Generate metadata-only reliability events on this site. Nothing is sent to Sentient Forms.
 				</p>
 			</div>
 			<div class="sf:flex sf:items-center sf:gap-3">
@@ -702,91 +703,92 @@
 					size="sm"
 					class="sf:shrink-0 sf:gap-2 sf:whitespace-nowrap"
 					style="min-width: 8.75rem; white-space: nowrap;"
-					onclick={() => (telemetryDetailsOpen = true)}
+					onclick={() => (diagnosticDetailsOpen = true)}
 				>
 					<InfoIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
-					<span>What&nbsp;is&nbsp;shared?</span>
+					<span>What&nbsp;is&nbsp;recorded?</span>
 				</Button>
 				<label class="sf:flex sf:items-center sf:gap-3">
-					<span class="sf:text-sm sf:font-semibold">{$telemetry.optIn ? 'On' : 'Off'}</span>
+					<span class="sf:text-sm sf:font-semibold">{$localDiagnostics.enabled ? 'On' : 'Off'}</span
+					>
 					<input
 						type="checkbox"
 						class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-						checked={$telemetry.optIn}
-						disabled={$telemetry.loading || $telemetry.saving}
-						onchange={toggle}
+						checked={$localDiagnostics.enabled}
+						disabled={$localDiagnostics.loading || $localDiagnostics.saving}
+						onchange={toggleLocalDiagnostics}
 					/>
 				</label>
 			</div>
 		</div>
 
 		<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
-			{#if $telemetry.syncedAt}
-				<p>Synced {$telemetry.syncedAt}</p>
-			{/if}
-			{#if $telemetry.remoteUpdatedAt}
-				<p>Remote consent record updated {$telemetry.remoteUpdatedAt}</p>
+			{#if $localDiagnostics.updatedAt}
+				<p>Preference saved {$localDiagnostics.updatedAt}</p>
 			{/if}
 		</div>
-		{#if $telemetry.loading}
+		{#if $localDiagnostics.loading}
 			<div class="sf:mt-3">
 				<StateTemplate
 					variant="loading"
-					title="Loading telemetry settings"
-					message="Syncing the latest telemetry consent state."
+					title="Loading local diagnostic settings"
+					message="Reading this site's local diagnostic preference."
 					inline
 					dense
-					testId="settings-telemetry-loading-state"
+					testId="settings-local-diagnostics-loading-state"
 				/>
 			</div>
-		{:else if $telemetry.lastError}
+		{:else if $localDiagnostics.lastError}
 			<div class="sf:mt-3">
 				<StateTemplate
 					variant="error"
-					title="Telemetry sync issue"
-					message={$telemetry.lastError}
+					title="Local diagnostic settings issue"
+					message={$localDiagnostics.lastError}
 					actionLabel="Retry"
 					onAction={() => {
-						void telemetry.load();
+						void localDiagnostics.load();
 					}}
 					inline
 					dense
-					testId="settings-telemetry-error-state"
+					testId="settings-local-diagnostics-error-state"
 				/>
 			</div>
 		{/if}
 	</div>
 
-	{#if telemetryDetailsOpen}
+	{#if diagnosticDetailsOpen}
 		<div
 			class="sf:fixed sf:inset-0 sf:z-[1000000] sf:flex sf:items-center sf:justify-center sf:bg-slate-950/50 sf:p-4"
 			role="presentation"
 			onclick={(event) => {
-				if (event.currentTarget === event.target) telemetryDetailsOpen = false;
+				if (event.currentTarget === event.target) diagnosticDetailsOpen = false;
 			}}
 		>
 			<div
 				class="sf:w-full sf:max-w-3xl sf:overflow-hidden sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl"
 				role="dialog"
 				aria-modal="true"
-				aria-labelledby="telemetry-details-title"
+				aria-labelledby="local-diagnostics-details-title"
 			>
 				<div
 					class="sf:flex sf:flex-col sf:gap-3 sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-5 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
 				>
 					<div>
-						<p id="telemetry-details-title" class="sf:text-lg sf:font-semibold sf:text-slate-950">
-							Telemetry and data privacy
+						<p
+							id="local-diagnostics-details-title"
+							class="sf:text-lg sf:font-semibold sf:text-slate-950"
+						>
+							Local diagnostic events and data privacy
 						</p>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							Telemetry is only queued after opt-in and Sentient site identity are both present.
+							Diagnostic events are generated only after opt-in and remain on this site.
 						</p>
 					</div>
 					<Button
 						type="button"
 						variant="secondary"
 						size="sm"
-						onclick={() => (telemetryDetailsOpen = false)}
+						onclick={() => (diagnosticDetailsOpen = false)}
 					>
 						Close
 					</Button>
@@ -794,35 +796,33 @@
 
 				<div class="sf:grid sf:gap-4 sf:p-5 sf:md:grid-cols-2">
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4">
-						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What is shared</p>
+						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What can be recorded</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Async job success or failure events, background processing warnings,
-							plugin/runtime versions, provider path, action code, execution request ID,
-							adapter, status, attempt counts, timing details, and sanitized error or warning
-							codes.
+							Async job success or failure events, background processing warnings, plugin/runtime
+							versions, provider path, action code, execution request ID, adapter, status, attempt
+							counts, timing details, and sanitized error or warning codes.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-danger-100 sf:bg-danger-50 sf:p-4">
-						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is not shared</p>
+						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is never recorded</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-danger-800">
-							Form field contents, prompts, model outputs, raw error messages, visitor
-							identifiers, API keys, saved provider secrets, and billing secrets are not sent
-							as telemetry.
+							Form field contents, prompts, model outputs, raw error messages, visitor identifiers,
+							API keys, saved provider secrets, and billing secrets are not included.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-primary-900">Why it helps</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-primary-800">
-							Operational telemetry helps identify reliability regressions, slow background
-							processing, and action execution issues that are hard to diagnose from one site.
+							Local diagnostic events help site owners and support troubleshoot reliability,
+							background processing, and action execution issues on this site.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">Your control</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Turn telemetry off here to stop new telemetry queueing. Local consent is saved
-							immediately; remote telemetry sync and delivery remain inactive until a Sentient
-							site identity exists.
+							Turn this off to stop new diagnostic events. Nothing leaves this site. The separate
+							on-site logging control determines whether masked events are written to the support
+							log.
 						</p>
 					</div>
 				</div>

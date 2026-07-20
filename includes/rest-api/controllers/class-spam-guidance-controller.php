@@ -121,6 +121,14 @@ class Sentient_Forms_Spam_Guidance_Controller extends Sentient_Forms_Abstract_Ba
 
     public function append_example( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): WP_REST_Response | WP_Error => $this->append_example_locked( $request )
+        );
+    }
+
+    /** Append guidance after the shared local-state fence is held. */
+    private function append_example_locked( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
         $form_source  = sanitize_key( (string) $request['form_source'] );
         $form_id      = $this->route_form_id( $request );
         $target_scope = sanitize_key( (string) ( $request->get_param( 'target_scope' ) ?: 'form' ) );
@@ -420,6 +428,18 @@ class Sentient_Forms_Spam_Guidance_Controller extends Sentient_Forms_Abstract_Ba
      * @return array<string,mixed>|WP_Error
      */
     private function save_option_mapping_config( string $form_source, string $form_id, string $mapping_id, array $config ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn (): array | WP_Error => $this->save_option_mapping_config_locked( $form_source, $form_id, $mapping_id, $config )
+        );
+    }
+
+    /**
+     * Persist legacy mapping guidance while the option authority is fenced.
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    private function save_option_mapping_config_locked( string $form_source, string $form_id, string $mapping_id, array $config ): array | WP_Error
     {
         $location = $this->find_option_mapping_location( $form_source, $form_id, $mapping_id );
         if ( is_wp_error( $location ) )

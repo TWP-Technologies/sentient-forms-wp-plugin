@@ -86,6 +86,44 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_elementor_form_config_writes_preserve_migration_lock_error(): void {
+		update_option(
+			$this->elementor_opaque_option_key,
+			[ 'entry_summary_v1' => [ 'action_customization' => 'Existing value.' ] ],
+			false
+		);
+		$lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+		$lock_name        = $lock_name_method->invoke( null );
+		$competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$acquired         = (int) $competitor->get_var(
+			$competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+		);
+		$this->assertSame( 1, $acquired );
+
+		$update = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/elementor_pro_forms/123%3Aformabc/action-config/entry_summary_v1' );
+		$update->set_param( 'form_source', 'elementor_pro_forms' );
+		$update->set_param( 'form_id', '123:formabc' );
+		$update->set_param( 'action_id', 'entry_summary_v1' );
+		$update->set_param( 'action_customization', 'Must not overwrite.' );
+		$delete = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/forms/elementor_pro_forms/123%3Aformabc/action-config/entry_summary_v1' );
+		$delete->set_param( 'form_source', 'elementor_pro_forms' );
+		$delete->set_param( 'form_id', '123:formabc' );
+		$delete->set_param( 'action_id', 'entry_summary_v1' );
+
+		try {
+			$update_response = $this->controller->update_action_config( $update );
+			$delete_response = $this->controller->delete_action_config( $delete );
+		} finally {
+			$competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		}
+
+		$this->assertInstanceOf( WP_Error::class, $update_response );
+		$this->assertSame( 'sentient_forms_action_authority_write_locked', $update_response->get_error_code() );
+		$this->assertInstanceOf( WP_Error::class, $delete_response );
+		$this->assertSame( 'sentient_forms_action_authority_write_locked', $delete_response->get_error_code() );
+		$this->assertSame( 'Existing value.', get_option( $this->elementor_opaque_option_key )['entry_summary_v1']['action_customization'] ?? null );
+	}
+
 	public function test_update_action_config_rejects_legacy_string_spam_examples(): void {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
 		$request->set_param( 'form_source', 'gravity_forms' );

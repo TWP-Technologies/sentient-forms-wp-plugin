@@ -25,7 +25,8 @@ class Sentient_Forms_Admin_Assets {
      *
      * @return string Version string for cache busting.
      */
-    public function get_cache_version(): string {
+    public function get_cache_version(): string
+    {
         if ( null !== $this->cache_version ) {
             return $this->cache_version;
         }
@@ -59,7 +60,8 @@ class Sentient_Forms_Admin_Assets {
      *
      * @return array|WP_Error
      */
-    public function get_manifest() {
+    public function get_manifest()
+    {
         if ( null !== $this->manifest ) {
             return $this->manifest;
         }
@@ -67,19 +69,25 @@ class Sentient_Forms_Admin_Assets {
         $manifest_path = $this->get_assets_path( 'manifest.json' );
 
         if ( ! file_exists( $manifest_path ) ) {
-            return new WP_Error( 'sentient_forms_manifest_missing', sprintf( 'Sentient Forms admin manifest missing: %s', $manifest_path ) );
+            /* translators: %s is the expected Vite manifest path. */
+            $message = sprintf( __( 'Sentient Forms admin manifest missing: %s', 'sentient-forms' ), $manifest_path );
+            return new WP_Error( 'sentient_forms_manifest_missing', $message );
         }
 
         $manifest_contents = file_get_contents( $manifest_path );
 
         if ( false === $manifest_contents ) {
-            return new WP_Error( 'sentient_forms_manifest_read_error', sprintf( 'Unable to read admin manifest: %s', $manifest_path ) );
+            /* translators: %s is the Vite manifest path that could not be read. */
+            $message = sprintf( __( 'Unable to read admin manifest: %s', 'sentient-forms' ), $manifest_path );
+            return new WP_Error( 'sentient_forms_manifest_read_error', $message );
         }
 
         $decoded = json_decode( $manifest_contents, true );
 
         if ( ! is_array( $decoded ) ) {
-            return new WP_Error( 'sentient_forms_manifest_decode_error', sprintf( 'Invalid admin manifest JSON: %s', $manifest_path ) );
+            /* translators: %s is the Vite manifest path containing invalid JSON. */
+            $message = sprintf( __( 'Invalid admin manifest JSON: %s', 'sentient-forms' ), $manifest_path );
+            return new WP_Error( 'sentient_forms_manifest_decode_error', $message );
         }
 
         $this->manifest = $decoded;
@@ -94,7 +102,8 @@ class Sentient_Forms_Admin_Assets {
      *
      * @return array|WP_Error
      */
-    public function get_entry( string $entry = self::DEFAULT_ENTRY ) {
+    public function get_entry( string $entry = self::DEFAULT_ENTRY )
+    {
         // Ensure dev server detection has run so $this->dev_base_url is set when available.
         $this->get_assets_base_url();
 
@@ -110,7 +119,44 @@ class Sentient_Forms_Admin_Assets {
         }
 
         if ( isset( $manifest[ $entry ] ) ) {
-            return $manifest[ $entry ];
+            return $this->validate_manifest_entry( $manifest[ $entry ], $entry );
+        }
+
+        $normalized_entry = ltrim( str_replace( '\\', '/', $entry ), '/' );
+        $source_matches   = [];
+
+        foreach ( $manifest as $manifest_key => $candidate ) {
+            if ( ! is_array( $candidate ) || empty( $candidate['isEntry'] ) || ! is_string( $candidate['src'] ?? null ) ) {
+                continue;
+            }
+
+            $normalized_key    = ltrim( str_replace( '\\', '/', (string) $manifest_key ), '/' );
+            $normalized_source = ltrim( str_replace( '\\', '/', $candidate['src'] ), '/' );
+            $path_matches      = $normalized_key === $normalized_entry
+                || str_ends_with( $normalized_key, '/' . $normalized_entry )
+                || $normalized_source === $normalized_entry
+                || str_ends_with( $normalized_source, '/' . $normalized_entry );
+            $is_svelte_start   = 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' === $normalized_entry
+                && 'entry/start' === ( $candidate['name'] ?? null );
+
+            if ( $path_matches || $is_svelte_start ) {
+                $source_matches[ (string) $manifest_key ] = $candidate;
+            }
+        }
+
+        if ( 1 === count( $source_matches ) ) {
+            return $this->validate_manifest_entry( reset( $source_matches ), $entry );
+        }
+
+        if ( count( $source_matches ) > 1 ) {
+            return new WP_Error(
+                'sentient_forms_manifest_entry_ambiguous',
+                sprintf(
+                    /* translators: %s: admin manifest entry. */
+                    __( 'Entry %s matched multiple admin manifest sources.', 'sentient-forms' ),
+                    $entry
+                )
+            );
         }
 
         if ( $this->dev_base_url ) {
@@ -118,7 +164,46 @@ class Sentient_Forms_Admin_Assets {
             return [ 'file' => ltrim( $entry, '/' ), 'css' => [] ];
         }
 
-        return new WP_Error( 'sentient_forms_manifest_entry_missing', sprintf( 'Entry %s not found in admin manifest.', $entry ) );
+        return new WP_Error(
+            'sentient_forms_manifest_entry_missing',
+            sprintf(
+                /* translators: %s: admin manifest entry. */
+                __( 'Entry %s not found in admin manifest.', 'sentient-forms' ),
+                $entry
+            )
+        );
+    }
+
+    /**
+     * Validate production module metadata before constructing a public asset URL.
+     *
+     * @param mixed  $candidate
+     * @param string $entry
+     * @return array|WP_Error
+     */
+    private function validate_manifest_entry( $candidate, string $entry )
+    {
+        $file = is_array( $candidate ) && is_string( $candidate['file'] ?? null )
+            ? str_replace( '\\', '/', trim( $candidate['file'] ) )
+            : '';
+
+        if (
+            '' === $file
+            || str_starts_with( $file, '/' )
+            || preg_match( '#(?:^|/)\.\.(?:/|$)#', $file )
+            || ! str_ends_with( strtolower( $file ), '.js' )
+        ) {
+            return new WP_Error(
+                'sentient_forms_manifest_entry_invalid',
+                sprintf(
+                    /* translators: %s: admin manifest entry. */
+                    __( 'Entry %s has invalid admin manifest metadata.', 'sentient-forms' ),
+                    $entry
+                )
+            );
+        }
+
+        return $candidate;
     }
 
     /**
@@ -129,7 +214,8 @@ class Sentient_Forms_Admin_Assets {
      *
      * @return string Full URL to the asset.
      */
-    public function get_asset_url( string $relative, bool $with_version = true ): string {
+    public function get_asset_url( string $relative, bool $with_version = true ): string
+    {
         $url = trailingslashit( $this->get_assets_base_url() ) . ltrim( $relative, '/' );
 
         // Add cache-busting version parameter for production assets.
@@ -144,11 +230,13 @@ class Sentient_Forms_Admin_Assets {
     /**
      * Resolve absolute filesystem path for assets/dist.
      */
-    private function get_assets_path( string $relative ): string {
+    private function get_assets_path( string $relative ): string
+    {
         return trailingslashit( SENTIENT_FORMS_PLUGIN_DIR ) . 'assets/dist/' . ltrim( $relative, '/' );
     }
 
-    public function get_sveltekit_runtime_key(): string {
+    public function get_sveltekit_runtime_key(): string
+    {
         if ( null !== $this->sveltekit_runtime_key ) {
             return $this->sveltekit_runtime_key;
         }
@@ -177,7 +265,8 @@ class Sentient_Forms_Admin_Assets {
         return $this->sveltekit_runtime_key;
     }
 
-    private function get_assets_base_url(): string {
+    private function get_assets_base_url(): string
+    {
         $default = trailingslashit( SENTIENT_FORMS_PLUGIN_URL ) . 'assets/dist/';
 
         if ( ! $this->development_asset_overrides_allowed() ) {
@@ -220,7 +309,8 @@ class Sentient_Forms_Admin_Assets {
         return $default;
     }
 
-    private function maybe_detect_dev_server( string $host ): ?string {
+    private function maybe_detect_dev_server( string $host ): ?string
+    {
         $host = trailingslashit( $host );
         $timeout = apply_filters( 'sentient_forms_admin_dev_timeout', 1.5 );
         $show_probe_notice = (bool) apply_filters( 'sentient_forms_admin_show_dev_probe_failures', false );
@@ -251,7 +341,8 @@ class Sentient_Forms_Admin_Assets {
     /**
      * Return a dev host only if explicitly provided via env/const/filter; otherwise null.
      */
-    private function explicit_dev_host(): ?string {
+    private function explicit_dev_host(): ?string
+    {
         if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) ) ) {
             return constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
         }
@@ -269,7 +360,8 @@ class Sentient_Forms_Admin_Assets {
         return null;
     }
 
-    private function development_asset_overrides_allowed(): bool {
+    private function development_asset_overrides_allowed(): bool
+    {
         $allowed = false;
 
         if ( defined( 'SENTIENT_FORMS_ENABLE_ADMIN_DEV_ASSETS' ) ) {
@@ -284,11 +376,13 @@ class Sentient_Forms_Admin_Assets {
         return (bool) apply_filters( 'sentient_forms_admin_dev_assets_enabled', $allowed );
     }
 
-    public function is_dev_mode(): bool {
+    public function is_dev_mode(): bool
+    {
         return null !== $this->dev_base_url;
     }
 
-    public function get_dev_notice(): ?string {
+    public function get_dev_notice(): ?string
+    {
         return $this->dev_notice_message;
     }
 }

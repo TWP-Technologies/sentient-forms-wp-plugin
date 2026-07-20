@@ -2,7 +2,7 @@
 
 if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Validation_Action' ) )
 {
-    final class Sentient_Forms_Test_Elementor_Validation_Action implements Sentient_Forms_Action_Interface
+    final class Sentient_Forms_Test_Elementor_Validation_Action extends Sentient_Forms_Local_Action_Execution_Service
     {
         /** @var callable */
         private $on_execute;
@@ -10,6 +10,23 @@ if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Validation_Action' ) )
         public function __construct( private string $id, callable $on_execute )
         {
             $this->on_execute = $on_execute;
+        }
+
+        public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+        {
+            return call_user_func(
+                $this->on_execute,
+                [
+                    'form'              => $form,
+                    'entry'             => $entry,
+                    'hook'              => $context['hook'] ?? '',
+                    'form_source'       => $context['form_source'] ?? '',
+                    'execution_context' => $context,
+                ],
+                [],
+                $entry['id'] ?? '',
+                $form['id'] ?? ''
+            );
         }
 
         public function get_id(): string
@@ -213,7 +230,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $page_id    = $this->create_elementor_form_page();
         $form_id    = $page_id . ':formabc';
-        $action_id  = 'elementor_content_validation_fixture';
+        $action_id  = 'imported_content_validation_v1_elementor_fixture';
         $executions = 0;
         $seen       = [];
         $handler    = new Sentient_Forms_Test_Elementor_Ajax_Handler();
@@ -235,15 +252,16 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             [ 'id' => 'formabc', 'post_id' => $page_id ]
         );
 
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Elementor_Validation_Action(
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,
                 static function ( array $form_data ) use ( &$executions, &$seen ): array {
                     ++$executions;
                     $seen = $form_data;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => 'Please review your submission.',
                             'fields'   => [
@@ -251,13 +269,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                                 [ 'field_id' => 'full_name.first', 'is_valid' => false, 'message' => 'Unresolvable compound child.' ],
                                 [ 'field_id' => 'missing_field', 'is_valid' => false, 'message' => 'Unknown field.' ],
                             ],
+                            ],
                         ],
                     ];
                 }
-            )
-        );
+            );
         $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
         $adapter->init();
 
         global $wp_filter;
@@ -277,7 +295,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 2, $accepted_args );
         $this->assertSame( 1, $executions );
         $this->assertSame( 'validation', $seen['hook'] ?? null );
-        $this->assertSame( 'elementor_pro/forms/validation', $seen['native_hook'] ?? null );
+        $this->assertSame( 'elementor_pro/forms/validation', $seen['execution_context']['native_hook'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $seen['form_source'] ?? null );
         $this->assertSame( [ 'first' => 'Ada', 'last' => 'Lovelace' ], $seen['entry']['full_name'] ?? null );
         $this->assertSame( [ 'full_name', 'email' ], $seen['execution_context']['native_validation_context']['record_field_ids'] ?? null );
@@ -307,7 +325,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $source_page_id    = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
         $embedding_page_id = $this->create_elementor_form_page( null, 'formabc', 'Shared Template Form' );
         $source_form_id    = $source_page_id . ':formabc';
-        $action_id         = 'elementor_template_source_validation_fixture';
+        $action_id         = 'imported_content_validation_v1_elementor_template_fixture';
         $executions        = 0;
         $seen_form_id      = null;
         $handler           = new Sentient_Forms_Test_Elementor_Ajax_Handler();
@@ -317,25 +335,26 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             'sentient_forms_elementor_posts_with_data',
             static fn(): array => [ $source_page_id, $embedding_page_id ]
         );
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Elementor_Validation_Action(
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,
                 static function ( array $form_data, array $settings, int | string $entry_id, int | string $form_id ) use ( &$executions, &$seen_form_id ): array {
                     ++$executions;
                     $seen_form_id = (string) $form_id;
 
                     return [
-                        'validation' => [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
                             'is_valid' => false,
                             'message'  => 'Template-source validation ran.',
                             'fields'   => [],
+                            ],
                         ],
                     ];
                 }
-            )
-        );
+            );
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->configure_validation_mapping( $adapter, $source_form_id, $action_id );
+        $this->configure_validation_mapping( $adapter, $source_form_id, $action );
         $adapter->init();
 
         $record = $this->elementor_submission_record(
@@ -437,28 +456,29 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             ]
         );
         $form_id   = $page_id . ':formabc';
-        $action_id = 'elementor_compound_collision_validation_fixture';
+        $action_id = 'imported_content_validation_v1_elementor_compound_fixture';
         $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Elementor_Validation_Action(
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,
                 static fn(): array => [
-                    'validation' => [
-                        'is_valid' => false,
-                        'message'  => 'Review the submitted fields.',
-                        'fields'   => [
-                            [
-                                'field_id' => 'full_name.first',
-                                'is_valid' => false,
-                                'message'  => 'Must never attach to the collapsed field.',
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'is_valid' => false,
+                            'message'  => 'Review the submitted fields.',
+                            'fields'   => [
+                                [
+                                    'field_id' => 'full_name.first',
+                                    'is_valid' => false,
+                                    'message'  => 'Must never attach to the collapsed field.',
+                                ],
                             ],
                         ],
                     ],
                 ]
-            )
-        );
+            );
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
         $adapter->init();
 
         do_action(
@@ -491,8 +511,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_id   = $page_id . ':formabc';
         $action_id = 'spam_analysis';
         $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
-        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-            new Sentient_Forms_Test_Elementor_Validation_Action(
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                 $action_id,
                 static fn(): array => [
                     'result_data' => [
@@ -511,10 +530,9 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                         ],
                     ],
                 ]
-            )
-        );
+            );
         $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-        $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
         $adapter->init();
 
         do_action(
@@ -565,14 +583,12 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                 [ 'existing-field' => 'Existing field error.' ],
                 [ 'Existing form error.' ]
             );
-            Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
-                new Sentient_Forms_Test_Elementor_Validation_Action(
+            $action = new Sentient_Forms_Test_Elementor_Validation_Action(
                     $action_id,
                     static fn(): WP_Error | array => $action_result
-                )
-            );
+                );
             $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
-            $this->configure_validation_mapping( $adapter, $form_id, $action_id );
+            $this->configure_validation_mapping( $adapter, $form_id, $action );
             $adapter->init();
             $errors_before   = $handler->errors;
             $messages_before = $handler->messages;
@@ -2040,6 +2056,30 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, false );
 
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+            [
+                'code'                 => 'elementor_ledger_gate_action',
+                'display_name'         => 'Elementor ledger gate action',
+                'definition_json'      => [ 'prompt' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+            [
+                'form_source'         => 'elementor_pro_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
         $scheduled_jobs = [];
         add_action(
             'sentient_forms_async_job_scheduled',
@@ -2051,23 +2091,6 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->assertTrue(
-            $adapter->update_form_settings(
-                $form_id,
-                [
-                    'map_summary' => [
-                        'local_mapping_id'           => 'map_summary',
-                        'central_action_id'          => 'entry_evaluation',
-                        'action_name_label'          => 'Summarize Elementor submission',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'after_submission' ],
-                        'settings'                   => [
-                            'async' => true,
-                        ],
-                    ],
-                ]
-            )
-        );
 
         $this->assertNull( $adapter->handle_new_record( $this->elementor_submission_record(), null ) );
         $this->assertSame( [], $scheduled_jobs );
@@ -2078,27 +2101,26 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
         $this->assertSame( 'sentient_forms_async', $scheduled_jobs[0]['group'] ?? null );
 
-        $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
+        $payload     = $scheduled_jobs[0]['args'][0] ?? [];
+        $job_context = $payload['context'] ?? [];
         $this->assertSame( 'elementor_pro_forms', $job_context['form_source'] ?? null );
         $this->assertSame( 'elementor_pro/forms/new_record', $job_context['hook'] ?? null );
         $this->assertSame( $form_id, $job_context['form_id'] ?? null );
         $this->assertNull( $job_context['entry_id'] ?? null );
-        $this->assertSame( 'map_summary', $job_context['local_mapping_id'] ?? null );
-        $this->assertSame( 'entry_evaluation', $job_context['central_action_id'] ?? null );
+        $this->assertSame( 'local_first_' . $mapping_id, $job_context['local_mapping_id'] ?? null );
+        $this->assertSame( 'elementor_ledger_gate_action', $job_context['central_action_id'] ?? null );
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
+        $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'entry', $payload );
 
-        $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
-        $this->assertSame( 'elementor_pro_forms', $scheduled_jobs[0]['args']['data']['form_source'] ?? null );
-        $this->assertNull( $job_entry['id'] ?? null );
-        $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
-        $this->assertSame( 'elementor_pro_forms', $job_entry['form_source'] ?? null );
-        $this->assertSame( $form_id, $job_entry['form_id'] ?? null );
-        $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
-        $this->assertSame( 'resume', $job_entry['file_refs'][0]['field_id'] ?? null );
-        $this->assertArrayNotHasKey( 'captcha', $job_entry );
+        $stored = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )
+            ->get_by_submission_uuid( (string) $submission_uuid );
+        $this->assertSame( 'Ada Lovelace', $stored['logical_fields_json']['full_name'] ?? null );
+        $this->assertSame( 'resume', $stored['file_refs_json'][0]['field_id'] ?? null );
+        $this->assertArrayNotHasKey( 'captcha', $stored['logical_fields_json'] ?? [] );
     }
 
     public function test_new_record_passes_dependency_metadata_to_elementor_async_jobs(): void
@@ -2118,6 +2140,42 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'elementor_dependency_fixture',
+                'display_name'         => 'Elementor dependency fixture',
+                'definition_json'      => [ 'prompt' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $first_id = $mappings->create(
+            [
+                'form_source' => 'elementor_pro_forms', 'form_id' => $form_id, 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $first_id );
+        $first_key = 'local_first_' . $first_id;
+        $second_id = $mappings->create(
+            [
+                'form_source' => 'elementor_pro_forms', 'form_id' => $form_id, 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async',
+                'settings_json' => [
+                    'trigger_sources' => [ 'after_submission' => [ 'type' => 'mapping', 'mapping_id' => $first_key ] ],
+                    'batch_settings' => [ 'max_wait_seconds' => 45 ],
+                ],
+                'enabled' => true,
+            ]
+        );
+        $this->assertIsInt( $second_id );
+        $second_key = 'local_first_' . $second_id;
+
         $scheduled_jobs = [];
         add_action(
             'sentient_forms_async_job_scheduled',
@@ -2129,42 +2187,6 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->assertTrue(
-            $adapter->update_form_settings(
-                $form_id,
-                [
-                    'map_first'  => [
-                        'local_mapping_id'           => 'map_first',
-                        'central_action_id'          => 'entry_evaluation',
-                        'action_name_label'          => 'First Elementor async action',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'after_submission' ],
-                        'settings'                   => [
-                            'async' => true,
-                        ],
-                    ],
-                    'map_second' => [
-                        'local_mapping_id'           => 'map_second',
-                        'central_action_id'          => 'entry_evaluation',
-                        'action_name_label'          => 'Dependent Elementor async action',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'after_submission' ],
-                        'settings'                   => [
-                            'async'           => true,
-                            'trigger_sources' => [
-                                'after_submission' => [
-                                    'type'       => 'mapping',
-                                    'mapping_id' => 'map_first',
-                                ],
-                            ],
-                            'batch_settings'   => [
-                                'max_wait_seconds' => 45,
-                            ],
-                        ],
-                    ],
-                ]
-            )
-        );
 
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
 
@@ -2174,36 +2196,67 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $contexts = [];
         foreach ( $scheduled_jobs as $job )
         {
-            $context = $job['args']['context'] ?? [];
+            $context = $job['args'][0]['context'] ?? [];
             if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
             {
                 $contexts[ $context['local_mapping_id'] ] = $context;
             }
         }
 
-        $this->assertArrayHasKey( 'map_first', $contexts );
-        $this->assertArrayHasKey( 'map_second', $contexts );
-        $this->assertSame( [ 'map_first' ], $contexts['map_second']['dependency_mapping_ids'] ?? null );
-        $this->assertSame( 'queued', $contexts['map_second']['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertArrayHasKey( $first_key, $contexts );
+        $this->assertArrayHasKey( $second_key, $contexts );
+        $this->assertSame( [ $first_key ], $contexts[ $second_key ]['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts[ $second_key ]['dependency_initial_outcomes'][ $first_key ] ?? null );
         $this->assertSame(
-            $contexts['map_first']['execution_request_id'] ?? null,
-            $contexts['map_second']['dependency_execution_request_ids']['map_first'] ?? null
+            $contexts[ $first_key ]['execution_request_id'] ?? null,
+            $contexts[ $second_key ]['dependency_execution_request_ids'][ $first_key ] ?? null
         );
         $upstream_record = Sentient_Forms_Plugin::instance()->get_async_request_store()->get(
-            (string) $contexts['map_second']['dependency_execution_request_ids']['map_first']
+            (string) $contexts[ $second_key ]['dependency_execution_request_ids'][ $first_key ]
         );
         $this->assertIsArray( $upstream_record );
         $this->assertSame( 'queued', $upstream_record['status'] ?? null );
-        $this->assertSame( 'entry_evaluation', $upstream_record['action_id'] ?? null );
+        $this->assertSame( 'local_mapping_' . $first_id, $upstream_record['action_id'] ?? null );
         $this->assertSame( 'elementor_pro_forms', $upstream_record['adapter'] ?? null );
-        $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
-        $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
+        $this->assertSame( 45, $contexts[ $second_key ]['dependency_wait_max_seconds'] ?? null );
+        $this->assertSame( 10, $contexts[ $second_key ]['dependency_wait_poll_seconds'] ?? null );
     }
 
     public function test_get_form_settings_reads_controller_saved_provider_native_action_key(): void
     {
+        global $wpdb;
+
+        $original_license = Sentient_Forms_Plugin::instance()->get_license_data();
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'license_id'     => 'license-elementor-provider-native-key-test',
+                'site_id'        => '55555555-5555-4555-8555-555555555555',
+                'proxy_api_key'  => 'proxy-elementor-provider-native-key-test',
+                'tier'           => 'pro',
+            ]
+        );
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $consent_id = $consents->record(
+            'sentient_managed',
+            '2026-07-elementor-provider-native-key-test-v1',
+            get_current_user_id() ?: null,
+            [ 'action' => 'setup_managed_proxy' ]
+        );
+        $this->assertIsInt( $consent_id );
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'  => 'sentient_managed',
+                'label'     => 'Sentient Forms Managed Service',
+                'auth_mode' => 'sentient_proxy',
+                'status'    => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
 
         $page_id = $this->create_elementor_form_page();
         $form_id = $page_id . ':formabc';
@@ -2212,7 +2265,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $request    = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_pro_forms/forms/' . rawurlencode( $form_id ) . '/actions' );
         $request->set_param( 'form_source_slug', 'elementor_pro_forms' );
         $request->set_param( 'form_id', $form_id );
-        $request->set_param( 'central_action_id', 'remote_summary_v1' );
+        $request->set_param( 'central_action_id', 'entry_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
 
@@ -2224,10 +2277,14 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $form_settings = $adapter->get_form_settings( $form_id );
 
         $this->assertArrayHasKey( $created['local_mapping_id'], $form_settings );
-        $this->assertSame( 'remote_summary_v1', $form_settings[ $created['local_mapping_id'] ]['central_action_id'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $form_settings[ $created['local_mapping_id'] ]['central_action_id'] ?? null );
+
+        $wpdb->delete( $wpdb->prefix . 'sentient_external_service_consents', [ 'id' => $consent_id ], [ '%d' ] );
+        $wpdb->delete( $wpdb->prefix . 'sentient_provider_credentials', [ 'id' => $credential_id ], [ '%d' ] );
+        Sentient_Forms_Plugin::instance()->set_license_data( $original_license );
     }
 
-    public function test_new_record_schedules_action_with_elementor_field_manifest_context(): void
+    public function test_new_record_keeps_elementor_field_manifest_available_while_scheduling_minimal_local_payload(): void
     {
         global $wpdb;
 
@@ -2244,70 +2301,26 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
         $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
 
-        $scheduled_jobs = [];
-        add_action(
-            'sentient_forms_async_job_scheduled',
-            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
-                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
-            },
-            10,
-            5
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'elementor_manifest_fixture',
+                'display_name'         => 'Elementor manifest fixture',
+                'definition_json'      => [ 'prompt' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
         );
-
-        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->assertTrue(
-            $adapter->update_form_settings(
-                $form_id,
-                [
-                    'map_summary' => [
-                        'local_mapping_id'           => 'map_summary',
-                        'central_action_id'          => 'entry_evaluation',
-                        'action_name_label'          => 'Summarize Elementor submission',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'after_submission' ],
-                        'settings'                   => [
-                            'async' => true,
-                        ],
-                    ],
-                ]
-            )
+        $this->assertIsInt( $action_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source' => 'elementor_pro_forms', 'form_id' => $form_id, 'hook' => 'after_submission',
+                'action_kind' => 'custom_action', 'action_id' => $action_id, 'input_bindings_json' => [],
+                'execution_mode' => 'async', 'enabled' => true,
+            ]
         );
-
-        $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
-
-        $this->assertNotNull( $submission_uuid );
-        $this->assertCount( 1, $scheduled_jobs );
-
-        $job_form = $scheduled_jobs[0]['args']['data']['form'] ?? [];
-        $this->assertSame( $form_id, $job_form['id'] ?? null );
-        $this->assertSame( 'Quote Request', $job_form['title'] ?? null );
-        $this->assertIsArray( $job_form['fields'] ?? null );
-        $this->assertSame( 'full_name', $job_form['fields'][0]['id'] ?? null );
-        $this->assertSame( 'Full name', $job_form['fields'][0]['label'] ?? null );
-        $this->assertSame( 'text', $job_form['fields'][0]['type'] ?? null );
-        $this->assertTrue( $job_form['fields'][0]['storage_eligible'] ?? false );
-        $this->assertSame( 'resume', $job_form['fields'][3]['id'] ?? null );
-        $this->assertFalse( $job_form['fields'][3]['storage_eligible'] ?? true );
-        $this->assertTrue( $job_form['fields'][3]['file_reference_eligible'] ?? false );
-    }
-
-    public function test_new_record_suppresses_stale_native_effects_in_scheduled_option_backed_mapping(): void
-    {
-        global $wpdb;
-
-        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
-        {
-            sentient_forms_tests_reset_async_state();
-        }
-
-        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
-        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
-
-        $page_id         = $this->create_elementor_form_page();
-        $form_id         = $page_id . ':formabc';
-        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $ledger_settings->set_enabled( 'elementor_pro_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $this->assertIsInt( $mapping_id );
 
         $scheduled_jobs = [];
         add_action(
@@ -2320,76 +2333,28 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         );
 
         $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
-        $this->assertTrue(
-            $adapter->update_form_settings(
-                $form_id,
-                [
-                    'map_spam' => [
-                        'local_mapping_id'           => 'map_spam',
-                        'central_action_id'          => 'spam_detection_v1',
-                        'action_name_label'          => 'Elementor Spam Detection',
-                        'action_type_indicator'      => 'master',
-                        'is_action_enabled_for_form' => true,
-                        'trigger_hooks'              => [ 'after_submission' ],
-                        'settings'                   => [
-                            'async'                         => true,
-                            'effect_mapping_json'           => [
-                                'store_result'                   => true,
-                                'store_result_meta'              => true,
-                                'meta'                           => [ 'spam_confidence' => 'confidence' ],
-                                'entry_note'                     => [ 'template' => 'Spam: {{classification}}' ],
-                                'mark_as_spam'                   => true,
-                                'spam'                           => [
-                                    'enabled'                        => true,
-                                    'classification_path'            => 'classification',
-                                    'confidence_path'                => 'confidence',
-                                    'confidence_threshold'           => 0.8,
-                                    'note'                           => [ 'template' => 'Spam: {{classification}}' ],
-                                    'suppress_notifications_on_spam' => true,
-                                    'suppress_webhooks_on_spam'      => true,
-                                    'skip_downstream_on_spam'        => true,
-                                ],
-                                'suppress_notifications_on_spam' => true,
-                                'suppress_webhooks_on_spam'      => true,
-                            ],
-                            'suppress_notifications_on_spam' => true,
-                            'suppress_webhooks_on_spam'      => true,
-                            'skip_downstream_on_spam'        => true,
-                            'spam_confidence_threshold'      => 0.8,
-                            'spam_result_display_mode'       => 'all_results',
-                            'spam_indicators_display'        => 'detailed',
-                        ],
-                    ],
-                ]
-            )
-        );
 
         $submission_uuid = $adapter->handle_new_record( $this->elementor_submission_record(), null );
 
         $this->assertNotNull( $submission_uuid );
         $this->assertCount( 1, $scheduled_jobs );
-        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
 
-        $scheduled_settings = $scheduled_jobs[0]['args']['settings']['settings'] ?? [];
-        $scheduled_map      = $scheduled_settings['effect_mapping_json'] ?? null;
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'form', $payload );
+        $this->assertArrayNotHasKey( 'entry', $payload );
 
-        $this->assertSame( 'spam_detection_v1', $scheduled_jobs[0]['args']['action_id'] ?? null );
-        $this->assertIsArray( $scheduled_map );
-        $this->assertArrayNotHasKey( 'store_result', $scheduled_map );
-        $this->assertArrayNotHasKey( 'store_result_meta', $scheduled_map );
-        $this->assertArrayNotHasKey( 'meta', $scheduled_map );
-        $this->assertArrayNotHasKey( 'entry_note', $scheduled_map );
-        $this->assertSame( [ 'skip_downstream_on_spam' => true ], $scheduled_map['spam'] ?? null );
-        $this->assertArrayNotHasKey( 'mark_as_spam', $scheduled_map );
-        $this->assertArrayNotHasKey( 'suppress_notifications_on_spam', $scheduled_map );
-        $this->assertArrayNotHasKey( 'suppress_webhooks_on_spam', $scheduled_map );
-        $this->assertArrayNotHasKey( 'suppress_notifications_on_spam', $scheduled_settings );
-        $this->assertArrayNotHasKey( 'suppress_webhooks_on_spam', $scheduled_settings );
-        $this->assertTrue( $scheduled_settings['skip_downstream_on_spam'] ?? false );
-        $this->assertArrayNotHasKey( 'spam_confidence_threshold', $scheduled_settings );
-        $this->assertArrayNotHasKey( 'spam_result_display_mode', $scheduled_settings );
-        $this->assertArrayNotHasKey( 'spam_indicators_display', $scheduled_settings );
+        $manifest = $adapter->get_form_fields( $form_id );
+        $this->assertSame( 'full_name', $manifest[0]['id'] ?? null );
+        $this->assertSame( 'Full name', $manifest[0]['label'] ?? null );
+        $this->assertSame( 'text', $manifest[0]['type'] ?? null );
+        $this->assertTrue( $manifest[0]['storage_eligible'] ?? false );
+        $this->assertSame( 'resume', $manifest[3]['id'] ?? null );
+        $this->assertFalse( $manifest[3]['storage_eligible'] ?? true );
+        $this->assertTrue( $manifest[3]['file_reference_eligible'] ?? false );
     }
+
 
     public function test_new_record_schedules_local_first_mapping_with_submission_uuid_without_native_entry_id(): void
     {
@@ -2644,23 +2609,43 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
     private function configure_validation_mapping(
         Sentient_Forms_Elementor_Forms_Adapter $adapter,
         string $form_id,
-        string $action_id
+        Sentient_Forms_Test_Elementor_Validation_Action $action
     ): void
     {
-        $adapter->update_form_settings(
-            $form_id,
+        global $wpdb;
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
             [
-                'map_validation' => [
-                    'local_mapping_id'           => 'map_validation',
-                    'central_action_id'          => $action_id,
-                    'action_type_indicator'      => 'custom',
-                    'action_name_label'          => 'Elementor validation',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
-                    'settings'                   => [ 'async' => false ],
-                ],
+                'code'                 => $action->get_id(),
+                'display_name'         => $action->get_name(),
+                'definition_json'      => [ 'prompt' => 'Validation fixture.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
             ]
         );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+            [
+                'form_source'        => 'elementor_pro_forms',
+                'form_id'            => $form_id,
+                'hook'               => 'validation',
+                'action_kind'        => 'custom_action',
+                'action_id'          => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'     => 'sync',
+                'enabled'            => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $runner   = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $action
+        );
+        $property = new ReflectionProperty( Sentient_Forms_Elementor_Forms_Adapter::class, 'workflow_runner' );
+        $property->setValue( $adapter, $runner );
     }
 
     private function elementor_submission_record( ?array $fields = null, array $settings = [] ): object

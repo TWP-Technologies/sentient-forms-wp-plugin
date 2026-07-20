@@ -11,12 +11,193 @@ if ( ! defined( 'ABSPATH' ) )
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Local-first form mappings live in a plugin-owned custom table. WordPress core has no native CRUD/cache API for these rows; SQL is prepared and table names are escaped at each call site.
 class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repository
 {
+    private static int $transaction_sequence = 0;
+
     protected function table_name(): string
     {
         return $this->wpdb->prefix . 'sentient_form_mappings';
     }
 
+    /**
+     * Run a mapping-graph mutation atomically.
+     *
+     * @template T
+     * @param callable():T|WP_Error $operation
+     * @return T|WP_Error
+     */
+    public function transaction( callable $operation ): mixed
+    {
+        return $this->with_local_state_write_lock(
+            fn(): mixed => $this->transaction_locked( $operation )
+        );
+    }
+
+    /** Run the mapping transaction after the shared local-state fence is held. */
+    private function transaction_locked( callable $operation ): mixed
+    {
+        if ( ! $this->uses_transactional_storage() )
+        {
+            return new WP_Error(
+                'sentient_forms_nontransactional_mapping_store',
+                __( 'The form mapping store must use transactional storage.', 'sentient-forms' )
+            );
+        }
+
+        self::$transaction_sequence++;
+        $savepoint = 'sentient_forms_mapping_graph_' . self::$transaction_sequence;
+        $savepoint_create_query = $this->wpdb->prepare( 'SAVEPOINT %i', $savepoint );
+        $savepoint_rollback_query = $this->wpdb->prepare( 'ROLLBACK TO SAVEPOINT %i', $savepoint );
+        $savepoint_release_query = $this->wpdb->prepare( 'RELEASE SAVEPOINT %i', $savepoint );
+        $previous_suppress_errors = $this->wpdb->suppress_errors();
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared immediately above with WordPress's identifier placeholder.
+        $savepoint_created = false !== $this->wpdb->query( $savepoint_create_query );
+        $has_outer_transaction = $savepoint_created
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared immediately above with WordPress's identifier placeholder.
+            && false !== $this->wpdb->query( $savepoint_rollback_query );
+        $this->wpdb->suppress_errors( $previous_suppress_errors );
+
+        $owns_transaction = ! $has_outer_transaction;
+        if ( $owns_transaction && false === $this->wpdb->query( 'START TRANSACTION' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_transaction_start_failed',
+                __( 'The form mapping transaction could not be started.', 'sentient-forms' )
+            );
+        }
+
+        try
+        {
+            $result = $operation();
+            if ( is_wp_error( $result ) )
+            {
+                if ( $owns_transaction )
+                {
+                    $rolled_back = $this->wpdb->query( 'ROLLBACK' );
+                }
+                else
+                {
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
+                    if ( false !== $rolled_back )
+                    {
+                        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                        $rolled_back = $this->wpdb->query( $savepoint_release_query );
+                    }
+                }
+                if ( false === $rolled_back )
+                {
+                    return new WP_Error(
+                        'sentient_forms_transaction_rollback_failed',
+                        __( 'The form mapping transaction could not be rolled back.', 'sentient-forms' )
+                    );
+                }
+                return $result;
+            }
+
+            $committed = $owns_transaction
+                ? $this->wpdb->query( 'COMMIT' )
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                : $this->wpdb->query( $savepoint_release_query );
+            if ( false === $committed )
+            {
+                if ( $owns_transaction )
+                {
+                    $rolled_back = $this->wpdb->query( 'ROLLBACK' );
+                }
+                else
+                {
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
+                }
+                if ( false === $rolled_back )
+                {
+                    return new WP_Error(
+                        'sentient_forms_transaction_rollback_failed',
+                        __( 'The form mapping transaction could not be rolled back.', 'sentient-forms' )
+                    );
+                }
+                return new WP_Error(
+                    'sentient_forms_transaction_commit_failed',
+                    __( 'The form mapping transaction could not be committed.', 'sentient-forms' )
+                );
+            }
+
+            return $result;
+        }
+        catch ( Throwable $error )
+        {
+            if ( $owns_transaction )
+            {
+                $rolled_back = $this->wpdb->query( 'ROLLBACK' );
+            }
+            else
+            {
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
+                if ( false !== $rolled_back )
+                {
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_release_query );
+                }
+            }
+            if ( false === $rolled_back )
+            {
+                // phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages and chained throwables are not rendered output.
+                throw new RuntimeException(
+                    __( 'The form mapping transaction could not be rolled back.', 'sentient-forms' ),
+                    0,
+                    $error
+                );
+                // phpcs:enable WordPress.Security.EscapeOutput.ExceptionNotEscaped
+            }
+            throw $error;
+        }
+    }
+
+    /**
+     * Lock every plugin-owned mapping row for a form until the current transaction ends.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function list_for_form_for_update( string $form_source, string $form_id ): array
+    {
+        $query = $this->wpdb->prepare(
+            'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY id ASC FOR UPDATE',
+            $this->table_name(),
+            sanitize_key( $form_source ),
+            sanitize_text_field( $form_id )
+        );
+        $rows = $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+            $query,
+            ARRAY_A
+        ) ?: [];
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    private function uses_transactional_storage(): bool
+    {
+        $previous_suppress_errors = $this->wpdb->suppress_errors();
+        $query = $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table_name() );
+        $definition = $this->wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query,
+            ARRAY_N
+        );
+        $this->wpdb->suppress_errors( $previous_suppress_errors );
+        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+        return 1 === preg_match( '/\bENGINE=InnoDB\b/i', $create_sql );
+    }
+
     public function create( array $data ): int | WP_Error
+    {
+        return $this->with_local_state_write_lock(
+            fn(): int | WP_Error => $this->create_locked( $data )
+        );
+    }
+
+    /** Create after the shared local-state fence is held. */
+    private function create_locked( array $data ): int | WP_Error
     {
         $hook = $this->normalize_hook( $data['hook'] ?? '' );
         if ( is_wp_error( $hook ) )
@@ -184,6 +365,14 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
 
     public function update( int $id, array $data ): array | WP_Error
     {
+        return $this->with_local_state_write_lock(
+            fn(): array | WP_Error => $this->update_locked( $id, $data )
+        );
+    }
+
+    /** Update after the shared local-state fence is held. */
+    private function update_locked( int $id, array $data ): array | WP_Error
+    {
         $id = absint( $id );
         if ( $id <= 0 )
         {
@@ -321,6 +510,16 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
     }
 
     public function delete( int $id ): bool
+    {
+        $result = $this->with_local_state_write_lock(
+            fn(): bool => $this->delete_locked( $id )
+        );
+
+        return is_wp_error( $result ) ? false : $result;
+    }
+
+    /** Delete after the shared local-state fence is held. */
+    private function delete_locked( int $id ): bool
     {
         $id = absint( $id );
         if ( $id <= 0 )

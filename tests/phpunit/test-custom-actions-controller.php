@@ -381,6 +381,36 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertSame( 'active', $reactivate_response->get_data()['action']['status'] ?? null );
     }
 
+    public function test_archive_preserves_retryable_local_state_lock_error(): void
+    {
+        $create_response = $this->create_local_custom_action_response();
+        $action_id       = (string) ( $create_response->get_data()['action']['id'] ?? '' );
+        $this->assertNotSame( '', $action_id );
+
+        $lock_name_method = new ReflectionMethod( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'database_lock_name' );
+        $lock_name        = $lock_name_method->invoke( null );
+        $competitor       = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $acquired         = (int) $competitor->get_var(
+            $competitor->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name )
+        );
+        $this->assertSame( 1, $acquired );
+
+        $archive = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/custom-actions/' . $action_id );
+        $archive->set_param( 'id', $action_id );
+        try
+        {
+            $response = $this->controller->archive_custom_action( $archive );
+        }
+        finally
+        {
+            $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $response );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $response->get_error_code() );
+        $this->assertSame( 409, $response->get_error_data()['status'] ?? null );
+    }
+
     private function create_local_template(): int
     {
         $template_id = $this->templates->upsert_by_code(

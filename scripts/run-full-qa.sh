@@ -24,7 +24,7 @@ smoke_staging() {
     return
   fi
 
-  local health_url="${SENTIENT_FORMS_STAGING_URL%/}/v1/health"
+  local health_url="${SENTIENT_FORMS_STAGING_URL%/}/v2/health"
   info "Validating staging CPS availability at ${health_url}"
   curl --fail --silent "${health_url}" >/dev/null
   info "Staging CPS responded successfully"

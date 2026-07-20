@@ -122,6 +122,32 @@ if ( ! class_exists( 'GFAPI' ) )
     }
 }
 
+class Sentient_Forms_Test_Status_Failing_Execution_Events_Repository extends Sentient_Forms_Execution_Events_Repository
+{
+    /** @var array<int, string> */
+    public array $recorded_statuses = [];
+
+    public function __construct( wpdb $wpdb, private string $failing_status )
+    {
+        parent::__construct( $wpdb );
+    }
+
+    public function record( array $data ): int | WP_Error
+    {
+        $status = sanitize_key( (string) ( $data['status'] ?? 'queued' ) );
+        $this->recorded_statuses[] = $status;
+        if ( $this->failing_status === $status )
+        {
+            return new WP_Error(
+                'sentient_forms_action_authority_write_locked',
+                'The Action authority write lock rejected the execution event.'
+            );
+        }
+
+        return parent::record( $data );
+    }
+}
+
 class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 {
     private Sentient_Forms_Provider_Credentials_Repository $credentials;
@@ -158,6 +184,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         if ( class_exists( 'Sentient_Forms_Test_Gravity_Meta_Store' ) )
         {
             Sentient_Forms_Test_Gravity_Meta_Store::reset();
+        }
+
+        if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
+        {
+            Sentient_Forms_Test_Gf_Meta_Store::reset();
         }
 
         GFFormsModel::$notes = [];
@@ -235,6 +266,239 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'Contact looks legitimate.', $event['result_json']['result_summary'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+    }
+
+    public function test_terminal_event_persistence_failure_is_propagated_after_provider_success(): void
+    {
+        global $wpdb;
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $events  = new Sentient_Forms_Test_Status_Failing_Execution_Events_Repository( $wpdb, 'succeeded' );
+        $service = $this->create_service( $client, null, null, $events );
+
+        $form    = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry   = [
+            'id' => 99,
+            '1'  => 'Ada Lovelace',
+            '2'  => 'ada@example.test',
+        ];
+        $context = [
+            'hook'                 => 'gform_after_submission',
+            'execution_request_id' => 'terminal-event-lock-failure',
+        ];
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            $form,
+            $entry,
+            $context
+        );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_terminal_event_persistence_failure', $result->get_error_code() );
+        $this->assertSame(
+            [
+                'terminal_persistence_failure' => true,
+                'effects_completed'             => true,
+                'execution_request_id'          => 'terminal-event-lock-failure',
+                'cause_code'                    => 'sentient_forms_action_authority_write_locked',
+            ],
+            $result->get_error_data()
+        );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( [ 'running', 'succeeded' ], $events->recorded_statuses );
+        $this->assertSame( 'running', $events->get_by_request_id( 'terminal-event-lock-failure' )['status'] ?? null );
+
+        $replay = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+        $this->assertInstanceOf( WP_Error::class, $replay );
+        $this->assertSame( 'sentient_forms_local_execution_indeterminate', $replay->get_error_code() );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $changed_entry      = $entry;
+        $changed_entry['2'] = 'grace@example.test';
+        $conflict           = $service->execute_mapping( $fixture['mapping_id'], $form, $changed_entry, $context );
+        $this->assertInstanceOf( WP_Error::class, $conflict );
+        $this->assertSame( 'sentient_forms_local_execution_digest_conflict', $conflict->get_error_code() );
+        $this->assertCount( 1, $client->chat_calls );
+    }
+
+    public function test_running_event_persistence_failure_stops_before_provider_execution(): void
+    {
+        global $wpdb;
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $events  = new Sentient_Forms_Test_Status_Failing_Execution_Events_Repository( $wpdb, 'running' );
+        $service = $this->create_service( $client, null, null, $events );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'running-event-lock-failure',
+            ]
+        );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertCount( 0, $client->chat_calls );
+        $this->assertSame( [ 'running' ], $events->recorded_statuses );
+        $this->assertNull( $events->get_by_request_id( 'running-event-lock-failure' ) );
+    }
+
+    public function test_failed_terminal_event_persistence_failure_is_indeterminate_after_provider_attempt(): void
+    {
+        global $wpdb;
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            new WP_Error( 'openrouter_http_error', 'Synthetic provider failure.', [ 'status' => 500 ] )
+        );
+        $events  = new Sentient_Forms_Test_Status_Failing_Execution_Events_Repository( $wpdb, 'failed' );
+        $service = $this->create_service( $client, null, null, $events );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'failed-terminal-event-lock-failure',
+            ]
+        );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_terminal_event_persistence_failure', $result->get_error_code() );
+        $this->assertFalse( $result->get_error_data()['effects_completed'] ?? true );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_data()['cause_code'] ?? null );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( [ 'running', 'failed' ], $events->recorded_statuses );
+        $this->assertSame( 'running', $events->get_by_request_id( 'failed-terminal-event-lock-failure' )['status'] ?? null );
+    }
+
+    public function test_selected_input_mapping_projects_direct_provider_prompt_and_records_a_safe_manifest(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'prompt_template' => 'Form: {{form}} Entry: {{entry}}' ]
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'input_mapping' => [
+                        'mode'             => 'selected',
+                        'field_ids'        => [ '2' ],
+                        'include_metadata' => false,
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $result  = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                    [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+                ],
+            ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+        $prompt = (string) ( $client->chat_calls[0]['payload']['messages'][1]['content'] ?? '' );
+        $this->assertStringContainsString( 'ada@example.test', $prompt );
+        $this->assertStringNotContainsString( 'Ada Lovelace', $prompt );
+        $this->assertStringNotContainsString( 'Contact Form', $prompt );
+        $this->assertStringNotContainsString( '"id":99', $prompt );
+        $this->assertSame( [ '2' ], $result['result']['input_manifest']['applied_entry_keys'] ?? null );
+        $this->assertFalse( $result['result']['input_manifest']['include_metadata'] ?? true );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( [ '2' ], $event['result_json']['input_manifest']['applied_entry_keys'] ?? null );
+    }
+
+    public function test_selected_input_mapping_projects_managed_provider_prompt_and_omits_entry_identity(): void
+    {
+        $fixture = $this->create_local_managed_mapping(
+            true,
+            [],
+            [ 'prompt_template' => 'Form: {{form}} Entry: {{entry}}' ]
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'input_mapping' => [
+                        'mode'             => 'selected',
+                        'field_ids'        => [ '2' ],
+                        'include_metadata' => false,
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $result        = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    [ 'id' => '1', 'label' => 'Name', 'type' => 'text' ],
+                    [ 'id' => '2', 'label' => 'Email', 'type' => 'email' ],
+                ],
+            ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'managed-minimized-input',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $payload = $managed_proxy->execute_calls[0]['payload'];
+        $prompt  = (string) ( $payload['prompt'] ?? '' );
+        $this->assertStringContainsString( 'ada@example.test', $prompt );
+        $this->assertStringNotContainsString( 'Ada Lovelace', $prompt );
+        $this->assertStringNotContainsString( 'Contact Form', $prompt );
+        $this->assertStringNotContainsString( '"id":99', $prompt );
+        $this->assertNull( $payload['metadata']['form_id'] ?? null );
+        $this->assertNull( $payload['metadata']['entry_id'] ?? null );
+        $this->assertSame( [ '2' ], $result['result']['input_manifest']['applied_entry_keys'] ?? null );
+
+        $event = $this->events->get_by_request_id( 'managed-minimized-input' );
+        $this->assertIsArray( $event );
+        $this->assertSame( [ '2' ], $event['result_json']['input_manifest']['applied_entry_keys'] ?? null );
     }
 
     public function test_local_execution_events_link_to_submission_uuid_when_runtime_context_has_ledger_submission(): void
@@ -3011,6 +3275,175 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed_credits_exhausted', $events[0]['result_json']['fallback']['reason'] ?? null );
     }
 
+    public function test_managed_credit_fallback_success_terminal_persistence_failure_is_not_replayed(): void
+    {
+        global $wpdb;
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error( 'managed_credits_exhausted', 'Managed service credits are exhausted.', [ 'status' => 402 ] )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $events     = new Sentient_Forms_Test_Status_Failing_Execution_Events_Repository( $wpdb, 'succeeded' );
+        $service    = $this->create_service( $openrouter, $managed_proxy, null, $events );
+        $form       = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry      = [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ];
+        $context    = [
+            'hook'                 => 'gform_after_submission',
+            'execution_request_id' => 'managed-fallback-success-terminal-persistence',
+        ];
+
+        $result = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_terminal_event_persistence_failure', $result->get_error_code() );
+        $this->assertTrue( $result->get_error_data()['effects_completed'] ?? false );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( [ 'running', 'succeeded' ], $events->recorded_statuses );
+        $this->assertSame( 'running', $events->get_by_request_id( 'managed-fallback-success-terminal-persistence' )['status'] ?? null );
+
+        $replay = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+        $this->assertInstanceOf( WP_Error::class, $replay );
+        $this->assertSame( 'sentient_forms_local_execution_indeterminate', $replay->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 1, $openrouter->chat_calls );
+    }
+
+    public function test_managed_credit_fallback_transient_failure_can_retry_same_request_identity(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+        $form    = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry   = [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ];
+        $context = [
+            'hook'                 => 'gform_after_submission',
+            'execution_request_id' => 'managed-fallback-transient-retry',
+        ];
+
+        $first_managed = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error( 'managed_credits_exhausted', 'Managed service credits are exhausted.', [ 'status' => 402 ] )
+        );
+        $first_openrouter = new Sentient_Forms_Test_OpenRouter_Client(
+            new WP_Error( 'openrouter_http_error', 'Backup provider failed transiently.', [ 'status' => 500 ] )
+        );
+        $first = $this->create_service( $first_openrouter, $first_managed )
+            ->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+
+        $this->assertWPError( $first );
+        $this->assertSame( 'openrouter_http_error', $first->get_error_code() );
+        $this->assertCount( 1, $first_managed->execute_calls );
+        $this->assertCount( 1, $first_openrouter->chat_calls );
+        $this->assertSame( 'failed', $this->events->get_by_request_id( 'managed-fallback-transient-retry' )['status'] ?? null );
+
+        $retry_managed = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error( 'managed_credits_exhausted', 'Managed service credits are exhausted.', [ 'status' => 402 ] )
+        );
+        $retry_openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $retry = $this->create_service( $retry_openrouter, $retry_managed )
+            ->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+
+        $this->assertIsArray( $retry );
+        $this->assertSame( 'succeeded', $retry['status'] ?? null );
+        $this->assertSame( 'openrouter', $retry['provider'] ?? null );
+        $this->assertCount( 1, $retry_managed->execute_calls );
+        $this->assertCount( 1, $retry_openrouter->chat_calls );
+        $this->assertSame( 'succeeded', $this->events->get_by_request_id( 'managed-fallback-transient-retry' )['status'] ?? null );
+    }
+
+    public function test_managed_credit_fallback_failure_terminal_persistence_failure_is_not_replayed(): void
+    {
+        global $wpdb;
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'template_code'   => 'spam_detection_v1',
+                'system_prompt'   => 'Classify contact form submissions.',
+                'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                'default_model'   => 'openrouter/auto',
+            ],
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' ),
+                'display_name'         => 'Spam Detection',
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $this->create_ready_managed_service_credential();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error( 'managed_credits_exhausted', 'Managed service credits are exhausted.', [ 'status' => 402 ] )
+        );
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client(
+            new WP_Error( 'openrouter_http_error', 'Backup provider failed.', [ 'status' => 500 ] )
+        );
+        $events  = new Sentient_Forms_Test_Status_Failing_Execution_Events_Repository( $wpdb, 'failed' );
+        $service = $this->create_service( $openrouter, $managed_proxy, null, $events );
+        $form    = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry   = [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ];
+        $context = [
+            'hook'                 => 'gform_after_submission',
+            'execution_request_id' => 'managed-fallback-failure-terminal-persistence',
+        ];
+
+        $result = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_terminal_event_persistence_failure', $result->get_error_code() );
+        $this->assertFalse( $result->get_error_data()['effects_completed'] ?? true );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( [ 'running', 'failed' ], $events->recorded_statuses );
+        $this->assertSame( 'running', $events->get_by_request_id( 'managed-fallback-failure-terminal-persistence' )['status'] ?? null );
+
+        $replay = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+        $this->assertInstanceOf( WP_Error::class, $replay );
+        $this->assertSame( 'sentient_forms_local_execution_indeterminate', $replay->get_error_code() );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertCount( 1, $openrouter->chat_calls );
+    }
+
     public function test_managed_only_policy_does_not_fallback_to_direct_when_managed_credits_are_exhausted(): void
     {
         $fixture = $this->create_local_managed_mapping();
@@ -4812,7 +5245,8 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
     private function create_service(
         Sentient_Forms_Test_OpenRouter_Client $client,
         ?Sentient_Forms_Test_Managed_Proxy_Client $managed_proxy = null,
-        ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null
+        ?Sentient_Forms_Action_Policy_Resolver $policy_resolver = null,
+        ?Sentient_Forms_Execution_Events_Repository $events = null
     ): Sentient_Forms_Local_Action_Execution_Service
     {
         return new Sentient_Forms_Local_Action_Execution_Service(
@@ -4820,7 +5254,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             $this->custom_actions,
             $this->credentials,
             $this->consents,
-            $this->events,
+            $events ?? $this->events,
             new Sentient_Forms_Provider_Credential_Vault(),
             $client,
             new Sentient_Forms_Local_Prompt_Renderer(),

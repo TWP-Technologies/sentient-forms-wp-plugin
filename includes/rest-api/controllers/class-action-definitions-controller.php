@@ -34,13 +34,6 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
      */
     private Sentient_Forms_Admin_Permission $permission_checker;
 
-    /**
-     * Action registry instance.
-     *
-     * @var Sentient_Forms_Action_Registry
-     */
-    private Sentient_Forms_Action_Registry $action_registry;
-
     public function __construct()
     {
         parent::__construct();
@@ -61,8 +54,6 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
             );
         }
 
-        $plugin                   = Sentient_Forms_Plugin::instance();
-        $this->action_registry    = $plugin->get_action_registry();
         $this->permission_checker = new Sentient_Forms_Admin_Permission();
     }
 
@@ -97,32 +88,14 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
      */
     public function get_action_definitions( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $cps_definitions = $this->maybe_fetch_cps_templates();
-        if ( ! is_wp_error( $cps_definitions ) && ! empty( $cps_definitions ) )
-        {
-            return $this->prepare_item_for_response( $cps_definitions );
-        }
-
         $definitions = $this->get_local_template_definitions();
-        if ( ! empty( $definitions ) )
+        if ( empty( $definitions ) )
         {
-            return $this->prepare_item_for_response( $definitions );
-        }
-
-        foreach ( $this->action_registry->get_all_actions() as $id => $action )
-        {
-            $definitions[] = [
-                'id'             => $id,
-                'label'          => $action->get_name(),
-                'description'    => $action->get_description(),
-                'settingsFields' => $action->get_settings_fields(),
-                'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
-                'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
-                'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
-                'source'         => 'bundled',
-                'baseCreditCost' => null,
-                'modelHint'      => method_exists( $action, 'get_model_hint' ) ? $action->get_model_hint() : null,
-            ];
+            return new WP_Error(
+                'sentient_forms_bundled_action_catalog_unavailable',
+                __( 'The bundled Sentient Forms Action Catalog is unavailable.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
         }
 
         return $this->prepare_item_for_response( $definitions );
@@ -215,129 +188,67 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
 
         global $wpdb;
         $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
-        $definitions = [];
-
         $templates = $repository->list_by_source( 'bundled' );
-        if ( [] === $templates )
-        {
-            $templates = $repository->list_active();
-        }
+        $codes     = Sentient_Forms_Bundled_Action_Templates::codes();
 
+        $templates_by_code = [];
         foreach ( $templates as $template )
         {
             $code = isset( $template['code'] ) && is_scalar( $template['code'] )
                 ? sanitize_key( (string) $template['code'] )
                 : '';
-            if ( '' === $code )
+            $id = absint( $template['id'] ?? 0 );
+            if (
+                '' === $code
+                || $id <= 0
+                || 'bundled' !== sanitize_key( (string) ( $template['source'] ?? '' ) )
+            )
+            {
+                return [];
+            }
+
+            if ( ! in_array( $code, $codes, true ) )
             {
                 continue;
             }
 
+            if ( isset( $templates_by_code[ $code ] ) )
+            {
+                return [];
+            }
+
+            $templates_by_code[ $code ] = $template;
+        }
+
+        $definitions = [];
+        foreach ( $codes as $code )
+        {
+            $template = $templates_by_code[ $code ] ?? null;
+            $catalog  = Sentient_Forms_Bundled_Action_Templates::get( $code );
+            if ( ! is_array( $template ) || ! is_array( $catalog ) )
+            {
+                return [];
+            }
+
             $definitions[] = [
                 'id'                     => $code,
-                'templateId'             => isset( $template['id'] ) ? (string) (int) $template['id'] : null,
-                'label'                  => isset( $template['display_name'] ) ? sanitize_text_field( (string) $template['display_name'] ) : $code,
-                'description'            => isset( $template['description'] ) && is_scalar( $template['description'] ) ? sanitize_textarea_field( (string) $template['description'] ) : '',
+                'templateId'             => (string) absint( $template['id'] ),
+                'label'                  => sanitize_text_field( (string) ( $catalog['display_name'] ?? $code ) ),
+                'description'            => isset( $catalog['description'] ) && is_scalar( $catalog['description'] ) ? sanitize_textarea_field( (string) $catalog['description'] ) : '',
                 'settingsFields'         => [],
                 'icon'                   => '',
-                'hooks'                  => $this->resolve_template_hooks( $template ),
+                'hooks'                  => $this->resolve_catalog_hooks( $catalog ),
                 'compatibility'          => [],
-                'source'                 => $this->normalize_local_template_source( $template['source'] ?? null ),
+                'source'                 => 'bundled',
                 'baseCreditCost'         => null,
-                'modelHint'              => isset( $template['default_model'] ) && is_scalar( $template['default_model'] ) ? sanitize_text_field( (string) $template['default_model'] ) : null,
-                'overrideSchema'         => is_array( $template['override_schema'] ?? null ) ? $template['override_schema'] : [],
-                'promptTemplate'         => isset( $template['prompt_template'] ) && is_scalar( $template['prompt_template'] ) ? (string) $template['prompt_template'] : null,
-                'structuredOutputSchema' => is_array( $template['structured_output_schema'] ?? null ) ? $template['structured_output_schema'] : null,
+                'modelHint'              => isset( $catalog['default_model'] ) && is_scalar( $catalog['default_model'] ) ? sanitize_text_field( (string) $catalog['default_model'] ) : null,
+                'overrideSchema'         => is_array( $catalog['override_schema'] ?? null ) ? $catalog['override_schema'] : [],
+                'promptTemplate'         => isset( $catalog['prompt_template'] ) && is_scalar( $catalog['prompt_template'] ) ? (string) $catalog['prompt_template'] : null,
+                'structuredOutputSchema' => is_array( $catalog['structured_output_schema'] ?? null ) ? $catalog['structured_output_schema'] : null,
             ];
         }
 
         return $definitions;
-    }
-
-    /**
-     * Attempt to fetch action templates from CPS if a proxy key is available.
-     *
-     * @return array<int, array<string, mixed>>|WP_Error
-     */
-    private function maybe_fetch_cps_templates(): array | WP_Error
-    {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_action_templates', false ) )
-        {
-            return [];
-        }
-
-        $plugin    = Sentient_Forms_Plugin::instance();
-        $proxy_key = $plugin->get_proxy_api_key();
-        if ( empty( $proxy_key ) )
-        {
-            return [];
-        }
-
-        $client = $plugin->get_cps_api_client();
-        if ( ! $client )
-        {
-            return [];
-        }
-
-        $response = $client->get(
-            '/actions/templates',
-            [ 'bearer_token' => $proxy_key ]
-        );
-
-        if ( is_wp_error( $response ) )
-        {
-            return $response;
-        }
-
-        $templates = $response['templates'] ?? ( $response['data']['templates'] ?? [] );
-        if ( ! is_array( $templates ) )
-        {
-            return [];
-        }
-
-        $mapped = [];
-        foreach ( $templates as $template )
-        {
-            $mapped[] = [
-                'id'             => $template['code'] ?? '',
-                'templateId'     => $template['id'] ?? null,
-                'label'          => $template['display_name'] ?? ( $template['code'] ?? '' ),
-                'description'    => $template['description'] ?? '',
-                'settingsFields' => [],
-                'icon'           => '',
-                'hooks'          => $this->resolve_template_hooks( $template ),
-                'compatibility'  => [],
-                'source'         => 'cps',
-                'baseCreditCost' => $template['base_credit_cost'] ?? null,
-                'modelHint'      => $template['model_hint'] ?? null,
-                'overrideSchema' => $template['override_schema'] ?? [],
-            ];
-        }
-
-        return $mapped;
-    }
-
-    /**
-     * Normalize template sources for the REST contract.
-     *
-     * Imported templates need to stay distinguishable so the UI can avoid
-     * presenting them as built-in actions. All other site-owned rows collapse
-     * to bundled because the UI no longer exposes source-of-authority chips.
-     *
-     * @param mixed $source Stored template source identifier.
-     *
-     * @return string
-     */
-    private function normalize_local_template_source( mixed $source ): string
-    {
-        $source_key = is_scalar( $source ) ? sanitize_key( (string) $source ) : '';
-
-        if ( 'imported' === $source_key )
-        {
-            return 'imported';
-        }
-
-        return 'bundled';
     }
 
     /**
@@ -350,7 +261,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
      *
      * @return array<int, string>
      */
-    private function resolve_template_hooks( array $template ): array
+    private function resolve_catalog_hooks( array $template ): array
     {
         $hooks = [];
         if ( isset( $template['hooks'] ) && is_array( $template['hooks'] ) )
@@ -378,22 +289,15 @@ class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstra
             }
         }
 
-        $hooks = array_values( array_unique( $hooks ) );
-        if ( ! empty( $hooks ) )
-        {
-            return $hooks;
-        }
+        $hooks = array_map(
+            static fn( string $hook ): string => match ( $hook ) {
+                'validation'       => 'gform_validation',
+                'after_submission' => 'gform_after_submission',
+                default            => $hook,
+            },
+            $hooks
+        );
 
-        $code = isset( $template['code'] ) && is_scalar( $template['code'] )
-            ? sanitize_key( (string) $template['code'] )
-            : '';
-
-        return match ( $code ) {
-            'spam_detection_v1'    => [ 'gform_validation', 'gform_after_submission' ],
-            'content_validation_v1'=> [ 'gform_validation' ],
-            'entry_summary_v1'     => [ 'gform_after_submission' ],
-            'clarification_assistant_v1' => [ 'real_time' ],
-            default                => [],
-        };
+        return array_values( array_unique( $hooks ) );
     }
 }

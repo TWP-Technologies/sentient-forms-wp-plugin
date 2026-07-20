@@ -49,7 +49,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         parent::tearDown();
     }
 
-    public function test_definitions_from_cps_are_normalized(): void
+    public function test_legacy_cps_template_flag_cannot_override_code_owned_definitions(): void
     {
         $enable_cps_templates = static fn() => true;
         add_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
@@ -61,28 +61,13 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->mock_http_response(
-            '/actions/templates',
-            [
-                'success' => true,
-                'data'    => [
-                    'templates' => [
-                        [
-                            'id'               => '0a3c9d89-14d3-4e7a-8e1b-c99877e4fb0f',
-                            'code'             => 'spam_detection_v1',
-                            'display_name'     => 'Spam Analysis',
-                            'description'      => 'Detect spam entries using LLMs',
-                            'model_hint'       => 'models/gemini-1.5-flash',
-                            'base_credit_cost' => 5,
-                        ],
-                    ],
-                ],
-            ],
-            function ( $args ) {
-                $this->assertArrayHasKey( 'Authorization', $args['headers'] );
-                $this->assertSame( 'Bearer proxy-key-789', $args['headers']['Authorization'] );
-            }
-        );
+        $http_called = false;
+        $callback    = static function () use ( &$http_called ) {
+            $http_called = true;
+
+            return new WP_Error( 'unexpected_cps_call', 'Code-owned Action definitions must never fetch CPS templates.' );
+        };
+        add_filter( 'pre_http_request', $callback, 10, 3 );
 
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
@@ -90,24 +75,19 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/actions/definitions', $routes, 'Action definitions route should be registered' );
         $response = rest_get_server()->dispatch( $request );
 
+        remove_filter( 'pre_http_request', $callback, 10 );
         remove_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
 
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
         $this->assertIsArray( $data );
         $this->assertNotEmpty( $data );
-        $definition = $data[0];
+        $definition = $this->find_definition_by_id( $data, 'spam_detection_v1' );
 
-        $this->assertSame( 'spam_detection_v1', $definition['id'] );
-        $this->assertSame( 'Spam Analysis', $definition['label'] );
-        $this->assertSame( 'cps', $definition['source'] );
-        $this->assertSame( 'models/gemini-1.5-flash', $definition['modelHint'] );
-        $this->assertSame( 5, $definition['baseCreditCost'] );
-        $this->assertArrayHasKey( 'hooks', $definition );
-        $this->assertIsArray( $definition['hooks'] );
-        $this->assertContains( 'gform_validation', $definition['hooks'] );
-        $this->assertContains( 'gform_after_submission', $definition['hooks'] );
-        $this->assertArrayHasKey( 'settingsFields', $definition );
+        $this->assertFalse( $http_called );
+        $this->assertIsArray( $definition );
+        $this->assertSame( 'bundled', $definition['source'] );
+        $this->assertSame( 'openrouter/auto', $definition['modelHint'] );
     }
 
     public function test_definitions_do_not_fetch_cps_by_default_even_with_proxy_key(): void
@@ -225,6 +205,50 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
                 $this->assertNull( $definition['structuredOutputSchema'] );
             }
             $this->assertIsArray( $definition['hooks'] ?? null );
+        }
+    }
+
+    public function test_stale_bundled_database_rows_do_not_hide_the_code_owned_catalog(): void
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $stale_code = 'retired_bundled_action_v0';
+        $inserted   = $repository->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => $stale_code,
+                'display_name'    => 'Retired bundled Action',
+                'prompt_template' => 'This stale row must not become executable.',
+                'version'         => '0',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $inserted );
+
+        try
+        {
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+            $ids = array_column( $response->get_data(), 'id' );
+            $this->assertSame( Sentient_Forms_Bundled_Action_Templates::codes(), $ids );
+            $this->assertNotContains( $stale_code, $ids );
+        }
+        finally
+        {
+            $repository->upsert_by_code(
+                [
+                    'source'          => 'bundled',
+                    'code'            => $stale_code,
+                    'display_name'    => 'Retired bundled Action',
+                    'prompt_template' => 'This stale row must not become executable.',
+                    'version'         => '0',
+                    'is_active'       => false,
+                ]
+            );
         }
     }
 

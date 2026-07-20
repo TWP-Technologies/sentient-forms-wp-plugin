@@ -85,11 +85,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -258,7 +255,9 @@ test.describe('Privacy setup assistant', () => {
 		});
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeHidden();
 
-		await expect(page.getByText('Maximum visibility')).toBeVisible();
+		await expect(page.getByTestId('settings-profile-base-badge')).toContainText(
+			'Maximum visibility'
+		);
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});
@@ -314,11 +313,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -492,11 +488,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -754,11 +747,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: '2026-04-21T00:00:00Z',
-					synced_at: '2026-04-21T00:00:00Z',
-					remote_updated_at: '2026-04-21T00:00:00Z',
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: '2026-04-21T00:00:00Z'
 				})
 			});
 		});
@@ -984,11 +974,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});
@@ -1232,11 +1219,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});
@@ -1402,11 +1386,8 @@ test.describe('Privacy setup assistant', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					telemetry_opt_in: false,
-					updated_at: null,
-					synced_at: null,
-					remote_updated_at: null,
-					last_error: null
+					local_diagnostics_enabled: false,
+					updated_at: null
 				})
 			});
 		});

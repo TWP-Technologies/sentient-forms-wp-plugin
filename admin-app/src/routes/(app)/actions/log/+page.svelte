@@ -432,6 +432,9 @@
 	function usageCostTitle(entry: ActionLogEntry): string {
 		const route = entry.usage_cost?.route;
 		const known = entry.usage_cost?.known;
+		if (route === 'not_applicable') {
+			return 'The action was skipped before provider execution, so it incurred no provider usage.';
+		}
 		if (route === 'openrouter_direct' && known === false) {
 			return 'OpenRouter direct run. Provider-billed estimate was not returned with this execution.';
 		}
@@ -445,6 +448,9 @@
 	}
 
 	function usagePolicyLabel(entry: ActionLogEntry): string {
+		if (entry.usage_cost?.route === 'not_applicable') {
+			return 'No provider usage';
+		}
 		return entry.usage_cost?.route === 'sentient_forms_managed'
 			? 'Managed action credits'
 			: 'Provider estimate';
@@ -854,13 +860,24 @@
 															{entry.pricing.pricing_policy_version}
 														</p>
 														<p class="sf:mt-1">
-															{usagePolicyLabel(entry)} {usageCostLabel(entry)}
-															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
-																, base floor {entry.pricing.base_floor_credits}
-															{/if}
-															{#if entry.pricing.normalized_actual_credits !== null && entry.pricing.normalized_actual_credits !== undefined}
-																, normalized actual {entry.pricing.normalized_actual_credits}
-															{/if}
+															<span
+																class="sf:block"
+																data-testid={`action-log-usage-policy-${entry.id}`}
+															>
+																{usagePolicyLabel(entry)}
+															</span>
+															<span
+																class="sf:block"
+																data-testid={`action-log-usage-cost-${entry.id}`}
+															>
+																{usageCostLabel(entry)}
+																{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
+																	, base floor {entry.pricing.base_floor_credits}
+																{/if}
+																{#if entry.pricing.normalized_actual_credits !== null && entry.pricing.normalized_actual_credits !== undefined}
+																	, normalized actual {entry.pricing.normalized_actual_credits}
+																{/if}
+															</span>
 														</p>
 													</div>
 												{/if}

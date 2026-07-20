@@ -26,11 +26,16 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
     public function test_queue_warning_triggers_when_threshold_exceeded(): void
     {
         add_filter( 'sentient_forms_async_queue_threshold', static fn () => 1 );
+        $emitted_warnings = [];
+        $capture_warning = static function ( array $warning ) use ( &$emitted_warnings ): void {
+            $emitted_warnings[] = $warning;
+        };
+        add_action( 'sentient_forms_async_health_warning', $capture_warning );
 
         $payload = [
             'context' => [ 'action_id' => 'test_action', 'form_source' => 'gravity_forms' ],
         ];
-        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_action', $payload, time() );
+        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_local_mapping', $payload, time() );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
         $result  = $service->evaluate();
@@ -40,7 +45,14 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         $this->assertContains( 'queue_backlog', $codes );
         $warning = $result['warnings'][0] ?? [];
         $this->assertStringContainsString( 'Background queue backlog', (string) ( $warning['message'] ?? '' ) );
+        $this->assertContains( 'queue_backlog', wp_list_pluck( $emitted_warnings, 'code' ) );
+        $emitted_warning = $emitted_warnings[0] ?? [];
+        $this->assertSame( 'queue_backlog', $emitted_warning['code'] ?? null );
+        $this->assertSame( 'warning', $emitted_warning['level'] ?? null );
+        $this->assertIsString( $emitted_warning['message'] ?? null );
+        $this->assertIsArray( $emitted_warning['data'] ?? null );
 
+        remove_action( 'sentient_forms_async_health_warning', $capture_warning );
     }
 
     public function test_failure_warning_triggers_for_recent_failures(): void
@@ -49,7 +61,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
 
         $job_id = wp_generate_uuid4();
         $payload = [ 'context' => [ 'action_id' => 'summary_v1', 'form_source' => 'gravity_forms' ] ];
-        $this->store->record_job( $job_id, 'sentient_forms_process_action', $payload, time() );
+        $this->store->record_job( $job_id, 'sentient_forms_process_local_mapping', $payload, time() );
         $this->store->update_status( $job_id, 'failed' );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
@@ -67,7 +79,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
             'context' => [ 'action_id' => 'summary_v1', 'form_source' => 'gravity_forms' ],
         ];
 
-        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_action', $payload, $run_at );
+        $this->store->record_job( wp_generate_uuid4(), 'sentient_forms_process_local_mapping', $payload, $run_at );
 
         $service = new Sentient_Forms_Async_Health_Service( $this->plugin );
         $result  = $service->evaluate();
@@ -98,7 +110,7 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         {
             $this->store->record_job(
                 wp_generate_uuid4(),
-                'sentient_forms_process_action',
+                'sentient_forms_process_local_mapping',
                 $payload,
                 $oldest_run_at + $index
             );

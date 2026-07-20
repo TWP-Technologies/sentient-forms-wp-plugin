@@ -5,10 +5,10 @@
   "license": "GPL-2.0-or-later",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/select-layout.mjs && vite dev",
-    "build": "node scripts/select-layout.mjs && vite build",
-    "preview": "node scripts/select-layout.mjs && vite preview",
-    "preview:ci": "SENTIENT_FORMS_ROUTER=pathname bun run build && SENTIENT_FORMS_ROUTER=pathname node scripts/select-layout.mjs && SENTIENT_FORMS_ROUTER=pathname vite preview --host 127.0.0.1 --port 4173",
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "preview:ci": "SENTIENT_FORMS_ROUTER=pathname bun run build && SENTIENT_FORMS_ROUTER=pathname vite preview --host 127.0.0.1 --port 4173",
     "restore:source": "node scripts/restore-package-source.mjs",
     "build:spa": "bun run build",
     "build:clean": "rimraf ../assets/dist",
@@ -29,7 +29,7 @@
     "qa:smoke": "bunx svelte-kit sync && bun run lint && bun run check && bun run svelte:guard && bun run tailwind:check && bun run test && bun run --bun e2e:smoke",
     "e2e:smoke": "node ./scripts/run-playwright-e2e.mjs --grep @smoke",
     "e2e:full": "node ./scripts/run-playwright-e2e.mjs --grep-invert @smoke",
-    "preview:serve": "node scripts/select-layout.mjs && vite preview --host 127.0.0.1 --port 4175 --outDir build",
+    "preview:serve": "vite preview --host 127.0.0.1 --port 4175 --outDir build",
     "preview:e2e": "node scripts/preview-e2e.mjs"
   },
   "devDependencies": {

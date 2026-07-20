@@ -32,7 +32,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
         private ?Sentient_Forms_Action_Policy_Resolver $action_policy_resolver = null,
         private ?Sentient_Forms_Action_Policy_Preflight $action_policy_preflight = null,
-        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null
+        private ?Sentient_Forms_Provider_Route_Decision $provider_route_decision = null,
+        private ?Sentient_Forms_Action_Input_Projector $input_projector = null
     )
     {
         global $wpdb;
@@ -53,6 +54,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->action_policy_resolver = $this->action_policy_resolver ?? new Sentient_Forms_Action_Policy_Resolver();
         $this->action_policy_preflight = $this->action_policy_preflight ?? new Sentient_Forms_Action_Policy_Preflight();
         $this->provider_route_decision = $this->provider_route_decision ?? new Sentient_Forms_Provider_Route_Decision();
+        $this->input_projector = $this->input_projector ?? new Sentient_Forms_Action_Input_Projector();
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -240,7 +242,48 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
-        $messages = $this->build_messages( $action, $definition, $mapping, $form, $entry, $context, $action_code );
+        $runtime_settings = is_array( $mapping['settings_json'] ?? null ) ? $mapping['settings_json'] : [];
+        $input_policy     = null;
+        if ( array_key_exists( 'input_mapping', $runtime_settings ) )
+        {
+            if ( ! is_array( $runtime_settings['input_mapping'] ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_invalid_input_mapping',
+                    __( 'Action input mapping is invalid.', 'sentient-forms' ),
+                    [ 'status' => 422 ]
+                );
+            }
+
+            $input_policy = $runtime_settings['input_mapping'];
+        }
+
+        $input_projection = $this->input_projector->project(
+            $input_policy,
+            is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
+            $form,
+            $entry
+        );
+        if ( is_wp_error( $input_projection ) )
+        {
+            return $input_projection;
+        }
+
+        $provider_form     = $input_projection['form'];
+        $provider_entry    = $input_projection['entry'];
+        $provider_bindings = $input_projection['bindings'];
+        $input_manifest    = $input_projection['manifest'];
+
+        $messages = $this->build_messages(
+            $action,
+            $definition,
+            $mapping,
+            $provider_form,
+            $provider_entry,
+            $provider_bindings,
+            $context,
+            $action_code
+        );
         if ( is_wp_error( $messages ) )
         {
             return $messages;
@@ -264,8 +307,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                 $model_selection,
                 $mapping,
                 $action,
-                $form,
-                $entry,
+                $provider_form,
+                $provider_entry,
                 $context,
                 $managed_context['site_id'],
                 $execution_request_id,
@@ -283,11 +326,38 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $payload_digest       = hash( 'sha256', (string) wp_json_encode( $payload ) );
         $existing             = $this->events->get_by_request_id( $execution_request_id );
+        $existing_status      = is_array( $existing ) ? sanitize_key( (string) ( $existing['status'] ?? '' ) ) : '';
+        $existing_digest      = is_array( $existing ) && is_scalar( $existing['payload_digest'] ?? null )
+            ? (string) $existing['payload_digest']
+            : '';
+        $execution_claim = $context['local_execution_claim'] ?? null;
+        $claimed_request = $execution_claim instanceof Sentient_Forms_Local_Execution_Claim
+            && (
+                $execution_claim->attests( $execution_request_id, 'job' )
+                || $execution_claim->attests( $execution_request_id, 'accepted_sync' )
+            );
 
         if (
             is_array( $existing )
-            && 'succeeded' === (string) ( $existing['status'] ?? '' )
-            && $payload_digest === (string) ( $existing['payload_digest'] ?? '' )
+            && in_array( $existing_status, [ 'queued', 'running', 'succeeded', 'failed' ], true )
+            && ! ( $claimed_request && in_array( $existing_status, [ 'queued', 'running' ], true ) )
+            && ( '' === $existing_digest || ! hash_equals( $existing_digest, $payload_digest ) )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_local_execution_digest_conflict',
+                __( 'The execution request identifier is already bound to a different or unverifiable payload.', 'sentient-forms' ),
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'existing_status'      => $existing_status,
+                    'retry_safe'           => false,
+                ]
+            );
+        }
+
+        if (
+            is_array( $existing )
+            && 'succeeded' === $existing_status
         )
         {
             $cached_result = is_array( $existing['result_json'] ?? null ) ? $existing['result_json'] : [];
@@ -320,7 +390,24 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $cached_response;
         }
 
-        $this->events->record(
+        if (
+            is_array( $existing )
+            && ! $claimed_request
+            && in_array( $existing_status, [ 'queued', 'running' ], true )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_local_execution_indeterminate',
+                __( 'The execution request is already active or its terminal state could not be confirmed, so it will not be replayed.', 'sentient-forms' ),
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'existing_status'      => $existing_status,
+                    'retry_safe'           => false,
+                ]
+            );
+        }
+
+        $running_recorded = $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
@@ -334,6 +421,10 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'payload_digest'       => $payload_digest,
             ]
         );
+        if ( is_wp_error( $running_recorded ) )
+        {
+            return $running_recorded;
+        }
 
         if ( 'sentient_managed' === $provider )
         {
@@ -388,7 +479,8 @@ class Sentient_Forms_Local_Action_Execution_Service
                     $execution_request_id,
                     $submission_uuid,
                     $payload_digest,
-                    $effective_action_policy
+                    $effective_action_policy,
+                    $input_manifest
                 );
                 if ( null !== $backup_result )
                 {
@@ -396,7 +488,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 }
             }
 
-            $this->events->record(
+            $terminal_recorded = $this->events->record(
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
@@ -413,6 +505,10 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'result_json'          => $safe_failure_result,
                 ]
             );
+            if ( is_wp_error( $terminal_recorded ) )
+            {
+                return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, false );
+            }
 
             return new WP_Error( $response->get_error_code(), $redacted_message, $safe_error_data );
         }
@@ -426,7 +522,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $result            = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
-            $this->events->record(
+            $terminal_recorded = $this->events->record(
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
@@ -458,10 +554,15 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'payload_digest'       => $payload_digest,
                 ]
             );
+            if ( is_wp_error( $terminal_recorded ) )
+            {
+                return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, false );
+            }
 
             return $result;
         }
 
+        $result['input_manifest'] = $input_manifest;
         $execution_result = [
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
@@ -494,7 +595,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             $preflight_effect_outcomes
         );
         $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, $provider );
-        $this->events->record(
+        $terminal_recorded = $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
@@ -511,6 +612,10 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'payload_digest'       => $payload_digest,
             ]
         );
+        if ( is_wp_error( $terminal_recorded ) )
+        {
+            return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, true );
+        }
         $this->index_lead_scoring_result( $mapping, $form, $entry, $context, $action_code, $execution_result, $result );
 
         return [
@@ -547,7 +652,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         string $execution_request_id,
         ?string $submission_uuid,
         string $primary_payload_digest,
-        array $effective_action_policy
+        array $effective_action_policy,
+        array $input_manifest
     ): array | WP_Error | null
     {
         $fallback_reason = $this->managed_credit_exhaustion_fallback_reason( $managed_error );
@@ -637,7 +743,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $redacted_message = $this->redact_secret( $response->get_error_message(), $api_key );
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
-            $this->events->record(
+            $terminal_recorded = $this->events->record(
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
@@ -650,12 +756,16 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'status'               => 'failed',
                     'error_code'           => $response->get_error_code(),
                     'error_message'        => $redacted_message,
-                    'payload_digest'       => $payload_digest,
+                    'payload_digest'       => $primary_payload_digest,
                     'result_json'          => [
                         'fallback' => $fallback_meta,
                     ],
                 ]
             );
+            if ( is_wp_error( $terminal_recorded ) )
+            {
+                return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, false );
+            }
 
             return new WP_Error( $response->get_error_code(), $redacted_message, $response->get_error_data() );
         }
@@ -667,7 +777,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $result            = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
-            $this->events->record(
+            $terminal_recorded = $this->events->record(
                 [
                     'execution_request_id' => $execution_request_id,
                     'mapping_id'           => (int) $mapping['id'],
@@ -697,14 +807,19 @@ class Sentient_Forms_Local_Action_Execution_Service
                             'fallback' => $fallback_meta,
                         ]
                     ),
-                    'payload_digest'       => $payload_digest,
+                    'payload_digest'       => $primary_payload_digest,
                 ]
             );
+            if ( is_wp_error( $terminal_recorded ) )
+            {
+                return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, false );
+            }
 
             return $result;
         }
 
-        $result['fallback'] = $fallback_meta;
+        $result['fallback']       = $fallback_meta;
+        $result['input_manifest'] = $input_manifest;
         $execution_result = [
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
@@ -737,7 +852,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             $preflight_effect_outcomes
         );
         $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, 'openrouter' );
-        $this->events->record(
+        $terminal_recorded = $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) $mapping['id'],
@@ -754,6 +869,10 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'payload_digest'       => $primary_payload_digest,
             ]
         );
+        if ( is_wp_error( $terminal_recorded ) )
+        {
+            return $this->terminal_event_persistence_error( $terminal_recorded, $execution_request_id, true );
+        }
         $this->index_lead_scoring_result( $mapping, $form, $entry, $context, $action_code, $execution_result, $result );
 
         return [
@@ -1122,7 +1241,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         return is_array( $result ) && 'Reject' === (string) ( $result['grade'] ?? '' );
     }
 
-    private function record_suggested_reply_skip( string $execution_request_id, ?string $submission_uuid, array $mapping, array $form, array $entry, string $action_code ): array
+    private function record_suggested_reply_skip( string $execution_request_id, ?string $submission_uuid, array $mapping, array $form, array $entry, string $action_code ): array | WP_Error
     {
         $result = [
             'structured' => [
@@ -1143,7 +1262,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $result['effects'] );
         $payload_digest = hash( 'sha256', (string) wp_json_encode( [ 'status' => 'skipped', 'action_code' => $action_code, 'entry_id' => $entry['id'] ?? null ] ) );
 
-        $this->events->record(
+        $recorded = $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
                 'mapping_id'           => (int) ( $mapping['id'] ?? 0 ),
@@ -1158,6 +1277,10 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'payload_digest'       => $payload_digest,
             ]
         );
+        if ( is_wp_error( $recorded ) )
+        {
+            return $recorded;
+        }
 
         return [
             'execution_request_id' => $execution_request_id,
@@ -1527,12 +1650,13 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $mapping,
         array $form,
         array $entry,
+        array $input_bindings,
         array $context,
         string $action_code
     ): array | WP_Error
     {
         $variables = $this->renderer->build_variables(
-            is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
+            $input_bindings,
             $form,
             $entry,
             $context
@@ -3497,6 +3621,23 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'last_error_code'    => $error->get_error_code(),
                 'last_error_message' => $redacted_message,
                 'http_status'        => $status_code,
+            ]
+        );
+    }
+
+    /**
+     * Preserve the post-provider persistence boundary without exposing provider payloads.
+     */
+    private function terminal_event_persistence_error( WP_Error $cause, string $execution_request_id, bool $effects_completed ): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_terminal_event_persistence_failure',
+            __( 'Sentient Forms completed the provider attempt but could not persist its terminal execution state.', 'sentient-forms' ),
+            [
+                'terminal_persistence_failure' => true,
+                'effects_completed'             => $effects_completed,
+                'execution_request_id'          => sanitize_text_field( $execution_request_id ),
+                'cause_code'                    => sanitize_key( (string) $cause->get_error_code() ),
             ]
         );
     }

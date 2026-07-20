@@ -27,7 +27,7 @@
 
 	const allSelected = $derived(
 		value.mode === 'all' ||
-			(value.mode === 'selected' && selectedIds.size === selectableFields.length)
+			(selectableFields.length > 0 && selectedIds.size === selectableFields.length)
 	);
 
 	function handleModeChange(event: Event) {
@@ -80,7 +80,7 @@
 
 		onchange({
 			...value,
-			include_metadata: !value.include_metadata
+			include_metadata: !(value.include_metadata ?? true)
 		});
 	}
 </script>

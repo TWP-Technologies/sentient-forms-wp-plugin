@@ -165,6 +165,68 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
     }
 
     /**
+     * The Vite manifest may prefix the SvelteKit runtime source with a build-worktree path.
+     */
+    public function test_get_entry_resolves_path_prefixed_sveltekit_runtime_source(): void
+    {
+        $entry = $this->assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+
+        $this->assertIsArray( $entry );
+        $this->assertSame( 'entry/start', $entry['name'] ?? null );
+        $this->assertNotEmpty( $entry['file'] ?? null );
+    }
+
+    public function test_get_entry_resolves_unique_sveltekit_start_entry_by_manifest_metadata(): void
+    {
+        $assets = new class extends Sentient_Forms_Admin_Assets {
+            public function get_manifest(): array
+            {
+                return [
+                    'generated/runtime-client.js' => [
+                        'file'    => '_app/immutable/entry/start.test.js',
+                        'name'    => 'entry/start',
+                        'src'     => 'generated/runtime-client.js',
+                        'isEntry' => true,
+                    ],
+                ];
+            }
+        };
+
+        $entry = $assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+
+        $this->assertIsArray( $entry );
+        $this->assertSame( '_app/immutable/entry/start.test.js', $entry['file'] ?? null );
+    }
+
+    public function test_get_entry_fails_closed_when_manifest_source_match_is_ambiguous(): void
+    {
+        $assets = new class extends Sentient_Forms_Admin_Assets {
+            public function get_manifest(): array
+            {
+                return [
+                    '../first/node_modules/@sveltejs/kit/src/runtime/client/entry.js' => [
+                        'file'    => '_app/immutable/entry/start.first.js',
+                        'name'    => 'entry/start',
+                        'src'     => '../first/node_modules/@sveltejs/kit/src/runtime/client/entry.js',
+                        'isEntry' => true,
+                    ],
+                    '../second/node_modules/@sveltejs/kit/src/runtime/client/entry.js' => [
+                        'file'    => '_app/immutable/entry/start.second.js',
+                        'name'    => 'entry/start',
+                        'src'     => '../second/node_modules/@sveltejs/kit/src/runtime/client/entry.js',
+                        'isEntry' => true,
+                    ],
+                ];
+            }
+        };
+
+        $entry = $assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+
+        $this->assertWPError( $entry );
+        $this->assertSame( 'sentient_forms_manifest_entry_ambiguous', $entry->get_error_code() );
+    }
+
+    /**
      * Test that asset URL preserves the relative path correctly.
      */
     public function test_get_asset_url_preserves_path(): void

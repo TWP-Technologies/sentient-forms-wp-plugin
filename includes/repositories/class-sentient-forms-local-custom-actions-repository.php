@@ -18,6 +18,14 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
 
     public function create( array $data ): int | WP_Error
     {
+        return $this->with_local_state_write_lock(
+            fn(): int | WP_Error => $this->create_locked( $data )
+        );
+    }
+
+    /** Create after the shared local-state fence is held. */
+    private function create_locked( array $data ): int | WP_Error
+    {
         $code = sanitize_key( (string) ( $data['code'] ?? '' ) );
         if ( '' === $code )
         {
@@ -62,6 +70,14 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
     }
 
     public function upsert_by_code( array $data ): int | WP_Error
+    {
+        return $this->with_local_state_write_lock(
+            fn(): int | WP_Error => $this->upsert_by_code_locked( $data )
+        );
+    }
+
+    /** Upsert after the shared local-state fence is held. */
+    private function upsert_by_code_locked( array $data ): int | WP_Error
     {
         $code = sanitize_key( (string) ( $data['code'] ?? '' ) );
         if ( '' === $code )
@@ -167,6 +183,14 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
     }
 
     public function update( int $id, array $data ): array | WP_Error
+    {
+        return $this->with_local_state_write_lock(
+            fn(): array | WP_Error => $this->update_locked( $id, $data )
+        );
+    }
+
+    /** Update after the shared local-state fence is held. */
+    private function update_locked( int $id, array $data ): array | WP_Error
     {
         $id = absint( $id );
         if ( $id <= 0 )
@@ -340,18 +364,22 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
-    public function update_status( int $id, string $status ): bool
+    public function update_status( int $id, string $status ): bool | WP_Error
     {
-        return false !== $this->wpdb->update(
-            $this->table_name(),
-            [
-                'status'     => sanitize_key( $status ),
-                'updated_at' => $this->now(),
-            ],
-            [ 'id' => $id ],
-            [ '%s', '%s' ],
-            [ '%d' ]
+        $result = $this->with_local_state_write_lock(
+            fn(): bool => false !== $this->wpdb->update(
+                $this->table_name(),
+                [
+                    'status'     => sanitize_key( $status ),
+                    'updated_at' => $this->now(),
+                ],
+                [ 'id' => $id ],
+                [ '%s', '%s' ],
+                [ '%d' ]
+            )
         );
+
+        return $result;
     }
 
     public function find_by_template_id( int $template_id, ?string $status = 'active' ): ?array

@@ -384,6 +384,21 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
      */
     private function adapter_update_form_settings( string $form_source_slug, string $form_id, array $settings ): WP_Error | array
     {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn (): WP_Error | array => $this->adapter_update_form_settings_locked( $form_source_slug, $form_id, $settings )
+        );
+    }
+
+    /**
+     * Update adapter-backed form settings while legacy option authority is fenced.
+     *
+     * @param string $form_source_slug Form Source identifier.
+     * @param string $form_id          Provider-native form identifier.
+     * @param array  $settings         Sanitized settings update.
+     * @return WP_Error|array
+     */
+    private function adapter_update_form_settings_locked( string $form_source_slug, string $form_id, array $settings ): WP_Error | array
+    {
         $availability_error = $this->elementor_forms_source_unavailable_error( $form_source_slug );
         if ( null !== $availability_error )
         {
@@ -409,6 +424,10 @@ class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Contro
         $current_settings = $adapter->get_form_settings( $form_id );
         $new_settings     = array_merge( $current_settings, $settings );
         $success          = $adapter->update_form_settings( $form_id, $new_settings );
+        if ( is_wp_error( $success ) )
+        {
+            return $success;
+        }
 
         return [ 'success' => $success, 'settings' => $new_settings ];
     }

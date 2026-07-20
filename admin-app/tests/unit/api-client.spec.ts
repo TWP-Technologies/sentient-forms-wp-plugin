@@ -1257,7 +1257,8 @@ describe('SentientFormsApiClient', () => {
 							date_created: '2030-01-05T10:00:00Z',
 							status: 'spam',
 							native_entry_id: '99',
-							native_entry_url: 'https://example.test/wp-admin/admin.php?page=gf_entries&id=42&lid=99',
+							native_entry_url:
+								'https://example.test/wp-admin/admin.php?page=gf_entries&id=42&lid=99',
 							field_summary: [
 								{ field_id: '1', label: 'Email', value: 'spam@example.test' },
 								{ field_id: '2', label: 'Message', value: 'Buy crypto traffic now.' }
@@ -3013,6 +3014,49 @@ describe('SentientFormsApiClient', () => {
 		).rejects.toMatchObject({ code: 'invalid_key' });
 
 		expect(notifySpy).toHaveBeenCalledWith('Invalid license');
+	});
+
+	it('parses local diagnostic settings and sends the local-only preference key', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					local_diagnostics_enabled: true,
+					updated_at: '2026-07-19T00:00:00Z'
+				}
+			})
+		);
+
+		await expect(
+			client.updateLocalDiagnosticsSettings(true, { showNotifications: false })
+		).resolves.toEqual({
+			local_diagnostics_enabled: true,
+			updated_at: '2026-07-19T00:00:00Z'
+		});
+
+		const [requestUrl, requestInit] = mockFetch.mock.calls[0] ?? [];
+		expect(requestUrl).toBe(`${baseUrl}telemetry`);
+		expect(requestInit).toEqual(expect.objectContaining({ method: 'PUT' }));
+		if (typeof requestInit?.body !== 'string') {
+			throw new Error('Expected local diagnostic request body to be serialized JSON.');
+		}
+		expect(JSON.parse(requestInit.body)).toEqual({ local_diagnostics_enabled: true });
+	});
+
+	it('rejects retired remote telemetry responses at the client boundary', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					telemetry_opt_in: true,
+					synced_at: '2026-07-19T00:00:00Z'
+				}
+			})
+		);
+
+		await expect(
+			client.getLocalDiagnosticsSettings({ showNotifications: false })
+		).rejects.toThrow();
 	});
 
 	it('accepts valid JSON literal responses', async () => {

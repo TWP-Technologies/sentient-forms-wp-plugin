@@ -13,6 +13,11 @@ import {
 	runWpEval,
 	waitForGravityEntryNotes
 } from './utils/wp-e2e-helpers';
+import {
+	parseLocalExecutionEvent,
+	parseLocalOpenRouterSmokeUrls,
+	type LocalExecutionEvent
+} from './utils/local-runtime-schemas';
 
 const runLocalOpenRouterValidationNotificationSmoke =
 	process.env.SENTIENT_RUN_WP_E2E === '1' &&
@@ -51,18 +56,6 @@ type LocalMappingSeedArgs = {
 	promptTemplate: string;
 	inputBindings?: Record<string, string>;
 	effectMapping?: Record<string, unknown>;
-};
-
-type LocalExecutionEvent = {
-	id?: number;
-	status?: string;
-	mapping_id?: number;
-	entry_id?: string | null;
-	provider?: string;
-	model?: string;
-	result_json?: {
-		structured?: Record<string, unknown>;
-	};
 };
 
 function seedLocalOpenRouterProvider(label: string): LocalProviderSeed {
@@ -504,7 +497,7 @@ echo 'null';
 		}
 	);
 
-	return JSON.parse(output) as LocalExecutionEvent | null;
+	return parseLocalExecutionEvent(output);
 }
 
 function getLocalOpenRouterSmokeUrls(): string[] {
@@ -515,8 +508,7 @@ echo wp_json_encode( [ 'urls' => is_array( $urls ) ? $urls : [] ] );
 `
 	);
 
-	const parsed = JSON.parse(output) as { urls?: string[] };
-	return Array.isArray(parsed.urls) ? parsed.urls : [];
+	return parseLocalOpenRouterSmokeUrls(output);
 }
 
 test.describe('Local OpenRouter validation and notification package smoke @local-openrouter-validation-notification', function () {

@@ -1,6 +1,6 @@
 <?php
 /**
- * REST controller proxying CPS custom-action CRUD endpoints.
+ * REST controller for plugin-owned local Custom Action CRUD endpoints.
  *
  * @package SentientForms
  */
@@ -16,8 +16,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
 
     protected string $rest_base = 'custom-actions';
 
-    private Sentient_Forms_Custom_Actions_Service $service;
-
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
 
     private ?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null;
@@ -27,7 +25,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
     public function __construct()
     {
         parent::__construct();
-        $this->service = new Sentient_Forms_Custom_Actions_Service( Sentient_Forms_Plugin::instance() );
         global $wpdb;
         if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
         {
@@ -97,131 +94,39 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
 
     public function list_custom_actions( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
-        {
-            return $this->prepare_item_for_response( $this->list_local_custom_actions_for_legacy_route( $request ) );
-        }
-
-        $query = [];
-
-        if ( null !== $request->get_param( 'status' ) )
-        {
-            $status = strtolower( sanitize_text_field( (string) $request->get_param( 'status' ) ) );
-            if ( !in_array( $status, [ 'active', 'archived' ], true ) )
-            {
-                return $this->prepare_error_response( 'rest_invalid_param', __( 'Status must be active or archived.', 'sentient-forms' ), 400 );
-            }
-            $query['status'] = $status;
-        }
-
-        if ( null !== $request->get_param( 'include_archived' ) )
-        {
-            $query['include_archived'] = rest_sanitize_boolean( $request->get_param( 'include_archived' ) ) ? 'true' : 'false';
-        }
-
-        if ( null !== $request->get_param( 'template_id' ) )
-        {
-            $query['template_id'] = sanitize_text_field( (string) $request->get_param( 'template_id' ) );
-        }
-
-        $result = $this->service->list( $query );
-        if ( is_wp_error( $result ) )
-        {
-            return $result;
-        }
-
-        return $this->prepare_item_for_response( $result->to_array() );
+        return $this->prepare_item_for_response( $this->list_local_custom_actions_for_legacy_route( $request ) );
     }
 
     public function create_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
-        {
-            $payload = $this->build_create_payload( $request );
-            if ( is_wp_error( $payload ) )
-            {
-                return $payload;
-            }
-
-            return $this->create_local_custom_action_for_legacy_route( $payload );
-        }
-
         $payload = $this->build_create_payload( $request );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
         }
 
-        $result = $this->service->create( $payload, $this->build_actor_hint() );
-        if ( is_wp_error( $result ) )
-        {
-            return $result;
-        }
-
-        return $this->prepare_item_for_response( $result->to_array(), 201 );
+        return $this->create_local_custom_action_for_legacy_route( $payload );
     }
 
     public function update_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
-        {
-            $payload = $this->build_update_payload( $request );
-            if ( is_wp_error( $payload ) )
-            {
-                return $payload;
-            }
-
-            return $this->update_local_custom_action_for_legacy_route( $request, $payload );
-        }
-
         $payload = $this->build_update_payload( $request );
         if ( is_wp_error( $payload ) )
         {
             return $payload;
         }
 
-        $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
-        $result    = $this->service->update( $action_id, $payload, $this->build_actor_hint() );
-        if ( is_wp_error( $result ) )
-        {
-            return $result;
-        }
-
-        return $this->prepare_item_for_response( $result->to_array() );
+        return $this->update_local_custom_action_for_legacy_route( $request, $payload );
     }
 
     public function archive_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
-        {
-            return $this->archive_local_custom_action_for_legacy_route( $request );
-        }
-
-        $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
-        $result    = $this->service->archive( $action_id, $this->build_actor_hint() );
-        if ( is_wp_error( $result ) )
-        {
-            return $result;
-        }
-
-        return $this->prepare_item_for_response( $result->to_array() );
+        return $this->archive_local_custom_action_for_legacy_route( $request );
     }
 
     public function reactivate_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
-        {
-            return $this->reactivate_local_custom_action_for_legacy_route( $request );
-        }
-
-        $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
-        $result    = $this->service->reactivate( $action_id, $this->build_actor_hint() );
-        if ( is_wp_error( $result ) )
-        {
-            return $result;
-        }
-
-        return $this->prepare_item_for_response( $result->to_array() );
+        return $this->reactivate_local_custom_action_for_legacy_route( $request );
     }
 
     /**
@@ -352,6 +257,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
         }
 
         $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'archived' );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
         if ( ! $updated )
         {
             return new WP_Error(
@@ -384,6 +293,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
         }
 
         $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'active' );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
         if ( ! $updated )
         {
             return new WP_Error(
@@ -871,6 +784,19 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
         if ( is_wp_error( $definition_validation ) )
         {
             return $definition_validation;
+        }
+
+        $requested_code = sanitize_key( (string) $request->get_param( 'code' ) );
+        if (
+            Sentient_Forms_Bundled_Action_Templates::has( $requested_code )
+            || Sentient_Forms_Bundled_Action_Templates::is_managed_custom_action_code( $requested_code )
+        )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_reserved_action_code',
+                __( 'Built-in and managed Action codes are reserved by the code-owned Action Catalog.', 'sentient-forms' ),
+                400
+            );
         }
 
         $code = $this->sanitize_code( $request->get_param( 'code' ) );
