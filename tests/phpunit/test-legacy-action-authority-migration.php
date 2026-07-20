@@ -64,6 +64,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'gravity_forms', '9938' ],
                 [ 'gravity_forms', '9939' ],
                 [ 'gravity_forms', '9940' ],
+                [ 'gravity_forms', '9942' ],
                 [ 'gravity_forms', '9953' ],
                 [ 'gravity_forms', '9954' ],
                 [ 'gravity_forms', '9955' ],
@@ -1518,6 +1519,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         finally
         {
             $competitor->get_var( $competitor->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            $competitor->close();
         }
 
         $this->assertSame( 0, $summary['migration_complete'] ?? null );
