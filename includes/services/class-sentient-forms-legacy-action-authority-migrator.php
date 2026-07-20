@@ -586,7 +586,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     private static function compare_and_swap_option( string $option_key, string $expected, string $replacement ): bool
     {
         global $wpdb;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- The option-backed control-plane cutover requires one byte-exact compare-and-swap so concurrent writers cannot be overwritten.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The option-backed control-plane cutover requires one byte-exact compare-and-swap against persisted bytes; WordPress's cached option APIs cannot provide the required atomic condition.
         $updated = $wpdb->query(
             $wpdb->prepare(
                 'UPDATE %i SET `option_value` = %s WHERE BINARY `option_name` = BINARY %s AND BINARY `option_value` = BINARY %s',
@@ -609,7 +609,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     private static function compare_and_delete_option( string $option_key, string $expected ): bool
     {
         global $wpdb;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Journal and lock ownership require an exact conditional delete rather than a collation-aware options API write.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Journal and lock ownership require an exact conditional delete against persisted bytes; WordPress's cached option APIs cannot provide the required atomic condition.
         $deleted = $wpdb->query(
             $wpdb->prepare(
                 'DELETE FROM %i WHERE BINARY `option_name` = BINARY %s AND BINARY `option_value` = BINARY %s',
