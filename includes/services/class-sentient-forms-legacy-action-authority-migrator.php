@@ -601,7 +601,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             return false;
         }
 
-        wp_cache_delete( $option_key, 'options' );
+        self::invalidate_option_caches( $option_key );
         return true;
     }
 
@@ -623,8 +623,15 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             return false;
         }
 
-        wp_cache_delete( $option_key, 'options' );
+        self::invalidate_option_caches( $option_key );
         return true;
+    }
+
+    /** Reconcile caches after a byte-exact option-table update or delete. */
+    private static function invalidate_option_caches( string $option_key ): void
+    {
+        wp_cache_delete( 'alloptions', 'options' );
+        wp_cache_delete( $option_key, 'options' );
     }
 
     /**
@@ -1559,17 +1566,63 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
             }
             return self::$dedicated_lock_database;
         }
-        if ( wpdb::class !== get_class( $wpdb ) )
+        if ( ! defined( 'DB_USER' ) || ! defined( 'DB_PASSWORD' ) || ! defined( 'DB_NAME' ) || ! defined( 'DB_HOST' ) )
         {
             return null;
         }
-        if ( ! defined( 'DB_USER' ) || ! defined( 'DB_PASSWORD' ) || ! defined( 'DB_NAME' ) || ! defined( 'DB_HOST' ) )
+        if ( ! self::can_use_core_dedicated_connection( $wpdb ) )
         {
             return null;
         }
 
         self::$dedicated_lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
         return self::$dedicated_lock_database;
+    }
+
+    /**
+     * Decide whether the core credentials describe the same unrouted connection.
+     *
+     * Routed database drop-ins must provide a primary-pinned connection through
+     * the filter above. A transparent wpdb subclass is safe to pair with a core
+     * connection only when it retains core connection and query behavior.
+     */
+    private static function can_use_core_dedicated_connection( wpdb $primary ): bool
+    {
+        if ( wpdb::class === get_class( $primary ) )
+        {
+            return true;
+        }
+        if (
+            (string) $primary->dbname !== (string) DB_NAME
+            || (string) $primary->dbhost !== (string) DB_HOST
+        )
+        {
+            return false;
+        }
+
+        foreach (
+            [
+                '__construct',
+                'db_connect',
+                'check_connection',
+                'select',
+                'query',
+                '_do_query',
+                'get_var',
+                'get_row',
+                'get_col',
+                'get_results',
+            ] as $method
+        )
+        {
+            $reflection = new ReflectionMethod( $primary, $method );
+            if ( wpdb::class !== $reflection->getDeclaringClass()->getName() )
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static function clear_lock_state(): void

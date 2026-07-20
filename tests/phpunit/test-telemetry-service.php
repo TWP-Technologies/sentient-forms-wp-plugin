@@ -98,45 +98,40 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
     {
         $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
-        $events  = [];
-        add_filter( 'sentient_forms_debug_log_enabled', '__return_true' );
-        add_action(
-            'sentient_forms_debug_log',
-            static function ( string $message, array $context ) use ( &$events ): void {
-                if ( str_contains( $message, '[sentient-forms][diagnostics] local diagnostic event' ) )
-                {
-                    $events[] = $context;
-                }
-            },
-            10,
-            2
+        $logger  = $this->make_logger_spy();
+
+        $this->with_plugin_logger(
+            $logger,
+            static function () use ( $service ): void {
+                $service->queue_event(
+                    'async_job_success',
+                    [
+                        'action_id'     => 'spam_detection_v1',
+                        'form_source'   => 'gravity_forms',
+                        'provider_path' => 'openrouter',
+                        'execution_request_id' => 'req-test-success',
+                        'entry_id'      => '123',
+                        'form_id'       => '4',
+                        'request_id'    => 'req_123',
+                        'result'        => 'contains model output',
+                    ]
+                );
+                $service->queue_event(
+                    'async_job_failure',
+                    [
+                        'action_id'   => 'entry_summary_v1',
+                        'form_source' => 'gravity_forms',
+                        'error_code'  => 'provider_timeout',
+                        'error_msg'   => 'The provider returned raw content in an error.',
+                        'entry_id'    => '456',
+                        'form_id'     => '7',
+                        'request_id'  => 'req_456',
+                    ]
+                );
+            }
         );
 
-        $service->queue_event(
-            'async_job_success',
-            [
-                'action_id'     => 'spam_detection_v1',
-                'form_source'   => 'gravity_forms',
-                'provider_path' => 'openrouter',
-                'execution_request_id' => 'req-test-success',
-                'entry_id'      => '123',
-                'form_id'       => '4',
-                'request_id'    => 'req_123',
-                'result'   => 'contains model output',
-            ]
-        );
-        $service->queue_event(
-            'async_job_failure',
-            [
-                'action_id'   => 'entry_summary_v1',
-                'form_source' => 'gravity_forms',
-                'error_code'  => 'provider_timeout',
-                'error_msg'   => 'The provider returned raw content in an error.',
-                'entry_id'    => '456',
-                'form_id'     => '7',
-                'request_id'  => 'req_456',
-            ]
-        );
+        $events = array_column( $logger->records, 'context' );
 
         $this->assertCount( 2, $events );
         $this->assertSame( [], $this->plugin->get_async_request_store()->claim_telemetry_batch( 10 ) );
@@ -166,44 +161,39 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
     {
         $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => true ] );
         $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
-        $events  = [];
-        add_filter( 'sentient_forms_debug_log_enabled', '__return_true' );
-        add_action(
-            'sentient_forms_debug_log',
-            static function ( string $message, array $context ) use ( &$events ): void {
-                if ( str_contains( $message, '[sentient-forms][diagnostics] local diagnostic event' ) )
-                {
-                    $events[] = $context;
-                }
-            },
-            10,
-            2
-        );
+        $logger  = $this->make_logger_spy();
 
         $this->assertSame( 20, has_action( 'sentient_forms_async_success', [ $service, 'handle_job_success' ] ) );
         $this->assertSame( 20, has_action( 'sentient_forms_async_failure', [ $service, 'handle_job_failure' ] ) );
         $this->assertSame( 10, has_action( 'sentient_forms_async_health_warning', [ $service, 'handle_health_warning' ] ) );
 
-        do_action(
-            'sentient_forms_async_success',
-            [
-                'action_id'             => 'entry_summary_v1',
-                'execution_request_id'  => 'req-success-hook',
-                'provider_path'         => 'openrouter',
-                'form_source'           => 'gravity_forms',
-            ],
-            [ 'result' => 'private model output' ]
+        $this->with_plugin_logger(
+            $logger,
+            static function (): void {
+                do_action(
+                    'sentient_forms_async_success',
+                    [
+                        'action_id'             => 'entry_summary_v1',
+                        'execution_request_id'  => 'req-success-hook',
+                        'provider_path'         => 'openrouter',
+                        'form_source'           => 'gravity_forms',
+                    ],
+                    [ 'result' => 'private model output' ]
+                );
+                do_action(
+                    'sentient_forms_async_failure',
+                    [
+                        'action_id'            => 'entry_summary_v1',
+                        'execution_request_id' => 'req-failure-hook',
+                        'form_source'          => 'gravity_forms',
+                    ],
+                    new WP_Error( 'provider_timeout', 'Private provider failure text.' )
+                );
+                do_action( 'sentient_forms_async_health_warning', [ 'code' => 'queue_backlog' ] );
+            }
         );
-        do_action(
-            'sentient_forms_async_failure',
-            [
-                'action_id'            => 'entry_summary_v1',
-                'execution_request_id' => 'req-failure-hook',
-                'form_source'          => 'gravity_forms',
-            ],
-            new WP_Error( 'provider_timeout', 'Private provider failure text.' )
-        );
-        do_action( 'sentient_forms_async_health_warning', [ 'code' => 'queue_backlog' ] );
+
+        $events = array_column( $logger->records, 'context' );
 
         $event_types = array_map(
             static fn ( array $event ): string => (string) ( $event['event'] ?? '' ),
@@ -218,6 +208,31 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
         remove_action( 'sentient_forms_async_success', [ $service, 'handle_job_success' ], 20 );
         remove_action( 'sentient_forms_async_failure', [ $service, 'handle_job_failure' ], 20 );
         remove_action( 'sentient_forms_async_health_warning', [ $service, 'handle_health_warning' ], 10 );
+    }
+
+    public function test_local_diagnostics_opt_out_does_not_write_to_configured_logger(): void
+    {
+        $this->plugin->set_telemetry_settings( [ 'local_diagnostics_enabled' => false ] );
+        $service = new Sentient_Forms_Telemetry_Service( $this->plugin );
+        $logger  = $this->make_logger_spy();
+
+        $this->with_plugin_logger(
+            $logger,
+            static function () use ( $service ): void {
+                $service->queue_event(
+                    'async_job_success',
+                    [
+                        'action_id'   => 'entry_summary_v1',
+                        'form_source' => 'gravity_forms',
+                        'status'      => 'success',
+                    ]
+                );
+                $service->queue_event( 'unsupported_private_event', [ 'result' => 'private model output' ] );
+                $service->flush_queue();
+            }
+        );
+
+        $this->assertSame( [], $logger->records );
     }
 
     public function test_opt_out_unschedules_flush_cron(): void
@@ -244,5 +259,43 @@ class Tests_Telemetry_Service extends WP_UnitTestCase
             [ 'record_type' => 'telemetry' ],
             [ '%s' ]
         );
+    }
+
+    private function make_logger_spy(): Sentient_Forms_Logger
+    {
+        return new class() extends Sentient_Forms_Logger {
+            /** @var array<int, array{message:string,context:array<string, mixed>}> */
+            public array $records = [];
+
+            public function __construct()
+            {
+                parent::__construct( false );
+            }
+
+            public function debug( string $message, array $context = [] ): void
+            {
+                $this->records[] = [
+                    'message' => $message,
+                    'context' => $context,
+                ];
+            }
+        };
+    }
+
+    private function with_plugin_logger( Sentient_Forms_Logger $logger, callable $callback ): void
+    {
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'logger' );
+        $original = $property->getValue( $this->plugin );
+        $property->setValue( $this->plugin, $logger );
+
+        try
+        {
+            $callback();
+        }
+        finally
+        {
+            $property->setValue( $this->plugin, $original );
+        }
     }
 }

@@ -165,7 +165,12 @@ class Sentient_Forms_Telemetry_Service
 
     private function log_debug( string $message, array $context = [] ): void
     {
-        sentient_forms_debug_log( self::LOG_PREFIX . $message, $context );
+        if ( ! $this->consent_enabled() )
+        {
+            return;
+        }
+
+        $this->plugin->get_logger()->debug( self::LOG_PREFIX . $message, $context );
     }
 
     private function metadata_payload( array $payload ): array

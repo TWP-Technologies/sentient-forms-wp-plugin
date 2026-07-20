@@ -66,6 +66,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'gravity_forms', '9940' ],
                 [ 'gravity_forms', '9953' ],
                 [ 'gravity_forms', '9954' ],
+                [ 'gravity_forms', '9955' ],
                 [ 'elementor_pro_forms', '321:opaque-form' ],
             ] as [ $form_source, $form_id ]
         )
@@ -145,6 +146,51 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $action = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->get( absint( $rows[0]['action_id'] ?? 0 ) );
         $this->assertSame( 'bundled__entry_summary_v1', $action['code'] ?? null );
         $this->assertSame( 'active', $action['status'] ?? null );
+    }
+
+    public function test_migration_invalidates_primed_autoloaded_legacy_action_option(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_9955';
+        $this->option_keys[] = $option_key;
+        $mapping             = [
+            'local_mapping_id'           => 'autoloaded_summary',
+            'central_action_id'          => 'entry_summary_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'after_submission' ],
+            'settings'                   => [],
+        ];
+        add_option( $option_key, [ 'autoloaded_summary' => $mapping ], '', true );
+        $alloptions = wp_load_alloptions( true );
+        $this->assertArrayHasKey( $option_key, $alloptions );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertSame( [], get_option( $option_key ) );
+    }
+
+    public function test_migration_invalidates_primed_autoloaded_journal_after_delete(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_autoloaded_journal';
+        $this->option_keys[] = $option_key;
+        $stored              = [ 'sf_disabled' => false ];
+        $journal             = [
+            'option_key'   => $option_key,
+            'option_value' => maybe_serialize( $stored ),
+            'wrapped'      => false,
+            'mappings'     => [],
+            'rows'         => [],
+        ];
+        add_option( $option_key, $stored, '', true );
+        add_option( 'sentient_forms_action_authority_migration_journal', $journal, '', true );
+        $alloptions = wp_load_alloptions( true );
+        $this->assertArrayHasKey( 'sentient_forms_action_authority_migration_journal', $alloptions );
+
+        $summary = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
+
+        $this->assertSame( 1, $summary['migration_complete'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
     }
 
     public function test_migrates_released_gravity_option_prefix_and_preserves_binding_named_mode(): void
@@ -1656,6 +1702,84 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
         $this->assertSame( [ 'model_override' => 'openrouter/auto' ], get_option( $option_key ) );
     }
 
+    public function test_transparent_wpdb_subclass_uses_core_dedicated_lock_connection(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_actions_gravity_forms_transparent_db';
+        $this->option_keys[] = $option_key;
+        $original_database   = $wpdb;
+        $transparent         = new class( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST ) extends wpdb {};
+        $transparent->set_prefix( $original_database->prefix );
+        $this->reset_dedicated_lock_database();
+        $wpdb = $transparent;
+
+        try
+        {
+            $result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+                $option_key,
+                [ 'model_override' => 'openrouter/auto' ]
+            );
+        }
+        finally
+        {
+            $wpdb = $original_database;
+            $this->reset_dedicated_lock_database();
+            $transparent->close();
+        }
+
+        $this->assertTrue( $result );
+        $this->assertSame( [ 'model_override' => 'openrouter/auto' ], get_option( $option_key ) );
+    }
+
+    public function test_wpdb_subclass_with_query_override_requires_topology_filter(): void
+    {
+        global $wpdb;
+
+        $option_key          = 'sentient_forms_actions_gravity_forms_routed_db';
+        $this->option_keys[] = $option_key;
+        $original_database   = $wpdb;
+        $routed_database     = new class( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST ) extends wpdb {
+            public function query( $query )
+            {
+                return parent::query( $query );
+            }
+        };
+        $provided_lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_filter = static function ( mixed $candidate, wpdb $primary, string $mode ) use ( $provided_lock_database ): wpdb {
+            return $provided_lock_database;
+        };
+        $routed_database->set_prefix( $original_database->prefix );
+        $this->reset_dedicated_lock_database();
+        $wpdb = $routed_database;
+
+        try
+        {
+            $result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+                $option_key,
+                [ 'model_override' => 'openrouter/auto' ]
+            );
+            add_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10, 3 );
+            $filtered_result = Sentient_Forms_Legacy_Action_Authority_Migrator::update_action_option(
+                $option_key,
+                [ 'model_override' => 'openrouter/auto' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10 );
+            $wpdb = $original_database;
+            $this->reset_dedicated_lock_database();
+            $routed_database->close();
+            $provided_lock_database->close();
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $result->get_error_code() );
+        $this->assertTrue( $filtered_result );
+        $this->assertSame( [ 'model_override' => 'openrouter/auto' ], get_option( $option_key ) );
+    }
+
     public function test_pending_journal_blocks_ordinary_legacy_option_writer(): void
     {
         $option_key          = 'sentient_forms_actions_gravity_forms_9941';
@@ -1766,6 +1890,17 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
 
         wp_cache_delete( $lock_option, 'options' );
         $this->assertSame( $newer_lock, get_option( $lock_option ) );
+    }
+
+    private function reset_dedicated_lock_database(): void
+    {
+        $property = new ReflectionProperty( Sentient_Forms_Legacy_Action_Authority_Migrator::class, 'dedicated_lock_database' );
+        $database = $property->getValue();
+        if ( $database instanceof wpdb )
+        {
+            $database->close();
+        }
+        $property->setValue( null, null );
     }
 
 }
