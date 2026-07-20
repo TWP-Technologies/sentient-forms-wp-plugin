@@ -365,9 +365,10 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
         return $this->prepare_item_for_response( $this->support_bundle->build() );
     }
 
-    public function get_migration_readiness( WP_REST_Request $request ): WP_REST_Response
+    public function get_migration_readiness( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        return $this->prepare_item_for_response( $this->cutover->build_readiness_report() );
+        $report = $this->cutover->build_readiness_report();
+        return is_wp_error( $report ) ? $report : $this->prepare_item_for_response( $report );
     }
 
     public function create_migration_dry_run( WP_REST_Request $request ): WP_REST_Response | WP_Error

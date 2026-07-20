@@ -1204,19 +1204,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             {
                 $execution_results[ (string) $mapping_id ] = $scheduled;
             }
-            if ( 'queued' === $schedule_outcome )
-            {
-                $this->log_queued_accepted_mapping(
-                    $form_source,
-                    $form_id,
-                    $native_entry_id,
-                    (string) $mapping_id,
-                    $action_settings,
-                    $submission_uuid,
-                    $execution_request_ids[ (string) $mapping_id ] ?? '',
-                    $mapping_native_effect_outcomes
-                );
-            }
         }
 
         return new Sentient_Forms_Accepted_Submission_Run_Result(

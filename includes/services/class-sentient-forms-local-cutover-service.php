@@ -82,12 +82,22 @@ class Sentient_Forms_Local_Cutover_Service
     /**
      * Build a non-mutating report for the current local-first cutover state.
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|WP_Error
      */
-    public function build_readiness_report(): array
+    public function build_readiness_report(): array | WP_Error
     {
-        $local_tables   = $this->table_counts( Sentient_Forms_Local_Data_Governance::local_table_suffixes() );
+        $local_tables = $this->table_counts( Sentient_Forms_Local_Data_Governance::local_table_suffixes() );
+        if ( is_wp_error( $local_tables ) )
+        {
+            return $local_tables;
+        }
+
         $runtime_tables = $this->table_counts( [ 'sentient_async_requests' ] );
+        if ( is_wp_error( $runtime_tables ) )
+        {
+            return $runtime_tables;
+        }
+
         $legacy_options = $this->legacy_option_report();
         $settings       = $this->settings_summary();
         $warnings       = $this->build_warnings( $local_tables, $runtime_tables, $legacy_options, $settings );
@@ -129,6 +139,11 @@ class Sentient_Forms_Local_Cutover_Service
     public function record_dry_run( ?int $actor_user_id = null ): array | WP_Error
     {
         $report = $this->build_readiness_report();
+        if ( is_wp_error( $report ) )
+        {
+            return $report;
+        }
+
         $run_id = $this->migration_runs->create(
             [
                 'source'         => self::SOURCE,
@@ -218,6 +233,11 @@ class Sentient_Forms_Local_Cutover_Service
         }
 
         $before = $this->build_readiness_report();
+        if ( is_wp_error( $before ) )
+        {
+            return $before;
+        }
+
         $run_id = $this->migration_runs->create(
             [
                 'source'         => self::SOURCE,
@@ -269,8 +289,24 @@ class Sentient_Forms_Local_Cutover_Service
             return $deleted_options;
         }
 
-        $after           = $this->build_readiness_report();
-        $summary         = [
+        $after = $this->build_readiness_report();
+        if ( is_wp_error( $after ) )
+        {
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                [
+                    'error_code'     => $after->get_error_code(),
+                    'error_message'  => $after->get_error_message(),
+                    'before'         => $this->summarize_report( $before ),
+                    'deleted_tables' => $deleted_tables,
+                    'deleted_options' => $deleted_options,
+                ]
+            );
+            return $after;
+        }
+
+        $summary = [
             'before'          => $this->summarize_report( $before ),
             'after'           => $this->summarize_report( $after ),
             'deleted_tables'  => $deleted_tables,
@@ -521,7 +557,7 @@ class Sentient_Forms_Local_Cutover_Service
         foreach ( self::RESET_TABLE_SUFFIXES as $suffix )
         {
             $count = $report['local_tables'][ $suffix ] ?? $report['runtime_tables'][ $suffix ] ?? null;
-            if ( null === $count || 0 !== (int) $count )
+            if ( null !== $count && 0 !== (int) $count )
             {
                 return false;
             }
@@ -548,27 +584,42 @@ class Sentient_Forms_Local_Cutover_Service
 
     /**
      * @param array<int, string> $suffixes
-     * @return array<string, int|null>
+     * @return array<string, int|null>|WP_Error
      */
-    private function table_counts( array $suffixes ): array
+    private function table_counts( array $suffixes ): array | WP_Error
     {
         $counts = [];
         $wpdb   = $this->wpdb;
         foreach ( $suffixes as $suffix )
         {
             $table_name = $wpdb->prefix . $suffix;
-            if ( ! $this->table_exists( $table_name ) )
+            $table_exists = $this->table_exists( $table_name );
+            if ( is_wp_error( $table_exists ) )
+            {
+                return $table_exists;
+            }
+            if ( ! $table_exists )
             {
                 $counts[ $suffix ] = null;
                 continue;
             }
 
-            $counts[ $suffix ] = (int) $wpdb->get_var(
+            $suppress_errors = $wpdb->suppress_errors();
+            $count = $wpdb->get_var(
                 $wpdb->prepare(
                     'SELECT COUNT(*) FROM %i',
                     $table_name
                 )
             );
+            $last_error = (string) $wpdb->last_error;
+            $wpdb->suppress_errors( $suppress_errors );
+
+            if ( '' !== $last_error || null === $count )
+            {
+                return $this->table_probe_error( $table_name );
+            }
+
+            $counts[ $suffix ] = (int) $count;
         }
 
         return $counts;
@@ -789,7 +840,12 @@ class Sentient_Forms_Local_Cutover_Service
         foreach ( $suffixes as $suffix )
         {
             $table_name = $wpdb->prefix . $suffix;
-            if ( ! $this->table_exists( $table_name ) )
+            $table_exists = $this->table_exists( $table_name );
+            if ( is_wp_error( $table_exists ) )
+            {
+                return $table_exists;
+            }
+            if ( ! $table_exists )
             {
                 $deleted[ $suffix ] = null;
                 continue;
@@ -1018,11 +1074,37 @@ class Sentient_Forms_Local_Cutover_Service
         return array_values( array_map( 'strval', is_array( $rows ) ? $rows : [] ) );
     }
 
-    private function table_exists( string $table_name ): bool
+    private function table_exists( string $table_name ): bool | WP_Error
     {
-        $query = $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name );
+        $query           = $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $this->wpdb->esc_like( $table_name ) );
+        $suppress_errors = $this->wpdb->suppress_errors();
         // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above for a dynamic plugin-owned table existence check.
-        return $table_name === $this->wpdb->get_var( $query );
+        $found      = $this->wpdb->get_var( $query );
+        $last_error = (string) $this->wpdb->last_error;
+        $this->wpdb->suppress_errors( $suppress_errors );
+
+        if ( '' !== $last_error )
+        {
+            return $this->table_probe_error( $table_name );
+        }
+
+        return $table_name === $found;
+    }
+
+    private function table_probe_error( string $table_name ): WP_Error
+    {
+        $table_suffix = str_starts_with( $table_name, $this->wpdb->prefix )
+            ? substr( $table_name, strlen( $this->wpdb->prefix ) )
+            : $table_name;
+
+        return new WP_Error(
+            'sentient_forms_local_cutover_table_probe_failed',
+            __( 'Could not verify a local-first table during cutover. Keep execution disabled and retry.', 'sentient-forms' ),
+            [
+                'status'       => 500,
+                'table_suffix' => $table_suffix,
+            ]
+        );
     }
 
     private function describe_value_shape( mixed $value ): string

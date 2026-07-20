@@ -1010,6 +1010,107 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $row['summary_json']['after']['local_tables']['sentient_form_mappings'] );
     }
 
+    public function test_migration_approved_reset_treats_missing_reset_owned_table_as_empty(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $missing_suffix      = 'sentient_lead_scoring_results';
+        $missing_table       = $wpdb->prefix . $missing_suffix;
+        $missing_table_query = $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $missing_table ) );
+        $hide_missing_table  = static function ( string $query ) use ( $missing_table_query ): string
+        {
+            if ( $missing_table_query === $query )
+            {
+                return 'SELECT NULL WHERE 1 = 0';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $hide_missing_table, PHP_INT_MAX );
+
+        try
+        {
+            $result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                self::$admin_id
+            );
+
+            $this->assertIsArray( $result );
+            $this->assertSame( 'completed', $result['status'] ?? null );
+            $this->assertArrayHasKey( $missing_suffix, $result['deleted_tables'] ?? [] );
+            $this->assertNull( $result['deleted_tables'][ $missing_suffix ] );
+        }
+        finally
+        {
+            remove_filter( 'query', $hide_missing_table, PHP_INT_MAX );
+        }
+    }
+
+    public function test_migration_approved_reset_fails_closed_when_table_probe_errors(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $table_name  = $wpdb->prefix . 'sentient_action_templates';
+        $probe_query = $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table_name ) );
+        $fail_probe  = static function ( string $query ) use ( $probe_query ): string
+        {
+            return $probe_query === $query
+                ? 'SELECT `sentient_forms_missing_probe_column` FROM `sentient_forms_missing_probe_table`'
+                : $query;
+        };
+        add_filter( 'query', $fail_probe, PHP_INT_MAX );
+
+        try
+        {
+            $result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                self::$admin_id
+            );
+        }
+        finally
+        {
+            remove_filter( 'query', $fail_probe, PHP_INT_MAX );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_local_cutover_table_probe_failed', $result->get_error_code() );
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+    }
+
+    public function test_migration_approved_reset_fails_closed_when_table_count_errors(): void
+    {
+        global $wpdb;
+
+        $this->seed_local_cutover_state();
+        $table_name  = $wpdb->prefix . 'sentient_action_templates';
+        $count_query = $wpdb->prepare( 'SELECT COUNT(*) FROM %i', $table_name );
+        $fail_count  = static function ( string $query ) use ( $count_query ): string
+        {
+            return $count_query === $query
+                ? 'SELECT `sentient_forms_missing_count_column` FROM `sentient_forms_missing_count_table`'
+                : $query;
+        };
+        add_filter( 'query', $fail_count, PHP_INT_MAX );
+
+        try
+        {
+            $result = ( new Sentient_Forms_Local_Cutover_Service() )->approved_reset(
+                Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+                self::$admin_id
+            );
+        }
+        finally
+        {
+            remove_filter( 'query', $fail_count, PHP_INT_MAX );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_local_cutover_table_probe_failed', $result->get_error_code() );
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+    }
+
     public function test_migration_approved_reset_reports_failed_option_deletion_and_retries(): void
     {
         global $wpdb;

@@ -64,6 +64,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
                 [ 'gravity_forms', '9938' ],
                 [ 'gravity_forms', '9939' ],
                 [ 'gravity_forms', '9940' ],
+                [ 'gravity_forms', '9953' ],
                 [ 'elementor_pro_forms', '321:opaque-form' ],
             ] as [ $form_source, $form_id ]
         )
@@ -1451,7 +1452,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
     {
         global $wpdb;
 
-        $option_key          = 'sentient_forms_actions_gravity_forms_9940';
+        $option_key          = 'sentient_forms_actions_gravity_forms_9953';
         $this->option_keys[] = $option_key;
         update_option(
             $option_key,
@@ -1494,7 +1495,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
             remove_filter( 'query', $release_before_option_swap );
 
             $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
-            $first_rows = $repository->list_for_form( 'gravity_forms', '9940' );
+            $first_rows = $repository->list_for_form( 'gravity_forms', '9953' );
             $this->assertTrue( $released );
             $this->assertSame( 0, $first['migration_complete'] ?? null );
             $this->assertNotFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
@@ -1503,7 +1504,7 @@ class Tests_Legacy_Action_Authority_Migration extends WP_UnitTestCase
             $this->assertFalse( $first_rows[0]['enabled'] ?? true );
 
             $second      = Sentient_Forms_Legacy_Action_Authority_Migrator::migrate();
-            $second_rows = $repository->list_for_form( 'gravity_forms', '9940' );
+            $second_rows = $repository->list_for_form( 'gravity_forms', '9953' );
             $this->assertSame( 1, $second['migration_complete'] ?? null );
             $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
             $this->assertCount( 1, $second_rows );
