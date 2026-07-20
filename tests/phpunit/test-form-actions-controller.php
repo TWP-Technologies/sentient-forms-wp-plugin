@@ -4206,7 +4206,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             &$new_child_id,
             &$injected
         ): string {
-            if ( $injected || ! str_contains( $query, 'SAVEPOINT sentient_forms_mapping_graph' ) )
+            if ( $injected || 1 !== preg_match( '/^SAVEPOINT `sentient_forms_mapping_graph_\d+`$/', $query ) )
             {
                 return $query;
             }
@@ -4300,7 +4300,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $mutated = false;
         $change_before_lock = static function ( string $query ) use ( $mappings, $source_id, &$mutated ): string {
-            if ( $mutated || ! str_contains( $query, 'SAVEPOINT sentient_forms_mapping_graph' ) )
+            if ( $mutated || 1 !== preg_match( '/^SAVEPOINT `sentient_forms_mapping_graph_\d+`$/', $query ) )
             {
                 return $query;
             }

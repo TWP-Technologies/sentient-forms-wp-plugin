@@ -45,10 +45,15 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
 
         self::$transaction_sequence++;
         $savepoint = 'sentient_forms_mapping_graph_' . self::$transaction_sequence;
+        $savepoint_create_query = $this->wpdb->prepare( 'SAVEPOINT %i', $savepoint );
+        $savepoint_rollback_query = $this->wpdb->prepare( 'ROLLBACK TO SAVEPOINT %i', $savepoint );
+        $savepoint_release_query = $this->wpdb->prepare( 'RELEASE SAVEPOINT %i', $savepoint );
         $previous_suppress_errors = $this->wpdb->suppress_errors();
-        $savepoint_created = false !== $this->wpdb->query( 'SAVEPOINT ' . $savepoint );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared immediately above with WordPress's identifier placeholder.
+        $savepoint_created = false !== $this->wpdb->query( $savepoint_create_query );
         $has_outer_transaction = $savepoint_created
-            && false !== $this->wpdb->query( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared immediately above with WordPress's identifier placeholder.
+            && false !== $this->wpdb->query( $savepoint_rollback_query );
         $this->wpdb->suppress_errors( $previous_suppress_errors );
 
         $owns_transaction = ! $has_outer_transaction;
@@ -71,10 +76,12 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
                 }
                 else
                 {
-                    $rolled_back = $this->wpdb->query( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
                     if ( false !== $rolled_back )
                     {
-                        $rolled_back = $this->wpdb->query( 'RELEASE SAVEPOINT ' . $savepoint );
+                        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                        $rolled_back = $this->wpdb->query( $savepoint_release_query );
                     }
                 }
                 if ( false === $rolled_back )
@@ -89,7 +96,8 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
 
             $committed = $owns_transaction
                 ? $this->wpdb->query( 'COMMIT' )
-                : $this->wpdb->query( 'RELEASE SAVEPOINT ' . $savepoint );
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                : $this->wpdb->query( $savepoint_release_query );
             if ( false === $committed )
             {
                 if ( $owns_transaction )
@@ -98,7 +106,8 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
                 }
                 else
                 {
-                    $rolled_back = $this->wpdb->query( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
                 }
                 if ( false === $rolled_back )
                 {
@@ -123,19 +132,23 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
             }
             else
             {
-                $rolled_back = $this->wpdb->query( 'ROLLBACK TO SAVEPOINT ' . $savepoint );
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                $rolled_back = $this->wpdb->query( $savepoint_rollback_query );
                 if ( false !== $rolled_back )
                 {
-                    $rolled_back = $this->wpdb->query( 'RELEASE SAVEPOINT ' . $savepoint );
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Prepared before the transaction starts with WordPress's identifier placeholder.
+                    $rolled_back = $this->wpdb->query( $savepoint_release_query );
                 }
             }
             if ( false === $rolled_back )
             {
+                // phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages and chained throwables are not rendered output.
                 throw new RuntimeException(
                     __( 'The form mapping transaction could not be rolled back.', 'sentient-forms' ),
                     0,
                     $error
                 );
+                // phpcs:enable WordPress.Security.EscapeOutput.ExceptionNotEscaped
             }
             throw $error;
         }
@@ -148,13 +161,15 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
      */
     public function list_for_form_for_update( string $form_source, string $form_id ): array
     {
+        $query = $this->wpdb->prepare(
+            'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY id ASC FOR UPDATE',
+            $this->table_name(),
+            sanitize_key( $form_source ),
+            sanitize_text_field( $form_id )
+        );
         $rows = $this->wpdb->get_results(
-            $this->wpdb->prepare(
-                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY id ASC FOR UPDATE',
-                $this->table_name(),
-                sanitize_key( $form_source ),
-                sanitize_text_field( $form_id )
-            ),
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+            $query,
             ARRAY_A
         ) ?: [];
         return array_map( [ $this, 'decode_row' ], $rows );
@@ -163,8 +178,10 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
     private function uses_transactional_storage(): bool
     {
         $previous_suppress_errors = $this->wpdb->suppress_errors();
+        $query = $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table_name() );
         $definition = $this->wpdb->get_row(
-            $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table_name() ),
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query,
             ARRAY_N
         );
         $this->wpdb->suppress_errors( $previous_suppress_errors );

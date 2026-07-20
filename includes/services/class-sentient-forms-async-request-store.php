@@ -667,11 +667,13 @@ class Sentient_Forms_Async_Request_Store
     private function has_active_executions_locked(): bool | WP_Error
     {
         $this->wpdb->last_error = '';
+        $query = $this->wpdb->prepare(
+            "SELECT COUNT(*) FROM %i WHERE record_type <> 'telemetry' AND status IN ('running', 'retry_pending', 'dependency_wait', 'indeterminate')",
+            $this->table()
+        );
         $count = $this->wpdb->get_var(
-            $this->wpdb->prepare(
-                "SELECT COUNT(*) FROM %i WHERE record_type <> 'telemetry' AND status IN ('running', 'retry_pending', 'dependency_wait', 'indeterminate')",
-                $this->table()
-            )
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query
         );
         if ( null === $count && '' !== (string) $this->wpdb->last_error )
         {

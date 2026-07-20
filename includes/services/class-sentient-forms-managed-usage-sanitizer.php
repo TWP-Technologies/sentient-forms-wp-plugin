@@ -265,9 +265,13 @@ class Sentient_Forms_Managed_Usage_Sanitizer
         }
 
         $query = "SELECT id, cost_json, result_json FROM %i WHERE provider IN ($provider_placeholders) AND (" . implode( ' OR ', $candidate_predicates ) . ')';
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Only internally generated placeholders are interpolated; identifiers and values remain bound through wpdb::prepare().
+        $prepared_query = $wpdb->prepare( $query, $table, ...$providers, ...$candidate_values );
         $wpdb->last_error = '';
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter -- Query is prepared immediately above from fixed predicates and bound values.
         $rows = $wpdb->get_results(
-            $wpdb->prepare( $query, $table, ...$providers, ...$candidate_values ),
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above from fixed predicates and bound values.
+            $prepared_query,
             ARRAY_A
         );
         if ( '' !== (string) $wpdb->last_error || ! is_array( $rows ) )

@@ -917,12 +917,14 @@ class Sentient_Forms_Local_Cutover_Service
 
     private function option_exists( string $option_name ): bool | WP_Error
     {
+        $query = $this->wpdb->prepare(
+            'SELECT 1 FROM %i WHERE option_name = %s LIMIT 1',
+            $this->wpdb->options,
+            $option_name
+        );
         $exists = $this->wpdb->get_var(
-            $this->wpdb->prepare(
-                'SELECT 1 FROM %i WHERE option_name = %s LIMIT 1',
-                $this->wpdb->options,
-                $option_name
-            )
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+            $query
         );
         if ( '' !== $this->wpdb->last_error )
         {

@@ -1107,16 +1107,19 @@ class Sentient_Forms_Installer
         global $wpdb;
         $table = $wpdb->prefix . 'sentient_form_mappings';
         $previous_suppress_errors = $wpdb->suppress_errors();
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned installer must verify the physical engine of its mapping table before enabling transactional graph mutations.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- SHOW CREATE TABLE is a read-only schema inspection required before enabling transactional graph mutations.
+        $show_create_query = $wpdb->prepare( 'SHOW CREATE TABLE %i', $table );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The versioned installer must inspect the live physical engine before enabling transactional graph mutations.
         $definition = $wpdb->get_row(
-            $wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $show_create_query,
             ARRAY_N
         );
         $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
 
         if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
         {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- One versioned schema repair converts legacy plugin-owned mapping tables to the engine required by repository transactions.
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- One versioned schema repair converts the plugin-owned mapping table to the engine required by repository transactions; schema writes cannot use an object-cache abstraction.
             $converted = $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
             if ( false === $converted )
             {
@@ -1124,9 +1127,12 @@ class Sentient_Forms_Installer
                 return false;
             }
 
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- SHOW CREATE TABLE is a read-only verification before recording the migration marker.
+            $show_create_query = $wpdb->prepare( 'SHOW CREATE TABLE %i', $table );
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Read back the physical engine before recording the migration marker.
             $definition = $wpdb->get_row(
-                $wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+                $show_create_query,
                 ARRAY_N
             );
             $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';

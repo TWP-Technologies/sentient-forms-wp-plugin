@@ -559,7 +559,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
     private static function read_option_snapshot( string $option_key ): ?array
     {
         global $wpdb;
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Exact persisted bytes are required for the migration journal compare-and-swap boundary.
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Exact persisted bytes are required for the migration journal compare-and-swap boundary; a cached option value is not authoritative here.
         $row = $wpdb->get_row(
             $wpdb->prepare(
                 'SELECT option_value FROM %i WHERE option_name = %s',
