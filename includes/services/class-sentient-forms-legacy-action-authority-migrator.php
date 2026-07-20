@@ -1226,7 +1226,7 @@ final class Sentient_Forms_Legacy_Action_Authority_Migrator
 
         if ( ! $has_field_ids && ! $has_include_metadata )
         {
-            return [] === $extra_keys ? $value : null;
+            return null;
         }
 
         if ( $has_field_ids && ! is_array( $value['field_ids'] ) && ! $has_include_metadata )
