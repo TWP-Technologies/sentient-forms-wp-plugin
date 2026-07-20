@@ -1132,7 +1132,7 @@ class Sentient_Forms_Async_Handler
         ];
 
         $started = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
-            function () use ( $payload, $context, $execution_request_id, $serialized_payload_digest ): bool | WP_Error {
+            function () use ( $payload, $context, $execution_request_id, $serialized_payload_digest ): array | bool | WP_Error {
                 $current_settings = get_option( 'sentient_forms_plugin_settings', [] );
                 $normalized_payload_digest = $this->local_mapping_payload_digest( $payload );
                 $stored_request            = $this->get_request_store()->get( $execution_request_id, 'job' );
@@ -1196,10 +1196,10 @@ class Sentient_Forms_Async_Handler
                 {
                     return $this->abort_claimed_local_execution_before_effect( $payload, $event_recorded );
                 }
-                return true;
+                return $claim;
             }
         );
-        if ( true !== $started )
+        if ( ! is_array( $started ) || 'claimed' !== ( $started['state'] ?? '' ) )
         {
             if ( is_wp_error( $started ) && 'sentient_forms_execution_globally_disabled' !== $started->get_error_code() )
             {
@@ -1207,6 +1207,17 @@ class Sentient_Forms_Async_Handler
             }
             return;
         }
+        $execution_claim = Sentient_Forms_Local_Execution_Claim::from_request_store_claim(
+            is_array( $started ) ? $started : [],
+            $execution_request_id,
+            'job'
+        );
+        if ( is_wp_error( $execution_claim ) )
+        {
+            $this->abort_claimed_local_execution_before_effect( $payload, $execution_claim );
+            return;
+        }
+        $context['local_execution_claim'] = $execution_claim;
 
         $dependency_gate = $this->evaluate_dependency_gate( $job );
         if ( 'skip' === $dependency_gate['state'] )
@@ -1256,6 +1267,11 @@ class Sentient_Forms_Async_Handler
 
             if ( is_wp_error( $result ) )
             {
+                if ( $this->is_terminal_event_persistence_failure( $result ) )
+                {
+                    $this->handle_local_mapping_terminal_persistence_failure( $payload, $result );
+                    return;
+                }
                 $this->handle_local_mapping_failure( $payload, $result );
                 return;
             }
@@ -1522,6 +1538,36 @@ class Sentient_Forms_Async_Handler
         );
     }
 
+    /**
+     * Preserve an already-attempted provider run as non-replayable when its terminal event cannot be stored.
+     *
+     * @param array<string, mixed> $payload Local mapping job payload.
+     */
+    private function handle_local_mapping_terminal_persistence_failure( array $payload, WP_Error $error ): void
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $context = $this->normalize_context( $context, 'sentient_forms_local_mapping' );
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+
+        if ( '' !== $execution_request_id )
+        {
+            $this->mark_indeterminate_after_persistence_failure( $error, $context, $execution_request_id );
+        }
+        else
+        {
+            $this->record_async_persistence_failure( $error, $context );
+        }
+
+        $this->update_metadata_best_effort(
+            $context['job_id'] ?? null,
+            'indeterminate',
+            [ 'last_error' => $error->get_error_message(), 'completed_at' => time() ],
+            $context
+        );
+    }
+
     private function requeue_local_mapping_waiting_on_dependencies( array $payload, int $delay_seconds, string $reason ): void
     {
         $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
@@ -1620,6 +1666,15 @@ class Sentient_Forms_Async_Handler
             ],
             true
         );
+    }
+
+    private function is_terminal_event_persistence_failure( WP_Error $error ): bool
+    {
+        $data = $error->get_error_data();
+
+        return 'sentient_forms_terminal_event_persistence_failure' === $error->get_error_code()
+            && is_array( $data )
+            && true === ( $data['terminal_persistence_failure'] ?? false );
     }
 
     private function is_local_mapping_permanent_provider_error( int $status, string $code, string $message ): bool
@@ -1818,6 +1873,7 @@ class Sentient_Forms_Async_Handler
         $execution_request_id = sanitize_text_field(
             (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
         );
+        $terminal_status = 'failed';
         if ( '' !== $execution_request_id )
         {
             $finished = $this->get_request_store()->finish_execution(
@@ -1827,21 +1883,30 @@ class Sentient_Forms_Async_Handler
             );
             if ( is_wp_error( $finished ) )
             {
-                $this->record_async_persistence_failure( $finished, $context );
+                $terminal_status = 'indeterminate';
+                $this->mark_indeterminate_after_persistence_failure( $finished, $context, $execution_request_id );
+            }
+        }
+        $terminal_event = $this->record_local_execution_event( $payload, 'failed', null, $cause );
+        if ( is_wp_error( $terminal_event ) )
+        {
+            $terminal_status = 'indeterminate';
+            if ( '' !== $execution_request_id )
+            {
+                $this->mark_indeterminate_after_persistence_failure( $terminal_event, $context, $execution_request_id );
+            }
+            else
+            {
+                $this->record_async_persistence_failure( $terminal_event, $context );
             }
         }
 
         $this->update_metadata_best_effort(
             $context['job_id'] ?? null,
-            'failed',
+            $terminal_status,
             [ 'last_error' => $cause->get_error_message(), 'completed_at' => time() ],
             $context
         );
-        $terminal_event = $this->record_local_execution_event( $payload, 'failed', null, $cause );
-        if ( is_wp_error( $terminal_event ) )
-        {
-            $this->record_async_persistence_failure( $terminal_event, $context );
-        }
 
         return $cause;
     }

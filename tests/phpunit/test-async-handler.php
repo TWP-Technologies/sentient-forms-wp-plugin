@@ -187,6 +187,23 @@ final class Sentient_Forms_Test_Recording_Gravity_Adapter extends Sentient_Forms
     }
 }
 
+final class Sentient_Forms_Test_Malformed_Queued_Claim_Request_Store extends Sentient_Forms_Async_Request_Store
+{
+    public bool $malform_next_claim = false;
+
+    public function claim_queued_execution( string $request_hash, string $record_type, string $payload_digest ): array | WP_Error
+    {
+        $claim = parent::claim_queued_execution( $request_hash, $record_type, $payload_digest );
+        if ( $this->malform_next_claim && is_array( $claim ) && 'claimed' === ( $claim['state'] ?? '' ) )
+        {
+            $this->malform_next_claim = false;
+            $claim['record']          = null;
+        }
+
+        return $claim;
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
@@ -2595,6 +2612,292 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			$this->assertStringNotContainsString( 'sentientforms.com', $call['url'] );
 		}
 	}
+
+    public function test_process_local_mapping_aborts_malformed_post_claim_capability_before_effects(): void
+    {
+        global $wpdb;
+
+        $original_store = $this->plugin->get_async_request_store();
+        $malformed_store = new Sentient_Forms_Test_Malformed_Queued_Claim_Request_Store( $wpdb );
+        $store_property  = ( new ReflectionClass( $this->plugin ) )->getProperty( 'async_request_store' );
+        $store_property->setValue( $this->plugin, $malformed_store );
+
+        $handler    = $this->plugin->get_async_handler();
+        $request_id = 'local-async-malformed-post-claim';
+
+        try
+        {
+            $scheduled = $handler->schedule_local_mapping(
+                9981,
+                [ 'id' => 398 ],
+                [ 'id' => 9982 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 398,
+                    'entry_id'             => 9982,
+                    'action_id'            => 'local_first_9981',
+                    'mapping_id'           => 'local_first_9981',
+                    'local_mapping_id'     => 'local_first_9981',
+                    'central_action_id'    => 'malformed_post_claim_fixture',
+                    'execution_request_id' => $request_id,
+                ]
+            );
+            $this->assertTrue( $scheduled );
+
+            $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $payload = $job['args'][0] ?? [];
+            $this->assertIsArray( $payload );
+            $malformed_store->malform_next_claim = true;
+
+            $handler->process_local_mapping( $payload );
+
+            $request = $malformed_store->get( $request_id, 'job' );
+            $event   = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+            $metadata = $this->plugin->get_async_metadata_store()->get( (string) ( $payload['context']['job_id'] ?? '' ) );
+            $this->assertSame( 'failed', $request['status'] ?? null );
+            $this->assertSame( 'failed', $event['status'] ?? null );
+            $this->assertSame( 'sentient_forms_local_execution_claim_invalid', $event['error_code'] ?? null );
+            $this->assertSame( 'failed', $metadata['status'] ?? null );
+            $this->assertCount( 0, $GLOBALS['__sentient_forms_http_calls'] );
+
+            $handler->process_local_mapping( $payload );
+            $this->assertCount( 0, $GLOBALS['__sentient_forms_http_calls'] );
+            $this->assertSame( 'failed', $malformed_store->get( $request_id, 'job' )['status'] ?? null );
+        }
+        finally
+        {
+            $store_property->setValue( $this->plugin, $original_store );
+        }
+    }
+
+    /** @dataProvider terminal_event_persistence_provider_outcomes */
+    public function test_process_local_mapping_marks_terminal_event_persistence_failure_indeterminate_without_replay( string $provider_outcome ): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $encrypted      = ( new Sentient_Forms_Provider_Credential_Vault() )->encrypt( 'sk-or-terminal-persistence-test-secret' );
+
+        $this->assertIsString( $encrypted );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Terminal persistence fixture',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'terminal_persistence_summary',
+                'display_name'         => 'Terminal Persistence Summary',
+                'definition_json'      => [ 'prompt_template' => 'Summarize {{name}}.' ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '324',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [ 'name' => '1' ],
+                'execution_mode'      => 'async',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'meta'         => [
+                        'sentient_forms_terminal_persistence_summary' => 'structured.summary',
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        GFAPI::$forms[324] = [
+            'id'     => 324,
+            'title'  => 'Terminal Persistence Form',
+            'fields' => [],
+        ];
+        GFAPI::$entries[657] = [
+            'id'      => 657,
+            'form_id' => 324,
+            '1'       => 'Persistence Lead',
+        ];
+
+        $provider_calls = 0;
+        $lock_filter    = null;
+        $provider_filter = static function ( $preempt, array $args, string $url ) use ( &$provider_calls, &$lock_filter, $provider_outcome, $wpdb ): mixed {
+            if ( false === strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return $preempt;
+            }
+
+            ++$provider_calls;
+            $lock_filter = static function ( mixed $candidate, wpdb $primary ) use ( &$lock_filter ): wpdb {
+                remove_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10 );
+                return $primary;
+            };
+            add_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10, 3 );
+
+            if ( 'failure' === $provider_outcome )
+            {
+                return new WP_Error( 'openrouter_http_error', 'Synthetic provider failure.', [ 'status' => 500 ] );
+            }
+
+            return [
+                'headers'  => [],
+                'body'     => wp_json_encode(
+                    [
+                        'id'      => 'chatcmpl-terminal-persistence',
+                        'model'   => 'openrouter/auto',
+                        'choices' => [
+                            [
+                                'message'       => [
+                                    'role'    => 'assistant',
+                                    'content' => wp_json_encode( [ 'summary' => 'Effect applied once.' ] ),
+                                ],
+                                'finish_reason' => 'stop',
+                            ],
+                        ],
+                        'usage'   => [
+                            'prompt_tokens'     => 7,
+                            'completion_tokens' => 4,
+                            'total_tokens'      => 11,
+                        ],
+                    ]
+                ),
+                'response' => [ 'code' => 200, 'message' => 'OK' ],
+                'cookies'  => [],
+            ];
+        };
+        add_filter( 'pre_http_request', $provider_filter, 9, 3 );
+
+        $success_events = 0;
+        $success_listener = static function () use ( &$success_events ): void {
+            ++$success_events;
+        };
+        add_action( 'sentient_forms_async_success', $success_listener, 10, 2 );
+        $failure_events = 0;
+        $failure_listener = static function () use ( &$failure_events ): void {
+            ++$failure_events;
+        };
+        add_action( 'sentient_forms_async_failure', $failure_listener, 10, 2 );
+
+        $adapter = new Sentient_Forms_Test_Recording_Gravity_Adapter( $this->plugin );
+        $this->original_gravity_adapter = $this->plugin->get_form_adapter_registry()->get_adapter_by_id( 'gravity_forms' );
+        $this->plugin->get_form_adapter_registry()->register_adapter( $adapter );
+        $this->evaluation_filter = static function ( array $jobs ): array {
+            $jobs[] = [ 'payload' => [ 'must_not_schedule' => true ] ];
+            return $jobs;
+        };
+        add_filter( 'sentient_forms_async_evaluation_jobs', $this->evaluation_filter, 99, 2 );
+
+        $handler = $this->plugin->get_async_handler();
+        $scheduled = $handler->schedule_local_mapping(
+            $mapping_id,
+            [ 'id' => 324 ],
+            [ 'id' => 657 ],
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => 324,
+                'entry_id'             => 657,
+                'action_id'            => 'local_first_' . $mapping_id,
+                'mapping_id'           => 'local_first_' . $mapping_id,
+                'local_mapping_id'     => 'local_first_' . $mapping_id,
+                'central_action_id'    => 'terminal_persistence_summary',
+                'execution_request_id' => 'local-async-terminal-persistence-' . $provider_outcome,
+            ]
+        );
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $local_job_count = count(
+            array_filter(
+                $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+                static fn ( array $queued_job ): bool => 'sentient_forms_process_local_mapping' === ( $queued_job['hook'] ?? '' )
+            )
+        );
+
+        try
+        {
+            $handler->process_local_mapping( $payload );
+
+            $this->assertSame( 1, $provider_calls );
+            if ( 'success' === $provider_outcome )
+            {
+                $this->assertSame( 'Effect applied once.', gform_get_meta( 657, 'sentient_forms_terminal_persistence_summary' ) );
+            }
+            else
+            {
+                $this->assertNull( gform_get_meta( 657, 'sentient_forms_terminal_persistence_summary' ) );
+            }
+            $request_id = 'local-async-terminal-persistence-' . $provider_outcome;
+            $this->assertSame( 'running', $events->get_by_request_id( $request_id )['status'] ?? null );
+            $this->assertSame( 'indeterminate', $this->plugin->get_async_request_store()->get( $request_id )['status'] ?? null );
+            $this->assertSame( 'indeterminate', $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] )['status'] ?? null );
+            $this->assertSame( 0, $success_events );
+            $this->assertSame( 0, $failure_events );
+            $this->assertSame( 0, $adapter->success_calls );
+            $this->assertSame( 0, $adapter->error_calls );
+            $this->assertCount(
+                0,
+                array_filter(
+                    $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+                    static fn ( array $queued_job ): bool => 'sentient_forms_evaluate_action' === ( $queued_job['hook'] ?? '' )
+                )
+            );
+
+            $handler->process_local_mapping( $payload );
+            $this->assertSame( 1, $provider_calls );
+            $this->assertSame( $local_job_count, count(
+                array_filter(
+                    $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+                    static fn ( array $queued_job ): bool => 'sentient_forms_process_local_mapping' === ( $queued_job['hook'] ?? '' )
+                )
+            ) );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $provider_filter, 9 );
+            if ( $lock_filter instanceof Closure )
+            {
+                remove_filter( 'sentient_forms_action_authority_lock_database', $lock_filter, 10 );
+            }
+            remove_action( 'sentient_forms_async_success', $success_listener, 10 );
+            remove_action( 'sentient_forms_async_failure', $failure_listener, 10 );
+        }
+    }
+
+    /** @return array<string, array{string}> */
+    public function terminal_event_persistence_provider_outcomes(): array
+    {
+        return [
+            'provider success' => [ 'success' ],
+            'provider failure' => [ 'failure' ],
+        ];
+    }
 
     public function test_process_local_mapping_executes_elementor_mapping_from_submission_ledger_identifiers(): void
     {

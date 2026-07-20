@@ -169,6 +169,76 @@ if ( ! class_exists( 'Sentient_Forms_Test_Context_Local_Execution_Service' ) )
     }
 }
 
+if ( ! class_exists( 'Sentient_Forms_Test_Terminal_Persistence_Local_Execution_Service' ) )
+{
+    final class Sentient_Forms_Test_Terminal_Persistence_Local_Execution_Service extends Sentient_Forms_Local_Action_Execution_Service
+    {
+        public int $calls = 0;
+
+        public function __construct( private bool $effects_completed )
+        {
+        }
+
+        public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+        {
+            ++$this->calls;
+
+            $execution_request_id = (string) ( $context['execution_request_id'] ?? '' );
+            global $wpdb;
+            ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->record(
+                [
+                    'execution_request_id' => $execution_request_id,
+                    'mapping_id'           => $mapping_id,
+                    'form_source'          => $context['form_source'] ?? null,
+                    'form_id'              => $context['form_id'] ?? null,
+                    'entry_id'             => $context['entry_id'] ?? null,
+                    'submission_uuid'      => $context['submission_uuid'] ?? null,
+                    'provider'             => 'openrouter',
+                    'model'                => 'openrouter/auto',
+                    'status'               => 'running',
+                    'payload_digest'       => 'provider-owned-payload-digest',
+                ]
+            );
+
+            return new WP_Error(
+                'sentient_forms_terminal_event_persistence_failure',
+                'Action execution crossed its provider boundary without durable terminal evidence.',
+                [
+                    'terminal_persistence_failure' => true,
+                    'effects_completed'             => $this->effects_completed,
+                    'execution_request_id'          => $execution_request_id,
+                    'cause_code'                   => 'sentient_forms_action_authority_write_locked',
+                ]
+            );
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Malformed_Accepted_Claim_Request_Store' ) )
+{
+    final class Sentient_Forms_Test_Malformed_Accepted_Claim_Request_Store extends Sentient_Forms_Async_Request_Store
+    {
+        public bool $malform_next_claim = false;
+
+        public function claim_execution(
+            string $request_hash,
+            array $context,
+            bool $retry_failed_safely = false,
+            string $record_type = 'accepted_sync'
+        ): array | WP_Error
+        {
+            $claim = parent::claim_execution( $request_hash, $context, $retry_failed_safely, $record_type );
+            if ( $this->malform_next_claim && is_array( $claim ) && 'claimed' === ( $claim['state'] ?? '' ) )
+            {
+                $this->malform_next_claim = false;
+                $claim['record']          = null;
+            }
+
+            return $claim;
+        }
+    }
+}
+
 if ( ! class_exists( 'Sentient_Forms_Test_CF7_Validation_Action' ) )
 {
     final class Sentient_Forms_Test_CF7_Validation_Action extends Sentient_Forms_Local_Action_Execution_Service
@@ -662,6 +732,133 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Accepted fixture submission', $stored['logical_fields_json']['message'] ?? null );
     }
 
+    public function test_accepted_submission_runner_executes_claimed_local_mapping_through_real_service(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $vault       = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted   = $vault->encrypt( 'sk-or-accepted-sync-ownership-fixture' );
+        $this->assertIsString( $encrypted );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Accepted sync ownership fixture',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt(
+            ( new Sentient_Forms_External_Service_Consent_Repository( $wpdb ) )
+                ->record( 'openrouter', '2026-07-20', get_current_user_id() )
+        );
+
+        $action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->create(
+            [
+                'code'                 => 'fixture_claimed_accepted_sync_action',
+                'display_name'         => 'Fixture claimed accepted sync Action',
+                'definition_json'      => [ 'prompt_template' => 'Summarize this accepted submission: {{entry}}.' ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
+            [
+                'form_source'         => 'fixture_forms',
+                'form_id'             => '99',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'settings_json'       => [ 'async' => false ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $provider_calls = 0;
+        $http_filter = static function ( mixed $preempt, array $args, string $url ) use ( &$provider_calls ): mixed {
+            if ( false === strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return $preempt;
+            }
+
+            ++$provider_calls;
+
+            return [
+                'headers'  => [],
+                'body'     => wp_json_encode(
+                    [
+                        'id'      => 'chatcmpl-accepted-sync-ownership',
+                        'model'   => 'openrouter/auto',
+                        'choices' => [
+                            [
+                                'message'       => [
+                                    'role'    => 'assistant',
+                                    'content' => 'Accepted submission summary.',
+                                ],
+                                'finish_reason' => 'stop',
+                            ],
+                        ],
+                        'usage'   => [
+                            'prompt_tokens'     => 8,
+                            'completion_tokens' => 4,
+                            'total_tokens'      => 12,
+                        ],
+                    ]
+                ),
+                'response' => [ 'code' => 200, 'message' => 'OK' ],
+                'cookies'  => [],
+            ];
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        try
+        {
+            $result = ( new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() ) )
+                ->run_accepted_submission_with_outcome(
+                    new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                    [ 'native' => 'claimed-sync-ownership' ]
+                );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $http_filter, 10 );
+        }
+
+        $runtime_mapping_id = 'local_first_' . $mapping_id;
+        $this->assertSame( 1, $provider_calls );
+        $this->assertSame( 'succeeded', $result->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->list_for_submission_uuid( (string) $result->get_submission_uuid() );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
+        $this->assertSame( 'openrouter', $events[0]['provider'] ?? null );
+        $request = Sentient_Forms_Plugin::instance()->get_async_request_store()->get(
+            (string) ( $events[0]['execution_request_id'] ?? '' ),
+            'accepted_sync'
+        );
+        $this->assertSame( 'success', $request['status'] ?? null );
+    }
+
     public function test_accepted_runner_records_unsupported_native_effect_outcomes_before_filtering(): void
     {
         global $wpdb;
@@ -838,6 +1035,67 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $events[0]['status'] ?? null );
     }
 
+    public function test_synchronous_accepted_execution_aborts_malformed_post_claim_capability_before_effects(): void
+    {
+        global $wpdb;
+
+        ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
+            'fixture_forms',
+            '99',
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+        delete_option( 'sentient_forms_action_log' );
+
+        $calls  = 0;
+        $action = new Sentient_Forms_Test_Context_Tracking_Action(
+            'fixture_malformed_accepted_claim',
+            static function () use ( &$calls ): array {
+                ++$calls;
+                return [ 'classification' => 'must-not-run' ];
+            }
+        );
+        $configured = $this->configure_accepted_mapping( 'fixture_malformed_accepted_claim', $action );
+
+        $plugin          = Sentient_Forms_Plugin::instance();
+        $original_store  = $plugin->get_async_request_store();
+        $malformed_store = new Sentient_Forms_Test_Malformed_Accepted_Claim_Request_Store( $wpdb );
+        $store_property  = ( new ReflectionClass( $plugin ) )->getProperty( 'async_request_store' );
+        $store_property->setValue( $plugin, $malformed_store );
+        $malformed_store->malform_next_claim = true;
+
+        try
+        {
+            $first = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'malformed-accepted-claim' ]
+            );
+
+            $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+                ->list_for_submission_uuid( (string) $first->get_submission_uuid() );
+            $this->assertCount( 1, $events );
+            $request_id = (string) ( $events[0]['execution_request_id'] ?? '' );
+            $this->assertSame( 0, $calls );
+            $this->assertSame( 'failed', $first->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+            $this->assertSame( 'failed', $events[0]['status'] ?? null );
+            $this->assertSame( 'sentient_forms_local_execution_claim_invalid', $events[0]['error_code'] ?? null );
+            $this->assertSame( 'failed', $malformed_store->get( $request_id, 'accepted_sync' )['status'] ?? null );
+
+            $replay = $configured['runner']->run_accepted_submission_with_outcome(
+                new Sentient_Forms_Test_Accepted_Submission_Adapter(),
+                [ 'native' => 'malformed-accepted-claim-replay' ]
+            );
+            $this->assertSame( 0, $calls );
+            $this->assertSame( 'replayed_failed', $replay->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+            $this->assertCount( 1, get_option( 'sentient_forms_action_log', [] ) );
+        }
+        finally
+        {
+            $store_property->setValue( $plugin, $original_store );
+            delete_option( 'sentient_forms_action_log' );
+        }
+    }
+
     public function test_synchronous_claim_rechecks_global_disable_inside_the_authority_fence(): void
     {
         global $wpdb;
@@ -912,6 +1170,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
     {
         global $wpdb;
 
+        delete_option( 'sentient_forms_action_log' );
+
         ( new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb ) )->set_enabled(
             'fixture_forms',
             '99',
@@ -979,10 +1239,13 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
 
         $request_id = (string) ( $execution_context['execution_request_id'] ?? '' );
         $request    = Sentient_Forms_Plugin::instance()->get_async_request_store()->get( $request_id, 'accepted_sync' );
+        $event      = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
         $this->assertTrue( $failed_success_transition );
         $this->assertSame( 1, $calls );
-        $this->assertSame( 'failed', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertSame( 'indeterminate', $result->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
         $this->assertSame( 'indeterminate', $request['status'] ?? null );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertSame( [], get_option( 'sentient_forms_action_log', [] ) );
 
         update_option( 'sentient_forms_plugin_settings', $enabled_plugin_settings, false );
         try
@@ -1004,7 +1267,7 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             }
         }
         $this->assertSame( 1, $calls );
-        $this->assertSame( 'replayed_active', $replay->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
+        $this->assertSame( 'indeterminate', $replay->get_mapping_outcomes()[ $configured['runtime_mapping_id'] ] ?? null );
     }
 
     public function test_synchronous_terminal_authority_and_action_log_share_one_reset_fence(): void
@@ -1713,6 +1976,94 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( (string) $first_uuid );
         $this->assertCount( 1, $events );
         $this->assertSame( 'failed', $events[0]['status'] ?? null );
+    }
+
+    /**
+     * @dataProvider terminal_persistence_effect_boundary_cases
+     */
+    public function test_synchronous_accepted_terminal_persistence_failure_is_indeterminate_and_non_replayable(
+        bool $effects_completed
+    ): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'fixture_forms', '99', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        delete_option( 'sentient_forms_action_log' );
+
+        $local_execution = new Sentient_Forms_Test_Terminal_Persistence_Local_Execution_Service( $effects_completed );
+        $configured      = $this->configure_accepted_mapping(
+            'fixture_terminal_persistence_' . ( $effects_completed ? 'effects' : 'provider_failure' ),
+            $local_execution,
+            [ 'settings_json' => [ 'synchronous_retry_safe' => true ] ]
+        );
+        $dependent_action_id  = $this->create_local_test_action(
+            'fixture_terminal_persistence_dependent_' . ( $effects_completed ? 'effects' : 'provider_failure' )
+        );
+        $dependent_mapping_id = $this->create_local_test_mapping(
+            $dependent_action_id,
+            [
+                'settings_json' => [
+                    'dependency_ids' => [ $configured['runtime_mapping_id'] ],
+                    'trigger_sources' => [
+                        'after_submission' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => $configured['runtime_mapping_id'],
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $dependent_runtime_mapping_id = 'local_first_' . $dependent_mapping_id;
+        $adapter = new Sentient_Forms_Test_Accepted_Submission_Adapter();
+
+        $first = $configured['runner']->run_accepted_submission_with_outcome(
+            $adapter,
+            [ 'native' => 'terminal-persistence' ]
+        );
+        $runtime_mapping_id = $configured['runtime_mapping_id'];
+        $this->assertSame( 'indeterminate', $first->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+        $this->assertSame( 'skipped', $first->get_mapping_outcomes()[ $dependent_runtime_mapping_id ] ?? null );
+        $error = $first->get_execution_result( $runtime_mapping_id );
+        $this->assertWPError( $error );
+        $this->assertSame( 'sentient_forms_terminal_event_persistence_failure', $error->get_error_code() );
+        $this->assertSame( 1, $local_execution->calls );
+        $this->assertSame( [], get_option( 'sentient_forms_action_log', [] ) );
+
+        $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->list_for_submission_uuid( (string) $first->get_submission_uuid() );
+        $this->assertCount( 1, $events );
+        $this->assertSame( 'running', $events[0]['status'] ?? null );
+        $execution_request_id = (string) ( $events[0]['execution_request_id'] ?? '' );
+        $request = Sentient_Forms_Plugin::instance()->get_async_request_store()->get(
+            $execution_request_id,
+            'accepted_sync'
+        );
+        $this->assertSame( 'indeterminate', $request['status'] ?? null );
+
+        $replay = $configured['runner']->run_accepted_submission_with_outcome(
+            $adapter,
+            [ 'native' => 'terminal-persistence' ]
+        );
+        $this->assertSame( 'indeterminate', $replay->get_mapping_outcomes()[ $runtime_mapping_id ] ?? null );
+        $this->assertSame( 'skipped', $replay->get_mapping_outcomes()[ $dependent_runtime_mapping_id ] ?? null );
+        $this->assertSame( 1, $local_execution->calls );
+        $persisted_event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )
+            ->get_by_request_id( $execution_request_id );
+        $this->assertSame( 'running', $persisted_event['status'] ?? null );
+    }
+
+    public function terminal_persistence_effect_boundary_cases(): array
+    {
+        return [
+            'provider succeeded and effects completed' => [ true ],
+            'provider failed before effects'            => [ false ],
+        ];
     }
 
     public function test_synchronous_accepted_exception_is_recorded_as_terminal_failure(): void

@@ -1103,7 +1103,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         $submission_uuid,
                         $execution_request_ids[ (string) $mapping_id ] ?? '',
                         $mapping_native_effect_outcomes,
-                        fn (): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
+                        fn ( Sentient_Forms_Local_Execution_Claim $execution_claim ): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
                             absint( $action_settings['local_form_mapping_id'] ?? 0 ),
                             $form,
                             $entry,
@@ -1118,6 +1118,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                                 'settings'         => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                                     ? $action_settings['settings']
                                     : [],
+                                'local_execution_claim' => $execution_claim,
                             ] + $dependency_context
                         )
                     );
@@ -1167,7 +1168,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     $submission_uuid,
                     $execution_request_ids[ (string) $mapping_id ] ?? '',
                     $mapping_native_effect_outcomes,
-                    fn (): array | bool | WP_Error => $this->execute_synchronous_mapping(
+                    fn ( Sentient_Forms_Local_Execution_Claim $_execution_claim ): array | bool | WP_Error => $this->execute_synchronous_mapping(
                         $central_action_id,
                         $form_source,
                         $form_id,
@@ -1219,7 +1220,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * Claim and execute one synchronous accepted mapping exactly once.
      *
      * @param array<string, mixed> $mapping
-     * @param callable(): (array<string, mixed>|bool|WP_Error) $execute
+     * @param callable(Sentient_Forms_Local_Execution_Claim): (array<string, mixed>|bool|WP_Error) $execute
      *
      * @return array{outcome: string, result: array<string, mixed>|bool|WP_Error|null, native_effect_outcomes: array<int, array{effect: string, status: string, reason: string}>}
      */
@@ -1338,6 +1339,17 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     'native_effect_outcomes' => $this->replayed_native_effect_outcomes( $event, $native_effect_outcomes ),
                 ];
             }
+            if ( 'indeterminate' === $claim_state )
+            {
+                return [
+                    'outcome'                => 'indeterminate',
+                    'result'                 => new WP_Error(
+                        'sentient_forms_synchronous_execution_indeterminate',
+                        __( 'Synchronous accepted action has an indeterminate terminal state and will not be replayed.', 'sentient-forms' )
+                    ),
+                    'native_effect_outcomes' => $this->replayed_native_effect_outcomes( $event, $native_effect_outcomes ),
+                ];
+            }
 
             return [
                 'outcome'                => 'replayed_active',
@@ -1398,9 +1410,74 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             ];
         }
 
+        $execution_claim = Sentient_Forms_Local_Execution_Claim::from_request_store_claim(
+            $claim,
+            $execution_request_id,
+            'accepted_sync'
+        );
+        if ( is_wp_error( $execution_claim ) )
+        {
+            $safe_error = __( 'Synchronous accepted action could not verify its durable execution claim.', 'sentient-forms' );
+            $terminal_event = $events->record(
+                array_merge(
+                    $event_base,
+                    [
+                        'status'        => 'failed',
+                        'error_code'    => $execution_claim->get_error_code(),
+                        'error_message' => $safe_error,
+                        'result_json'   => [ 'native_effect_outcomes' => $native_effect_outcomes ],
+                    ]
+                )
+            );
+            if ( is_wp_error( $terminal_event ) )
+            {
+                $request_transition = $this->finish_and_log_synchronous_request(
+                    $request_store,
+                    $execution_request_id,
+                    'indeterminate',
+                    __( 'Synchronous accepted action claim evidence could not be finalized.', 'sentient-forms' ),
+                    static function ( true | WP_Error $_transition ): void {
+                        // No effect was attempted, but terminal evidence is incomplete.
+                    }
+                );
+
+                return [
+                    'outcome'                => 'indeterminate',
+                    'result'                 => is_wp_error( $request_transition ) ? $request_transition : $terminal_event,
+                    'native_effect_outcomes' => $native_effect_outcomes,
+                ];
+            }
+
+            $request_transition = $this->finish_and_log_synchronous_request(
+                $request_store,
+                $execution_request_id,
+                'failed',
+                $safe_error,
+                function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $execution_claim, $native_effect_outcomes ): void {
+                    $this->log_synchronous_accepted_failure(
+                        $form_source,
+                        $form_id,
+                        $entry_id,
+                        $mapping_id,
+                        $mapping,
+                        $submission_uuid,
+                        $execution_request_id,
+                        is_wp_error( $transition ) ? $transition : $execution_claim,
+                        $native_effect_outcomes
+                    );
+                }
+            );
+
+            return [
+                'outcome'                => is_wp_error( $request_transition ) ? 'indeterminate' : 'failed',
+                'result'                 => is_wp_error( $request_transition ) ? $request_transition : $execution_claim,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
+        }
+
         try
         {
-            $result = $execute();
+            $result = $execute( $execution_claim );
         }
         catch ( Throwable )
         {
@@ -1408,6 +1485,31 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'sentient_forms_synchronous_execution_exception',
                 __( 'Synchronous accepted action failed.', 'sentient-forms' )
             );
+        }
+
+        if ( is_wp_error( $result ) && $this->is_terminal_event_persistence_failure( $result ) )
+        {
+            $safe_error = __( 'Synchronous accepted action crossed the effect boundary without durable terminal evidence.', 'sentient-forms' );
+            $request_transition = $this->finish_and_log_synchronous_request(
+                $request_store,
+                $execution_request_id,
+                'indeterminate',
+                $safe_error,
+                static function ( true | WP_Error $_transition ): void {
+                    // Indeterminate is neither success nor failure. The request
+                    // and execution event retain the authoritative evidence.
+                }
+            );
+            if ( is_wp_error( $request_transition ) )
+            {
+                $result = $request_transition;
+            }
+
+            return [
+                'outcome'                => 'indeterminate',
+                'result'                 => $result,
+                'native_effect_outcomes' => $native_effect_outcomes,
+            ];
         }
 
         if ( is_wp_error( $result ) )
@@ -1433,7 +1535,27 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
             if ( is_wp_error( $terminal_event ) )
             {
-                $result = $terminal_event;
+                $safe_indeterminate_error = __( 'Synchronous accepted action crossed the effect boundary without durable terminal evidence.', 'sentient-forms' );
+                $request_transition = $this->finish_and_log_synchronous_request(
+                    $request_store,
+                    $execution_request_id,
+                    'indeterminate',
+                    $safe_indeterminate_error,
+                    static function ( true | WP_Error $_transition ): void {
+                        // Indeterminate is recorded by the request store. Do not
+                        // misclassify it as a terminal Action failure.
+                    }
+                );
+                if ( is_wp_error( $request_transition ) )
+                {
+                    $terminal_event = $request_transition;
+                }
+
+                return [
+                    'outcome'                => 'indeterminate',
+                    'result'                 => $terminal_event,
+                    'native_effect_outcomes' => $native_effect_outcomes,
+                ];
             }
             $request_transition = $this->finish_and_log_synchronous_request(
                 $request_store,
@@ -1497,24 +1619,13 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
         if ( is_wp_error( $terminal_event ) )
         {
-            $safe_error = __( 'Synchronous accepted action failed.', 'sentient-forms' );
             $request_transition = $this->finish_and_log_synchronous_request(
                 $request_store,
                 $execution_request_id,
                 'indeterminate',
                 __( 'Synchronous accepted action crossed the effect boundary without durable terminal evidence.', 'sentient-forms' ),
-                function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $terminal_event, $native_effect_outcomes ): void {
-                    $this->log_synchronous_accepted_failure(
-                        $form_source,
-                        $form_id,
-                        $entry_id,
-                        $mapping_id,
-                        $mapping,
-                        $submission_uuid,
-                        $execution_request_id,
-                        is_wp_error( $transition ) ? $transition : $terminal_event,
-                        $native_effect_outcomes
-                    );
+                static function ( true | WP_Error $_transition ): void {
+                    // Preserve provider/event evidence without a false failure log.
                 }
             );
             if ( is_wp_error( $request_transition ) )
@@ -1523,7 +1634,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             }
 
             return [
-                'outcome'                => 'failed',
+                'outcome'                => 'indeterminate',
                 'result'                 => $terminal_event,
                 'native_effect_outcomes' => $native_effect_outcomes,
             ];
@@ -1536,17 +1647,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             function ( true | WP_Error $transition ) use ( $form_source, $form_id, $entry_id, $mapping_id, $mapping, $submission_uuid, $execution_request_id, $result_payload, $native_effect_outcomes ): void {
                 if ( is_wp_error( $transition ) )
                 {
-                    $this->log_synchronous_accepted_failure(
-                        $form_source,
-                        $form_id,
-                        $entry_id,
-                        $mapping_id,
-                        $mapping,
-                        $submission_uuid,
-                        $execution_request_id,
-                        $transition,
-                        $native_effect_outcomes
-                    );
+                    // The request store records indeterminate when its success
+                    // transition fails. Do not emit a false Action failure.
                     return;
                 }
 
@@ -1566,7 +1668,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( is_wp_error( $request_transition ) )
         {
             return [
-                'outcome'                => 'failed',
+                'outcome'                => 'indeterminate',
                 'result'                 => $request_transition,
                 'native_effect_outcomes' => $native_effect_outcomes,
             ];
@@ -1618,6 +1720,15 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      *
      * @param callable(true|WP_Error):void $log_terminal_outcome
      */
+    private function is_terminal_event_persistence_failure( WP_Error $error ): bool
+    {
+        $data = $error->get_error_data();
+
+        return 'sentient_forms_terminal_event_persistence_failure' === $error->get_error_code()
+            && is_array( $data )
+            && true === ( $data['terminal_persistence_failure'] ?? false );
+    }
+
     private function finish_and_log_synchronous_request(
         Sentient_Forms_Async_Request_Store $request_store,
         string $execution_request_id,
@@ -1702,7 +1813,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         if ( $actual_succeeded !== $expected_succeeded )
         {
             return $this->record_terminal_invariant_failure(
-                $events,
                 $event,
                 'sentient_forms_executor_terminal_status_mismatch'
             );
@@ -1714,7 +1824,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             if ( is_wp_error( $recorded ) )
             {
                 return $this->record_terminal_invariant_failure(
-                    $events,
                     $event,
                     'sentient_forms_executor_terminal_enrichment_failed'
                 );
@@ -1744,7 +1853,6 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         }
 
         return $this->record_terminal_invariant_failure(
-            $events,
             $event,
             'sentient_forms_runner_terminal_persistence_failed'
         );
@@ -1757,26 +1865,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * @param array<string, mixed> $event
      */
     private function record_terminal_invariant_failure(
-        Sentient_Forms_Execution_Events_Repository $events,
         array $event,
         string $error_code
     ): WP_Error
     {
-        $safe_error             = __( 'Synchronous accepted action evidence could not be finalized.', 'sentient-forms' );
-        $event['status']        = 'failed';
-        $event['error_code']    = $error_code;
-        $event['error_message'] = $safe_error;
-        $recorded               = $events->record( $event );
-
-        if ( is_wp_error( $recorded ) )
-        {
-            return new WP_Error(
-                'sentient_forms_terminal_invariant_persistence_failed',
-                $safe_error
-            );
-        }
-
-        return new WP_Error( $error_code, $safe_error );
+        return new WP_Error(
+            $error_code,
+            __( 'Synchronous accepted action evidence could not be finalized.', 'sentient-forms' ),
+            [
+                'terminal_authority_failure' => true,
+                'preserved_event_status'     => sanitize_key( (string) ( $event['status'] ?? '' ) ),
+            ]
+        );
     }
 
     /**
@@ -2056,6 +2156,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         return match ( $status ) {
             'queued', 'running'      => 'replayed_active',
             'success', 'succeeded'   => 'replayed_success',
+            'indeterminate'          => 'indeterminate',
             default                  => 'failed',
         };
     }
@@ -2473,8 +2574,8 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             $dependency_id = sanitize_text_field( (string) $dependency_id );
             $blocking_outcomes = $allow_queued_dependencies
-                ? [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict' ]
-                : [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict', 'queued', 'replayed_active' ];
+                ? [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict', 'indeterminate' ]
+                : [ null, 'failed', 'replayed_failed', 'skipped', 'digest_conflict', 'indeterminate', 'queued', 'replayed_active' ];
             if ( '' !== $dependency_id && in_array( $mapping_outcomes[ $dependency_id ] ?? null, $blocking_outcomes, true ) )
             {
                 return $dependency_id;
