@@ -5,6 +5,7 @@ import {
 	type LocalDiagnosticsSettingsResponse
 } from '$lib/api/local-diagnostics-contract';
 import { notifications } from '$lib/stores/notifications';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export interface LocalDiagnosticsState {
 	loading: boolean;
@@ -15,7 +16,7 @@ export interface LocalDiagnosticsState {
 }
 
 const runtime = parseLocalDiagnosticsBootstrap(
-	typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.telemetry
+	readRuntimeConfigSafely()?.telemetry
 );
 const initialState: LocalDiagnosticsState = {
 	loading: false,
@@ -36,16 +37,17 @@ function mapResponse(payload: LocalDiagnosticsSettingsResponse): LocalDiagnostic
 }
 
 export function createLocalDiagnosticsStore(
-	client: SentientFormsApiClient = createClientFromConfig()
+	client?: SentientFormsApiClient
 ) {
 	const { subscribe, set, update } = writable<LocalDiagnosticsState>({ ...initialState });
+	const resolveClient = () => client ?? createClientFromConfig();
 
 	return {
 		subscribe,
 		async load() {
 			update((state) => ({ ...state, loading: true }));
 			try {
-				const response = await client.getLocalDiagnosticsSettings({
+				const response = await resolveClient().getLocalDiagnosticsSettings({
 					showNotifications: false
 				});
 				const mapped = mapResponse(response);
@@ -64,7 +66,7 @@ export function createLocalDiagnosticsStore(
 		async setEnabled(next: boolean) {
 			update((state) => ({ ...state, saving: true }));
 			try {
-				const response = await client.updateLocalDiagnosticsSettings(next, {
+				const response = await resolveClient().updateLocalDiagnosticsSettings(next, {
 					showNotifications: true
 				});
 				const mapped = mapResponse(response);

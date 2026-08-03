@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
+	import { localMigrationBundleSchema } from '$lib/api/endpoint-schemas';
 	import { notifications } from '$lib/stores/notifications';
 	import { Button, StateTemplate } from '$lib/components/ui';
 	import type {
@@ -8,6 +9,7 @@
 		LocalMigrationDryRunResponse,
 		LocalMigrationImportApplyResponse,
 		LocalMigrationImportDryRunResponse,
+		LocalMigrationImportRequest,
 		LocalMigrationImportReport,
 		LocalMigrationReadinessReport
 	} from '$lib/api/types';
@@ -220,18 +222,18 @@
 		return exactCount + prefixCount;
 	}
 
-	function parseImportBundle(): Record<string, unknown> | null {
+	function parseImportBundle(): LocalMigrationImportRequest['bundle'] | null {
 		importError = null;
 		importApplyResult = null;
 
 		try {
-			const parsed: unknown = JSON.parse(importText);
-			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-				importError = 'Paste a single CPS export JSON object.';
+			const parsed = localMigrationBundleSchema.safeParse(JSON.parse(importText));
+			if (!parsed.success) {
+				importError = 'The CPS export bundle does not match the supported migration contract.';
 				return null;
 			}
 
-			return parsed as Record<string, unknown>;
+			return parsed.data;
 		} catch {
 			importError = 'The CPS export bundle is not valid JSON.';
 			return null;
@@ -240,9 +242,8 @@
 
 	function fingerprintBundleText(value: string): string | null {
 		try {
-			const parsed: unknown = JSON.parse(value);
-			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-			return fingerprintBundle(parsed as Record<string, unknown>);
+			const parsed = localMigrationBundleSchema.safeParse(JSON.parse(value));
+			return parsed.success ? fingerprintBundle(parsed.data) : null;
 		} catch {
 			return null;
 		}

@@ -193,10 +193,11 @@
 			applyDrafts(profileData);
 			const requestedView = requestedViewFromLocation();
 			view = requestedView ?? (profileData.readiness.ready ? 'dashboard' : 'setup');
-			const profileId = profileData.profile?.id;
+			const profile = profileData.profile;
+			const profileId = profile?.id;
 			if (
 				profileId &&
-				isGenerationPending(resolveGenerationStatus(profileData.profile.generation_metadata))
+				isGenerationPending(resolveGenerationStatus(profile.generation_metadata))
 			) {
 				void pollProfileGeneration(profileId);
 			}
@@ -510,7 +511,6 @@
 				correctionEntry.entry_id,
 				parsed.data
 			);
-			profileResponse = response;
 			dashboard = response.dashboard ?? dashboard;
 			const updatedEntry = (response.entry as LeadScoringEntry | undefined) ?? correctionEntry;
 			selectedEntryDetail =

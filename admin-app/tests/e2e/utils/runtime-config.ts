@@ -1,26 +1,23 @@
-import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import type { SentientFormsConfig } from '$lib/api/http';
 import type { FormSourceSummary } from '$lib/api/types';
+import { getPreviewOrigin } from './preview-origin';
 
 const defaultFormSources: FormSourceSummary[] = [
 	{ slug: 'gravity_forms', label: 'Gravity Forms', isActive: true }
 ];
 
-const defaultWpHost = existsSync('/.dockerenv')
-	? 'http://host.docker.internal:8080'
-	: 'http://localhost:8080';
-const wpHost = process.env.SENTIENT_WP_BASE_URL ?? defaultWpHost;
 const useRestRoute = process.env.SENTIENT_WP_USE_REST_ROUTE === '1';
+const previewOrigin = getPreviewOrigin();
 const apiBase = useRestRoute
-	? `${wpHost}/index.php?rest_route=/sentient-forms/v1/`
-	: `${wpHost}/wp-json/sentient-forms/v1/`;
+	? `${previewOrigin}/index.php?rest_route=/sentient-forms/v1/`
+	: `${previewOrigin}/wp-json/sentient-forms/v1/`;
 
 const baseConfig: SentientFormsConfig = {
 	apiBaseUrl: apiBase,
 	restNonce: 'e2e-rest-nonce',
 	ajaxNonce: 'e2e-ajax-nonce',
-	siteUrl: wpHost,
+	siteUrl: previewOrigin,
 	localSiteIdentifier: 'local-dev',
 	formSources: defaultFormSources,
 	license: {

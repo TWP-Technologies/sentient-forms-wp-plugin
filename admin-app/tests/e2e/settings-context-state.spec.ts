@@ -23,8 +23,10 @@ test.describe('Settings context state templates', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: {},
 					execution_event_retention_days: 90,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: false,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'balanced',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -897,6 +899,7 @@ test.describe('Settings context state templates', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: {},
 					execution_event_retention_days: 90,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: false,
 					managed_zdr_required: true,

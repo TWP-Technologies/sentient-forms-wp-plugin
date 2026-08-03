@@ -1,5 +1,4 @@
-import type { FormSourceSummary } from '$lib/api/types';
-import type { LocalDiagnosticsBootstrap } from '$lib/api/local-diagnostics-contract';
+import { requireRuntimeConfig } from '$lib/schemas/runtime-config';
 import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
@@ -22,55 +21,6 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
 	method?: HttpMethod;
 	body?: unknown;
 	showNotifications?: boolean;
-}
-
-export interface SentientFormsConfig {
-	apiBaseUrl: string;
-	restNonce: string;
-	ajaxNonce: string;
-	siteUrl: string;
-	localSiteIdentifier?: string;
-	pluginVersion?: string;
-	initialRoute?: string;
-	formSources?: FormSourceSummary[];
-	license?: {
-		status?: string;
-		licenseKeyMasked?: string;
-		proxyKeyPresent?: boolean;
-		tier?: string | null;
-		expiresAt?: string | null;
-		lastSynced?: string | null;
-		licenseId?: string | null;
-		siteId?: string | null;
-	};
-	i18n?: Record<string, string>;
-	devMode?: boolean;
-	demoMode?: boolean;
-	devServerUrl?: string | null;
-	telemetry?: LocalDiagnosticsBootstrap;
-	asyncSettings?: {
-		maxAttempts: number;
-		baseDelaySeconds: number;
-		maxDelaySeconds: number;
-		updatedAt?: string | null;
-		updatedBy?: string | null;
-	};
-	asyncHealth?: {
-		queue_depth: number;
-		oldest_run_at: number | null;
-		recent_failures: Record<string, number>;
-		warnings: Array<{ code: string; level: string; message: string }>;
-	};
-	currentUser?: {
-		id: number;
-		canManage: boolean;
-	};
-}
-
-declare global {
-	interface Window {
-		sentientFormsConfig?: SentientFormsConfig;
-	}
 }
 
 export class ApiError extends Error {
@@ -97,15 +47,8 @@ export class ApiError extends Error {
 	}
 }
 
-function getRuntimeConfig(): SentientFormsConfig {
-	if (typeof window === 'undefined' || !window.sentientFormsConfig) {
-		throw new Error('Sentient Forms runtime config missing.');
-	}
-	return window.sentientFormsConfig;
-}
-
-export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const config = getRuntimeConfig();
+export async function apiFetch(path: string, options: RequestOptions = {}): Promise<unknown> {
+	const config = requireRuntimeConfig();
 
 	const { method = 'GET', showNotifications = true, headers, body, ...rest } = options;
 
@@ -180,7 +123,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 		throw error;
 	}
 
-	return payload as T;
+	return payload;
 }
 
 function stringValue(value: unknown): string {

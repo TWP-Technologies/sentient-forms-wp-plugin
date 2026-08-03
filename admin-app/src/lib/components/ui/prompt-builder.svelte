@@ -6,6 +6,7 @@
   Still allows adding custom keys for advanced users.
 -->
 <script lang="ts">
+	import { z } from 'zod';
 	import { parsePromptOverridesInput } from '$lib/utils/custom-actions';
 	import Button from './button.svelte';
 	import type {
@@ -91,7 +92,8 @@
 				} else {
 					// Unknown type: try JSON parse, fall back to string
 					try {
-						obj[pair.key.trim()] = JSON.parse(pair.value);
+						const parsed = z.json().safeParse(JSON.parse(pair.value));
+						obj[pair.key.trim()] = parsed.success ? parsed.data : pair.value;
 					} catch {
 						obj[pair.key.trim()] = pair.value;
 					}

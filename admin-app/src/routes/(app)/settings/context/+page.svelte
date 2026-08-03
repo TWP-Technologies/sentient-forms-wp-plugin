@@ -16,6 +16,7 @@
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		buildSiteContextGenerateRequest,
 		compactSiteContextModelSelection,
 		normalizeSiteContextResponse,
 		siteContextGenerateDisabledMessage,
@@ -24,7 +25,7 @@
 		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	const CONTEXT_HARD_LIMIT = 5000;
 	const GENERATION_POLL_INTERVAL_MS = 3000;
@@ -200,7 +201,10 @@
 			return;
 		}
 
-		if (job?.status === 'failed' && siteContextGenerationFailureIsFresh(previousStatus, nextStatus)) {
+		if (
+			job?.status === 'failed' &&
+			siteContextGenerationFailureIsFresh(previousStatus, nextStatus)
+		) {
 			const message = job.error ?? 'Failed to generate Site Context';
 			error = message;
 			failGenerationToast(message);
@@ -210,9 +214,7 @@
 	async function pollGenerationStatus(): Promise<void> {
 		if (!mounted) return;
 		try {
-			const next = parseSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
-			);
+			const next = parseSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 			if (!mounted) return;
 			generationPollFailures = 0;
 			syncFromStatus(next, { preserveLocalEdits: true });
@@ -250,9 +252,7 @@
 		loading = true;
 		error = null;
 		try {
-			const next = parseSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
-			);
+			const next = parseSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 			if (!mounted) return;
 			syncFromStatus(next);
 		} catch (e) {
@@ -282,9 +282,9 @@
 		saving = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+			const response = await wpRequestEndpoint('siteContext.update', {
 				method: 'PUT',
-				body: JSON.stringify(buildSettingsPayload()),
+				body: buildSettingsPayload(),
 				showNotifications: false
 			});
 			syncFromStatus(parseSiteContextResponse(response));
@@ -309,9 +309,9 @@
 		generating = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
+			const response = await wpRequestEndpoint('siteContext.generate', {
 				method: 'POST',
-				body: JSON.stringify(buildSettingsPayload()),
+				body: buildSiteContextGenerateRequest(buildSettingsPayload()),
 				showNotifications: false
 			});
 			syncFromStatus(parseSiteContextResponse(response));
@@ -330,7 +330,7 @@
 		withdrawing = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+			const response = await wpRequestEndpoint('siteContext.withdraw', {
 				method: 'DELETE'
 			});
 			syncFromStatus(parseSiteContextResponse(response));

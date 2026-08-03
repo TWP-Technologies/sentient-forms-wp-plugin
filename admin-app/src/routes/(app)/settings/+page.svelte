@@ -16,11 +16,14 @@
 		SiteContextStatusResponse
 	} from '$lib/api/types';
 	import { navigateToAppPath } from '$lib/navigation';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 	import InfoIcon from '@lucide/svelte/icons/info';
 	import { normalizeSiteContextResponse, siteContextStatusLabel } from '$lib/utils/site-context';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
+	import { parseSiteContextStatusResponse } from '$lib/schemas/site-context';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
+	type RetentionDays = PluginSettingsResponse['execution_event_retention_days'];
 
 	interface PrivacyPresetDefinition {
 		label: string;
@@ -35,7 +38,7 @@
 	const asyncHealth = asyncHealthStore;
 	const logging = loggingStore;
 	const client = createClientFromConfig();
-	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+	const runtime = readRuntimeConfigSafely();
 	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
 
 	let formDirty = $state(false);
@@ -54,7 +57,7 @@
 	let retentionSaving = $state(false);
 	let managedZdrSaving = $state(false);
 	let settingsWriteInFlight = $derived(executionSaving || retentionSaving || managedZdrSaving);
-	let executionEventRetentionDays = $state(90);
+	let executionEventRetentionDays = $state<RetentionDays>(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
 	let managedZdrRequired = $state(false);
@@ -425,8 +428,8 @@
 	async function loadSiteContextStatus(): Promise<void> {
 		siteContextLoading = true;
 		try {
-			siteContextStatus = normalizeSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
+			siteContextStatus = parseSiteContextStatusResponse(
+				normalizeSiteContextResponse(await wpRequestEndpoint('siteContext.read'))
 			);
 		} catch (error) {
 			console.error('Failed to load Site Context status', error);

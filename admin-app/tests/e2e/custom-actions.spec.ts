@@ -5,7 +5,7 @@ import { mockWpJson } from './utils/mock-wpjson';
 
 test.describe('Custom actions admin view', () => {
 	test.beforeEach(async ({ page }) => {
-		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 	});
 
@@ -121,6 +121,7 @@ test.describe('Custom actions admin view', () => {
 			execution_global_disabled: false,
 			execution_provider_disabled: {},
 			execution_event_retention_days: 90,
+			submission_ledger_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
 			privacy_setup_profile: 'balanced',

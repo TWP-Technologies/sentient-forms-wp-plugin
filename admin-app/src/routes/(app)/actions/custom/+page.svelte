@@ -198,7 +198,7 @@
 									class="sf:p-2 sf:font-mono sf:text-xs sf:break-all sf:max-w-xs sf:truncate"
 									title={action.template_id}
 								>
-									{action.template_id.slice(0, 8)}…
+									{action.template_id ? `${action.template_id.slice(0, 8)}…` : '—'}
 								</td>
 								<td class="sf:p-2">
 									<Badge variant={action.status === 'active' ? 'success' : 'neutral'}>

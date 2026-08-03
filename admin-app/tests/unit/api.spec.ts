@@ -23,7 +23,7 @@ declare global {
 
 describe('apiFetch', () => {
 	const config = {
-		apiBaseUrl: 'https://example.com/wp-json/sentient-forms/v1/',
+		apiBaseUrl: 'http://localhost:3000/wp-json/sentient-forms/v1/',
 		restNonce: 'abc123'
 	};
 
@@ -103,29 +103,39 @@ describe('apiFetch', () => {
 		await expect(apiFetch('bad')).rejects.toBeInstanceOf(ApiError);
 	});
 
-	it('throws a diagnostic ApiError for contaminated JSON responses', async () => {
+	it('throws a payload-safe ApiError for contaminated JSON responses', async () => {
 		window.sentientFormsConfig = config;
+		const secret = 'sk-live-must-not-escape';
 
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue(
-				new Response('x{"success":true}', {
+				new Response(`${secret}{"success":true}`, {
 					status: 200,
 					headers: { 'content-type': 'application/json' }
 				})
 			)
 		);
 
-		await expect(apiFetch('test')).rejects.toMatchObject({
+		let rejected: unknown;
+		try {
+			await apiFetch('test');
+		} catch (error) {
+			rejected = error;
+		}
+
+		expect(rejected).toMatchObject({
 			code: 'invalid_json_response',
 			status: 200,
 			payload: {
 				code: 'invalid_json_response',
 				error_code: 'invalid_json_response',
-				body_prefix: expect.stringContaining('x{"success"'),
+				body_length: expect.any(Number),
 				url: `${config.apiBaseUrl}test`
 			}
 		});
+		expect(JSON.stringify(rejected)).not.toContain(secret);
+		expect(String(rejected)).not.toContain(secret);
 	});
 
 	it('announces expired WordPress sessions from the legacy wpFetch wrapper', async () => {
@@ -315,10 +325,16 @@ describe('apiFetch', () => {
 		window.history.replaceState({}, '', '/wp/wp-admin/admin.php?page=sentient-forms');
 
 		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(JSON.stringify({ success: true, data: { ok: true } }), {
-				status: 200,
-				headers: { 'content-type': 'application/json' }
-			})
+			new Response(
+				JSON.stringify({
+					success: true,
+					data: { local_diagnostics_enabled: false, updated_at: null }
+				}),
+				{
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				}
+			)
 		);
 
 		const client = createClientFromConfig({
@@ -326,18 +342,30 @@ describe('apiFetch', () => {
 			notifyErrors: false
 		});
 
-		await client.request('settings');
+		await client.requestEndpoint('telemetry.read');
 
-		expect(window.sentientFormsConfig?.siteUrl).toBe('http://localhost:3000/wp');
-		expect(window.sentientFormsConfig?.apiBaseUrl).toBe(
-			'http://localhost:3000/wp/wp-json/sentient-forms/v1/'
-		);
+		expect(window.sentientFormsConfig).toBeUndefined();
 		expect(fetchMock).toHaveBeenCalledWith(
-			'http://localhost:3000/wp/wp-json/sentient-forms/v1/settings',
+			'http://localhost:3000/wp/wp-json/sentient-forms/v1/telemetry',
 			expect.objectContaining({
 				credentials: 'same-origin'
 			})
 		);
+	});
+
+	it('fails closed instead of guessing request authority from malformed runtime config', () => {
+		window.sentientFormsConfig = {
+			apiBaseUrl: 'javascript:alert(1)',
+			restNonce: 'must-not-escape',
+			siteUrl: 'http://localhost:3000'
+		};
+
+		expect(() =>
+			createClientFromConfig({
+				fetchImpl: vi.fn(),
+				notifyErrors: false
+			})
+		).toThrow('Sentient Forms runtime config is invalid.');
 	});
 
 	it('uses the latest WordPress REST nonce when runtime config is injected after client creation', async () => {
@@ -345,10 +373,16 @@ describe('apiFetch', () => {
 		window.history.replaceState({}, '', '/wp-admin/admin.php?page=sentient-forms');
 
 		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(JSON.stringify({ success: true, data: { ok: true } }), {
-				status: 200,
-				headers: { 'content-type': 'application/json' }
-			})
+			new Response(
+				JSON.stringify({
+					success: true,
+					data: { local_diagnostics_enabled: false, updated_at: null }
+				}),
+				{
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				}
+			)
 		);
 
 		const client = createClientFromConfig({
@@ -362,10 +396,10 @@ describe('apiFetch', () => {
 			siteUrl: 'http://localhost:3000'
 		};
 
-		await client.request('settings');
+		await client.requestEndpoint('telemetry.read');
 
 		expect(fetchMock).toHaveBeenCalledWith(
-			'http://localhost:3000/wp-json/sentient-forms/v1/settings',
+			'http://localhost:3000/wp-json/sentient-forms/v1/telemetry',
 			expect.objectContaining({
 				headers: expect.objectContaining({
 					'X-WP-Nonce': 'late-rest-nonce'

@@ -93,13 +93,33 @@ const localActionTemplates = [
 	{
 		id: 1,
 		source: 'bundled',
+		external_id: null,
 		code: 'spam_detection',
 		display_name: 'Spam detection',
 		description: 'Detect unwanted submissions.',
 		prompt_template: 'Classify this entry.',
 		default_model: 'openrouter/free-model',
+		structured_output_schema: null,
+		override_schema: null,
 		version: '1',
-		is_active: true
+		is_active: true,
+		created_at: null,
+		updated_at: null
+	}
+];
+
+const localDashboardCustomActions = [
+	{
+		id: 1,
+		external_id: 'action-alpha',
+		template_id: null,
+		code: 'alpha',
+		display_name: 'Alpha action',
+		definition_json: {},
+		model_selection_json: null,
+		status: 'active',
+		created_at: '2026-02-20T00:00:00Z',
+		updated_at: '2026-02-24T00:00:00Z'
 	}
 ];
 
@@ -107,10 +127,22 @@ const localExecutionEvents = [
 	{
 		id: 1,
 		execution_request_id: 'run-responsive-1',
+		mapping_id: null,
+		form_source: null,
+		form_id: null,
+		entry_id: null,
 		provider: 'openrouter',
 		model: 'openrouter/free-model',
 		status: 'succeeded',
-		created_at: '2030-01-05T10:00:00Z'
+		token_usage_json: null,
+		cost_json: null,
+		result_json: null,
+		error_code: null,
+		error_message: null,
+		payload_digest: null,
+		created_at: '2030-01-05T10:00:00Z',
+		updated_at: null,
+		expires_at: null
 	}
 ];
 
@@ -159,14 +191,14 @@ const actionDefinitions = [
 		label: 'Spam detection',
 		source: 'cps',
 		hooks: ['gform_validation', 'gform_after_submission'],
-		base_credit_cost: 2
+		baseCreditCost: 2
 	},
 	{
 		id: 'spam_analysis',
 		label: 'Spam analysis',
 		source: 'cps',
 		hooks: ['gform_validation'],
-		base_credit_cost: 2
+		baseCreditCost: 2
 	}
 ];
 
@@ -334,7 +366,9 @@ export async function mockResponsiveApi(
 	];
 
 	const workflowPlan = {
-		authority: 'wp_rest',
+		authority: 'local',
+		authority_reason: 'responsive_fixture',
+		cps_unreachable: true,
 		policy_version: '2026-02-mixed-sync-async-v1',
 		hook_scope: 'all',
 		available_hooks: ['gform_validation', 'gform_after_submission'],
@@ -387,8 +421,10 @@ export async function mockResponsiveApi(
 			[formSourceSlug]: false
 		},
 		execution_event_retention_days: 90,
+		submission_ledger_retention_days: 90,
 		delete_data_on_uninstall: true,
 		store_full_ai_outputs: false,
+		managed_zdr_required: false,
 		privacy_setup_profile: 'balanced',
 		privacy_setup_completed_at: '2026-02-24T10:00:00Z'
 	};
@@ -448,7 +484,7 @@ export async function mockResponsiveApi(
 					generated_at: '2030-01-05T10:00:00Z',
 					providers: localProviderCredentials,
 					templates: localActionTemplates,
-					custom_actions: customActions,
+					custom_actions: localDashboardCustomActions,
 					recent_events: localExecutionEvents,
 					license: defaultLicense,
 					async_health: asyncHealthState

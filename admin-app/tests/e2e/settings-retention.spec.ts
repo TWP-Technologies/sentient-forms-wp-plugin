@@ -35,8 +35,10 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 180,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: true,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'maximum_visibility',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -119,6 +121,7 @@ test.describe('Settings retention controls', () => {
 			execution_global_disabled: false,
 			execution_provider_disabled: { gravity_forms: false },
 			execution_event_retention_days: 90,
+			submission_ledger_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
 			managed_zdr_required: false,
@@ -235,8 +238,10 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 30,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: false,
 					store_full_ai_outputs: true,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'maximum_visibility',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})
@@ -311,8 +316,10 @@ test.describe('Settings retention controls', () => {
 					execution_global_disabled: false,
 					execution_provider_disabled: { gravity_forms: false },
 					execution_event_retention_days: 90,
+					submission_ledger_retention_days: 90,
 					delete_data_on_uninstall: true,
 					store_full_ai_outputs: false,
+					managed_zdr_required: false,
 					privacy_setup_profile: 'balanced',
 					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 				})

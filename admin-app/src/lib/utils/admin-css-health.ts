@@ -1,4 +1,5 @@
 import { array as zodArray, enum as zodEnum } from 'zod';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export const ADMIN_CSS_HEALTH_WARNING = '[Sentient Forms] Admin CSS health check failed';
 
@@ -71,11 +72,13 @@ function queryElement(root: ParentNode, selector: string): HTMLElement | null {
 
 function cssHealthProbeEnabled(): boolean {
 	if (import.meta.env.DEV || import.meta.env.MODE === 'test') return true;
-	return typeof window !== 'undefined' && Boolean(window.sentientFormsConfig?.devMode);
+	return Boolean(readRuntimeConfigSafely()?.devMode);
 }
 
 function isAdminCssHealthTarget(value: unknown): value is AdminCssHealthTarget {
-	return typeof value === 'string' && ADMIN_CSS_HEALTH_TARGETS.includes(value as AdminCssHealthTarget);
+	return (
+		typeof value === 'string' && ADMIN_CSS_HEALTH_TARGETS.includes(value as AdminCssHealthTarget)
+	);
 }
 
 function resolveZodRuntime(): ZodRuntime | null {

@@ -41,6 +41,7 @@ import type {
 	TopUpCheckoutSessionRequest,
 	TopUpCheckoutSessionResponse
 } from './types';
+import { endpointRegistry } from './endpoint-schemas';
 import type { LocalDiagnosticsSettingsResponse } from './local-diagnostics-contract';
 
 type AsyncSettingsPayload = {
@@ -126,13 +127,14 @@ export class MockSentientFormsApiClient {
 	private formDisabled: Record<string, boolean> = {};
 	private localDiagnosticsSettings: LocalDiagnosticsSettingsResponse = {
 		local_diagnostics_enabled: true,
-		updated_at: new Date().toISOString()
+		updated_at: null
 	};
 	private pluginSettings: PluginSettingsResponse = {
 		enable_logging: true,
 		execution_global_disabled: false,
 		execution_provider_disabled: {},
 		execution_event_retention_days: 90,
+		submission_ledger_retention_days: 90,
 		delete_data_on_uninstall: true,
 		store_full_ai_outputs: false,
 		managed_zdr_required: false,
@@ -151,8 +153,7 @@ export class MockSentientFormsApiClient {
 		return {
 			success: true,
 			message: 'Mock license activated',
-			status: 'active',
-			proxyApiKey: 'mock-proxy-key'
+			status: 'active'
 		};
 	}
 
@@ -299,7 +300,9 @@ export class MockSentientFormsApiClient {
 		return { ...this.localDiagnosticsSettings };
 	}
 
-	async updateLocalDiagnosticsSettings(enabled: boolean): Promise<LocalDiagnosticsSettingsResponse> {
+	async updateLocalDiagnosticsSettings(
+		enabled: boolean
+	): Promise<LocalDiagnosticsSettingsResponse> {
 		this.localDiagnosticsSettings = {
 			local_diagnostics_enabled: enabled,
 			updated_at: new Date().toISOString()
@@ -339,7 +342,7 @@ export class MockSentientFormsApiClient {
 	}
 
 	async getDashboardSummary(): Promise<DashboardSummaryResponse> {
-		return {
+		return endpointRegistry['dashboard.summary'].response.parse({
 			generated_at: new Date().toISOString(),
 			providers: this.providerCredentials,
 			templates: [],
@@ -349,7 +352,7 @@ export class MockSentientFormsApiClient {
 			recent_events: [],
 			license: await this.getLicenseInfo(),
 			async_health: await this.getAsyncHealth()
-		};
+		});
 	}
 
 	private toLocalCustomActionRecord(action: CustomAction, index: number): LocalCustomActionRecord {
@@ -380,7 +383,7 @@ export class MockSentientFormsApiClient {
 	async getFormsOverview(formSourceSlug: string): Promise<FormsOverviewResponse> {
 		const forms = await this.getForms(formSourceSlug);
 		const executionStatus = await this.getFormExecutionStatus();
-		return {
+		return endpointRegistry['forms.overview'].response.parse({
 			form_source: formSourceSlug,
 			forms: forms.map((form) => ({
 				...form,
@@ -392,7 +395,7 @@ export class MockSentientFormsApiClient {
 				execution_status: executionStatus
 			})),
 			generated_at: new Date().toISOString()
-		};
+		});
 	}
 
 	async getFormActions(
@@ -465,14 +468,14 @@ export class MockSentientFormsApiClient {
 		);
 		const offset = Math.max(0, options.offset ?? 0);
 		const perPage = Math.max(1, options.perPage ?? 20);
-		return {
+		return endpointRegistry['forms.ledger.records.list'].response.parse({
 			form_source: formSourceSlug,
 			form_id: formIdValue,
 			records: matchingRecords.slice(offset, offset + perPage),
 			total: matchingRecords.length,
 			per_page: perPage,
 			offset
-		};
+		});
 	}
 
 	async getSubmissionLedgerRecord(
@@ -490,7 +493,7 @@ export class MockSentientFormsApiClient {
 		if (!record) {
 			throw new Error('Submission ledger record not found');
 		}
-		return record;
+		return endpointRegistry['forms.ledger.records.read'].response.parse(record);
 	}
 
 	async getFormActionsBootstrap(
@@ -507,7 +510,7 @@ export class MockSentientFormsApiClient {
 			...customActions.actions.map((action) => action.code)
 		]);
 
-		return {
+		return endpointRegistry['forms.actions.bootstrap'].response.parse({
 			form_source: formSourceSlug,
 			form_id: formId,
 			form: forms.find((form) => String(form.id) === String(formId)) ?? null,
@@ -525,7 +528,7 @@ export class MockSentientFormsApiClient {
 			workflow_plan: await this.getWorkflowPlan(formSourceSlug, formId, 'all'),
 			ledger_settings: ledgerSettings,
 			generated_at: new Date().toISOString()
-		};
+		});
 	}
 
 	private buildFormSourceDescriptor(
@@ -884,7 +887,7 @@ export class MockSentientFormsApiClient {
 
 		this.formActions = [...this.formActions, duplicate];
 
-		return {
+		return endpointRegistry['forms.actions.duplicate'].response.parse({
 			duplicate,
 			insertion: {
 				parent: payload.parent,
@@ -892,7 +895,7 @@ export class MockSentientFormsApiClient {
 				skipped_children: [],
 				warnings: []
 			}
-		};
+		});
 	}
 
 	async updateFormAction(

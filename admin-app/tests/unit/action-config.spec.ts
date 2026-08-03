@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	deriveDraftExecutionKind,
 	isSpamActionCode,
@@ -215,6 +215,7 @@ describe('action config helpers', () => {
 	});
 
 	it('keeps read normalization tolerant while write validation stays strict', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 		expect(normalizeSpamGuidanceExamples(['legacy string example'])).toEqual([]);
 		expect(
 			validateFormActionConfig({
@@ -225,5 +226,14 @@ describe('action config helpers', () => {
 			spam_positive_examples: [],
 			spam_negative_examples: []
 		});
+		expect(warn).toHaveBeenCalledWith(
+			'[SentientForms] Rejected form action config payload.',
+			expect.objectContaining({
+				schema: 'formActionConfigPayload',
+				issues: expect.any(Array)
+			})
+		);
+		expect(JSON.stringify(warn.mock.calls)).not.toContain('Missing rationale');
+		warn.mockRestore();
 	});
 });

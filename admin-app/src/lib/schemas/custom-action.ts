@@ -453,9 +453,10 @@ function validateDefinition(
 		return undefined;
 	}
 
+	const workflow = validateWorkflow(value.workflow, issues);
 	return {
 		...value,
-		workflow: validateWorkflow(value.workflow, issues)
+		...(workflow === undefined ? {} : { workflow })
 	} as ActionDefinitionPayload;
 }
 
