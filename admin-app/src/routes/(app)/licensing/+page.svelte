@@ -13,6 +13,7 @@
 		BillingSubscriptionState,
 		BillingStateResponse,
 		CreditBalanceResponse,
+		ManagedCheckoutCompleteRequest,
 		ManagedCheckoutStartRequest,
 		TierSummary,
 		TopUpCheckoutSessionRequest
@@ -590,11 +591,7 @@
 			return;
 		}
 
-		window.history.replaceState(
-			{},
-			'',
-			removeManagedCheckoutReturnParams(window.location.href)
-		);
+		window.history.replaceState({}, '', removeManagedCheckoutReturnParams(window.location.href));
 	}
 
 	async function completeManagedCheckoutFromReturn(): Promise<void> {
@@ -614,6 +611,27 @@
 		await completeManagedCheckout(reference);
 	}
 
+	function buildManagedCheckoutCompleteRequest(
+		reference: ManagedCheckoutReference
+	): ManagedCheckoutCompleteRequest {
+		if (reference.checkoutIntentId) {
+			return {
+				activation_token: reference.activationToken,
+				checkout_intent_id: reference.checkoutIntentId,
+				...(reference.checkoutSessionId ? { checkout_session_id: reference.checkoutSessionId } : {})
+			};
+		}
+
+		if (reference.checkoutSessionId) {
+			return {
+				activation_token: reference.activationToken,
+				checkout_session_id: reference.checkoutSessionId
+			};
+		}
+
+		throw new Error('Managed checkout reference is incomplete.');
+	}
+
 	async function completeManagedCheckout(reference: ManagedCheckoutReference): Promise<void> {
 		checkoutCompletionLoading = true;
 		billingError = null;
@@ -622,11 +640,7 @@
 
 		try {
 			const result = await client.completeManagedCheckout(
-				{
-					checkout_intent_id: reference.checkoutIntentId ?? undefined,
-					checkout_session_id: reference.checkoutSessionId ?? undefined,
-					activation_token: reference.activationToken
-				},
+				buildManagedCheckoutCompleteRequest(reference),
 				{ showNotifications: false }
 			);
 
@@ -649,6 +663,11 @@
 		} finally {
 			checkoutCompletionLoading = false;
 		}
+	}
+
+	function retryManagedCheckout(reference: ManagedCheckoutReference | null): void {
+		if (!reference) return;
+		void completeManagedCheckout(reference);
 	}
 
 	async function handleActivate(event: SubmitEvent) {
@@ -709,7 +728,8 @@
 			return;
 		}
 
-		if (!hasExistingSubscription && !acceptedManagedCheckoutDisclosure) {
+		const disclosureAccepted = acceptedManagedCheckoutDisclosure;
+		if (!disclosureAccepted) {
 			issues = [
 				{
 					id: 'managed-checkout-disclosure',
@@ -736,7 +756,7 @@
 					success_url: managedCheckoutReturnUrl(),
 					cancel_url: managedCheckoutReturnUrl(),
 					disclosure_version: MANAGED_DISCLOSURE_VERSION,
-					accepted_managed_service_terms: acceptedManagedCheckoutDisclosure
+					accepted_managed_service_terms: disclosureAccepted
 				},
 				{ showNotifications: false }
 			);
@@ -865,9 +885,7 @@
 								? 'Check again'
 								: null}
 							onAction={!managedCheckoutReturnIncomplete && managedCheckoutReference
-								? () => {
-										void completeManagedCheckout(managedCheckoutReference);
-									}
+								? () => retryManagedCheckout(managedCheckoutReference)
 								: null}
 							inline
 							testId="licensing-managed-checkout-completion"
@@ -1252,7 +1270,7 @@
 						message={billingError.message}
 						actionLabel={billingError.actionLabel}
 						onAction={() => {
-							void billingError.retry();
+							void billingError?.retry();
 						}}
 						inline
 						testId="licensing-billing-error-state"

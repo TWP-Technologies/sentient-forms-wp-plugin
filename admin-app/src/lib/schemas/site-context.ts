@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { ModelSelection, SiteContextStatusResponse } from '$lib/api/types';
 import { SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS } from '$lib/utils/site-context';
 
 const nullableStringSchema = z.string().nullable();
@@ -53,9 +52,7 @@ export const modelSelectionSchema = z
 		reasoning: modelReasoningSchema,
 		tools: siteContextModelToolsSchema
 	})
-	.passthrough()
-	.transform((value) => value as ModelSelection);
-
+	.passthrough();
 const siteContextSettingsSchema = z
 	.object({
 		consent_status: z.enum(['unset', 'granted', 'declined']),
@@ -76,6 +73,11 @@ const siteContextSettingsSchema = z
 	})
 	.passthrough();
 
+const siteContextMetadataSchema = z.preprocess(
+	(value) => (Array.isArray(value) && value.length === 0 ? {} : value),
+	z.record(z.string(), z.json())
+);
+
 const siteContextSchema = z
 	.object({
 		id: z.string(),
@@ -88,7 +90,7 @@ const siteContextSchema = z
 		next_free_refresh_at: nullableStringSchema,
 		created_at: z.string(),
 		updated_at: z.string(),
-		metadata: z.record(z.string(), z.unknown()).nullable().optional()
+		metadata: siteContextMetadataSchema.nullable().optional()
 	})
 	.passthrough();
 
@@ -106,7 +108,7 @@ const generationAccessSchema = z
 
 const generationJobDiagnosticsSchema = z.preprocess(
 	(value) => (Array.isArray(value) && value.length === 0 ? {} : value),
-	z.record(z.string(), z.unknown())
+	z.record(z.string(), z.json())
 );
 
 export const siteContextGenerationJobSchema = z
@@ -140,9 +142,10 @@ export const siteContextStatusResponseSchema = z
 		generation_access: generationAccessSchema,
 		generation_job: siteContextGenerationJobSchema.nullable().optional()
 	})
-	.passthrough()
-	.transform((value) => value as SiteContextStatusResponse);
+	.passthrough();
 
-export function parseSiteContextStatusResponse(value: unknown): SiteContextStatusResponse {
+export type SiteContextStatusBoundary = z.output<typeof siteContextStatusResponseSchema>;
+
+export function parseSiteContextStatusResponse(value: unknown): SiteContextStatusBoundary {
 	return siteContextStatusResponseSchema.parse(value);
 }

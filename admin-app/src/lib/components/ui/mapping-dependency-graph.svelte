@@ -1362,8 +1362,8 @@
 		const decision = evaluateConnectionDecision({
 			source: sourceNodeId,
 			target: targetNodeId,
-			sourceHandle: connectionState.fromHandle?.id ?? undefined,
-			targetHandle: connectionState.toHandle?.id ?? undefined
+			sourceHandle: connectionState.fromHandle?.id ?? null,
+			targetHandle: connectionState.toHandle?.id ?? null
 		});
 		if (!decision.valid) {
 			setConnectionFeedback(decision.code ?? 'unknown', decision.message ?? 'Connection rejected.');
@@ -1965,7 +1965,7 @@
 		<p
 			class="sf:text-xs sf:rounded-md sf:border sf:border-indigo-200 sf:bg-indigo-50 sf:px-3 sf:py-2 sf:text-indigo-800"
 		>
-			Connecting from <strong>{displayMappingLabel(pendingConnectionSource.nodeId)}</strong>. Drop
+			Connecting from <strong>{displayMappingLabel(pendingConnectionSource.nodeId ?? '')}</strong>. Drop
 			on an action's left hook handle to set dependency order, or on a root target handle to
 			retarget hook root.
 		</p>

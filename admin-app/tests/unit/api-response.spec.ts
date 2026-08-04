@@ -20,6 +20,12 @@ describe('unwrapRestResponse', () => {
 		expect(unwrapRestResponse({ success: true, data })).toBe(data);
 	});
 
+	it('does not misclassify failure envelopes as successful null responses', () => {
+		const failure = { success: false, data: null, code: 'request_failed' };
+
+		expect(unwrapRestResponse(failure)).toBe(failure);
+	});
+
 	it('returns nullish payloads unchanged', () => {
 		expect(unwrapRestResponse(null)).toBeNull();
 		expect(unwrapRestResponse(undefined)).toBeUndefined();

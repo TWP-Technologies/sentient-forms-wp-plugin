@@ -4,6 +4,7 @@
 	import type {
 		ModelSelection,
 		PluginSettingsResponse,
+		SiteContextUpdateRequest,
 		SiteContextStatusResponse
 	} from '$lib/api/types';
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
@@ -17,6 +18,7 @@
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		buildSiteContextGenerateRequest,
 		compactSiteContextModelSelection,
 		normalizeSiteContextResponse,
 		siteContextGenerateDisabledMessage,
@@ -25,7 +27,7 @@
 		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 	type SiteContextBadgeVariant = 'neutral' | 'success' | 'warning';
@@ -379,9 +381,7 @@
 	async function pollSiteContextGenerationStatus(): Promise<void> {
 		if (!open) return;
 		try {
-			const next = parseSiteContextResponse(
-				await wpFetch<SiteContextStatusResponse>('site-context')
-			);
+			const next = parseSiteContextResponse(await wpRequestEndpoint('siteContext.read'));
 			if (!open) return;
 			siteContextGenerationPollFailures = 0;
 			syncSiteContext(next, { preserveLocalEdits: true });
@@ -419,9 +419,7 @@
 		siteContextLoading = true;
 		siteContextError = null;
 		try {
-			syncSiteContext(
-				parseSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
-			);
+			syncSiteContext(parseSiteContextResponse(await wpRequestEndpoint('siteContext.read')));
 		} catch (error) {
 			console.error('Failed to load Site Context setup state', error);
 			siteContextError = readableError(error, 'Unable to load Site Context setup state.');
@@ -430,7 +428,7 @@
 		}
 	}
 
-	function siteContextPayload() {
+	function siteContextPayload(): SiteContextUpdateRequest {
 		const generationModelSelection = compactSiteContextModelSelection(siteContextModelSelection);
 		if (managedAccountReady && managedZdrRequired) {
 			generationModelSelection.require_zdr = true;
@@ -464,9 +462,9 @@
 		siteContextError = null;
 		siteContextApplyError = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+			const response = await wpRequestEndpoint('siteContext.update', {
 				method: 'PUT',
-				body: JSON.stringify(siteContextPayload()),
+				body: siteContextPayload(),
 				showNotifications: false
 			});
 			syncSiteContext(parseSiteContextResponse(response));
@@ -501,9 +499,9 @@
 		siteContextGenerating = true;
 		siteContextError = null;
 		try {
-			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
+			const response = await wpRequestEndpoint('siteContext.generate', {
 				method: 'POST',
-				body: JSON.stringify(siteContextPayload()),
+				body: buildSiteContextGenerateRequest(siteContextPayload()),
 				showNotifications: false
 			});
 			syncSiteContext(parseSiteContextResponse(response));

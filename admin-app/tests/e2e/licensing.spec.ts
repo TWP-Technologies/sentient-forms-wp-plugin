@@ -33,8 +33,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	let activateRequests = 0;
 	let deactivateRequests = 0;
 
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	await seedRuntimeConfig(page);
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
 		route.fulfill({
@@ -89,7 +88,11 @@ test('licensing screen handles activation flow', async ({ page }) => {
 
 		return route.fulfill({
 			status: 200,
-			body: JSON.stringify({ success: true, data: status }),
+			body: JSON.stringify({
+				success: true,
+				message: 'License deactivated successfully.',
+				status: 'inactive'
+			}),
 			headers: { 'content-type': 'application/json' }
 		});
 	});
@@ -211,7 +214,7 @@ test('first-time managed checkout uses secure random bytes when randomUUID is un
 		});
 	});
 
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const inactiveStatus = {
@@ -314,7 +317,7 @@ test('first-time managed checkout uses secure random bytes when randomUUID is un
 });
 
 test('managed checkout retries reuse the same checkout attempt identity', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const inactiveStatus = {
@@ -403,7 +406,7 @@ test('managed checkout retries reuse the same checkout attempt identity', async 
 test('managed checkout return with completed status resumes activation on the licensing route', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const inactiveStatus = {
@@ -482,7 +485,7 @@ test('managed checkout return with completed status resumes activation on the li
 test('managed checkout success without an activation token shows a recovery state without completing', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const inactiveStatus = {
@@ -537,7 +540,7 @@ test('managed checkout success without an activation token shows a recovery stat
 test('managed checkout activation reloads the license before the forced billing refresh', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const inactiveStatus = {
@@ -711,7 +714,7 @@ test('managed checkout activation reloads the license before the forced billing 
 test('licensing screen uses billing-state credits without legacy credit refresh', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
@@ -805,7 +808,7 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 });
 
 test('licensing screen explains the v2 managed billing boundary', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
@@ -932,7 +935,7 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 });
 
 test('starter and pro subscriptions do not expose purchasable top-ups', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
@@ -1019,7 +1022,7 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 });
 
 test('business top-up retries preserve canonical pack and attempt identity', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	const topUpCheckoutAttemptIds: string[] = [];
@@ -1164,7 +1167,7 @@ test('business top-up retries preserve canonical pack and attempt identity', asy
 });
 
 test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	let portalAttempts = 0;
@@ -1298,7 +1301,7 @@ test('existing subscriptions use subscription update portal for plan changes', a
 test('larger subscriptions use the same subscription update portal for downgrades', async ({
 	page
 }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	let portalAttempts = 0;
@@ -1417,7 +1420,7 @@ test('larger subscriptions use the same subscription update portal for downgrade
 });
 
 test('licensing billing error state maps portal failures to actionable copy', async ({ page }) => {
-	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	let portalAttempts = 0;

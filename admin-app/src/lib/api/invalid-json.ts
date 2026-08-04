@@ -4,7 +4,7 @@ export interface InvalidJsonResponsePayload {
 	message: string;
 	status: number;
 	content_type: string;
-	body_prefix: string;
+	body_length: number;
 	url: string;
 }
 
@@ -39,7 +39,7 @@ export function buildInvalidJsonResponsePayload(
 			'Sentient Forms received invalid JSON from WordPress. The response may contain stray output before the JSON body.',
 		status: response.status,
 		content_type: contentType,
-		body_prefix: sanitizeBodyPrefixPreview(bodyText),
+		body_length: bodyText.length,
 		url: responseUrl
 	};
 }
@@ -52,24 +52,6 @@ export function hasContaminatedJsonPrefix(bodyText: string): boolean {
 
 	const codePoint = prefix.codePointAt(0);
 	return typeof codePoint === 'number' && isUnsafeControlCharacter(codePoint);
-}
-
-function sanitizeBodyPrefixPreview(bodyText: string): string {
-	return Array.from(bodyText)
-		.slice(0, 160)
-		.map((character) => {
-			if (character === '\uFEFF') {
-				return '<BOM>';
-			}
-
-			const codePoint = character.codePointAt(0);
-			if (typeof codePoint === 'number' && isUnsafeControlCharacter(codePoint)) {
-				return '\uFFFD';
-			}
-
-			return character;
-		})
-		.join('');
 }
 
 function firstNonJsonWhitespaceIndex(value: string): number {

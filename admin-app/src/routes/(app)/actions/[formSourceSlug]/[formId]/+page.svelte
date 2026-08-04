@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { z } from 'zod';
+	import { readValidatedStorage } from '$lib/storage/validated-storage';
+	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 	import { onMount } from 'svelte';
 	import {
 		Section,
@@ -117,7 +120,7 @@
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
 	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	type Props = { data: { formSourceSlug: string; formId: string } };
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
@@ -423,8 +426,7 @@
 	let currentFormSummary = $state<FormSummary | null>(null);
 	let currentFormSummaryLoading = $state(false);
 	let currentFormSummaryError = $state<string | null>(null);
-	const runtimeFormSources: FormSourceSummary[] =
-		typeof window === 'undefined' ? [] : (window.sentientFormsConfig?.formSources ?? []);
+	const runtimeFormSources: FormSourceSummary[] = readRuntimeConfigSafely()?.formSources ?? [];
 	const runtimeFormSourceDescriptor = $derived.by(
 		() =>
 			runtimeFormSources.find((source) => source.slug === data.formSourceSlug)?.descriptor ?? null
@@ -1531,7 +1533,10 @@
 
 		return {
 			...mapping,
-			mode: mapping.mode === 'mixed' && mapping.media_ids.length > 0 ? 'media_library' : 'none',
+			mode:
+				mapping.mode === 'mixed' && (mapping.media_ids?.length ?? 0) > 0
+					? 'media_library'
+					: 'none',
 			gf_upload_field_ids: []
 		};
 	}
@@ -2290,12 +2295,9 @@
 		if (createKind === 'template') return;
 
 		try {
-			const raw = localStorage.getItem(LAST_HOOKS_KEY);
-			if (!raw) return;
-			const parsed = JSON.parse(raw);
-			if (Array.isArray(parsed) && parsed.every((h) => typeof h === 'string')) {
-				selectedHooks = new Set(sanitizeHooksForAction(parsed, selectedCreateActionId));
-			}
+			const parsed = readValidatedStorage(localStorage, LAST_HOOKS_KEY, z.array(z.string()));
+			if (!parsed) return;
+			selectedHooks = new Set(sanitizeHooksForAction(parsed, selectedCreateActionId));
 		} catch (err) {
 			console.warn('Could not restore hooks', err);
 		}
@@ -3257,18 +3259,14 @@
 	}
 
 	async function resolveLocalBuilderModelSelection(): Promise<ResolvedModelSelection> {
-		const response = await wpFetch<ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>>(
-			'models/resolve',
-			{
-				method: 'POST',
-				body: {
-					action_selection: localBuilderModelSelection,
-					template_model_hint: 'openrouter/auto'
-				},
-				showNotifications: false
-			}
-		);
-		const resolved = unwrapRestResponse<ResolvedModelSelection>(response);
+		const resolved = await wpRequestEndpoint('models.resolve', {
+			method: 'POST',
+			body: {
+				action_selection: localBuilderModelSelection,
+				template_model_hint: 'openrouter/auto'
+			},
+			showNotifications: false
+		});
 
 		if (!resolved?.model_id) {
 			throw new Error('Local model policy did not return a usable OpenRouter model.');
@@ -5857,11 +5855,11 @@
 										inheritedNegative={currentFormActionConfig.spam_negative_examples?.length
 											? (currentFormActionConfig.spam_negative_examples ?? [])
 											: (currentActionDefaults.spam_negative_examples ?? [])}
-										inheritanceSource={currentFormActionConfig.spam_positive_examples?.length > 0 ||
-										currentFormActionConfig.spam_negative_examples?.length > 0
+										inheritanceSource={(currentFormActionConfig.spam_positive_examples?.length ?? 0) > 0 ||
+										(currentFormActionConfig.spam_negative_examples?.length ?? 0) > 0
 											? 'form'
-											: currentActionDefaults.spam_positive_examples?.length > 0 ||
-												  currentActionDefaults.spam_negative_examples?.length > 0
+											: (currentActionDefaults.spam_positive_examples?.length ?? 0) > 0 ||
+												  (currentActionDefaults.spam_negative_examples?.length ?? 0) > 0
 												? 'action'
 												: null}
 										onchange={(details) => {

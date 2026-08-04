@@ -36,7 +36,7 @@ function record(index: number, overrides: Record<string, unknown> = {}) {
 
 test.describe('Submission Ledger admin view', () => {
 	test.beforeEach(async ({ page }) => {
-		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? '';
 		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 	});
 

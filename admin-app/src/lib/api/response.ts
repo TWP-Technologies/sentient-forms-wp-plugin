@@ -1,21 +1,26 @@
 export type RestEnvelope<T> = {
-	success?: boolean;
-	data?: T;
+	success: boolean;
+	data: T;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-export function unwrapRestResponse<T>(payload: T | RestEnvelope<T> | null | undefined): T | null | undefined {
+function isRestEnvelope<T>(payload: T | RestEnvelope<T>): payload is RestEnvelope<T> {
+	return isRecord(payload) && payload.success === true && 'data' in payload;
+}
+
+export function unwrapRestResponse<T>(
+	payload: T | RestEnvelope<T> | null | undefined
+): T | null | undefined {
 	if (payload === null || payload === undefined) {
-		return payload as null | undefined;
+		return payload;
 	}
 
-	const value: unknown = payload;
-	if (isRecord(value) && 'success' in value && 'data' in value) {
-		return value.data as T;
+	if (isRestEnvelope(payload)) {
+		return payload.data;
 	}
 
-	return value as T;
+	return payload;
 }

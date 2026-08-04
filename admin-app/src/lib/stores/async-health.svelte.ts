@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import { createClientFromConfig, type SentientFormsApiClient } from '$lib/api/client';
 import type { AsyncHealthResponse } from '$lib/api/types';
+import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
 
 export interface AsyncHealthState extends AsyncHealthResponse {
 	loading: boolean;
@@ -9,7 +10,7 @@ export interface AsyncHealthState extends AsyncHealthResponse {
 	lastPurgeResult: { removed: number; message: string } | null;
 }
 
-const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.asyncHealth;
+const runtime = readRuntimeConfigSafely()?.asyncHealth;
 
 const initialState: AsyncHealthState = {
 	queue_depth: runtime?.queue_depth ?? 0,
@@ -31,7 +32,13 @@ export function createAsyncHealthStore(client: SentientFormsApiClient = createCl
 			update((state) => ({ ...state, loading: true }));
 			try {
 				const response = await client.getAsyncHealth({ showNotifications: false });
-				set({ ...response, loading: false, purging: false, lastFetched: Date.now(), lastPurgeResult: null });
+				set({
+					...response,
+					loading: false,
+					purging: false,
+					lastFetched: Date.now(),
+					lastPurgeResult: null
+				});
 				return response;
 			} catch (error) {
 				console.error('Failed to load async health', error);
@@ -45,7 +52,13 @@ export function createAsyncHealthStore(client: SentientFormsApiClient = createCl
 				const result = await client.purgeAsyncJobs(options);
 				// Refresh health after purge
 				const response = await client.getAsyncHealth({ showNotifications: false });
-				set({ ...response, loading: false, purging: false, lastFetched: Date.now(), lastPurgeResult: result });
+				set({
+					...response,
+					loading: false,
+					purging: false,
+					lastFetched: Date.now(),
+					lastPurgeResult: result
+				});
 				return result;
 			} catch (error) {
 				console.error('Failed to purge async jobs', error);
@@ -60,4 +73,3 @@ export function createAsyncHealthStore(client: SentientFormsApiClient = createCl
 }
 
 export const asyncHealthStore = createAsyncHealthStore();
-

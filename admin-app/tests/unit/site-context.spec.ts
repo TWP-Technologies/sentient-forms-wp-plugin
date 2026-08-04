@@ -218,6 +218,48 @@ describe('normalizeSiteContextResponse', () => {
 
 		expect(status.generation_job?.diagnostics).toEqual({});
 	});
+
+	it('normalizes PHP empty Site Context metadata arrays to an empty record', () => {
+		const status = parseSiteContextStatusResponse({
+			context: {
+				id: 'context-1',
+				license_id: 'license-1',
+				summary_text: 'A concise business summary.',
+				source: 'manual',
+				auto_include: true,
+				pii_ack: true,
+				free_refresh_available: false,
+				next_free_refresh_at: null,
+				created_at: '2026-06-18T00:00:00Z',
+				updated_at: '2026-06-18T00:00:00Z',
+				metadata: []
+			},
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: '2026-06-18T00:00:00Z',
+				last_error: null
+			},
+			has_context: true,
+			is_empty: false,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'ready',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null
+			},
+			generation_job: null
+		});
+
+		expect(status.context?.metadata).toEqual({});
+	});
 });
 
 describe('siteContextModelSelectionChanged', () => {

@@ -2,9 +2,12 @@ import type {
 	ModelSelection,
 	SiteContext,
 	SiteContextConsentStatus,
+	SiteContextGenerateRequest,
 	SiteContextGenerationAccess,
-	SiteContextStatusResponse
+	SiteContextStatusResponse,
+	SiteContextUpdateRequest
 } from '$lib/api/types';
+import { modelSelectionSchema, type ModelSelectionBoundary } from '$lib/schemas/model-selection';
 
 export const DEFAULT_SITE_CONTEXT_REFRESH_DAYS = 30;
 export const SITE_CONTEXT_REFRESH_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
@@ -89,14 +92,15 @@ function fallbackGenerationAccessForLegacyResponse(
 	empty: SiteContextStatusResponse
 ): SiteContextGenerationAccess {
 	if (settings.consent_status !== 'granted') return empty.generation_access;
+	const modelSelection = settings.generation_model_selection;
 
 	return defaultSiteContextGenerationAccess({
 		reason_code: 'site_context_generation_setup_required',
 		message:
 			'Set up Sentient Forms Managed Service billing or a paid OpenRouter key before generating Site Context.',
 		setup_target: 'providers',
-		provider: settings.generation_model_selection.provider ?? empty.generation_access.provider,
-		model: settings.generation_model_selection.primary ?? empty.generation_access.model
+		provider: modelSelection?.provider ?? empty.generation_access.provider,
+		model: modelSelection?.primary ?? empty.generation_access.model
 	});
 }
 
@@ -144,8 +148,7 @@ export function normalizeSiteContextResponse(
 		typeof response.has_context === 'boolean'
 			? response.has_context
 			: Boolean(wrappedContext?.summary_text?.trim());
-	const isEmpty =
-		typeof response.is_empty === 'boolean' ? response.is_empty : !hasContext;
+	const isEmpty = typeof response.is_empty === 'boolean' ? response.is_empty : !hasContext;
 	const isStale = Boolean(response.is_stale);
 	const consentDeclined = settings.consent_status === 'declined';
 	const generationAccessFallback = fallbackGenerationAccessForLegacyResponse(settings, empty);
@@ -241,14 +244,27 @@ export function normalizeSiteContextModelSelection(
 	};
 }
 
-export function compactSiteContextModelSelection(selection: ModelSelection): ModelSelection {
+export function compactSiteContextModelSelection(
+	selection: ModelSelection
+): ModelSelectionBoundary {
 	const normalized = normalizeSiteContextModelSelection(selection);
 	if (stableSerialize(normalized.tools) !== stableSerialize(SITE_CONTEXT_DEFAULT_TOOLS)) {
-		return normalized;
+		return modelSelectionSchema.parse(normalized);
 	}
 
 	const { tools: _tools, ...compact } = normalized;
-	return compact;
+	return modelSelectionSchema.parse(compact);
+}
+
+export function buildSiteContextGenerateRequest(
+	request: SiteContextUpdateRequest
+): SiteContextGenerateRequest {
+	return {
+		consent_status: request.consent_status,
+		auto_refresh_enabled: request.auto_refresh_enabled,
+		auto_refresh_days: request.auto_refresh_days,
+		generation_model_selection: request.generation_model_selection
+	};
 }
 
 export function siteContextGenerationJobIsActive(
@@ -314,7 +330,8 @@ export function siteContextWarningMessage(
 		return 'AI-generated Site Context is off. Manual context can still help actions make more correct decisions, especially spam checks.';
 	}
 
-	const resolvesToInclude = mode === 'always' || (mode === 'global' && status.context?.auto_include);
+	const resolvesToInclude =
+		mode === 'always' || (mode === 'global' && status.context?.auto_include);
 	if (!resolvesToInclude) return null;
 
 	if (status.is_empty) {

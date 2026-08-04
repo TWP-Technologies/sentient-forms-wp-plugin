@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { FormActionConfig, SpamGuidanceExample } from '$lib/api/types';
+import { modelSelectionSchema } from '$lib/schemas/model-selection';
 
 export const MAX_SPAM_GUIDANCE_EXAMPLES = 10;
 export const MAX_SPAM_GUIDANCE_TEXT_LENGTH = 800;
@@ -13,7 +13,7 @@ const spamGuidanceTextSchema = z
 		error: `Must contain between 1 and ${MAX_SPAM_GUIDANCE_TEXT_LENGTH} characters`
 	});
 
-const spamGuidanceExampleSourceSchema = z.strictObject({
+export const spamGuidanceExampleSourceSchema = z.strictObject({
 	kind: z.enum(['manual', 'entry']),
 	form_source: z.string().trim().min(1).optional(),
 	form_id: z.string().trim().min(1).optional(),
@@ -23,7 +23,7 @@ const spamGuidanceExampleSourceSchema = z.strictObject({
 	selected_by_user_id: z.number().int().nullable().optional()
 });
 
-const spamGuidanceExampleSchema = z.strictObject({
+export const spamGuidanceExampleSchema = z.strictObject({
 	text: spamGuidanceTextSchema,
 	rationale: spamGuidanceTextSchema,
 	source: spamGuidanceExampleSourceSchema.optional()
@@ -35,41 +35,54 @@ const spamGuidanceExamplesSchema = z
 		error: `Must contain at most ${MAX_SPAM_GUIDANCE_EXAMPLES} items`
 	});
 
-const formActionConfigPayloadSchema = z
-	.strictObject({
-		spam_positive_examples: spamGuidanceExamplesSchema.optional(),
-		spam_negative_examples: spamGuidanceExamplesSchema.optional(),
-		action_customization: z
-			.string()
-			.trim()
-			.max(MAX_ACTION_CUSTOMIZATION_LENGTH, {
-				error: `Must contain at most ${MAX_ACTION_CUSTOMIZATION_LENGTH} characters`
-			})
-			.optional(),
-		include_site_context: z.enum(['global', 'always', 'never']).optional(),
-		suppress_notifications_on_spam: z.boolean().optional(),
-		suppress_webhooks_on_spam: z.boolean().optional(),
-		skip_downstream_on_spam: z.boolean().optional(),
-		spam_result_display_mode: z.enum(['none', 'spam_only', 'all_results']).optional(),
-		spam_indicators_display: z.enum(['simple', 'detailed']).optional(),
-		model_selection: z.unknown().optional(),
-		realtime_settings: z.unknown().optional(),
-		updated_at: z.string().optional()
-	})
-	.transform((value) => value as Partial<FormActionConfig>);
+export const formActionConfigPayloadSchema = z.strictObject({
+	spam_positive_examples: spamGuidanceExamplesSchema.optional(),
+	spam_negative_examples: spamGuidanceExamplesSchema.optional(),
+	action_customization: z
+		.string()
+		.trim()
+		.max(MAX_ACTION_CUSTOMIZATION_LENGTH, {
+			error: `Must contain at most ${MAX_ACTION_CUSTOMIZATION_LENGTH} characters`
+		})
+		.optional(),
+	include_site_context: z.enum(['global', 'always', 'never']).optional(),
+	suppress_notifications_on_spam: z.boolean().optional(),
+	suppress_webhooks_on_spam: z.boolean().optional(),
+	skip_downstream_on_spam: z.boolean().optional(),
+	spam_result_display_mode: z.enum(['none', 'spam_only', 'all_results']).optional(),
+	spam_indicators_display: z.enum(['simple', 'detailed']).optional(),
+	model_selection: modelSelectionSchema.optional(),
+	model_override: z.string().optional(),
+	realtime_settings: z.json().optional(),
+	updated_at: z.string().optional()
+});
+
+export type SpamGuidanceExampleSourceBoundary = z.output<typeof spamGuidanceExampleSourceSchema>;
+export type SpamGuidanceExampleBoundary = z.output<typeof spamGuidanceExampleSchema>;
+export type FormActionConfigBoundary = z.output<typeof formActionConfigPayloadSchema>;
 
 export const formActionConfigSchema = {
 	safeParse: safeParseFormActionConfigPayload
 };
 
-export function normalizeSpamGuidanceExamples(value: unknown): SpamGuidanceExample[] {
+export function normalizeSpamGuidanceExamples(value: unknown): SpamGuidanceExampleBoundary[] {
 	const result = spamGuidanceExamplesSchema.safeParse(value);
 	return result.success === true ? result.data : [];
 }
 
-export function validateFormActionConfig(value: unknown): FormActionConfig {
+export function validateFormActionConfig(value: unknown): FormActionConfigBoundary {
 	const result = safeParseFormActionConfigPayload(value);
 	if (result.success === false) {
+		console.warn('[SentientForms] Rejected form action config payload.', {
+			schema: 'formActionConfigPayload',
+			issues: result.error.issues.map((issue) => ({
+				code: issue.code,
+				path: issue.path.filter(
+					(segment): segment is string | number =>
+						typeof segment === 'string' || typeof segment === 'number'
+				)
+			}))
+		});
 		return {
 			include_site_context: 'global',
 			spam_positive_examples: [],
@@ -77,7 +90,7 @@ export function validateFormActionConfig(value: unknown): FormActionConfig {
 		};
 	}
 
-	return result.data as FormActionConfig;
+	return result.data;
 }
 
 export function safeParseFormActionConfigPayload(value: unknown) {

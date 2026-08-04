@@ -39,7 +39,12 @@ const baseCustomActions = [
 		base_credit_cost: 1,
 		archived_at: null,
 		created_at: '2025-11-20T00:00:00Z',
-		updated_at: '2025-11-20T00:00:00Z'
+		updated_at: '2025-11-20T00:00:00Z',
+		action_kind: 'template_override',
+		definition: null,
+		definition_version: 1,
+		output_contract: null,
+		supported_execution_modes: ['after_submission']
 	}
 ];
 
@@ -1352,10 +1357,10 @@ test.describe('Actions admin flows', () => {
 					body: JSON.stringify({
 						success: true,
 						data: {
-							status: 'running',
+							status: 'success',
 							last_run_at: '2030-01-05T10:02:00Z',
 							last_error_code: null,
-							message: 'Execution is running.',
+							message: 'Execution completed.',
 							updated_at: '2030-01-05T10:02:00Z',
 							entry_id: 456,
 							last_result: null
@@ -1377,7 +1382,7 @@ test.describe('Actions admin flows', () => {
 
 		await page.clock.runFor(1_000);
 		await expect.poll(() => statusRequests, { timeout: 2_000 }).toBe(1);
-		await expect(page.getByTestId('form-execution-status')).toContainText('running');
+		await expect(page.getByTestId('form-execution-status')).toContainText('success');
 	});
 
 	test('keeps Add Action controls visible below the WordPress admin bar with long action lists', async ({

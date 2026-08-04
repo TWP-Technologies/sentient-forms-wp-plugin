@@ -1,6 +1,7 @@
-import type { InputMapping } from '$lib/utils/input-mapping';
-
-export type { InputMapping } from '$lib/utils/input-mapping';
+import type {
+	RegisteredEndpointRequest,
+	RegisteredEndpointResponse
+} from '$lib/api/endpoint-schemas';
 
 export interface LicenseActivationRequest {
 	licenseKey: string;
@@ -12,87 +13,39 @@ export interface LicenseActivationResult {
 	success: boolean;
 	message: string;
 	status: string;
-	proxyApiKey?: string;
-	tier?: string | TierSummary;
+	tier?: string;
 	expiryDate?: string | null;
 	licenseId?: string;
 	siteId?: string;
 }
 
-export interface LicenseActivationResponsePayload {
-	success?: boolean;
-	message?: string;
-	status?: string;
-	proxy_api_key?: string;
-	tier?: string | TierSummary;
-	expiry_date?: string | null;
-	license_id?: string;
-	site_id?: string;
-}
+export type LicenseInfoResponse = RegisteredEndpointResponse<'license.read'>;
 
-export interface LicenseInfoResponse {
-	license_key_masked: string;
-	status: string;
-	proxy_key_present: boolean;
-	expires_at: string | null;
-	last_synced: string | null;
-	tier: string | TierSummary | null;
-	license_id: string | null;
-	site_id: string | null;
-	site_url: string;
-}
+export type BillingCheckoutSessionRequest = RegisteredEndpointRequest<'billing.checkout.create'>;
 
-export interface BillingCheckoutSessionRequest {
-	checkout_attempt_id: string;
-	plan_code: 'starter' | 'pro' | 'business';
-	success_url: string;
-	cancel_url: string;
-	quantity?: 1;
-}
+export type BillingCheckoutSessionResponse = RegisteredEndpointResponse<'billing.checkout.create'>;
 
-export type { BillingCheckoutSessionResponse } from '$lib/api/billing-checkout-contract';
+export type TopUpCheckoutSessionRequest = RegisteredEndpointRequest<'billing.topUp.create'>;
 
-export interface TopUpCheckoutSessionRequest {
-	checkout_attempt_id: string;
-	pack_code: 'top_up_small' | 'top_up_medium' | 'top_up_large';
-	success_url: string;
-	cancel_url: string;
-	quantity?: number;
-}
+export type TopUpCheckoutSessionResponse = RegisteredEndpointResponse<'billing.topUp.create'>;
 
-export interface TopUpCheckoutSessionResponse {
-	session_id: string;
-	checkout_url: string;
-	customer_id: string;
-	top_up_credits: number;
-	pack_code: string;
-}
+export type ManagedCheckoutStartRequest =
+	RegisteredEndpointRequest<'billing.managedCheckout.start'>;
 
-export interface ManagedCheckoutStartRequest {
-	checkout_attempt_id: string;
-	plan_code: 'starter' | 'pro' | 'business';
-	billing_interval?: 'monthly';
-	success_url: string;
-	cancel_url: string;
-	disclosure_version: string;
-	accepted_managed_service_terms: boolean;
-}
+export type ManagedCheckoutStartResponse =
+	RegisteredEndpointResponse<'billing.managedCheckout.start'>;
 
-export type { ManagedCheckoutCompleteRequest } from '$lib/api/managed-checkout-contract';
+export type ManagedCheckoutCompleteRequest =
+	RegisteredEndpointRequest<'billing.managedCheckout.complete'>;
 
-export interface BillingPortalSessionResponse {
-	session_id: string;
-	portal_url: string;
-	customer_id: string;
-}
+export type ManagedCheckoutCompleteResponse =
+	RegisteredEndpointResponse<'billing.managedCheckout.complete'>;
+
+export type BillingPortalSessionResponse = RegisteredEndpointResponse<'billing.portal.create'>;
 
 export type BillingPortalFlowType = 'home' | 'subscription_update' | 'subscription_cancel';
 
-export interface BillingPortalSessionRequest {
-	return_url: string;
-	flow_type?: BillingPortalFlowType;
-	subscription_id?: string;
-}
+export type BillingPortalSessionRequest = RegisteredEndpointRequest<'billing.portal.create'>;
 
 export interface BillingPolicyState {
 	paid_trial_days: number;
@@ -151,44 +104,7 @@ export interface BillingBoundaryState {
 	managed_proxy_billed_by_sentient: boolean;
 }
 
-export interface BillingStateResponse {
-	service?: string;
-	site_id?: string | null;
-	license_id?: string | null;
-	status?: string | null;
-	stale?: boolean;
-	cached_at?: string | null;
-	last_error_code?: string | null;
-	plan?: TierSummary | null;
-	account?: BillingAccountState | null;
-	billing?: BillingProviderState | null;
-	managed_usage?: ManagedUsageSummary | null;
-	billing_boundary?: BillingBoundaryState | null;
-	provider?: string;
-	provider_mode?: 'test' | 'live' | 'auto' | string;
-	provider_livemode?: boolean;
-	license_status?: string | null;
-	tier?: TierSummary | null;
-	customer_id?: string | null;
-	subscription?: BillingSubscriptionState | null;
-	credits?: {
-		current_balance: number;
-		tier_quota: number;
-		ledger_delta: number;
-		top_up_available?: number;
-	};
-	allocation?: {
-		seat_quantity: number;
-		tier_site_limit: number;
-		allowed_sites: number;
-		active_sites: number;
-		over_limit: boolean;
-		blocked_new_activations: boolean;
-		grace_expires_at?: string | null;
-		capacity_policy: string;
-	} | null;
-	policy?: BillingPolicyState | null;
-}
+export type BillingStateResponse = RegisteredEndpointResponse<'billing.state'>;
 
 export interface ApiErrorPayload {
 	error_code?: string;
@@ -236,22 +152,7 @@ export interface CreditBalanceResponse {
 	stale?: boolean;
 }
 
-export interface PluginSettingsResponse {
-	enable_logging?: boolean;
-	execution_global_disabled?: boolean;
-	execution_provider_disabled?: Record<string, boolean>;
-	execution_event_retention_days?: number;
-	delete_data_on_uninstall?: boolean;
-	store_full_ai_outputs?: boolean;
-	managed_zdr_required?: boolean;
-	privacy_setup_profile?:
-		| 'balanced'
-		| 'privacy_focused'
-		| 'maximum_privacy'
-		| 'maximum_visibility'
-		| string;
-	privacy_setup_completed_at?: string | null;
-}
+export type PluginSettingsResponse = RegisteredEndpointResponse<'settings.read'>;
 
 export type SiteContextConsentStatus = 'unset' | 'granted' | 'declined';
 
@@ -328,22 +229,9 @@ export interface SiteContextStatusResponse {
 	generation_job?: SiteContextGenerationJob | null;
 }
 
-export interface SiteContextUpdateRequest {
-	summary_text?: string;
-	auto_include?: boolean;
-	pii_ack?: boolean;
-	consent_status?: SiteContextConsentStatus;
-	auto_refresh_enabled?: boolean;
-	auto_refresh_days?: number;
-	generation_model_selection?: ModelSelection | null;
-}
+export type SiteContextUpdateRequest = RegisteredEndpointRequest<'siteContext.update'>;
 
-export interface SiteContextGenerateRequest {
-	consent_status?: SiteContextConsentStatus;
-	auto_refresh_enabled?: boolean;
-	auto_refresh_days?: number;
-	generation_model_selection?: ModelSelection | null;
-}
+export type SiteContextGenerateRequest = RegisteredEndpointRequest<'siteContext.generate'>;
 
 export type LocalProvider = 'openrouter' | 'sentient_managed' | string;
 export type LocalProviderAuthMode =
@@ -368,21 +256,14 @@ export interface LocalProviderCredential {
 	secret_configured: boolean;
 }
 
-export interface LocalProviderCredentialDeleteResponse {
-	deleted: boolean;
-	credential: LocalProviderCredential;
-}
+export type LocalProviderCredentialDeleteResponse =
+	RegisteredEndpointResponse<'providers.credentials.delete'>;
 
-export interface SentientManagedSetupRequest {
-	disclosure_version: string;
-	accepted_external_service_terms: boolean;
-	label?: string;
-}
+export type SentientManagedSetupRequest =
+	RegisteredEndpointRequest<'provider.sentientManaged.setup'>;
 
-export interface SentientManagedRevokeRequest {
-	disclosure_version: string;
-	confirm_managed_service_revocation: boolean;
-}
+export type SentientManagedRevokeRequest =
+	RegisteredEndpointRequest<'provider.sentientManaged.revoke'>;
 
 export type SentientManagedConsentState = 'accepted' | 'revoked' | 'missing' | string;
 
@@ -395,28 +276,11 @@ export interface SentientManagedAccountState {
 	credential_ready: boolean;
 }
 
-export interface SentientManagedSetupResponse {
-	provider: 'sentient_managed';
-	status: LocalProviderStatus;
-	credential_id: number;
-	credential: LocalProviderCredential | null;
-	consent_recorded: boolean;
-	consent_id: number;
-	consent_state?: SentientManagedConsentState;
-	account: SentientManagedAccountState;
-	billing_boundary: BillingBoundaryState;
-}
+export type SentientManagedSetupResponse =
+	RegisteredEndpointResponse<'provider.sentientManaged.setup'>;
 
-export interface SentientManagedRevokeResponse {
-	provider: 'sentient_managed';
-	status: LocalProviderStatus;
-	credential_id: number | null;
-	credential: LocalProviderCredential | null;
-	consent_recorded: boolean;
-	consent_id: number;
-	consent_state: SentientManagedConsentState;
-	billing_boundary: BillingBoundaryState;
-}
+export type SentientManagedRevokeResponse =
+	RegisteredEndpointResponse<'provider.sentientManaged.revoke'>;
 
 export interface OpenRouterKeyStatus {
 	label?: string;
@@ -427,31 +291,11 @@ export interface OpenRouterKeyStatus {
 	[key: string]: unknown;
 }
 
-export interface OpenRouterValidateRequest {
-	api_key: string;
-	disclosure_version: string;
-	accepted_external_service_terms: boolean;
-	label?: string;
-	save?: boolean;
-}
+export type OpenRouterValidateRequest = RegisteredEndpointRequest<'provider.openrouter.validate'>;
 
-export interface OpenRouterConstantRequest {
-	constant_name: string;
-	disclosure_version: string;
-	accepted_external_service_terms: boolean;
-	label?: string;
-}
+export type OpenRouterConstantRequest = RegisteredEndpointRequest<'provider.openrouter.constant'>;
 
-export interface OpenRouterValidateResponse {
-	provider: 'openrouter';
-	status: LocalProviderStatus;
-	credential_id: number | null;
-	key_status: OpenRouterKeyStatus;
-	consent_recorded: boolean;
-	consent_id: number;
-	auth_mode?: LocalProviderAuthMode;
-	constant_name?: string | null;
-}
+export type OpenRouterValidateResponse = RegisteredEndpointResponse<'provider.openrouter.validate'>;
 
 export interface OpenRouterModelCacheItem {
 	id: string;
@@ -471,21 +315,7 @@ export interface OpenRouterModelCacheItem {
 	tags: string[];
 }
 
-export interface OpenRouterModelsResponse {
-	provider: 'openrouter';
-	source: 'local_cache';
-	total_cached: number;
-	total_returned: number;
-	free_count: number;
-	stale_count: number;
-	zdr_filtered?: boolean;
-	models: OpenRouterModelCacheItem[];
-	refresh_consent?: OpenRouterModelRefreshConsentState;
-	consent_recorded?: boolean;
-	consent_id?: number;
-	stored?: number;
-	warnings?: Array<{ code: string; message: string }>;
-}
+export type OpenRouterModelsResponse = RegisteredEndpointResponse<'provider.openrouter.models'>;
 
 export interface OpenRouterModelRefreshConsentState {
 	state: 'accepted' | 'missing';
@@ -494,12 +324,8 @@ export interface OpenRouterModelRefreshConsentState {
 	accepted_at: string | null;
 }
 
-export interface OpenRouterModelsRefreshRequest {
-	disclosure_version: string;
-	accepted_external_service_terms: boolean;
-	output_modalities?: string;
-	supported_parameters?: string;
-}
+export type OpenRouterModelsRefreshRequest =
+	RegisteredEndpointRequest<'provider.openrouter.modelsRefresh'>;
 
 export interface LocalActionTemplate {
 	id: number;
@@ -608,28 +434,7 @@ export interface LocalSupportBundle {
 	[key: string]: unknown;
 }
 
-export interface DashboardSummaryResponse {
-	generated_at: string;
-	providers: LocalProviderCredential[];
-	templates: LocalActionTemplate[];
-	custom_actions: LocalCustomActionRecord[];
-	recent_events: LocalExecutionEvent[];
-	section_errors?: Array<{
-		section: string;
-		code: string;
-		message: string;
-	}>;
-	license?: {
-		status?: string;
-		proxy_key_present?: boolean;
-		tier?: string | TierSummary | null;
-		expires_at?: string | null;
-		last_synced?: string | null;
-		license_id?: string | null;
-		site_id?: string | null;
-	};
-	async_health?: AsyncHealthResponse;
-}
+export type DashboardSummaryResponse = RegisteredEndpointResponse<'dashboard.summary'>;
 
 export interface LocalMigrationWarning {
 	code: string;
@@ -669,11 +474,7 @@ export interface LocalMigrationReadinessReport {
 	warnings: LocalMigrationWarning[];
 }
 
-export interface LocalMigrationDryRunResponse {
-	run_id: number;
-	status: 'dry_run_complete' | string;
-	report: LocalMigrationReadinessReport;
-}
+export type LocalMigrationDryRunResponse = RegisteredEndpointResponse<'migration.dryRun'>;
 
 export interface LocalMigrationImportFinding {
 	code: string;
@@ -684,55 +485,24 @@ export interface LocalMigrationImportFinding {
 	value?: string;
 }
 
-export interface LocalMigrationImportReport {
-	schema_version: string;
-	source: string;
-	source_version: string;
-	generated_at: string;
-	exported_at: string | null;
-	ready_to_import: boolean;
-	counts: Record<string, number>;
-	changes: Record<string, Record<string, number> | number>;
-	conflicts: LocalMigrationImportFinding[];
-	warnings: LocalMigrationImportFinding[];
-	mapping: Record<string, unknown>;
-}
+export type LocalMigrationImportReport =
+	RegisteredEndpointResponse<'migration.import.dryRun'>['report'];
 
-export interface LocalMigrationImportRequest {
-	bundle: Record<string, unknown>;
-}
+export type LocalMigrationImportRequest = RegisteredEndpointRequest<'migration.import.dryRun'>;
 
-export interface LocalMigrationImportDryRunResponse {
-	run_id: number;
-	status: 'dry_run_complete' | string;
-	dry_run: true;
-	report: LocalMigrationImportReport;
-}
+export type LocalMigrationImportApplyRequest = RegisteredEndpointRequest<'migration.import.apply'>;
 
-export interface LocalMigrationImportApplyResponse {
-	run_id: number;
-	status: 'completed' | string;
-	dry_run: false;
-	report: LocalMigrationImportReport;
-	applied: Record<string, number>;
-}
+export type LocalMigrationImportDryRunResponse =
+	RegisteredEndpointResponse<'migration.import.dryRun'>;
 
-export interface LocalMigrationApprovedResetRequest {
-	confirmation_phrase: string;
-}
+export type LocalMigrationImportApplyResponse =
+	RegisteredEndpointResponse<'migration.import.apply'>;
 
-export interface LocalMigrationApprovedResetResponse {
-	run_id: number;
-	status: 'completed' | string;
-	before: LocalMigrationReadinessReport;
-	after: LocalMigrationReadinessReport;
-	deleted_tables: Record<string, number | null>;
-	deleted_options: {
-		exact_options: Record<string, boolean>;
-		option_prefixes: Record<string, { count: number; sample: string[] }>;
-	};
-	preserved: string[];
-}
+export type LocalMigrationApprovedResetRequest =
+	RegisteredEndpointRequest<'migration.approvedReset'>;
+
+export type LocalMigrationApprovedResetResponse =
+	RegisteredEndpointResponse<'migration.approvedReset'>;
 
 /**
  * Form field information from adapter (e.g., Gravity Forms)
@@ -745,7 +515,7 @@ export interface FormFieldInfo {
 	/** Field type (text, email, select, etc.) */
 	type: string;
 	/** Admin label override */
-	adminLabel?: string;
+	adminLabel?: string | null;
 	/** Gravity Forms page number for paginated forms */
 	page_index?: number;
 	/** Whether this provider field ID is ambiguous in the current form manifest */
@@ -826,6 +596,19 @@ export interface TemplateSchemaResponse {
 	code: string;
 	display_name: string;
 	override_schema: TemplateOverrideSchema;
+}
+
+/**
+ * Input mapping configuration for field selection (CA-MAP-001)
+ * Controls which form fields are sent to the selected execution provider
+ */
+export interface InputMapping {
+	/** Field selection mode */
+	mode: 'all' | 'selected' | 'exclude';
+	/** Gravity Forms field IDs to include/exclude based on mode */
+	field_ids?: string[];
+	/** Include form metadata (title, entry ID, etc.) */
+	include_metadata?: boolean;
 }
 
 /**
@@ -956,49 +739,31 @@ export interface RealtimeSettings {
  * Strongly-typed settings for form-level action configuration
  */
 export interface FormActionSettings {
-	/** Field selection configuration */
 	input_mapping?: InputMapping;
-	/** Attachment selection configuration */
 	attachment_mapping?: AttachmentMapping;
-	/** Upstream mapping prerequisites that must complete successfully first */
 	dependency_ids?: string[];
-	/** Per-hook trigger source authority (hook root or mapping parent) */
 	trigger_sources?: Record<string, TriggerSourceConfig>;
-	/** Skip this mapping when its upstream spam check classified the entry as spam */
 	skip_on_upstream_spam?: boolean;
-	/** Explicit mapping override for suppressing notifications when spam is confirmed */
 	suppress_notifications_on_spam?: boolean;
-	/** Explicit mapping override for suppressing Gravity Forms Webhooks when spam is confirmed */
 	suppress_webhooks_on_spam?: boolean;
-	/** Explicit mapping override for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
-	/** Whether spam notes should be stored for none, spam-only, or all classifications */
 	spam_result_display_mode?: SpamResultDisplayMode;
-	/** How much spam-indicator detail to include in spam notes */
 	spam_indicators_display?: SpamIndicatorsDisplayMode;
-	/** Mapping-level legitimate spam-calibration examples */
+	spam_confidence_threshold?: number;
 	spam_positive_examples?: SpamGuidanceExample[];
-	/** Mapping-level spam-calibration examples */
 	spam_negative_examples?: SpamGuidanceExample[];
-	/** Optional action-specific AI instructions for this mapping */
 	action_customization?: string;
-	/** Conditional run gates for this mapping (CB-FORMS-006) */
+	include_site_context?: 'global' | 'always' | 'never';
+	model_override?: string;
 	conditions?: MappingConditionsConfig;
-	/** Prompt overrides for this mapping */
 	prompt_overrides?: Record<string, unknown>;
-	/** Non-blocking WordPress side effects to run after successful action execution */
 	post_execution_actions?: CustomActionPostExecutionActionPayload[];
-	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
 	execution_mode?: ExecutionMode;
-	/** Real-time suggestion/clarification runtime controls */
+	async?: boolean;
 	realtime_settings?: RealtimeSettings;
-	/** Batch settings for after-submission execution (CB-EXEC-003/004) */
 	batch_settings?: BatchSettings;
-	/** Resolved status of the linked local-first custom action */
 	linked_action_status?: LinkedActionStatus;
-	/** Whether the linked local-first custom action needs repair */
 	repair_state?: RepairState;
-	/** Additional runtime settings */
 	[key: string]: unknown;
 }
 
@@ -1010,7 +775,6 @@ export interface FormActionLinkage {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
-	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-001/002 */
 	execution_mode?: ExecutionMode;
 	linked_action_status?: LinkedActionStatus;
 	repair_state?: RepairState;
@@ -1027,15 +791,9 @@ export interface FormActionMutationPayload {
 	settings?: FormActionSettings;
 }
 
-export interface DuplicateParentSelection {
-	type: 'hook_root' | 'mapping';
-	hook: string;
-	mapping_id?: string;
-}
+export type DuplicateFormActionRequest = RegisteredEndpointRequest<'forms.actions.duplicate'>;
 
-export interface DuplicateFormActionRequest {
-	parent: DuplicateParentSelection;
-}
+export type DuplicateParentSelection = DuplicateFormActionRequest['parent'];
 
 export interface DuplicateFormActionSkippedChild {
 	child_id: string;
@@ -1051,10 +809,7 @@ export interface DuplicateFormActionInsertion {
 	warnings: string[];
 }
 
-export interface DuplicateFormActionResponse {
-	duplicate: FormActionLinkage;
-	insertion: DuplicateFormActionInsertion;
-}
+export type DuplicateFormActionResponse = RegisteredEndpointResponse<'forms.actions.duplicate'>;
 
 export type WorkflowBlockReason =
 	| 'disabled'
@@ -1108,18 +863,7 @@ export interface WorkflowPolicyViolation {
 	message: string;
 }
 
-export interface WorkflowPlanResponse {
-	authority: 'cps' | 'local';
-	authority_reason?: string | null;
-	cps_unreachable: boolean;
-	policy_version: string;
-	hook_scope: 'all' | string;
-	available_hooks: string[];
-	nodes: WorkflowPlanNode[];
-	edges: WorkflowPlanEdge[];
-	hooks: WorkflowPlanHook[];
-	policy_violations: WorkflowPolicyViolation[];
-}
+export type WorkflowPlanResponse = RegisteredEndpointResponse<'forms.workflowPlan.read'>;
 
 export type TraceBlockReason =
 	| 'disabled'
@@ -1210,32 +954,11 @@ export interface RequestTraceInput {
 	draft_applied: boolean;
 }
 
-export interface RequestTraceRequest {
-	hook_scope?: 'all' | string;
-	entry_values?: Record<string, string | number | boolean | null>;
-	entry_id?: number;
-	field_scope?: 'mapped_and_rule';
-	include_drafts?: boolean;
-	draft_mappings?: FormActionLinkage[];
-}
+export type RequestTraceRequest = RegisteredEndpointRequest<'forms.requestTrace.run'>;
 
-export interface RequestTraceResponse {
-	authority: 'wp_rest';
-	policy_version: string;
-	hook_scope: 'all' | string;
-	available_hooks: string[];
-	input: RequestTraceInput;
-	hooks: RequestTraceHook[];
-	policy_violations: WorkflowPolicyViolation[];
-}
+export type RequestTraceResponse = RegisteredEndpointResponse<'forms.requestTrace.run'>;
 
-export interface FormDisableStateResponse {
-	sf_disabled: boolean;
-	global_disabled?: boolean;
-	provider_disabled?: boolean;
-	effective_disabled?: boolean;
-	message?: string;
-}
+export type FormDisableStateResponse = RegisteredEndpointResponse<'forms.disabled.read'>;
 
 export interface ModelSelection {
 	primary: string;
@@ -1435,31 +1158,18 @@ export interface SpamGuidanceExample {
  * This configuration persists at the form level, surviving action mapping deletion.
  */
 export interface FormActionConfig {
-	/** Examples of legitimate submissions (positive examples) */
 	spam_positive_examples?: SpamGuidanceExample[];
-	/** Examples of spam submissions (negative examples) */
 	spam_negative_examples?: SpamGuidanceExample[];
-	/** Default policy for suppressing notifications when blocking spam checks confirm spam */
 	suppress_notifications_on_spam?: boolean;
-	/** Default policy for suppressing Gravity Forms Webhooks when blocking spam checks confirm spam */
 	suppress_webhooks_on_spam?: boolean;
-	/** Default policy for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
-	/** Optional action-specific AI instructions for this configuration scope */
 	action_customization?: string;
-	/** Default policy for when to store spam notes for this action on this form */
 	spam_result_display_mode?: SpamResultDisplayMode;
-	/** Default policy for how much indicator detail spam notes should include */
 	spam_indicators_display?: SpamIndicatorsDisplayMode;
-	/** Site context inclusion: 'global' | 'always' | 'never' */
 	include_site_context?: 'global' | 'always' | 'never';
-	/** Structured model selection default for this action scope */
 	model_selection?: ModelSelection;
-	/** Legacy string model override retained for transition reads */
 	model_override?: string;
-	/** Default realtime behavior for realtime-capable actions */
 	realtime_settings?: RealtimeSettings;
-	/** Last update timestamp */
 	updated_at?: string;
 }
 
@@ -1582,16 +1292,7 @@ export interface LeadProfileRecord {
 	updated_at?: string | null;
 }
 
-export interface LeadProfileResponse {
-	profile: LeadProfileRecord | null;
-	readiness: LeadProfileReadiness;
-	dashboard?: LeadValueDashboard;
-	generation_job?: {
-		id: string;
-		status: string;
-		action_scheduler_id?: number | null;
-	};
-}
+export type LeadProfileResponse = RegisteredEndpointResponse<'lead.profile.read'>;
 
 export interface LeadProfileSavePayload {
 	lead_profile_consent?: boolean;
@@ -1688,10 +1389,8 @@ export interface LeadScoringFormSummary {
 	setup_status?: string | null;
 }
 
-export interface LeadValueHistoricalRunResponse {
-	run: LeadValueHistoricalRun;
-	message?: string;
-}
+export type LeadValueHistoricalRunResponse =
+	RegisteredEndpointResponse<'lead.historicalRuns.create'>;
 
 export interface LeadValueHistoricalRunCreatePayload {
 	action_code?: 'lead_grading_v1' | 'suggested_reply_v1' | string;
@@ -1732,11 +1431,7 @@ export interface LeadValueEntrySearchEntry {
 	field_summary: Array<{ field_id: string; label: string; value: string }>;
 }
 
-export interface LeadValueEntrySearchResponse {
-	entries: LeadValueEntrySearchEntry[];
-	form_source: string;
-	form_id: number;
-}
+export type LeadValueEntrySearchResponse = RegisteredEndpointResponse<'lead.entries.search'>;
 
 export type SpamGuidanceEntryStatusFilter = 'all' | 'active' | 'spam';
 export type SpamGuidanceExampleLabel = 'ham' | 'spam';
@@ -1774,12 +1469,8 @@ export interface SpamGuidanceEntrySearchAvailability {
 	native_unavailable_reason?: SpamGuidanceEntryUnavailableReason | null;
 }
 
-export interface SpamGuidanceEntrySearchResponse {
-	entries: SpamGuidanceEntrySearchEntry[];
-	form_source: string;
-	form_id: string;
-	availability: SpamGuidanceEntrySearchAvailability;
-}
+export type SpamGuidanceEntrySearchResponse =
+	RegisteredEndpointResponse<'spamGuidance.entries.search'>;
 
 export interface SpamGuidanceExampleAppendPayload {
 	target_scope: SpamGuidanceTargetScope;
@@ -1790,15 +1481,8 @@ export interface SpamGuidanceExampleAppendPayload {
 	mapping_id?: number | string;
 }
 
-export interface SpamGuidanceExampleAppendResponse {
-	target_scope: SpamGuidanceTargetScope;
-	label: SpamGuidanceExampleLabel;
-	config: FormActionConfig;
-	generation?: {
-		route?: string;
-		model?: string | null;
-	} | null;
-}
+export type SpamGuidanceExampleAppendResponse =
+	RegisteredEndpointResponse<'spamGuidance.examples.append'>;
 
 export type CustomActionStatus = 'active' | 'archived';
 
@@ -1965,12 +1649,7 @@ export interface CustomActionFilters {
 	template_id?: string;
 }
 
-export interface CapabilitiesResponse {
-	supports_custom_actions?: boolean;
-	supports_status?: boolean;
-	supports_credits?: boolean;
-	cps_version?: string;
-}
+export type CapabilitiesResponse = RegisteredEndpointResponse<'meta.capabilities'>;
 
 export interface FormExecutionStatus {
 	status: 'unknown' | 'success' | 'error';
@@ -2006,20 +1685,11 @@ export interface MeteringSummary {
 	workflow?: WorkflowMeteringSummary | null;
 }
 
-export interface AsyncSettingsResponse {
-	max_attempts: number;
-	base_delay_seconds: number;
-	max_delay_seconds: number;
-	updated_at: string | null;
-	updated_by: string | null;
-}
+export type TelemetrySettingsResponse = RegisteredEndpointResponse<'telemetry.read'>;
 
-export interface AsyncHealthResponse {
-	queue_depth: number;
-	oldest_run_at: number | null;
-	recent_failures: Record<string, number>;
-	warnings: Array<{ code: string; level: string; message: string }>;
-}
+export type AsyncSettingsResponse = RegisteredEndpointResponse<'asyncSettings.read'>;
+
+export type AsyncHealthResponse = RegisteredEndpointResponse<'asyncHealth.read'>;
 
 export interface FormSummary {
 	id: string | number;
@@ -2038,12 +1708,7 @@ export interface FormOverviewItem extends FormSummary {
 	execution_status: FormExecutionStatus;
 }
 
-export interface FormsOverviewResponse {
-	form_source: string;
-	form_source_descriptor?: FormSourceDescriptor | null;
-	forms: FormOverviewItem[];
-	generated_at: string;
-}
+export type FormsOverviewResponse = RegisteredEndpointResponse<'forms.overview'>;
 
 export interface FormSourceLifecycleDescriptor {
 	id?: string;
@@ -2087,18 +1752,8 @@ export interface FormSourceDescriptor {
 	requirements?: Record<string, boolean | string | number | null>;
 }
 
-export interface SubmissionLedgerSettingsResponse {
-	form_source: string;
-	form_id: string;
-	enabled: boolean;
-	enabled_at: string | null;
-	enabled_by_user_id: number | null;
-	disabled_at: string | null;
-	disabled_by_user_id: number | null;
-	settings_source: string;
-	ledger_records_endpoint: string;
-	record_count?: number;
-}
+export type SubmissionLedgerSettingsResponse =
+	RegisteredEndpointResponse<'forms.ledger.settings.read'>;
 
 export interface SubmissionLedgerRecord {
 	id: number;
@@ -2131,38 +1786,14 @@ export interface SubmissionLedgerActionRun {
 	updated_at: string | null;
 }
 
-export interface SubmissionLedgerRecordsResponse {
-	form_source: string;
-	form_id: string;
-	records: SubmissionLedgerRecord[];
-	total: number;
-	per_page: number;
-	offset: number;
-}
+export type SubmissionLedgerRecordsResponse =
+	RegisteredEndpointResponse<'forms.ledger.records.list'>;
 
-export interface FormActionsBootstrapResponse {
-	form_source: string;
-	form_id: string | number;
-	form?: FormSummary | null;
-	form_source_descriptor?: FormSourceDescriptor | null;
-	actions: FormActionLinkage[];
-	execution_status: FormExecutionStatus;
-	disabled_state: FormDisableStateResponse;
-	capabilities?: CapabilitiesResponse;
-	definitions?: ActionDefinition[];
-	custom_actions?: {
-		actions: CustomAction[];
-		quota: CustomActionQuota | null;
-	};
-	provider_credentials?: LocalProviderCredential[];
-	form_action_configs?: Record<string, FormActionConfig>;
-	form_fields?: FormFieldInfo[];
-	action_defaults?: Record<string, FormActionConfig>;
-	provider_path_policy?: ProviderPathPolicyResponse;
-	workflow_plan?: WorkflowPlanResponse | null;
-	ledger_settings?: SubmissionLedgerSettingsResponse;
-	generated_at: string;
-}
+export type FormActionsBootstrapResponse = RegisteredEndpointResponse<'forms.actions.bootstrap'>;
+
+export type ActionCompatibilityRequest = RegisteredEndpointRequest<'forms.actions.compatibility'>;
+export type ActionCompatibilityEvidence = RegisteredEndpointResponse<'forms.actions.compatibility'>;
+export type ActionCompatibilityLifecycle = ActionCompatibilityEvidence['lifecycle'];
 
 export interface FormSourceSummary {
 	slug: string;

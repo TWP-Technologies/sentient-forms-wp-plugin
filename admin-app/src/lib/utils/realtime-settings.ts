@@ -130,7 +130,7 @@ export function normalizeRealtimeSettings(value: unknown): RealtimeSettings {
 
 export function summarizeRealtimeSettings(settings: RealtimeSettings): string {
 	const normalized = normalizeRealtimeSettings(settings);
-	const triggers = [];
+	const triggers: string[] = [];
 	if (normalized.auto_refresh_enabled) triggers.push('auto');
 	if (normalized.manual_refresh_enabled) triggers.push('manual');
 	if (normalized.field_checkpoints_enabled) {

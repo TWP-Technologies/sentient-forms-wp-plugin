@@ -18,7 +18,7 @@ function dashboardSummary(overrides: Record<string, unknown> = {}) {
 			license_id: null,
 			site_id: null
 		},
-		async_health: { status: 'healthy', blockers: [], warnings: [] },
+		async_health: { queue_depth: 0, oldest_run_at: null, recent_failures: {}, warnings: [] },
 		...overrides
 	};
 }
@@ -150,19 +150,66 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 					}
 				],
 				templates: [
-					{ id: 1, code: 'spam_detection', display_name: 'Spam detection', is_active: true },
-					{ id: 2, code: 'entry_summary', display_name: 'Entry summary', is_active: true }
+					{
+						id: 1,
+						source: null,
+						external_id: null,
+						code: 'spam_detection',
+						display_name: 'Spam detection',
+						description: null,
+						prompt_template: null,
+						default_model: null,
+						structured_output_schema: null,
+						override_schema: null,
+						version: null,
+						is_active: true,
+						created_at: null,
+						updated_at: null
+					},
+					{
+						id: 2,
+						source: null,
+						external_id: null,
+						code: 'entry_summary',
+						display_name: 'Entry summary',
+						description: null,
+						prompt_template: null,
+						default_model: null,
+						structured_output_schema: null,
+						override_schema: null,
+						version: null,
+						is_active: true,
+						created_at: null,
+						updated_at: null
+					}
 				],
 				custom_actions: [
-					{ id: 3, code: 'route_quote', display_name: 'Route quote', status: 'active' }
+					{
+						id: 3,
+						external_id: null,
+						template_id: null,
+						code: 'route_quote',
+						display_name: 'Route quote',
+						definition_json: {},
+						model_selection_json: null,
+						status: 'active',
+						created_at: null,
+						updated_at: null
+					}
 				],
 				recent_events: [
 					{
 						id: 4,
 						execution_request_id: 'run_1',
+						mapping_id: null,
+						form_source: null,
+						form_id: null,
+						entry_id: null,
 						provider: 'openrouter',
 						model: 'openrouter/free-model',
 						status: 'succeeded',
+						token_usage_json: null,
+						cost_json: null,
 						result_json: {
 							structured: {
 								sentiment: 'negative',
@@ -172,7 +219,12 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 								applied: ['entry_note']
 							}
 						},
-						created_at: '2030-01-05T10:00:00Z'
+						error_code: null,
+						error_message: null,
+						payload_digest: null,
+						created_at: '2030-01-05T10:00:00Z',
+						updated_at: null,
+						expires_at: null
 					}
 				]
 			})
@@ -219,10 +271,22 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 					{
 						id: 4,
 						execution_request_id: 'legacy_run_1',
+						mapping_id: null,
+						form_source: null,
+						form_id: null,
+						entry_id: null,
 						provider: 'legacy_cps',
 						model: 'gemini-3-flash-preview',
 						status: 'succeeded',
-						created_at: '2030-01-05T10:00:00Z'
+						token_usage_json: null,
+						cost_json: null,
+						result_json: null,
+						error_code: null,
+						error_message: null,
+						payload_digest: null,
+						created_at: '2030-01-05T10:00:00Z',
+						updated_at: null,
+						expires_at: null
 					}
 				]
 			})
@@ -276,7 +340,22 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			page,
 			dashboardSummary({
 				templates: [
-					{ id: 1, code: 'spam_detection', display_name: 'Spam detection', is_active: true }
+					{
+						id: 1,
+						source: null,
+						external_id: null,
+						code: 'spam_detection',
+						display_name: 'Spam detection',
+						description: null,
+						prompt_template: null,
+						default_model: null,
+						structured_output_schema: null,
+						override_schema: null,
+						version: null,
+						is_active: true,
+						created_at: null,
+						updated_at: null
+					}
 				],
 				section_errors: [
 					{
@@ -513,6 +592,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			execution_global_disabled: false,
 			execution_provider_disabled: {},
 			execution_event_retention_days: 90,
+			submission_ledger_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
 			privacy_setup_profile: 'balanced',

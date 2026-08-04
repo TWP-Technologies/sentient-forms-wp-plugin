@@ -25,7 +25,7 @@
 		type ActionLogStatus,
 		type ActionLogResultVariant
 	} from '$lib/utils/action-log-presentation';
-	import { wpFetch } from '$lib/wp';
+	import { wpRequestEndpoint } from '$lib/wp';
 
 	interface ActionLogEntry {
 		id: string;
@@ -93,7 +93,7 @@
 		provider_label: string;
 		form_id: number;
 		form_name: string;
-		entry_id: number;
+		entry_id: number | null;
 		date_created: string | null;
 		status: string | null;
 		fields: ActionLogEntryPreviewField[];
@@ -136,6 +136,74 @@
 			draftFilters.status !== appliedFilters.status ||
 			draftFilters.actionCode !== appliedFilters.actionCode
 	);
+
+	function normalizeActionLogLinks(
+		links: Record<string, string | null | undefined> | null | undefined
+	): ActionLogFormContext['links'] {
+		return {
+			provider_admin_url: links?.provider_admin_url ?? null,
+			form_admin_url: links?.form_admin_url ?? null,
+			entries_admin_url: links?.entries_admin_url ?? null,
+			entry_admin_url: links?.entry_admin_url ?? null
+		};
+	}
+
+	function normalizeActionLogEntry(
+		entry: Awaited<ReturnType<typeof wpRequestEndpoint<'actionLog.list'>>>['entries'][number]
+	): ActionLogEntry {
+		const context = entry.form_context;
+		return {
+			id: entry.id,
+			form_source: entry.form_source,
+			form_id: entry.form_id ?? '',
+			entry_id: entry.entry_id ?? null,
+			action_code: entry.action_code,
+			action_label: entry.action_label,
+			status: entry.status,
+			result_summary: entry.result_summary ?? null,
+			classification: entry.classification ?? null,
+			credits_used: entry.credits_used,
+			error_code: entry.error_code ?? null,
+			error_message: entry.error_message ?? null,
+			structured_output_valid: entry.structured_output_valid,
+			execution_request_id: entry.execution_request_id ?? null,
+			mapping_id: entry.mapping_id ?? null,
+			resolved_model_id: entry.resolved_model_id ?? null,
+			pricing: entry.pricing ?? null,
+			usage_cost: entry.usage_cost ?? null,
+			details: entry.details ?? null,
+			form_context: context
+				? {
+						provider_slug: context.provider_slug,
+						provider_label: context.provider_label,
+						form_id: context.form_id ?? '',
+						form_name: context.form_name,
+						entry_id: context.entry_id ?? null,
+						links: normalizeActionLogLinks(context.links),
+						entry_preview_available: context.entry_preview_available,
+						form_missing: context.form_missing
+					}
+				: null,
+			created_at: entry.created_at,
+			completed_at: entry.completed_at ?? null
+		};
+	}
+
+	function normalizeActionLogPreview(
+		preview: Awaited<ReturnType<typeof wpRequestEndpoint<'actionLog.preview'>>>
+	): ActionLogEntryPreview {
+		return {
+			log_id: preview.log_id,
+			provider_label: preview.provider_label,
+			form_id: preview.form_id,
+			form_name: preview.form_name,
+			entry_id: preview.entry_id,
+			date_created: preview.date_created ?? null,
+			status: preview.status ?? null,
+			fields: preview.fields,
+			links: normalizeActionLogLinks(preview.links)
+		};
+	}
 	let pagination = $derived(
 		buildPaginationPresentation({
 			page,
@@ -164,8 +232,8 @@
 				params.set('action_code', appliedFilters.actionCode);
 			}
 
-			const response = await wpFetch<LogResponse>(`actions/log?${params}`);
-			entries = response.entries;
+			const response = await wpRequestEndpoint('actionLog.list', {}, `actions/log?${params}`);
+			entries = response.entries.map(normalizeActionLogEntry);
 			total = response.total;
 			perPage = response.per_page;
 			totalPages = Math.max(1, response.total_pages);
@@ -270,12 +338,14 @@
 
 		previewLoadingId = entry.id;
 		try {
-			const preview = await wpFetch<ActionLogEntryPreview>(
+			const preview = await wpRequestEndpoint(
+				'actionLog.preview',
+				{},
 				`actions/log/${encodeURIComponent(entry.id)}/entry-preview`
 			);
 			previewCache = {
 				...previewCache,
-				[entry.id]: preview
+				[entry.id]: normalizeActionLogPreview(preview)
 			};
 		} catch (requestError) {
 			previewError =
@@ -996,7 +1066,9 @@
 				<div class="sf:mt-5 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 					<Badge variant="info">{activePreview.provider_label}</Badge>
 					<Badge variant="neutral">Form #{activePreview.form_id}</Badge>
-					<Badge variant="neutral">Entry #{activePreview.entry_id}</Badge>
+					{#if activePreview.entry_id !== null}
+						<Badge variant="neutral">Entry #{activePreview.entry_id}</Badge>
+					{/if}
 					{#if activePreview.status}
 						<Badge variant="neutral">{activePreview.status}</Badge>
 					{/if}
