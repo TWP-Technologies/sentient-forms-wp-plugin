@@ -29,6 +29,7 @@
 	import { runAdminCssHealthCheck } from '$lib/utils/admin-css-health';
 	import { Toaster, toast } from 'sonner-svelte';
 	import { readRuntimeConfigSafely } from '$lib/schemas/runtime-config';
+	import { parseSettingsUpdatedEvent, SETTINGS_UPDATED_EVENT } from '$lib/api/settings-events';
 
 	interface Props {
 		children?: import('svelte').Snippet;
@@ -55,6 +56,9 @@
 	let softRepairAttempted = $state(false);
 	let hardRepairAttempted = $state(false);
 	let privacySettings = $state<PluginSettingsResponse | null>(null);
+	let privacySettingsLoading = $state(false);
+	let privacySettingsLoadError = $state<string | null>(null);
+	let privacySettingsRequestGeneration = 0;
 	let privacyAssistantOpen = $state(false);
 	let privacyAssistantSaving = $state(false);
 	let privacyApplyError = $state<string | null>(null);
@@ -164,15 +168,31 @@
 		const openAssistantWhenIncomplete = options.openAssistantWhenIncomplete ?? true;
 		if (runtime?.currentUser && !runtime.currentUser.canManage) return;
 
+		const requestGeneration = ++privacySettingsRequestGeneration;
+		privacySettingsLoading = true;
+		privacySettingsLoadError = null;
 		try {
-			const settings = await client.getSettings({ showNotifications: false });
+			const settings = await client.getSettings({ showNotifications: false, dedupe: false });
+			if (requestGeneration !== privacySettingsRequestGeneration) return;
+
 			privacySettings = settings;
+			privacySettingsLoadError = null;
 			privacyApplyError = null;
 			if (openAssistantWhenIncomplete && !settings.privacy_setup_completed_at) {
 				privacyAssistantOpen = true;
 			}
 		} catch (error) {
+			if (requestGeneration !== privacySettingsRequestGeneration) return;
+
 			console.error('Failed to load Sentient Forms privacy settings', error);
+			privacySettingsLoadError = readableSettingsError(
+				error,
+				'Privacy settings could not be loaded. Retry before applying a preset.'
+			);
+		} finally {
+			if (requestGeneration === privacySettingsRequestGeneration) {
+				privacySettingsLoading = false;
+			}
 		}
 	}
 
@@ -201,11 +221,6 @@
 			privacySettings = settings;
 			privacyAssistantOpen = false;
 			privacyApplyError = null;
-			window.dispatchEvent(
-				new CustomEvent('sentient-forms:settings-updated', {
-					detail: settings
-				})
-			);
 			const profileLabel =
 				settings.privacy_setup_profile === 'privacy_focused'
 					? 'Privacy focused'
@@ -298,8 +313,19 @@
 				void loadPrivacySettings({ openAssistantWhenIncomplete: false });
 			}
 		};
+		const handleSettingsUpdated = (event: Event) => {
+			const settings = parseSettingsUpdatedEvent(event);
+			if (!settings) return;
+
+			privacySettingsRequestGeneration += 1;
+			privacySettingsLoading = false;
+			privacySettingsLoadError = null;
+			privacyApplyError = null;
+			privacySettings = settings;
+		};
 
 		window.addEventListener('sentient-forms:open-privacy-setup', openAssistant);
+		window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
 
 		const handleSessionExpired = (event: Event) => {
 			const detail = (event as CustomEvent<{ message?: string }>).detail;
@@ -330,6 +356,7 @@
 		return () => {
 			unsubscribeNotifications();
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
+			window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
 			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
 			window.removeEventListener(SECURITY_ROADBLOCK_EVENT, handleSecurityRoadblock);
 			window.removeEventListener('resize', updateWpAdminOffset);
@@ -495,11 +522,16 @@
 <PrivacySetupAssistant
 	open={privacyAssistantOpen}
 	settings={privacySettings}
+	loading={privacySettingsLoading}
+	loadError={privacySettingsLoadError}
 	saving={privacyAssistantSaving}
 	applyError={privacyApplyError}
 	{managedAccountReady}
 	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
 	onapply={applyPrivacyPreset}
+	onretry={() => {
+		void loadPrivacySettings({ openAssistantWhenIncomplete: false });
+	}}
 	onclose={() => {
 		if (privacySettings?.privacy_setup_completed_at) {
 			privacyAssistantOpen = false;

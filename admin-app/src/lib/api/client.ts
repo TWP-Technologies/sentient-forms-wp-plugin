@@ -24,6 +24,7 @@ import {
 	readResponseText
 } from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
+import { announceSettingsUpdateResponse } from '$lib/api/settings-events';
 import type {
 	ActionCompatibilityEvidence,
 	ActionCompatibilityRequest,
@@ -854,6 +855,7 @@ export class SentientFormsApiClient {
 			...options
 		});
 		const data = this.unwrap<RegisteredEndpointResponse<'settings.update'>>(response);
+		announceSettingsUpdateResponse(data, Object.keys(payload));
 		return 'settings' in data ? data.settings : data;
 	}
 

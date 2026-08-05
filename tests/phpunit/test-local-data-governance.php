@@ -1703,21 +1703,24 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertNotNull( $applied['privacy_setup_completed_at'] );
     }
 
-    public function test_privacy_presets_initialize_both_retention_windows(): void
+    public function test_privacy_presets_apply_all_governance_consequences(): void
     {
-        $expected_retention = [
-            'balanced'          => 90,
-            'privacy_focused'   => 30,
-            'maximum_privacy'   => 7,
-            'maximum_visibility' => 180,
+        $expected_presets = [
+            'balanced'           => [ 90, false, true, false ],
+            'privacy_focused'    => [ 30, false, true, false ],
+            'maximum_privacy'    => [ 7, false, true, false ],
+            'maximum_visibility' => [ 180, true, true, true ],
         ];
 
-        foreach ( $expected_retention as $profile => $days )
+        foreach ( $expected_presets as $profile => [ $days, $store_full_outputs, $delete_on_uninstall, $logging_enabled ] )
         {
             $applied = Sentient_Forms_Local_Data_Governance::apply_privacy_preset( $profile );
 
             $this->assertSame( $days, $applied['execution_event_retention_days'], $profile );
             $this->assertSame( $days, $applied['submission_ledger_retention_days'], $profile );
+            $this->assertSame( $store_full_outputs, $applied['store_full_ai_outputs'], $profile );
+            $this->assertSame( $delete_on_uninstall, $applied['delete_data_on_uninstall'], $profile );
+            $this->assertSame( $logging_enabled, $applied['enable_logging'], $profile );
         }
     }
 

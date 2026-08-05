@@ -65,6 +65,7 @@ test.describe('Privacy setup assistant', () => {
 					Object.assign(settingsState, {
 						enable_logging: true,
 						execution_event_retention_days: 180,
+						submission_ledger_retention_days: 180,
 						delete_data_on_uninstall: true,
 						store_full_ai_outputs: true,
 						managed_zdr_required: payload.managed_zdr_required === true,
@@ -230,7 +231,39 @@ test.describe('Privacy setup assistant', () => {
 
 		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
-		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		const assistant = page.getByTestId('privacy-setup-assistant');
+		await expect(assistant).toBeVisible();
+		await expect(assistant).toHaveAttribute('tabindex', '-1');
+		await expect(page.getByTestId('privacy-setup-assistant-backdrop')).toHaveClass(
+			/sf-wp-modal-backdrop/
+		);
+		await page.getByTestId('privacy-setup-assistant-backdrop').evaluate((element) => {
+			element.parentElement?.setAttribute('id', 'sentient-forms-admin-app');
+			document.body.classList.add('wp-admin');
+		});
+		await expect
+			.poll(() =>
+				page.getByTestId('privacy-setup-assistant-backdrop').evaluate((element) => {
+					const style = getComputedStyle(element);
+					return { top: style.top, left: style.left };
+				})
+			)
+			.toEqual({ top: '0px', left: '0px' });
+		await expect
+			.poll(() => assistant.evaluate((element) => element.contains(document.activeElement)))
+			.toBe(true);
+		const firstPreset = page.getByTestId('privacy-setup-preset-balanced');
+		await page.getByRole('button', { name: 'Skip Setup' }).focus();
+		await page.keyboard.press('Tab');
+		await expect(firstPreset).toBeFocused();
+		for (const preset of ['balanced', 'privacy_focused', 'maximum_privacy', 'maximum_visibility']) {
+			await expect(page.getByTestId(`privacy-setup-preset-${preset}`)).toHaveAttribute(
+				'aria-pressed',
+				'false'
+			);
+		}
+		await expect(page.getByTestId('privacy-setup-preset-balanced')).toContainText('Recommended');
+		await expect(page.getByRole('button', { name: 'Choose a preset' })).toBeDisabled();
 		await expect(page.getByText('Updated before')).toHaveCount(0);
 		await expect(
 			page.getByTestId('privacy-setup-assistant').getByText('Site Context', { exact: true })
@@ -245,7 +278,21 @@ test.describe('Privacy setup assistant', () => {
 			.getByTestId('privacy-setup-managed-zdr')
 			.getByLabel('Enforce ZDR for managed service')
 			.check();
-		await page.getByTestId('privacy-setup-preset-maximum_visibility').click();
+		const presetPreview = page.getByTestId('privacy-setup-preset-preview');
+		const presetExpectations = {
+			balanced: ['90-day', 'Full AI outputs off', 'On-site logging off'],
+			privacy_focused: ['30-day', 'Full AI outputs off', 'On-site logging off'],
+			maximum_privacy: ['7-day', 'Full AI outputs off', 'On-site logging off'],
+			maximum_visibility: ['180-day', 'Full AI outputs on', 'On-site logging on']
+		};
+		for (const [preset, [retention, fullOutputs, logging]] of Object.entries(presetExpectations)) {
+			await page.getByTestId(`privacy-setup-preset-${preset}`).click();
+			await expect(presetPreview).toContainText(`${retention} execution logs`);
+			await expect(presetPreview).toContainText(`${retention} Submission Ledger records`);
+			await expect(presetPreview).toContainText(fullOutputs);
+			await expect(presetPreview).toContainText('Delete plugin data on uninstall');
+			await expect(presetPreview).toContainText(logging);
+		}
 		await page.getByRole('button', { name: 'Apply Maximum visibility' }).click();
 
 		await expect.poll(() => capturedPayloads.length).toBe(1);
@@ -260,7 +307,19 @@ test.describe('Privacy setup assistant', () => {
 			'Maximum visibility'
 		);
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
+		await expect(page.getByTestId('settings-profile-submission-ledger')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
+
+		const reviewSetup = page.getByRole('button', { name: 'Review setup' });
+		await reviewSetup.click();
+		await expect(assistant).toBeVisible();
+		await expect(page.getByTestId('privacy-setup-preset-maximum_visibility')).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		await page.getByRole('button', { name: 'Close' }).click();
+		await expect(assistant).toBeHidden();
+		await expect(reviewSetup).toBeFocused();
 	});
 
 	test('does not persist managed ZDR from first-run setup without managed service', async ({
@@ -295,6 +354,7 @@ test.describe('Privacy setup assistant', () => {
 					Object.assign(settingsState, {
 						enable_logging: true,
 						execution_event_retention_days: 180,
+						submission_ledger_retention_days: 180,
 						delete_data_on_uninstall: true,
 						store_full_ai_outputs: true,
 						privacy_setup_profile: 'maximum_visibility',
@@ -864,6 +924,7 @@ test.describe('Privacy setup assistant', () => {
 		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		settingsState.managed_zdr_required = true;
+		await page.getByTestId('privacy-setup-preset-balanced').click();
 		await page.getByRole('button', { name: 'Apply Balanced' }).click();
 
 		await expect.poll(() => capturedPayload).not.toBeNull();
@@ -1335,6 +1396,7 @@ test.describe('Privacy setup assistant', () => {
 		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await page.getByTestId('site-context-generation-consent').click();
+		await page.getByTestId('privacy-setup-preset-balanced').click();
 		await page.getByRole('button', { name: 'Apply Balanced' }).click();
 
 		await expect(page.getByTestId('privacy-setup-apply-error')).toContainText(
@@ -1508,6 +1570,7 @@ test.describe('Privacy setup assistant', () => {
 
 		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		await page.getByTestId('privacy-setup-preset-balanced').click();
 		await page.getByRole('button', { name: 'Apply Balanced' }).click();
 
 		await expect(page.getByTestId('privacy-setup-apply-error')).toContainText(

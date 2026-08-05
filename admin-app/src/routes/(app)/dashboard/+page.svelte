@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import { parseSettingsUpdatedEvent, SETTINGS_UPDATED_EVENT } from '$lib/api/settings-events';
 	import type {
 		LocalActionTemplate,
 		LocalCustomActionRecord,
@@ -254,20 +255,15 @@
 	onMount(() => {
 		void loadDashboardData();
 
-		function handleSettingsUpdated(): void {
+		function handleSettingsUpdated(event: Event): void {
+			if (!parseSettingsUpdatedEvent(event)) return;
 			void loadDashboardData({ forceRefresh: true });
 		}
 
-		window.addEventListener(
-			'sentient-forms:settings-updated',
-			handleSettingsUpdated as EventListener
-		);
+		window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
 
 		return () => {
-			window.removeEventListener(
-				'sentient-forms:settings-updated',
-				handleSettingsUpdated as EventListener
-			);
+			window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
 		};
 	});
 </script>
