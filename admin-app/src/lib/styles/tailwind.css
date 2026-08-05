@@ -175,6 +175,11 @@
 			min-height: 0;
 		}
 	}
+
+	body.wp-admin #sentient-forms-admin-app .sf-wp-modal-backdrop.sf-privacy-setup-backdrop {
+		top: 0;
+		left: 0;
+	}
 }
 
 @layer base {

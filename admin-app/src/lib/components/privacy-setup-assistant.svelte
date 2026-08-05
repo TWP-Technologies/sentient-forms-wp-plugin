@@ -10,7 +10,7 @@
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
 	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
 	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
-	import { Alert, Badge, Button } from '$lib/components/ui';
+	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
 	import { appHref } from '$lib/navigation';
 	import { parseSiteContextStatusResponse } from '$lib/schemas/site-context';
 	import { notifications } from '$lib/stores/notifications';
@@ -42,8 +42,10 @@
 		label: string;
 		kicker: string;
 		description: string;
-		retentionLabel: string;
+		executionRetentionLabel: string;
+		ledgerRetentionLabel: string;
 		fullOutputLabel: string;
+		uninstallLabel: string;
 		loggingLabel: string;
 	}
 
@@ -52,9 +54,12 @@
 		saving?: boolean;
 		applyError?: string | null;
 		settings?: PluginSettingsResponse | null;
+		loading?: boolean;
+		loadError?: string | null;
 		dismissible?: boolean;
 		managedAccountReady?: boolean;
 		onapply?: (preset: PrivacyPresetId, options: { managedZdrRequired?: boolean }) => void;
+		onretry?: () => void;
 		onclose?: () => void;
 	}
 
@@ -65,8 +70,10 @@
 			kicker: 'Recommended',
 			description:
 				'Good default for most sites. Keeps useful troubleshooting without saving full AI replies.',
-			retentionLabel: '90-day execution logs',
+			executionRetentionLabel: '90-day execution logs',
+			ledgerRetentionLabel: '90-day Submission Ledger records',
 			fullOutputLabel: 'Full AI outputs off',
+			uninstallLabel: 'Delete plugin data on uninstall',
 			loggingLabel: 'On-site logging off'
 		},
 		{
@@ -75,8 +82,10 @@
 			kicker: 'Lower retention',
 			description:
 				'Cuts back local history while keeping enough detail to verify that actions are working.',
-			retentionLabel: '30-day execution logs',
+			executionRetentionLabel: '30-day execution logs',
+			ledgerRetentionLabel: '30-day Submission Ledger records',
 			fullOutputLabel: 'Full AI outputs off',
+			uninstallLabel: 'Delete plugin data on uninstall',
 			loggingLabel: 'On-site logging off'
 		},
 		{
@@ -85,8 +94,10 @@
 			kicker: 'Minimum storage',
 			description:
 				'Stores the least local AI detail after actions finish. Best for sensitive intake flows.',
-			retentionLabel: '7-day execution logs',
+			executionRetentionLabel: '7-day execution logs',
+			ledgerRetentionLabel: '7-day Submission Ledger records',
 			fullOutputLabel: 'Full AI outputs off',
+			uninstallLabel: 'Delete plugin data on uninstall',
 			loggingLabel: 'On-site logging off'
 		},
 		{
@@ -95,8 +106,10 @@
 			kicker: 'For tuning and support',
 			description:
 				'Keeps more local detail so you can inspect outputs, compare prompts, and debug setups faster.',
-			retentionLabel: '180-day execution logs',
+			executionRetentionLabel: '180-day execution logs',
+			ledgerRetentionLabel: '180-day Submission Ledger records',
 			fullOutputLabel: 'Full AI outputs on',
+			uninstallLabel: 'Delete plugin data on uninstall',
 			loggingLabel: 'On-site logging on'
 		}
 	];
@@ -106,22 +119,26 @@
 		saving = false,
 		applyError = null,
 		settings = null,
+		loading = false,
+		loadError = null,
 		dismissible = false,
 		managedAccountReady = false,
 		onapply,
+		onretry,
 		onclose
 	}: Props = $props();
 
 	function initialPreset(
 		settingsValue: PluginSettingsResponse | null | undefined
-	): PrivacyPresetId {
+	): PrivacyPresetId | null {
+		if (!settingsValue?.privacy_setup_completed_at) return null;
 		const candidate = settingsValue?.privacy_setup_profile;
 		return presetDefinitions.some((preset) => preset.id === candidate)
 			? (candidate as PrivacyPresetId)
 			: 'balanced';
 	}
 
-	let selectedPreset = $state<PrivacyPresetId>(initialPreset(settings));
+	let selectedPreset = $state<PrivacyPresetId | null>(initialPreset(settings));
 	let siteContextLoading = $state(false);
 	let siteContextSaving = $state(false);
 	let siteContextGenerating = $state(false);
@@ -137,12 +154,16 @@
 	let managedZdrRequired = $state(Boolean(settings?.managed_zdr_required));
 	let managedZdrTouched = $state(false);
 	let applyErrorRegion = $state<HTMLDivElement | null>(null);
+	let dialogElement = $state<HTMLDivElement | null>(null);
+	let presetTouched = $state(false);
+	let previousOpen = false;
+	let previouslyFocusedElement: HTMLElement | null = null;
 	let siteContextGenerationPollTimer: ReturnType<typeof setTimeout> | null = null;
 	let siteContextGenerationPollFailures = 0;
 	let siteContextGenerationToastId: ToastId | null = null;
 	let siteContextGenerationToastActive = false;
 	let selectedDefinition = $derived(
-		presetDefinitions.find((preset) => preset.id === selectedPreset) ?? presetDefinitions[0]
+		presetDefinitions.find((preset) => preset.id === selectedPreset) ?? null
 	);
 	let completedAtLabel = $derived(settings?.privacy_setup_completed_at ?? null);
 	let siteContextHasChanges = $derived.by(() => {
@@ -167,7 +188,10 @@
 	);
 	let siteContextShouldSaveBeforeApply = $derived(siteContextTouched && siteContextHasChanges);
 	let footerApplyError = $derived(applyError ?? siteContextApplyError);
-	let managedZdrControlDisabled = $derived(!managedAccountReady || saving || siteContextSaving);
+	let settingsReady = $derived(!loading && !loadError && settings !== null);
+	let managedZdrControlDisabled = $derived(
+		!settingsReady || !managedAccountReady || saving || siteContextSaving
+	);
 	let siteContextGenerationJobActive = $derived(
 		siteContextGenerationJobIsActive(siteContextStatus)
 	);
@@ -190,13 +214,30 @@
 	);
 
 	$effect(() => {
-		if (!open) return;
-		selectedPreset = initialPreset(settings);
-		managedZdrRequired = managedAccountReady && Boolean(settings?.managed_zdr_required);
-		managedZdrTouched = false;
-		siteContextTouched = false;
-		siteContextApplyError = null;
-		void loadSiteContext();
+		const justOpened = open && !previousOpen;
+		const justClosed = !open && previousOpen;
+		previousOpen = open;
+
+		if (justOpened) {
+			presetTouched = false;
+			previouslyFocusedElement =
+				document.activeElement instanceof HTMLElement ? document.activeElement : null;
+			managedZdrRequired = managedAccountReady && Boolean(settings?.managed_zdr_required);
+			managedZdrTouched = false;
+			siteContextTouched = false;
+			siteContextApplyError = null;
+			void focusDialog();
+			void loadSiteContext();
+		}
+
+		if (open && settingsReady && !presetTouched) {
+			selectedPreset = initialPreset(settings);
+		}
+		if (open && settingsReady && !managedZdrTouched) {
+			managedZdrRequired = managedAccountReady && Boolean(settings?.managed_zdr_required);
+		}
+
+		if (justClosed) restorePreviousFocus();
 	});
 
 	$effect(() => {
@@ -223,14 +264,74 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent): void {
-		if (!open || !dismissible || saving) return;
-		if (event.key === 'Escape') {
+		if (!open) return;
+		if (event.key === 'Tab') {
+			trapDialogFocus(event);
+			return;
+		}
+		if (event.key === 'Escape' && dismissible && !saving) {
 			event.preventDefault();
 			onclose?.();
 		}
 	}
 
+	async function focusDialog(): Promise<void> {
+		await tick();
+		if (!open || !dialogElement) return;
+		const firstFocusable = dialogFocusableElements()[0];
+		(firstFocusable ?? dialogElement).focus();
+	}
+
+	function dialogFocusableElements(): HTMLElement[] {
+		if (!dialogElement) return [];
+		return Array.from(
+			dialogElement.querySelectorAll<HTMLElement>(
+				'a[href], button, input, select, textarea, [tabindex]'
+			)
+		).filter(
+			(element) =>
+				element.tabIndex >= 0 &&
+				!element.hasAttribute('disabled') &&
+				!element.hasAttribute('hidden') &&
+				element.getClientRects().length > 0
+		);
+	}
+
+	function trapDialogFocus(event: KeyboardEvent): void {
+		const focusable = dialogFocusableElements();
+		if (focusable.length === 0) {
+			event.preventDefault();
+			dialogElement?.focus();
+			return;
+		}
+
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+		const activeElement = document.activeElement;
+		if (
+			activeElement === dialogElement ||
+			!dialogElement?.contains(activeElement) ||
+			!focusable.includes(activeElement as HTMLElement)
+		) {
+			event.preventDefault();
+			(event.shiftKey ? last : first).focus();
+		} else if (event.shiftKey && activeElement === first) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && activeElement === last) {
+			event.preventDefault();
+			first.focus();
+		}
+	}
+
+	function restorePreviousFocus(): void {
+		const target = previouslyFocusedElement;
+		previouslyFocusedElement = null;
+		if (target?.isConnected) target.focus();
+	}
+
 	async function applySelectedPreset(): Promise<void> {
+		if (!settingsReady || !selectedPreset) return;
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
@@ -238,6 +339,7 @@
 	}
 
 	async function useBalancedDefaults(): Promise<void> {
+		if (!settingsReady) return;
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
@@ -543,6 +645,7 @@
 	onDestroy(() => {
 		clearSiteContextGenerationPoll();
 		dismissSiteContextGenerationToast();
+		restorePreviousFocus();
 	});
 </script>
 
@@ -550,13 +653,15 @@
 
 {#if open}
 	<div
-		class="sf:fixed sf:inset-0 sf:z-[1200] sf:flex sf:items-start sf:justify-center sf:overflow-y-auto sf:bg-slate-950/45 sf:p-4 sf:sm:p-6"
+		class="sf-wp-modal-backdrop sf-privacy-setup-backdrop sf:flex sf:items-stretch sf:justify-center sf:overflow-hidden sf:bg-slate-950/45 sf:p-0 sf:sm:items-start sf:sm:p-6"
 		role="presentation"
 		onclick={handleBackdropClick}
 		data-testid="privacy-setup-assistant-backdrop"
 	>
 		<div
-			class="sf:my-6 sf:flex sf:max-h-[calc(100vh-3rem)] sf:w-full sf:max-w-5xl sf:flex-col sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl"
+			bind:this={dialogElement}
+			tabindex="-1"
+			class="sf:m-0 sf:flex sf:h-full sf:max-h-full sf:w-full sf:max-w-5xl sf:flex-col sf:overflow-hidden sf:rounded-none sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl sf:sm:h-auto sf:sm:max-h-[calc(100dvh-var(--sentient-forms-wp-admin-offset,0px)-3rem)] sf:sm:rounded-lg"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="privacy-setup-assistant-title"
@@ -600,6 +705,25 @@
 			</div>
 
 			<div class="sf:flex-1 sf:space-y-6 sf:overflow-y-auto sf:p-5 sf:sm:p-6">
+				{#if loading}
+					<StateTemplate
+						variant="loading"
+						title="Loading privacy settings"
+						message="Retrieving the current profile before a preset can be applied."
+						inline
+						testId="privacy-setup-loading-state"
+					/>
+				{:else if loadError}
+					<StateTemplate
+						variant="error"
+						title="Privacy settings unavailable"
+						message={loadError}
+						actionLabel="Retry"
+						onAction={onretry}
+						inline
+						testId="privacy-setup-load-error"
+					/>
+				{/if}
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 					<span
 						class="sf:inline-flex sf:h-7 sf:w-7 sf:items-center sf:justify-center sf:rounded-full sf:bg-primary-600 sf:text-sm sf:font-semibold sf:text-white"
@@ -621,14 +745,16 @@
 							type="button"
 							variant="secondary"
 							size="md"
-							class={`sf:h-full sf:w-full sf:flex-col sf:items-start sf:rounded-lg sf:p-4 sf:text-left sf:transition-all ${
+							class={`sf:h-full sf:w-full sf:flex-col sf:items-start sf:rounded-lg sf:p-4 sf:text-left sf:transition-all sf:sm:p-6 ${
 								selectedPreset === preset.id
 									? 'sf:border-primary-600 sf:bg-primary-50 sf:shadow-md sf:ring-2 sf:ring-primary-500 sf:ring-offset-2 sf:ring-offset-white sf:hover:border-primary-600 sf:hover:bg-primary-50'
 									: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300 sf:hover:bg-slate-50'
 							}`}
 							aria-pressed={selectedPreset === preset.id}
+							disabled={!settingsReady}
 							onclick={() => {
 								selectedPreset = preset.id;
+								presetTouched = true;
 							}}
 							data-testid={`privacy-setup-preset-${preset.id}`}
 						>
@@ -643,8 +769,10 @@
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-slate-600">{preset.description}</p>
 							<ul class="sf:mt-4 sf:space-y-2 sf:text-xs sf:text-slate-500">
-								<li>{preset.retentionLabel}</li>
+								<li>{preset.executionRetentionLabel}</li>
+								<li>{preset.ledgerRetentionLabel}</li>
 								<li>{preset.fullOutputLabel}</li>
+								<li>{preset.uninstallLabel}</li>
 								<li>{preset.loggingLabel}</li>
 							</ul>
 						</Button>
@@ -653,7 +781,8 @@
 
 				<div class="sf:space-y-4">
 					<div
-						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:space-y-4"
+						class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:space-y-4 sf:sm:p-6"
+						data-testid="privacy-setup-preset-preview"
 					>
 						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
 							<span
@@ -663,31 +792,52 @@
 							</span>
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 								<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
-									{selectedDefinition.label} changes
+									{selectedDefinition ? `${selectedDefinition.label} changes` : 'Choose a preset'}
 								</p>
-								<Badge variant="info">{selectedDefinition.kicker}</Badge>
+								{#if selectedDefinition}
+									<Badge variant="info">{selectedDefinition.kicker}</Badge>
+								{/if}
 							</div>
 						</div>
-						<div class="sf:grid sf:gap-3 sf:sm:grid-cols-3">
-							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-								<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution logs</p>
-								<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-									{selectedDefinition.retentionLabel}
-								</p>
+						{#if selectedDefinition}
+							<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-5">
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution logs</p>
+									<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+										{selectedDefinition.executionRetentionLabel}
+									</p>
+								</div>
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<p class="sf:text-xs sf:font-medium sf:text-slate-500">Submission Ledger</p>
+									<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+										{selectedDefinition.ledgerRetentionLabel}
+									</p>
+								</div>
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<p class="sf:text-xs sf:font-medium sf:text-slate-500">AI reply storage</p>
+									<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+										{selectedDefinition.fullOutputLabel}
+									</p>
+								</div>
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<p class="sf:text-xs sf:font-medium sf:text-slate-500">Uninstall</p>
+									<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+										{selectedDefinition.uninstallLabel}
+									</p>
+								</div>
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<p class="sf:text-xs sf:font-medium sf:text-slate-500">Diagnostics</p>
+									<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+										{selectedDefinition.loggingLabel}
+									</p>
+								</div>
 							</div>
-							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-								<p class="sf:text-xs sf:font-medium sf:text-slate-500">AI reply storage</p>
-								<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-									{selectedDefinition.fullOutputLabel}
-								</p>
-							</div>
-							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-								<p class="sf:text-xs sf:font-medium sf:text-slate-500">Diagnostics</p>
-								<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-									{selectedDefinition.loggingLabel}
-								</p>
-							</div>
-						</div>
+						{:else}
+							<Alert variant="info">
+								Balanced is recommended for most sites, but it is not selected yet. Review the
+								choices above and make an explicit selection before applying setup.
+							</Alert>
+						{/if}
 						<p class="sf:text-sm sf:text-slate-600">
 							All presets still keep action definitions, mappings, and provider setup on this site
 							until you delete them. The difference is how much execution history stays available
@@ -768,53 +918,55 @@
 				</div>
 			</div>
 
-			<StickyActionFooter
-				align="between"
-				class="sf:bg-white"
-				testId="privacy-setup-action-footer"
-			>
-					<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-3">
-						<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
-							<span
-								class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
-							>
-								5
-							</span>
-							<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
-								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to
-								use immediately.
-							</p>
+			<StickyActionFooter align="between" class="sf:bg-white" testId="privacy-setup-action-footer">
+				<div class="sf:flex sf:min-w-0 sf:basis-full sf:flex-1 sf:flex-col sf:gap-3 sf:sm:basis-0">
+					<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
+						<span
+							class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
+						>
+							5
+						</span>
+						<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
+							Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to use
+							immediately.
+						</p>
+					</div>
+					{#if footerApplyError}
+						<div
+							bind:this={applyErrorRegion}
+							tabindex="-1"
+							class="sf:focus-visible:outline-none"
+							data-testid="privacy-setup-apply-error"
+						>
+							<Alert variant="danger">
+								{footerApplyError}
+							</Alert>
 						</div>
-						{#if footerApplyError}
-							<div
-								bind:this={applyErrorRegion}
-								tabindex="-1"
-								class="sf:focus-visible:outline-none"
-								data-testid="privacy-setup-apply-error"
-							>
-								<Alert variant="danger">
-									{footerApplyError}
-								</Alert>
-							</div>
-						{/if}
-					</div>
-					<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
-						<Button
-							variant="secondary"
-							disabled={saving || siteContextSaving}
-							onclick={useBalancedDefaults}
-						>
-							Skip Setup
-						</Button>
-						<Button
-							class="sf:min-w-[9rem]"
-							loading={saving || siteContextSaving}
-							disabled={saving || siteContextSaving}
-							onclick={applySelectedPreset}
-						>
-							{saving || siteContextSaving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
-						</Button>
-					</div>
+					{/if}
+				</div>
+				<div
+					class="sf:flex sf:w-full sf:shrink-0 sf:flex-nowrap sf:justify-end sf:gap-2 sf:sm:w-auto"
+				>
+					<Button
+						variant="secondary"
+						disabled={!settingsReady || saving || siteContextSaving}
+						onclick={useBalancedDefaults}
+					>
+						Skip Setup
+					</Button>
+					<Button
+						class="sf:min-w-[9rem]"
+						loading={saving || siteContextSaving}
+						disabled={!settingsReady || !selectedDefinition || saving || siteContextSaving}
+						onclick={applySelectedPreset}
+					>
+						{saving || siteContextSaving
+							? 'Saving...'
+							: selectedDefinition
+								? `Apply ${selectedDefinition.label}`
+								: 'Choose a preset'}
+					</Button>
+				</div>
 			</StickyActionFooter>
 		</div>
 	</div>

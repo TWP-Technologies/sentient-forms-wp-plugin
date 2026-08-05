@@ -107,6 +107,18 @@ async function assertElementWithinViewport(locator: Locator, contextLabel: strin
 	);
 }
 
+async function assertCardPadding(
+	locator: Locator,
+	expectedPixels: number,
+	contextLabel: string
+): Promise<void> {
+	const padding = await locator.evaluate((element) => {
+		const style = getComputedStyle(element);
+		return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft];
+	});
+	expect(padding, `${contextLabel} card padding`).toEqual(Array(4).fill(`${expectedPixels}px`));
+}
+
 async function assertContentFrameWidth(page: Page, contextLabel: string): Promise<void> {
 	const frame = page.getByTestId('app-content-frame');
 	await expect(frame, `${contextLabel} content frame`).toBeVisible();
@@ -212,5 +224,87 @@ test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 		await expect(mappingModal.getByTestId('mapping-config-save')).toBeVisible();
 		await assertElementWithinViewport(mappingModal, 'mapping-config-modal');
 		await assertNoPageOverflow(page, 'mobile /#/actions/gravity_forms/123 mapping modal');
+	});
+
+	test('privacy setup and retention controls stay viewport-bounded on narrow widths', async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 360, height: 800 });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
+		await expect(page.getByLabel('Execution logs')).toBeVisible();
+		await expect(page.getByLabel('Submission Ledger records')).toBeVisible();
+		const retentionCard = page.getByLabel('Execution logs').locator('xpath=ancestor::form');
+		await assertCardPadding(retentionCard, 16, 'mobile retention');
+		await assertNoPageOverflow(page, 'mobile /#/settings retention controls');
+		await page.getByRole('button', { name: 'Review setup' }).click();
+
+		const modal = page.getByTestId('privacy-setup-assistant');
+		const footer = page.getByTestId('privacy-setup-action-footer');
+		await expect(modal).toBeVisible();
+		await expect(footer).toBeVisible();
+		await page.getByTestId('privacy-setup-preset-maximum_visibility').click();
+		const footerCopy = footer.getByText(
+			'Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to use immediately.',
+			{ exact: true }
+		);
+		const skipSetupButton = footer.getByRole('button', { name: 'Skip Setup' });
+		const applyPresetButton = footer.getByRole('button', { name: 'Apply Maximum visibility' });
+		const mobileFooterMetrics = await Promise.all([
+			footerCopy.boundingBox(),
+			skipSetupButton.boundingBox(),
+			applyPresetButton.boundingBox()
+		]);
+		const [mobileCopyBox, mobileSkipBox, mobileApplyBox] = mobileFooterMetrics;
+		expect(mobileCopyBox, 'mobile assistant footer copy box').not.toBeNull();
+		expect(mobileSkipBox, 'mobile assistant Skip Setup button box').not.toBeNull();
+		expect(mobileApplyBox, 'mobile assistant apply button box').not.toBeNull();
+		expect(mobileCopyBox!.width, 'mobile assistant footer copy width').toBeGreaterThanOrEqual(240);
+		expect(
+			Math.min(mobileSkipBox!.y, mobileApplyBox!.y),
+			'mobile assistant actions start below the explanatory copy'
+		).toBeGreaterThanOrEqual(mobileCopyBox!.y + mobileCopyBox!.height - 1);
+		await assertCardPadding(
+			page.getByTestId('privacy-setup-preset-balanced'),
+			16,
+			'mobile assistant preset'
+		);
+		await assertCardPadding(
+			page.getByTestId('privacy-setup-preset-preview'),
+			16,
+			'mobile assistant consequence'
+		);
+		await assertElementWithinViewport(modal, 'privacy-setup-assistant');
+		await assertElementWithinViewport(footer, 'privacy-setup-action-footer');
+		await assertNoPageOverflow(page, 'mobile /#/settings privacy setup');
+		expect(
+			await modal
+				.locator(':scope > div')
+				.nth(1)
+				.evaluate((element) => getComputedStyle(element).overflowY)
+		).toBe('auto');
+
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await assertCardPadding(retentionCard, 24, 'desktop retention');
+		await assertCardPadding(
+			page.getByTestId('privacy-setup-preset-balanced'),
+			24,
+			'desktop assistant preset'
+		);
+		await assertCardPadding(
+			page.getByTestId('privacy-setup-preset-preview'),
+			24,
+			'desktop assistant consequence'
+		);
+		const desktopFooterMetrics = await Promise.all([
+			footerCopy.boundingBox(),
+			skipSetupButton.boundingBox()
+		]);
+		const [desktopCopyBox, desktopSkipBox] = desktopFooterMetrics;
+		expect(desktopCopyBox, 'desktop assistant footer copy box').not.toBeNull();
+		expect(desktopSkipBox, 'desktop assistant Skip Setup button box').not.toBeNull();
+		expect(
+			desktopCopyBox!.x + desktopCopyBox!.width,
+			'desktop assistant copy remains beside the actions'
+		).toBeLessThanOrEqual(desktopSkipBox!.x + 1);
 	});
 });
