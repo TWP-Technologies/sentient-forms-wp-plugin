@@ -41,6 +41,7 @@ final class Sentient_Forms_Form_Source_Lifecycles
             'gform_after_submission'   => self::AFTER_SUBMISSION,
             'wpcf7_mail_sent'          => self::AFTER_SUBMISSION,
             'wpforms_process_complete' => self::AFTER_SUBMISSION,
+            'elementor_pro/forms/new_record' => self::AFTER_SUBMISSION,
             'elementor_pro_forms_new_record' => self::AFTER_SUBMISSION,
         ];
     }
@@ -67,13 +68,20 @@ final class Sentient_Forms_Form_Source_Lifecycles
             return null;
         }
 
-        $key = sanitize_key( (string) $value );
+        $raw = trim( (string) $value );
+        $aliases = self::legacy_aliases();
+        if ( isset( $aliases[ $raw ] ) )
+        {
+            return $aliases[ $raw ];
+        }
+
+        $key = sanitize_key( $raw );
         if ( in_array( $key, self::canonical_ids(), true ) )
         {
             return $key;
         }
 
-        return self::legacy_aliases()[ $key ] ?? null;
+        return $aliases[ $key ] ?? null;
     }
 
     /**

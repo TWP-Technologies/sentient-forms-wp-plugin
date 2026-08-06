@@ -9,113 +9,58 @@
 require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-validation-scenario.php';
 require_once dirname( __DIR__, 2 ) . '/scripts/check-action-facet-policy-snapshot.php';
 
-final class Sentient_Forms_Test_Exact_Artifact_Accepted_Adapter implements
-    Sentient_Forms_Adapter_Interface,
-    Sentient_Forms_Accepted_Submission_Adapter_Interface
+final class Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client implements Sentient_Forms_Provider_Client_Interface
 {
-    /** @param array<string, mixed> $descriptor */
-    public function __construct(
-        private string $source,
-        private string $form_id,
-        private string $native_hook,
-        private array $descriptor,
-        private ?string $native_entry_id = null
-    )
+    /** @var array<int, array{api_key:string,payload:array<string,mixed>,options:array<string,mixed>}> */
+    public array $chat_calls = [];
+
+    /** @param array<string, mixed> $structured_output */
+    public function __construct( private array $structured_output )
     {
     }
 
-    public function get_id(): string
+    public function validate_key( string $api_key ): array | WP_Error
     {
-        return $this->source;
+        return [ 'data' => [ 'label' => 'Exact-artifact test key' ] ];
     }
 
-    public function get_name(): string
+    public function chat_completion( string $api_key, array $payload, array $options = [] ): array | WP_Error
     {
-        return 'Exact Artifact ' . $this->source;
-    }
+        $this->chat_calls[] = compact( 'api_key', 'payload', 'options' );
 
-    public function is_active(): bool
-    {
-        return true;
-    }
-
-    public function get_forms(): array
-    {
-        return [ [ 'id' => $this->form_id, 'name' => 'Exact Artifact Form' ] ];
-    }
-
-    public function get_form_fields( $form_id ): array
-    {
-        return [ [ 'id' => 'message', 'label' => 'Message', 'type' => 'textarea' ] ];
-    }
-
-    public function form_exists( mixed $form_id ): bool
-    {
-        return (string) $form_id === $this->form_id;
-    }
-
-    public function get_entry_data( $entry_id, $form_id = null ): array
-    {
-        return [ 'id' => $entry_id, 'form_id' => $form_id ];
-    }
-
-    public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool
-    {
-        return false;
-    }
-
-    public function mark_entry_as_spam( mixed $entry_id ): bool
-    {
-        return false;
-    }
-
-    public function reject_submission( mixed $entry_id, string $message ): bool
-    {
-        return false;
-    }
-
-    public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool
-    {
-        return false;
-    }
-
-    public function get_action_hook_for_event( string $event_name ): ?string
-    {
-        return 'after_submission' === $event_name ? $this->native_hook : null;
-    }
-
-    public function get_form_object( int $form_id ): array | null
-    {
-        return (string) $form_id === $this->form_id ? [ 'id' => $this->form_id ] : null;
-    }
-
-    public function get_accepted_submission_native_hook(): string
-    {
-        return $this->native_hook;
-    }
-
-    /** @return array<string, mixed> */
-    public function normalize_accepted_submission( mixed $native_submission ): array | WP_Error
-    {
-        $normalized = [
-            'form_id'        => $this->form_id,
-            'form'           => [ 'id' => $this->form_id, 'title' => 'Exact Artifact Form' ],
-            'logical_fields' => [ 'message' => 'Exact artifact behavioral fixture.' ],
-            'files'          => [],
-            'source_submitted_at' => '2026-07-12T12:00:00Z',
+        return [
+            'id'      => 'chatcmpl-exact-artifact-public-seam',
+            'model'   => $payload['model'] ?? 'openrouter/auto',
+            'choices' => [
+                [
+                    'message'       => [
+                        'role'    => 'assistant',
+                        'content' => wp_json_encode( $this->structured_output ),
+                    ],
+                    'finish_reason' => 'stop',
+                ],
+            ],
+            'usage'   => [
+                'prompt_tokens'     => 8,
+                'completion_tokens' => 5,
+                'total_tokens'      => 13,
+            ],
         ];
-        if ( 'gravity_forms' === $this->source && null !== $this->native_entry_id )
-        {
-            $normalized['native_entry_id'] = $this->native_entry_id;
-        }
+    }
+}
 
-        return $normalized;
+final class Sentient_Forms_Test_Exact_Artifact_Model_Selection_Service extends Sentient_Forms_Local_Action_Model_Selection_Service
+{
+    public function __construct( private int $fixture_credential_id )
+    {
+        parent::__construct();
     }
 
-    /** @return array<string, mixed> */
-    public function get_capability_descriptor(): array
+    public function resolve_execution_credential( string $provider, int $credential_id = 0 ): array | WP_Error
     {
-        return $this->descriptor;
+        $resolved_id = $credential_id > 0 ? $credential_id : $this->fixture_credential_id;
+
+        return parent::resolve_execution_credential( $provider, $resolved_id );
     }
 }
 
@@ -134,6 +79,8 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
 
     public function test_exact_artifact_test_identity_distinguishes_action_facet_policy(): void
     {
+        $this->assertContains( 'policy_basis_assignment', self::required_assignment_keys() );
+
         $base = [
             'action_code'                 => 'spam_detection_v1',
             'form_source'                 => 'gravity_forms',
@@ -155,6 +102,107 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertSame( 'reject', self::validation_mode_for_semantic_outcome( 'validation_effect_applied' ) );
         $this->assertSame( 'reject', self::validation_mode_for_semantic_outcome( 'validation_rejection' ) );
         $this->assertSame( 'accept', self::validation_mode_for_semantic_outcome( 'effect_applied' ) );
+        $this->assertSame(
+            Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
+            Sentient_Forms_Form_Source_Lifecycles::normalize_id( 'elementor_pro/forms/new_record' )
+        );
+        $this->assertContains(
+            'elementor_pro/forms/new_record',
+            Sentient_Forms_Form_Source_Lifecycles::accepted_input_ids()
+        );
+        $this->assertNull( Sentient_Forms_Form_Source_Lifecycles::normalize_id( 'unrelated/forms/new_record' ) );
+    }
+
+    public function test_assignment_validation_fails_closed_without_policy_basis(): void
+    {
+        $this->assignment = array_fill_keys( self::required_assignment_keys(), null );
+        unset( $this->assignment['policy_basis_assignment'] );
+        $this->expectException( PHPUnit\Framework\AssertionFailedError::class );
+
+        $this->verify_against_public_authorities();
+    }
+
+    public function test_assignment_validation_fails_closed_with_mismatched_policy_basis(): void
+    {
+        $this->assignment = array_fill_keys( self::required_assignment_keys(), null );
+        $this->assignment['required_semantic_outcome'] = 'effect_applied';
+        $this->assignment['facet_scenario_assignment'] = 'base_action';
+        $this->assignment['policy_basis_assignment']    = 'action_facet_catalog';
+        $this->expectException( PHPUnit\Framework\AssertionFailedError::class );
+
+        $this->verify_against_public_authorities();
+    }
+
+    /** @dataProvider accepted_submission_sources */
+    public function test_after_submission_evidence_dispatches_registered_adapter_hook_through_real_execution_service(
+        string $source,
+        string $native_hook,
+        string $adapter_class
+    ): void
+    {
+        $this->assignment = [
+            'action_code' => 'spam_detection_v1',
+            'form_source' => $source,
+        ];
+
+        $identities = $this->exercise_accepted_submission_runner();
+
+        $this->assertSame( $native_hook, $identities['registered_native_hook'] ?? null );
+        $this->assertSame( $adapter_class, $identities['registered_adapter_class'] ?? null );
+        $this->assertSame( 1, $identities['external_provider_call_count'] ?? null );
+    }
+
+    /** @return array<string, array{string,string,string}> */
+    public function accepted_submission_sources(): array
+    {
+        return [
+            'gravity_forms'       => [ 'gravity_forms', 'gform_after_submission', Sentient_Forms_Gravity_Forms_Adapter::class ],
+            'contact_form_7'      => [ 'contact_form_7', 'wpcf7_mail_sent', Sentient_Forms_Contact_Form_7_Adapter::class ],
+            'wpforms'             => [ 'wpforms', 'wpforms_process_complete', Sentient_Forms_WPForms_Adapter::class ],
+            'elementor_pro_forms' => [ 'elementor_pro_forms', 'elementor_pro/forms/new_record', Sentient_Forms_Elementor_Forms_Adapter::class ],
+        ];
+    }
+
+    /** @dataProvider source_contract_probe_sources */
+    public function test_source_contract_probe_restores_preexisting_hook_state( string $source, string $sentinel_hook ): void
+    {
+        $sentinel = static fn( bool $active ): bool => $active;
+        add_filter( $sentinel_hook, $sentinel, 37 );
+        $this->assignment = [ 'form_source' => $source ];
+
+        try
+        {
+            $this->exercise_authenticated_source_contract_rejection();
+            $this->assertSame( 37, has_filter( $sentinel_hook, $sentinel ) );
+        }
+        finally
+        {
+            remove_filter( $sentinel_hook, $sentinel, 37 );
+        }
+    }
+
+    /** @return array<string, array{string,string}> */
+    public function source_contract_probe_sources(): array
+    {
+        return [
+            'contact_form_7'      => [ 'contact_form_7', 'sentient_forms_contact_form_7_is_active' ],
+            'wpforms'             => [ 'wpforms', 'sentient_forms_wpforms_is_active' ],
+            'elementor_pro_forms' => [ 'elementor_pro_forms', 'sentient_forms_elementor_is_active' ],
+        ];
+    }
+
+    public function test_spam_guidance_facet_loads_gravity_runtime_when_file_runs_in_isolation(): void
+    {
+        $this->assignment = [
+            'facet_scenario_assignment'                  => 'spam_guidance_rationale_generation',
+            'policy_basis_assignment'                    => 'action_facet_catalog',
+            'effective_feature_access_assignment'        => 'active_subscription',
+            'effective_execution_requirement_assignment' => 'provider_flexible',
+        ];
+
+        $identities = $this->exercise_action_facet_assignment();
+
+        $this->assertSame( 'openrouter', $identities['observed_provider_route'] ?? null );
     }
 
     public function test_exact_artifact_assignment_public_seam(): void
@@ -232,18 +280,16 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
     {
         Sentient_Forms_Action_Facet_Policy_Snapshot_Verifier::verify_snapshot( dirname( __DIR__, 2 ) );
 
-        $required = [
-            'id', 'action_code', 'form_source', 'lifecycle', 'required_semantic_outcome',
-            'facet_scenario_assignment', 'effective_feature_access_assignment',
-            'effective_execution_requirement_assignment', 'effective_required_form_source_capabilities',
-            'effective_required_managed_capabilities', 'effective_eligible_lifecycles',
-            'effective_metering_class', 'expected_effect_code', 'expected_effect_sha256',
-        ];
-        foreach ( $required as $key )
+        foreach ( self::required_assignment_keys() as $key )
         {
             $this->assertArrayHasKey( $key, $this->assignment );
         }
         $this->assertNotSame( 'policy_rejection', $this->assignment['required_semantic_outcome'] );
+        $facet_code = $this->assignment['facet_scenario_assignment'];
+        $this->assertSame(
+            'base_action' === $facet_code ? 'action_catalog' : 'action_facet_catalog',
+            $this->assignment['policy_basis_assignment']
+        );
         $snapshot = json_decode(
             (string) file_get_contents( dirname( __DIR__, 2 ) . '/contracts/action-source-compatibility.v1.json' ),
             true,
@@ -263,7 +309,6 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertIsArray( $row );
         $definition = Sentient_Forms_Bundled_Action_Templates::get( $this->assignment['action_code'] );
         $this->assertIsArray( $definition );
-        $facet_code = $this->assignment['facet_scenario_assignment'];
         $facets = 'base_action' === $facet_code ? [] : [ $facet_code ];
         $policy = ( new Sentient_Forms_Action_Policy_Resolver() )->resolve_action_definition( $definition, $facets );
         $this->assertIsArray( $policy );
@@ -281,10 +326,19 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $this->assertSame( $this->assignment[ $assignment_key ], $policy[ $policy_key ] );
         }
 
-        $effect = $this->derive_public_effect( $row );
-        $this->assertSame( hash( 'sha256', $effect['description'] ), $effect['description_sha256'] );
+        return $this->derive_public_effect( $row );
+    }
 
-        return $effect;
+    /** @return array<int, string> */
+    private static function required_assignment_keys(): array
+    {
+        return [
+            'id', 'action_code', 'form_source', 'lifecycle', 'required_semantic_outcome',
+            'facet_scenario_assignment', 'policy_basis_assignment', 'effective_feature_access_assignment',
+            'effective_execution_requirement_assignment', 'effective_required_form_source_capabilities',
+            'effective_required_managed_capabilities', 'effective_eligible_lifecycles',
+            'effective_metering_class', 'expected_effect_code', 'expected_effect_sha256',
+        ];
     }
 
     /** @param array<string, mixed> $row @return array{code:string,description:string,description_sha256:string} */
@@ -341,6 +395,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
     /** @return array<string, mixed> */
     private function exercise_action_facet_assignment(): array
     {
+        require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
         $this->assertSame( 'spam_guidance_rationale_generation', $this->assignment['facet_scenario_assignment'] );
         $this->assertNull( $this->assignment['provider_route_assignment'] ?? null );
         $this->assertSame( 'action_facet_catalog', $this->assignment['policy_basis_assignment'] ?? null );
@@ -428,6 +483,11 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         add_filter( 'sentient_forms_spam_guidance_billing_state', $billing_filter );
         add_filter( 'sentient_forms_spam_guidance_openrouter_generation_response', $provider_filter );
 
+        $had_rest_server      = array_key_exists( 'wp_rest_server', $GLOBALS );
+        $previous_rest_server = $GLOBALS['wp_rest_server'] ?? null;
+        $rest_server          = new WP_REST_Server();
+        $GLOBALS['wp_rest_server'] = $rest_server;
+
         $route = '/sentient-forms/v1/spam-guidance/forms/gravity_forms/' . $form_id . '/examples';
         $body  = [
             'target_scope' => 'form',
@@ -437,22 +497,29 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
 
         try
         {
-            $controller = new Sentient_Forms_Spam_Guidance_Controller();
-            add_action( 'rest_api_init', [ $controller, 'register_routes' ] );
+            $model_selection = new Sentient_Forms_Test_Exact_Artifact_Model_Selection_Service( $credential_id );
+            $rationale_service = new Sentient_Forms_Spam_Guidance_Rationale_Service(
+                null,
+                null,
+                null,
+                $model_selection
+            );
+            $controller = new Sentient_Forms_Spam_Guidance_Controller( null, null, $rationale_service );
+            add_action( 'rest_api_init', [ $controller, 'register_routes' ], 0 );
             try
             {
-                do_action( 'rest_api_init', rest_get_server() );
+                do_action( 'rest_api_init', $rest_server );
             }
             finally
             {
-                remove_action( 'rest_api_init', [ $controller, 'register_routes' ] );
+                remove_action( 'rest_api_init', [ $controller, 'register_routes' ], 0 );
             }
 
             $denied_request = new WP_REST_Request( 'POST', $route );
             $denied_request->set_param( 'form_source', 'gravity_forms' );
             $denied_request->set_param( 'form_id', $form_id );
             $denied_request->set_body_params( $body );
-            $denied_response = rest_get_server()->dispatch( $denied_request );
+            $denied_response = $rest_server->dispatch( $denied_request );
 
             $this->assertSame( 403, $denied_response->get_status(), wp_json_encode( $denied_response->get_data() ) );
             $this->assertSame( 'rest_forbidden', $denied_response->get_data()['code'] ?? null );
@@ -465,15 +532,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
             $request->set_body_params( $body );
 
-            $response = rest_get_server()->dispatch( $request );
+            $response = $rest_server->dispatch( $request );
         }
         finally
         {
+            if ( $had_rest_server )
+            {
+                $GLOBALS['wp_rest_server'] = $previous_rest_server;
+            }
+            else
+            {
+                unset( $GLOBALS['wp_rest_server'] );
+            }
             remove_filter( 'sentient_forms_spam_guidance_billing_state', $billing_filter );
             remove_filter( 'sentient_forms_spam_guidance_openrouter_generation_response', $provider_filter );
         }
 
         $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
         $this->assertSame( 1, $provider_calls );
         $data = $response->get_data();
         $this->assertSame( 'openrouter', $data['generation']['route'] ?? null );
@@ -564,89 +640,103 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade();
         $source  = $this->assignment['form_source'];
         $action  = $this->assignment['action_code'];
-        $form_id = (string) self::factory()->post->create(
-            [ 'post_title' => 'Exact-artifact accepted form identity' ]
-        );
         $hooks = [
             'gravity_forms'       => 'gform_after_submission',
             'contact_form_7'      => 'wpcf7_mail_sent',
             'wpforms'             => 'wpforms_process_complete',
             'elementor_pro_forms' => 'elementor_pro/forms/new_record',
         ];
-        $registry_adapter = Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->get_adapter_by_id( $source );
-        $this->assertIsObject( $registry_adapter );
-        $this->assertTrue( method_exists( $registry_adapter, 'get_capability_descriptor' ) );
-        $descriptor = $registry_adapter->get_capability_descriptor();
+        $this->assertArrayHasKey( $source, $hooks );
+
+        $all_hook_snapshots = $this->snapshot_all_hooks();
+        $this->isolate_hooks(
+            [
+                $hooks[ $source ],
+                'sentient_forms_contact_form_7_is_active',
+                'sentient_forms_contact_form_7_current_submission',
+                'sentient_forms_wpforms_is_active',
+                'sentient_forms_elementor_is_active',
+                'sentient_forms_elementor_pro_forms_api_available',
+                'sentient_forms_elementor_posts_with_data',
+            ]
+        );
 
         $administrator = self::factory()->user->create( [ 'role' => 'administrator' ] );
+        wp_set_current_user( $administrator );
         global $wpdb;
-        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-        $enabled = $settings->set_enabled( $source, $form_id, true, $administrator );
-        $this->assertIsArray( $enabled );
-
-        $mapping_id = $this->create_sync_bundled_mapping( $source, $form_id, $action );
-        $provider_result = [
-            'status'      => 'succeeded',
-            'result_data' => [
-                'structured_output_valid' => true,
-                'structured_output'       => $this->structured_fixture( $action ),
-            ],
-            'meta'        => [ 'fixture_action_code' => $action ],
-        ];
-        $boundary = new Sentient_Forms_Test_Exact_Artifact_Execution_Boundary( $provider_result );
-        $runner   = new Sentient_Forms_Form_Source_Workflow_Runner(
-            Sentient_Forms_Plugin::instance(),
-            null,
-            null,
-            $boundary
-        );
-        $adapter = new Sentient_Forms_Test_Exact_Artifact_Accepted_Adapter(
-            $source,
-            $form_id,
-            $hooks[ $source ],
-            $descriptor,
-            'gravity_forms' === $source
-                ? (string) self::factory()->post->create( [ 'post_title' => 'Exact-artifact accepted entry identity' ] )
-                : null
-        );
-        $result = $runner->run_accepted_submission_with_outcome( $adapter, [ 'fixture' => true ] );
-        $submission_uuid = $result->get_submission_uuid();
-        $runtime_key = 'local_first_' . $mapping_id;
-
-        $this->assertNotEmpty( $submission_uuid );
-        $this->assertSame( 'succeeded', $result->get_mapping_outcomes()[ $runtime_key ] ?? null );
-        $execution_result = $result->get_execution_result( $runtime_key );
-        $this->assertIsArray( $execution_result );
-        $this->assertSame( $action, $execution_result['meta']['fixture_action_code'] ?? null );
-        $this->assertCount( 1, $boundary->calls );
-        $request_id = $boundary->calls[0]['context']['execution_request_id'] ?? null;
-        $this->assertIsString( $request_id );
-        $this->assertNotSame( '', $request_id );
-        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
-        $this->assertIsArray( $event );
-        $this->assertSame( 'succeeded', $event['status'] ?? null );
-        $this->assertSame( $action, $event['action_code'] ?? null );
-        $this->assertSame( $source, $event['form_source'] ?? null );
-        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
-        $ledger = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )->get_by_submission_uuid( $submission_uuid );
-        $this->assertIsArray( $ledger );
-        $this->assertSame( $source, $ledger['form_source'] ?? null );
-        $this->assertSame( $form_id, $ledger['form_id'] ?? null );
-        $this->assertSame( 'Exact artifact behavioral fixture.', $ledger['logical_fields_json']['message'] ?? null );
-
-        $manifest_row = ( new Sentient_Forms_Action_Source_Compatibility_Manifest() )->get( $action, $source );
-        $this->assertIsArray( $manifest_row );
-        $contract = $manifest_row['lifecycle_contracts']['after_submission'] ?? null;
-        $this->assertIsArray( $contract );
-        if ( 'gravity_forms' === $source )
+        try
         {
-            $this->assertNotEmpty( $contract['native_effects'] ?? [] );
-            $this->assert_gravity_native_result_effect( $action, $form_id );
+            $client = new Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client( $this->structured_fixture( $action ) );
+            $execution_service = new Sentient_Forms_Local_Action_Execution_Service(
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                $client
+            );
+            $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+                Sentient_Forms_Plugin::instance(),
+                null,
+                null,
+                $execution_service
+            );
+            $fixture = $this->registered_accepted_submission_fixture( $source, $runner );
+            $form_id = $fixture['form_id'];
+            $adapter = $fixture['adapter'];
+            $this->assertSame( 10, has_action( $hooks[ $source ], [ $adapter, $fixture['callback'] ] ) );
+
+            $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+            $enabled  = $settings->set_enabled( $source, $form_id, true, $administrator );
+            $this->assertIsArray( $enabled );
+            $mapping_id = $this->create_sync_bundled_mapping( $source, $form_id, $action );
+
+            do_action_ref_array( $hooks[ $source ], $fixture['native_args'] );
+
+            $ledger = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )->list_for_form( $source, $form_id, 1 )[0] ?? null;
+            $this->assertIsArray( $ledger );
+            $submission_uuid = $ledger['submission_uuid'] ?? null;
+            $this->assertIsString( $submission_uuid );
+            $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( $submission_uuid, 10 );
+            $event  = $events[0] ?? null;
+            $this->assertIsArray( $event );
+            $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+            $this->assertSame(
+                'succeeded',
+                $event['status'] ?? null,
+                wp_json_encode( [ $event['error_code'] ?? null, $event['error_message'] ?? null ] )
+            );
+            $this->assertSame( $action, $event['action_code'] ?? null );
+            $this->assertSame( $source, $event['form_source'] ?? null );
+            $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+            $this->assertSame( $source, $ledger['form_source'] ?? null );
+            $this->assertSame( $form_id, $ledger['form_id'] ?? null );
+            $this->assertNotEmpty( $ledger['logical_fields_json'] ?? [] );
+            $this->assertCount( 1, $client->chat_calls );
+
+            $manifest_row = ( new Sentient_Forms_Action_Source_Compatibility_Manifest() )->get( $action, $source );
+            $this->assertIsArray( $manifest_row );
+            $contract = $manifest_row['lifecycle_contracts']['after_submission'] ?? null;
+            $this->assertIsArray( $contract );
+            if ( 'gravity_forms' === $source )
+            {
+                $this->assertNotEmpty( $contract['native_effects'] ?? [] );
+                $this->assert_gravity_native_result_effect( $action, $fixture['native_entry_id'], $event );
+            }
+            else
+            {
+                $this->assertTrue( $contract['requires_submission_ledger'] ?? false );
+                $this->assertGreaterThan( 0, $ledger['id'] ?? 0 );
+            }
+
+            $request_id = $event['execution_request_id'] ?? null;
+            $this->assertIsString( $request_id );
+            $this->assertNotSame( '', $request_id );
         }
-        else
+        finally
         {
-            $this->assertTrue( $contract['requires_submission_ledger'] ?? false );
-            $this->assertGreaterThan( 0, $ledger['id'] ?? 0 );
+            $this->restore_all_hooks( $all_hook_snapshots );
         }
 
         return [
@@ -659,51 +749,244 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'provider_observation_id'   => 'public-seam:' . $request_id,
             'observed_provider_route'   => null,
             'applied_facets'            => [],
+            'registered_native_hook'    => $hooks[ $source ],
+            'registered_adapter_class'  => get_class( $adapter ),
+            'external_provider_call_count' => count( $client->chat_calls ),
         ];
+    }
+
+    /**
+     * @return array{adapter:object,callback:string,form_id:string,native_args:array<int,mixed>,native_entry_id:string|null}
+     */
+    private function registered_accepted_submission_fixture(
+        string $source,
+        Sentient_Forms_Form_Source_Workflow_Runner $runner
+    ): array
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        if ( 'gravity_forms' === $source )
+        {
+            require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
+            $form_id  = self::factory()->post->create( [ 'post_title' => 'Exact-artifact Gravity form' ] );
+            $entry_id = self::factory()->post->create( [ 'post_title' => 'Exact-artifact Gravity entry' ] );
+            $form     = [
+                'id'     => $form_id,
+                'title'  => 'Exact-artifact Gravity form',
+                'fields' => [ [ 'id' => '1', 'label' => 'Message', 'type' => 'textarea' ] ],
+            ];
+            $entry = [
+                'id'           => $entry_id,
+                'form_id'      => $form_id,
+                'status'       => 'active',
+                'date_created' => gmdate( 'Y-m-d H:i:s' ),
+                '1'            => 'Exact artifact behavioral fixture.',
+            ];
+            GFAPI::$forms[ $form_id ]   = $form;
+            GFAPI::$entries[ $entry_id ] = $entry;
+            $adapter = new Sentient_Forms_Gravity_Forms_Adapter( $plugin, $runner );
+            $adapter->register_hooks();
+
+            return [
+                'adapter'         => $adapter,
+                'callback'        => 'handle_accepted_submission',
+                'form_id'         => (string) $form_id,
+                'native_args'     => [ $entry, $form ],
+                'native_entry_id' => (string) $entry_id,
+            ];
+        }
+
+        if ( 'contact_form_7' === $source )
+        {
+            $form_id = self::factory()->post->create( [ 'post_title' => 'Exact-artifact CF7 form' ] );
+            $form       = [ 'id' => $form_id, 'title' => 'Exact-artifact CF7 form' ];
+            $submission = [ 'message' => 'Exact artifact behavioral fixture.' ];
+            add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+            add_filter( 'sentient_forms_contact_form_7_current_submission', static fn(): array => $submission );
+            $adapter = new Sentient_Forms_Contact_Form_7_Adapter( $plugin, $runner );
+            $adapter->init();
+
+            return [
+                'adapter'         => $adapter,
+                'callback'        => 'handle_mail_sent',
+                'form_id'         => (string) $form_id,
+                'native_args'     => [ $form ],
+                'native_entry_id' => null,
+            ];
+        }
+
+        if ( 'wpforms' === $source )
+        {
+            $form_id = self::factory()->post->create(
+                [
+                    'post_type'    => 'wpforms',
+                    'post_status'  => 'publish',
+                    'post_title'   => 'Exact-artifact WPForms form',
+                    'post_content' => '{}',
+                ]
+            );
+            $form_data = [
+                'id'       => $form_id,
+                'settings' => [ 'form_title' => 'Exact-artifact WPForms form' ],
+                'fields'   => [ 1 => [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea' ] ],
+            ];
+            $fields = [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Message',
+                    'type'  => 'textarea',
+                    'value' => 'Exact artifact behavioral fixture.',
+                ],
+            ];
+            add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+            $adapter = new Sentient_Forms_WPForms_Adapter( $plugin, $runner );
+            $adapter->init();
+
+            return [
+                'adapter'         => $adapter,
+                'callback'        => 'handle_process_complete',
+                'form_id'         => (string) $form_id,
+                'native_args'     => [ $fields, [], $form_data, 0 ],
+                'native_entry_id' => null,
+            ];
+        }
+
+        $form_id = $this->create_source_contract_probe_form( 'elementor_pro_forms' );
+        $record = new class {
+            public function get( string $key ): mixed
+            {
+                return 'fields' === $key
+                    ? [
+                        'message' => [
+                            'id'    => 'message',
+                            'title' => 'Message',
+                            'type'  => 'textarea',
+                            'value' => 'Exact artifact behavioral fixture.',
+                        ],
+                    ]
+                    : null;
+            }
+
+            public function get_form_settings( ?string $key = null ): mixed
+            {
+                $settings = [ 'form_name' => 'Exact-artifact Elementor rejection probe' ];
+
+                return null === $key ? $settings : ( $settings[ $key ] ?? null );
+            }
+        };
+        $adapter  = new Sentient_Forms_Elementor_Forms_Adapter( $plugin );
+        $property = new ReflectionProperty( Sentient_Forms_Elementor_Forms_Adapter::class, 'workflow_runner' );
+        $property->setValue( $adapter, $runner );
+        $adapter->init();
+
+        return [
+            'adapter'         => $adapter,
+            'callback'        => 'handle_new_record',
+            'form_id'         => $form_id,
+            'native_args'     => [ $record, null ],
+            'native_entry_id' => null,
+        ];
+    }
+
+    /** @param array<int, string> $hook_names @return array<string, WP_Hook|null> */
+    private function isolate_hooks( array $hook_names ): array
+    {
+        global $wp_filter;
+        $snapshots = [];
+        foreach ( array_unique( $hook_names ) as $hook_name )
+        {
+            $snapshots[ $hook_name ] = $wp_filter[ $hook_name ] ?? null;
+            unset( $wp_filter[ $hook_name ] );
+        }
+
+        return $snapshots;
+    }
+
+    /** @param array<string, WP_Hook|null> $snapshots */
+    private function restore_hooks( array $snapshots ): void
+    {
+        global $wp_filter;
+        foreach ( $snapshots as $hook_name => $snapshot )
+        {
+            unset( $wp_filter[ $hook_name ] );
+            if ( $snapshot instanceof WP_Hook )
+            {
+                $wp_filter[ $hook_name ] = $snapshot;
+            }
+        }
+    }
+
+    /** @return array<string, WP_Hook> */
+    private function snapshot_all_hooks(): array
+    {
+        global $wp_filter;
+
+        return array_map( static fn( WP_Hook $hook ): WP_Hook => clone $hook, $wp_filter );
+    }
+
+    /** @param array<string, WP_Hook> $snapshots */
+    private function restore_all_hooks( array $snapshots ): void
+    {
+        global $wp_filter;
+        $wp_filter = $snapshots;
     }
 
     private function create_sync_bundled_mapping( string $source, string $form_id, string $action ): int
     {
         global $wpdb;
-        $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action );
-        $this->assertIsArray( $catalog );
-        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+        $vault     = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted = $vault->encrypt( 'sk-or-exact-artifact-public-seam' );
+        $this->assertIsString( $encrypted );
+        $credential_id = ( new Sentient_Forms_Provider_Credentials_Repository( $wpdb ) )->create(
             [
-                'source'                   => 'bundled',
-                'code'                     => $action,
-                'display_name'             => $catalog['display_name'],
-                'description'              => $catalog['description'] ?? null,
-                'prompt_template'          => $catalog['prompt_template'],
-                'default_model'            => $catalog['default_model'] ?? null,
-                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
-                'override_schema'          => $catalog['override_schema'] ?? null,
-                'version'                  => $catalog['version'] ?? '1',
-                'is_active'                => true,
+                'provider'          => 'openrouter',
+                'label'             => 'Exact-artifact public seam',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
             ]
         );
-        $this->assertIsInt( $template_id );
-        $custom_action_id = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->upsert_by_code(
+        $this->assertIsInt( $credential_id );
+        $consent_id = ( new Sentient_Forms_External_Service_Consent_Repository( $wpdb ) )->record(
+            'openrouter',
+            '2026-04-16',
+            get_current_user_id()
+        );
+        $this->assertIsInt( $consent_id );
+        $model_id = 'example/exact-artifact-structured';
+        $model_cached = ( new Sentient_Forms_Model_Cache_Repository( $wpdb ) )->upsert(
+            'openrouter',
+            $model_id,
             [
-                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $action ),
-                'display_name'         => $catalog['display_name'],
-                'template_id'          => $template_id,
-                'definition_json'      => [ 'template_code' => $action ],
-                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
-                'status'               => 'active',
+                'id'                   => $model_id,
+                'name'                 => 'Exact-artifact structured-output fixture',
+                'input_modalities'     => [ 'text' ],
+                'output_modalities'    => [ 'text' ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs' ],
+            ],
+            gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS )
+        );
+        $this->assertTrue( true === $model_cached );
+
+        $local_action = $this->create_plugin_owned_bundled_action(
+            $action,
+            [
+                'provider'      => 'openrouter',
+                'model'         => $model_id,
+                'credential_id' => $credential_id,
             ]
         );
-        $this->assertIsInt( $custom_action_id );
         $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
             [
                 'form_source'         => $source,
                 'form_id'             => $form_id,
                 'hook'                => 'after_submission',
                 'action_kind'         => 'custom_action',
-                'action_id'           => $custom_action_id,
+                'action_id'           => $local_action['id'],
                 'input_bindings_json' => [],
                 'execution_mode'      => 'sync',
                 'settings_json'       => [ 'dispatch_mode' => 'sync', 'async' => false ],
-                'effect_mapping_json' => $catalog['effect_mapping_json'] ?? [],
+                'effect_mapping_json' => $local_action['catalog']['effect_mapping_json'] ?? [],
                 'enabled'             => true,
             ]
         );
@@ -715,75 +998,93 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
     /** @return array<string, mixed> */
     private function structured_fixture( string $action ): array
     {
-        return [
-            'classification'  => 'spam',
-            'confidence'      => 0.99,
-            'summary'         => 'Exact artifact fixture completed.',
-            'message'         => 'Exact artifact validation result.',
-            'sentiment'       => 'positive',
-            'urgency'         => 'normal',
-            'status'          => 'complete',
-            'intent'          => 'request_information',
-            'buying_stage'    => 'consideration',
-            'route_to'        => 'support',
-            'priority'        => 'normal',
-            'recommendation'  => 'Route to support.',
-            'severity'        => 'none',
-            'needs_review'    => false,
-            'staff_warning'   => 'No safety issue.',
-            'grade'           => 'B',
-            'fit_summary'     => 'The request is a suitable fit.',
-            'recommended_priority' => 'normal',
-            'profile_version' => 1,
-            'next_best_action' => 'Review the request.',
-            'suggested_reply_draft' => 'Thank you for your submission.',
-            'do_not_send'      => true,
-            'action_code'     => $action,
-        ];
-    }
-
-    private function assert_gravity_native_result_effect( string $action, string $form_id ): void
-    {
-        require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
-        $this->assertTrue( class_exists( 'GFAPI' ) );
-        $this->assertTrue( property_exists( 'GFAPI', 'entries' ) );
-        $entry_id = self::factory()->post->create( [ 'post_title' => 'Exact-artifact native effect identity' ] );
-        GFAPI::$entries[ $entry_id ] = [
-            'id'      => $entry_id,
-            'form_id' => absint( $form_id ),
-            'status'  => 'active',
-        ];
         $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action );
         $this->assertIsArray( $catalog );
-        $effects = ( new Sentient_Forms_Local_Result_Applier() )->apply(
-            [
-                'form_source'         => 'gravity_forms',
-                'form_id'             => $form_id,
-                'effect_mapping_json' => $catalog['effect_mapping_json'] ?? [],
-            ],
-            [ 'id' => $form_id, 'title' => 'Exact-artifact form' ],
-            [ 'id' => $entry_id ],
-            [
-                'execution_request_id' => wp_generate_uuid4(),
-                'status'               => 'succeeded',
-                'result'               => [
-                    'content'    => 'Exact artifact fixture completed.',
-                    'structured' => $this->structured_fixture( $action ),
-                ],
-            ]
-        );
+        $schema = $catalog['structured_output_schema'] ?? null;
+        $this->assertIsArray( $schema );
+        $fixture = $this->structured_schema_fixture_value( $schema );
+        $this->assertIsArray( $fixture );
+
+        return $fixture;
+    }
+
+    /** @param array<string, mixed> $schema */
+    private function structured_schema_fixture_value( array $schema, string $property_name = '' ): mixed
+    {
+        $enum = is_array( $schema['enum'] ?? null ) ? $schema['enum'] : [];
+        if ( [] !== $enum )
+        {
+            if ( 'classification' === $property_name && in_array( 'spam', $enum, true ) )
+            {
+                return 'spam';
+            }
+
+            return $enum[0];
+        }
+
+        $type = $schema['type'] ?? null;
+        if ( is_array( $type ) )
+        {
+            $type = array_values( array_diff( $type, [ 'null' ] ) )[0] ?? 'string';
+        }
+        if ( 'object' === $type || is_array( $schema['properties'] ?? null ) )
+        {
+            $value = [];
+            foreach ( is_array( $schema['required'] ?? null ) ? $schema['required'] : [] as $required_property )
+            {
+                $property_schema = $schema['properties'][ $required_property ] ?? [ 'type' => 'string' ];
+                $value[ $required_property ] = $this->structured_schema_fixture_value( $property_schema, $required_property );
+            }
+
+            return $value;
+        }
+        if ( 'array' === $type )
+        {
+            $minimum = max( 0, absint( $schema['minItems'] ?? 0 ) );
+            $items   = [];
+            for ( $index = 0; $index < $minimum; ++$index )
+            {
+                $items[] = $this->structured_schema_fixture_value(
+                    is_array( $schema['items'] ?? null ) ? $schema['items'] : [ 'type' => 'string' ],
+                    $property_name
+                );
+            }
+
+            return $items;
+        }
+        if ( 'boolean' === $type )
+        {
+            return true;
+        }
+        if ( in_array( $type, [ 'integer', 'number' ], true ) )
+        {
+            $minimum = is_numeric( $schema['minimum'] ?? null ) ? (float) $schema['minimum'] : 0.0;
+            $maximum = is_numeric( $schema['maximum'] ?? null ) ? (float) $schema['maximum'] : max( 1.0, $minimum );
+            $number  = 'confidence' === $property_name ? min( 0.99, $maximum ) : $minimum;
+
+            return 'integer' === $type ? (int) ceil( $number ) : $number;
+        }
+
+        return 'Exact artifact fixture completed.';
+    }
+
+    /** @param array<string, mixed> $event */
+    private function assert_gravity_native_result_effect( string $action, ?string $entry_id, array $event ): void
+    {
+        $this->assertIsString( $entry_id );
+        $effects = $event['result_json']['effects'] ?? null;
         $this->assertIsArray( $effects );
         $this->assertContains( 'store_result', $effects['applied'] ?? [] );
         if ( 'spam_detection_v1' === $action )
         {
             $this->assertContains( 'mark_as_spam', $effects['applied'] ?? [] );
-            $this->assertSame( 'spam', GFAPI::$entries[ $entry_id ]['status'] ?? null );
+            $this->assertSame( 'spam', GFAPI::$entries[ (int) $entry_id ]['status'] ?? null );
         }
         else
         {
             $this->assertContains( 'entry_note', $effects['applied'] ?? [] );
         }
-        $this->assertNotEmpty( gform_get_meta( $entry_id, 'sentient_forms_last_response' ) );
+        $this->assertNotEmpty( gform_get_meta( (int) $entry_id, 'sentient_forms_last_response' ) );
     }
 
     /** @return array<string, mixed> */
@@ -922,22 +1223,36 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertContains( $source, [ 'contact_form_7', 'wpforms', 'elementor_pro_forms' ] );
         $administrator = self::factory()->user->create( [ 'role' => 'administrator' ] );
         wp_set_current_user( $administrator );
-        $form_id = $this->create_source_contract_probe_form( $source );
-        $controller = new Sentient_Forms_Form_Actions_Controller();
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/' . $source . '/forms/' . $form_id . '/actions' );
-        $request->set_param( 'form_source_slug', $source );
-        $request->set_param( 'form_id', $form_id );
-        $request->set_param( 'central_action_id', 'clarification_assistant_v1' );
-        // The REST write contract still accepts the historical request indicator and
-        // immediately materializes a plugin-owned local Action. This exercises that
-        // public compatibility boundary without restoring remote Action authority.
-        $request->set_param( 'action_type_indicator', 'master' );
-        $request->set_param( 'trigger_hooks', [ 'real_time' ] );
-        $request->set_param( 'settings', [ 'execution_mode' => 'real_time' ] );
-        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $hook_snapshots = $this->isolate_hooks(
+            [
+                'sentient_forms_contact_form_7_is_active',
+                'sentient_forms_contact_form_7_forms',
+                'sentient_forms_contact_form_7_form_object',
+                'sentient_forms_wpforms_is_active',
+                'sentient_forms_elementor_is_active',
+                'sentient_forms_elementor_pro_forms_api_available',
+                'sentient_forms_elementor_posts_with_data',
+            ]
+        );
 
         try
         {
+            $form_id = $this->create_source_contract_probe_form( $source );
+            $local_action = $this->create_plugin_owned_bundled_action(
+                'clarification_assistant_v1',
+                [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ]
+            );
+            $action_code = $local_action['code'];
+            $controller  = new Sentient_Forms_Form_Actions_Controller();
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/' . $source . '/forms/' . $form_id . '/actions' );
+            $request->set_param( 'form_source_slug', $source );
+            $request->set_param( 'form_id', $form_id );
+            $request->set_param( 'central_action_id', $action_code );
+            $request->set_param( 'action_type_indicator', 'custom' );
+            $request->set_param( 'trigger_hooks', [ 'real_time' ] );
+            $request->set_param( 'settings', [ 'execution_mode' => 'real_time' ] );
+            $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
             $permission = $controller->permissions_check_for_form_source_and_id( $request );
             $this->assertTrue( true === $permission );
             global $wpdb;
@@ -948,7 +1263,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         }
         finally
         {
-            $this->remove_source_contract_probe_filters();
+            $this->restore_hooks( $hook_snapshots );
         }
         $this->assertWPError( $response );
         $this->assertContains(
@@ -970,6 +1285,46 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         ];
     }
 
+    /**
+     * @param array<string, mixed> $model_selection
+     * @return array{id:int,code:string,catalog:array<string,mixed>}
+     */
+    private function create_plugin_owned_bundled_action( string $action_code, array $model_selection ): array
+    {
+        global $wpdb;
+        $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+        $this->assertIsArray( $catalog );
+        $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'source'                   => 'bundled',
+                'code'                     => $action_code,
+                'display_name'             => $catalog['display_name'],
+                'description'              => $catalog['description'] ?? null,
+                'prompt_template'          => $catalog['prompt_template'],
+                'default_model'            => $catalog['default_model'] ?? null,
+                'structured_output_schema' => $catalog['structured_output_schema'] ?? null,
+                'override_schema'          => $catalog['override_schema'] ?? null,
+                'version'                  => $catalog['version'] ?? '1',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+        $local_action_code = Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $action_code );
+        $local_action_id   = ( new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ) )->upsert_by_code(
+            [
+                'code'                 => $local_action_code,
+                'display_name'         => $catalog['display_name'],
+                'template_id'          => $template_id,
+                'definition_json'      => [ 'template_code' => $action_code ],
+                'model_selection_json' => $model_selection,
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $local_action_id );
+
+        return [ 'id' => $local_action_id, 'code' => $local_action_code, 'catalog' => $catalog ];
+    }
+
     private function create_source_contract_probe_form( string $source ): string
     {
         if ( 'contact_form_7' === $source )
@@ -977,46 +1332,15 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $probe_id = self::factory()->post->create(
                 [ 'post_title' => 'Exact-artifact CF7 rejection identity' ]
             );
+            $probe_form = [ 'id' => $probe_id, 'title' => 'Exact-artifact CF7 rejection probe' ];
             add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
             add_filter(
                 'sentient_forms_contact_form_7_forms',
-                static fn(): array => [
-                    new class( $probe_id ) {
-                        public function __construct( private int $probe_id )
-                        {
-                        }
-
-                        public function id(): int
-                        {
-                            return $this->probe_id;
-                        }
-
-                        public function title(): string
-                        {
-                            return 'Exact-artifact CF7 rejection probe';
-                        }
-                    },
-                ]
+                static fn(): array => [ $probe_form ]
             );
             add_filter(
                 'sentient_forms_contact_form_7_form_object',
-                static fn( mixed $form, mixed $form_id ): mixed => $probe_id === absint( $form_id )
-                    ? new class( $probe_id ) {
-                        public function __construct( private int $probe_id )
-                        {
-                        }
-
-                        public function id(): int
-                        {
-                            return $this->probe_id;
-                        }
-
-                        public function title(): string
-                        {
-                            return 'Exact-artifact CF7 rejection probe';
-                        }
-                    }
-                    : $form,
+                static fn( mixed $form, mixed $form_id ): mixed => $probe_id === absint( $form_id ) ? $probe_form : $form,
                 10,
                 2
             );
@@ -1081,17 +1405,6 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         add_filter( 'sentient_forms_elementor_posts_with_data', static fn(): array => [ $page_id ] );
 
         return $page_id . ':form-exact-artifact';
-    }
-
-    private function remove_source_contract_probe_filters(): void
-    {
-        remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
-        remove_all_filters( 'sentient_forms_contact_form_7_forms' );
-        remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
-        remove_all_filters( 'sentient_forms_wpforms_is_active' );
-        remove_all_filters( 'sentient_forms_elementor_is_active' );
-        remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
-        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
     }
 
     /** @param array<string, mixed> $assignment */
