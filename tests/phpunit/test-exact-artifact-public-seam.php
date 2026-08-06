@@ -118,6 +118,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assignment = array_fill_keys( self::required_assignment_keys(), null );
         unset( $this->assignment['policy_basis_assignment'] );
         $this->expectException( PHPUnit\Framework\AssertionFailedError::class );
+        $this->expectExceptionMessage( 'policy_basis_assignment' );
 
         $this->verify_against_public_authorities();
     }
@@ -129,8 +130,65 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assignment['facet_scenario_assignment'] = 'base_action';
         $this->assignment['policy_basis_assignment']    = 'action_facet_catalog';
         $this->expectException( PHPUnit\Framework\AssertionFailedError::class );
+        $this->expectExceptionMessage( 'action_catalog' );
 
         $this->verify_against_public_authorities();
+    }
+
+    public function test_observation_writer_rejects_unencodable_payload_without_creating_artifact(): void
+    {
+        $this->assignment = [
+            'id'                         => 'unencodable-observation',
+            'action_code'                => 'spam_detection_v1',
+            'form_source'                => 'gravity_forms',
+            'lifecycle'                  => 'after_submission',
+            'required_semantic_outcome'  => 'effect_applied',
+            'facet_scenario_assignment'  => 'base_action',
+            'policy_basis_assignment'    => 'action_catalog',
+        ];
+        $this->expected_effect = [
+            'code'               => 'fixture_effect',
+            'description'        => 'Fixture effect.',
+            'description_sha256' => hash( 'sha256', 'Fixture effect.' ),
+        ];
+        $this->observation_path = trailingslashit( get_temp_dir() )
+            . 'sentient-forms-unencodable-observation-' . wp_generate_uuid4() . '.json';
+        $unencodable = fopen( 'php://memory', 'r' );
+        $this->assertIsResource( $unencodable );
+
+        try
+        {
+            $this->write_observation(
+                [
+                    'request_trace_id'          => null,
+                    'rejection_trace_id'        => null,
+                    'submission_id'             => null,
+                    'execution_id'              => null,
+                    'lifecycle_id'              => null,
+                    'provider_observation_type' => 'automated_public_seam',
+                    'provider_observation_id'   => 'public-seam:unencodable-observation',
+                    'observed_provider_route'   => null,
+                    'applied_facets'            => $unencodable,
+                ]
+            );
+            $this->fail( 'Unencodable observation payloads must fail before creating an artifact.' );
+        }
+        catch ( PHPUnit\Framework\AssertionFailedError $error )
+        {
+            $this->assertStringContainsString(
+                'Observation must be JSON-encodable before writing.',
+                $error->getMessage()
+            );
+            $this->assertFalse( file_exists( $this->observation_path ) );
+        }
+        finally
+        {
+            fclose( $unencodable );
+            if ( file_exists( $this->observation_path ) )
+            {
+                unlink( $this->observation_path );
+            }
+        }
     }
 
     /** @dataProvider accepted_submission_sources */
@@ -203,6 +261,49 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $identities = $this->exercise_action_facet_assignment();
 
         $this->assertSame( 'openrouter', $identities['observed_provider_route'] ?? null );
+    }
+
+    public function test_spam_guidance_facet_restores_shared_runtime_state(): void
+    {
+        require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
+        $plugin           = Sentient_Forms_Plugin::instance();
+        $original_license = $plugin->get_license_data();
+        $original_forms   = GFAPI::$forms;
+        $original_entries = GFAPI::$entries;
+        $original_user_id = get_current_user_id();
+        $sentinel_user_id = self::factory()->user->create( [ 'role' => 'subscriber' ] );
+        wp_set_current_user( $sentinel_user_id );
+        $plugin->set_license_data(
+            [
+                'license_status' => 'inactive',
+                'proxy_api_key'  => 'preexisting-fixture-key',
+                'site_id'        => 'preexisting-fixture-site',
+            ]
+        );
+        $expected_license = $plugin->get_license_data();
+        $this->assignment = [
+            'facet_scenario_assignment'                  => 'spam_guidance_rationale_generation',
+            'policy_basis_assignment'                    => 'action_facet_catalog',
+            'effective_feature_access_assignment'        => 'active_subscription',
+            'effective_execution_requirement_assignment' => 'provider_flexible',
+        ];
+
+        try
+        {
+            $this->exercise_action_facet_assignment();
+
+            $this->assertSame( $expected_license, $plugin->get_license_data() );
+            $this->assertSame( $original_forms, GFAPI::$forms );
+            $this->assertSame( $original_entries, GFAPI::$entries );
+            $this->assertSame( $sentinel_user_id, get_current_user_id() );
+        }
+        finally
+        {
+            wp_set_current_user( $original_user_id );
+            $plugin->set_license_data( $original_license );
+            GFAPI::$forms   = $original_forms;
+            GFAPI::$entries = $original_entries;
+        }
     }
 
     public function test_exact_artifact_assignment_public_seam(): void
@@ -286,9 +387,15 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         }
         $this->assertNotSame( 'policy_rejection', $this->assignment['required_semantic_outcome'] );
         $facet_code = $this->assignment['facet_scenario_assignment'];
+        $expected_policy_basis = 'base_action' === $facet_code ? 'action_catalog' : 'action_facet_catalog';
         $this->assertSame(
-            'base_action' === $facet_code ? 'action_catalog' : 'action_facet_catalog',
-            $this->assignment['policy_basis_assignment']
+            $expected_policy_basis,
+            $this->assignment['policy_basis_assignment'],
+            sprintf(
+                'policy_basis_assignment must be %s for facet scenario %s.',
+                $expected_policy_basis,
+                $facet_code
+            )
         );
         $snapshot = json_decode(
             (string) file_get_contents( dirname( __DIR__, 2 ) . '/contracts/action-source-compatibility.v1.json' ),
@@ -396,6 +503,28 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
     private function exercise_action_facet_assignment(): array
     {
         require_once __DIR__ . '/fixtures/exact-artifact/class-sentient-forms-test-exact-artifact-gravity-runtime.php';
+        $plugin           = Sentient_Forms_Plugin::instance();
+        $previous_license = $plugin->get_license_data();
+        $previous_forms   = GFAPI::$forms;
+        $previous_entries = GFAPI::$entries;
+        $previous_user_id = get_current_user_id();
+
+        try
+        {
+            return $this->execute_action_facet_assignment_fixture();
+        }
+        finally
+        {
+            wp_set_current_user( $previous_user_id );
+            $plugin->set_license_data( $previous_license );
+            GFAPI::$forms   = $previous_forms;
+            GFAPI::$entries = $previous_entries;
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function execute_action_facet_assignment_fixture(): array
+    {
         $this->assertSame( 'spam_guidance_rationale_generation', $this->assignment['facet_scenario_assignment'] );
         $this->assertNull( $this->assignment['provider_route_assignment'] ?? null );
         $this->assertSame( 'action_facet_catalog', $this->assignment['policy_basis_assignment'] ?? null );
@@ -1445,11 +1574,13 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'observed_provider_route'   => $identities['observed_provider_route'] ?? null,
             'applied_facets'            => $identities['applied_facets'] ?? [],
         ];
+        $encoded = wp_json_encode( $observation, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+        $this->assertIsString( $encoded, 'Observation must be JSON-encodable before writing.' );
         $handle = fopen( $this->observation_path, 'x' );
         $this->assertIsResource( $handle );
         try
         {
-            $written = fwrite( $handle, wp_json_encode( $observation, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) . "\n" );
+            $written = fwrite( $handle, $encoded . "\n" );
             $this->assertGreaterThan( 0, $written );
         }
         finally
