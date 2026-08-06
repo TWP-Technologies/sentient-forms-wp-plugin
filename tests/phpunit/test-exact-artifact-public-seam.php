@@ -477,6 +477,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertSame( 1, $provider_calls );
         $data = $response->get_data();
         $this->assertSame( 'openrouter', $data['generation']['route'] ?? null );
+        $this->assertSame( 'direct_ready', $data['generation']['route_decision_reason'] ?? null );
         $this->assertSame( 'openrouter:gen-' . $fixture_request_id, $provider_observation_id );
         $this->assertSame(
             'Specific warranty request from an authenticated historical entry.',

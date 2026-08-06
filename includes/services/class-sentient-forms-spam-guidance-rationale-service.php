@@ -53,7 +53,7 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
 
     /**
      * @param array<string,mixed> $context
-     * @return array{rationale:string,route:string,model?:string}|WP_Error
+     * @return array{rationale:string,route:string,model?:string,route_decision_reason?:string}|WP_Error
      */
     public function generate( array $context ): array | WP_Error
     {
@@ -146,12 +146,16 @@ class Sentient_Forms_Spam_Guidance_Rationale_Service
             );
         }
 
-        if ( 'sentient_managed' === $route['provider'] )
+        $generation = 'sentient_managed' === $route['provider']
+            ? $this->run_managed_generation( $managed_context, $prompt, $context, $execution_contract )
+            : $this->run_openrouter_generation( $prompt, $context, $openrouter_credential, $execution_contract );
+        if ( is_wp_error( $generation ) )
         {
-            return $this->run_managed_generation( $managed_context, $prompt, $context, $execution_contract );
+            return $generation;
         }
 
-        return $this->run_openrouter_generation( $prompt, $context, $openrouter_credential, $execution_contract );
+        $generation['route_decision_reason'] = sanitize_key( (string) $route['decision_reason'] );
+        return $generation;
     }
 
     /**

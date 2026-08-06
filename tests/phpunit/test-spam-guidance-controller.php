@@ -560,6 +560,9 @@ class Tests_Spam_Guidance_Controller extends WP_UnitTestCase
 
         $data    = $response->get_data();
         $example = $data['config']['spam_positive_examples'][0] ?? null;
+        $this->assertIsArray( $data['generation'] ?? null );
+        $this->assertArrayNotHasKey( 'route', $data['generation'] );
+        $this->assertArrayNotHasKey( 'route_decision_reason', $data['generation'] );
         $this->assertIsArray( $example );
         $this->assertStringContainsString( 'Please quote a warranty repair.', $example['text'] );
         $this->assertSame( 'Specific warranty request from a plausible customer.', $example['rationale'] );

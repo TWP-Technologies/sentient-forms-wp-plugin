@@ -250,17 +250,31 @@ class Sentient_Forms_Spam_Guidance_Controller extends Sentient_Forms_Abstract_Ba
             return $saved;
         }
 
+        $generation_response = null;
+        if ( is_array( $generation ) )
+        {
+            $route = isset( $generation['route'] ) && is_scalar( $generation['route'] )
+                ? sanitize_key( (string) $generation['route'] )
+                : '';
+            $route_decision_reason = isset( $generation['route_decision_reason'] ) && is_scalar( $generation['route_decision_reason'] )
+                ? sanitize_key( (string) $generation['route_decision_reason'] )
+                : '';
+            $generation_response = [
+                'model' => isset( $generation['model'] ) && is_scalar( $generation['model'] ) ? sanitize_text_field( (string) $generation['model'] ) : '',
+            ];
+            if ( '' !== $route && '' !== $route_decision_reason )
+            {
+                $generation_response['route']                 = $route;
+                $generation_response['route_decision_reason'] = $route_decision_reason;
+            }
+        }
+
         return $this->prepare_item_for_response(
             [
                 'target_scope' => $target_scope,
                 'label'        => $label,
                 'config'       => $saved,
-                'generation'   => is_array( $generation )
-                    ? [
-                        'route' => isset( $generation['route'] ) && is_scalar( $generation['route'] ) ? sanitize_key( (string) $generation['route'] ) : '',
-                        'model' => isset( $generation['model'] ) && is_scalar( $generation['model'] ) ? sanitize_text_field( (string) $generation['model'] ) : '',
-                    ]
-                    : null,
+                'generation'   => $generation_response,
             ]
         );
     }
