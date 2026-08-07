@@ -77,6 +77,12 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
 
     private string $observation_path = '';
 
+    /** @var callable(resource,string):int|false|null */
+    private $observation_write_callback = null;
+
+    /** @var callable(string,string):bool|null */
+    private $observation_publish_callback = null;
+
     public function test_exact_artifact_test_identity_distinguishes_action_facet_policy(): void
     {
         $this->assertContains( 'policy_basis_assignment', self::required_assignment_keys() );
@@ -187,6 +193,105 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             if ( file_exists( $this->observation_path ) )
             {
                 unlink( $this->observation_path );
+            }
+        }
+    }
+
+    public function test_observation_writer_rejects_short_write_without_publishing_truncated_artifact(): void
+    {
+        $this->configure_observation_writer_fixture( 'short-write' );
+        $write_calls = 0;
+        $this->observation_write_callback = static function ( $handle, string $payload ) use ( &$write_calls ): int | false {
+            ++$write_calls;
+            if ( 1 === $write_calls )
+            {
+                return fwrite( $handle, substr( $payload, 0, 7 ) );
+            }
+
+            return false;
+        };
+
+        try
+        {
+            $this->write_observation( $this->valid_observation_identities( 'short-write' ) );
+            $this->fail( 'A short write must fail before the final observation artifact is published.' );
+        }
+        catch ( PHPUnit\Framework\AssertionFailedError $error )
+        {
+            $this->assertStringContainsString( 'complete observation payload', $error->getMessage() );
+            $this->assertFalse( file_exists( $this->observation_path ) );
+            $this->assertSame( [], glob( $this->observation_path . '.tmp.*' ) ?: [] );
+        }
+        finally
+        {
+            $this->observation_write_callback = null;
+            if ( file_exists( $this->observation_path ) )
+            {
+                unlink( $this->observation_path );
+            }
+            foreach ( glob( $this->observation_path . '.tmp.*' ) ?: [] as $temporary_path )
+            {
+                unlink( $temporary_path );
+            }
+        }
+    }
+
+    public function test_observation_writer_cleans_staging_file_when_atomic_publication_fails(): void
+    {
+        $this->configure_observation_writer_fixture( 'publication-failure' );
+        $this->observation_publish_callback = static fn( string $temporary_path, string $final_path ): bool => false;
+
+        try
+        {
+            $this->write_observation( $this->valid_observation_identities( 'publication-failure' ) );
+            $this->fail( 'A failed atomic publication must not leave a final or staging observation artifact.' );
+        }
+        catch ( PHPUnit\Framework\AssertionFailedError $error )
+        {
+            $this->assertStringContainsString( 'atomic', $error->getMessage() );
+            $this->assertFalse( file_exists( $this->observation_path ) );
+            $this->assertSame( [], glob( $this->observation_path . '.tmp.*' ) ?: [] );
+        }
+        finally
+        {
+            $this->observation_publish_callback = null;
+            if ( file_exists( $this->observation_path ) )
+            {
+                unlink( $this->observation_path );
+            }
+            foreach ( glob( $this->observation_path . '.tmp.*' ) ?: [] as $temporary_path )
+            {
+                unlink( $temporary_path );
+            }
+        }
+    }
+
+    public function test_observation_writer_does_not_replace_existing_final_artifact(): void
+    {
+        $this->configure_observation_writer_fixture( 'existing-final' );
+        $existing = "existing-authoritative-artifact\n";
+        $this->assertSame( strlen( $existing ), file_put_contents( $this->observation_path, $existing ) );
+
+        try
+        {
+            $this->write_observation( $this->valid_observation_identities( 'existing-final' ) );
+            $this->fail( 'An existing final observation artifact must never be accepted or replaced.' );
+        }
+        catch ( PHPUnit\Framework\AssertionFailedError $error )
+        {
+            $this->assertStringContainsString( 'must not replace', $error->getMessage() );
+            $this->assertSame( $existing, file_get_contents( $this->observation_path ) );
+            $this->assertSame( [], glob( $this->observation_path . '.tmp.*' ) ?: [] );
+        }
+        finally
+        {
+            if ( file_exists( $this->observation_path ) )
+            {
+                unlink( $this->observation_path );
+            }
+            foreach ( glob( $this->observation_path . '.tmp.*' ) ?: [] as $temporary_path )
+            {
+                unlink( $temporary_path );
             }
         }
     }
@@ -304,6 +409,17 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             GFAPI::$forms   = $original_forms;
             GFAPI::$entries = $original_entries;
         }
+    }
+
+    public function test_realtime_evidence_executes_public_request_before_persisting_gravity_qna(): void
+    {
+        $this->assignment = [ 'form_source' => 'gravity_forms' ];
+
+        $identities = $this->exercise_gravity_realtime_persistence();
+
+        $this->assertIsString( $identities['request_trace_id'] ?? null );
+        $this->assertSame( $identities['request_trace_id'], $identities['execution_id'] ?? null );
+        $this->assertSame( 1, $identities['external_provider_call_count'] ?? null );
     }
 
     public function test_exact_artifact_assignment_public_seam(): void
@@ -583,15 +699,18 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         );
         $this->assertIsInt( $credential_id );
 
-        $billing_filter = static fn (): array => [
-            'status'  => 'active',
-            'plan'    => [ 'code' => 'starter' ],
-            'billing' => [
-                'managed_enabled' => true,
-                'subscription'    => [ 'status' => 'active' ],
-            ],
-            'credits' => [ 'current_balance' => 0 ],
-        ];
+        $billing_status = 'inactive';
+        $billing_filter = static function () use ( &$billing_status ): array {
+            return [
+                'status'  => $billing_status,
+                'plan'    => [ 'code' => 'starter' ],
+                'billing' => [
+                    'managed_enabled' => true,
+                    'subscription'    => [ 'status' => $billing_status ],
+                ],
+                'credits' => [ 'current_balance' => 0 ],
+            ];
+        };
         $provider_calls          = 0;
         $provider_observation_id = null;
         $provider_filter = static function () use ( $fixture_request_id, &$provider_calls, &$provider_observation_id ): array {
@@ -655,6 +774,22 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $this->assertSame( 0, $provider_calls, 'A request without the required REST nonce must not reach the provider boundary.' );
             $this->assertEmpty( get_option( 'sentient_forms_form_config_gravity_forms_' . $form_id, [] ) );
 
+            $inactive_request = new WP_REST_Request( 'POST', $route );
+            $inactive_request->set_param( 'form_source', 'gravity_forms' );
+            $inactive_request->set_param( 'form_id', $form_id );
+            $inactive_request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $inactive_request->set_body_params( $body );
+            $inactive_response = $rest_server->dispatch( $inactive_request );
+
+            $this->assertSame( 403, $inactive_response->get_status(), wp_json_encode( $inactive_response->get_data() ) );
+            $this->assertSame(
+                'sentient_forms_spam_rationale_subscription_required',
+                $inactive_response->get_data()['code'] ?? null
+            );
+            $this->assertSame( 0, $provider_calls, 'An inactive subscription must not reach the provider boundary.' );
+            $this->assertEmpty( get_option( 'sentient_forms_form_config_gravity_forms_' . $form_id, [] ) );
+
+            $billing_status = 'active';
             $request = new WP_REST_Request( 'POST', $route );
             $request->set_param( 'form_source', 'gravity_forms' );
             $request->set_param( 'form_id', $form_id );
@@ -817,19 +952,37 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $this->assertSame( 10, has_action( $hooks[ $source ], [ $adapter, $fixture['callback'] ] ) );
 
             $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
-            $enabled  = $settings->set_enabled( $source, $form_id, true, $administrator );
+            $enabled  = $settings->set_enabled( $source, $form_id, 'gravity_forms' !== $source, $administrator );
             $this->assertIsArray( $enabled );
-            $mapping_id = $this->create_sync_bundled_mapping( $source, $form_id, $action );
+            $mapping_id = $this->create_bundled_mapping( $source, $form_id, $action );
 
             do_action_ref_array( $hooks[ $source ], $fixture['native_args'] );
 
-            $ledger = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )->list_for_form( $source, $form_id, 1 )[0] ?? null;
-            $this->assertIsArray( $ledger );
-            $submission_uuid = $ledger['submission_uuid'] ?? null;
-            $this->assertIsString( $submission_uuid );
-            $events = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_for_submission_uuid( $submission_uuid, 10 );
-            $event  = $events[0] ?? null;
+            $ledger_repository = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+            $event_repository  = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+            $ledger_rows        = $ledger_repository->list_for_form( $source, $form_id, 1 );
+            $ledger             = $ledger_rows[0] ?? null;
+            if ( 'gravity_forms' === $source )
+            {
+                $this->assertSame( [], $ledger_rows, 'Gravity Forms must exercise the native-entry fallback with the Submission Ledger disabled.' );
+                $this->assertIsString( $fixture['native_entry_id'] );
+                $event = $event_repository->get_latest_for_entry(
+                    $source,
+                    $form_id,
+                    $fixture['native_entry_id']
+                );
+                $submission_uuid = $event['submission_uuid'] ?? null;
+            }
+            else
+            {
+                $this->assertIsArray( $ledger );
+                $submission_uuid = $ledger['submission_uuid'] ?? null;
+                $this->assertIsString( $submission_uuid );
+                $events = $event_repository->list_for_submission_uuid( $submission_uuid, 10 );
+                $event  = $events[0] ?? null;
+            }
             $this->assertIsArray( $event );
+            $this->assertIsString( $submission_uuid );
             $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
             $this->assertSame(
                 'succeeded',
@@ -839,9 +992,6 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $this->assertSame( $action, $event['action_code'] ?? null );
             $this->assertSame( $source, $event['form_source'] ?? null );
             $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
-            $this->assertSame( $source, $ledger['form_source'] ?? null );
-            $this->assertSame( $form_id, $ledger['form_id'] ?? null );
-            $this->assertNotEmpty( $ledger['logical_fields_json'] ?? [] );
             $this->assertCount( 1, $client->chat_calls );
 
             $manifest_row = ( new Sentient_Forms_Action_Source_Compatibility_Manifest() )->get( $action, $source );
@@ -851,11 +1001,15 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             if ( 'gravity_forms' === $source )
             {
                 $this->assertNotEmpty( $contract['native_effects'] ?? [] );
+                $this->assertSame( $fixture['native_entry_id'], $event['entry_id'] ?? null );
                 $this->assert_gravity_native_result_effect( $action, $fixture['native_entry_id'], $event );
             }
             else
             {
                 $this->assertTrue( $contract['requires_submission_ledger'] ?? false );
+                $this->assertSame( $source, $ledger['form_source'] ?? null );
+                $this->assertSame( $form_id, $ledger['form_id'] ?? null );
+                $this->assertNotEmpty( $ledger['logical_fields_json'] ?? [] );
                 $this->assertGreaterThan( 0, $ledger['id'] ?? 0 );
             }
 
@@ -1059,7 +1213,15 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $wp_filter = $snapshots;
     }
 
-    private function create_sync_bundled_mapping( string $source, string $form_id, string $action ): int
+    /** @param array<string, mixed> $settings */
+    private function create_bundled_mapping(
+        string $source,
+        string $form_id,
+        string $action,
+        string $hook = 'after_submission',
+        string $execution_mode = 'sync',
+        array $settings = []
+    ): int
     {
         global $wpdb;
         $vault     = new Sentient_Forms_Provider_Credential_Vault();
@@ -1105,16 +1267,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
                 'credential_id' => $credential_id,
             ]
         );
+        $mapping_settings = array_merge(
+            [
+                'dispatch_mode'  => 'sync',
+                'async'          => false,
+                'execution_mode' => $execution_mode,
+            ],
+            $settings
+        );
         $mapping_id = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->create(
             [
                 'form_source'         => $source,
                 'form_id'             => $form_id,
-                'hook'                => 'after_submission',
+                'hook'                => $hook,
                 'action_kind'         => 'custom_action',
                 'action_id'           => $local_action['id'],
                 'input_bindings_json' => [],
-                'execution_mode'      => 'sync',
-                'settings_json'       => [ 'dispatch_mode' => 'sync', 'async' => false ],
+                'execution_mode'      => $execution_mode,
+                'settings_json'       => $mapping_settings,
                 'effect_mapping_json' => $local_action['catalog']['effect_mapping_json'] ?? [],
                 'enabled'             => true,
             ]
@@ -1243,7 +1413,6 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $form_id          = self::factory()->post->create( [ 'post_title' => 'Exact-artifact realtime form identity' ] );
         $entry_id         = self::factory()->post->create( [ 'post_title' => 'Exact-artifact realtime entry identity' ] );
         $storage_field_id = (string) ( 100 + ( $form_id % 100 ) );
-        $mapping_id       = wp_generate_uuid4();
         $request_id       = wp_generate_uuid4();
         $submitted_at     = gmdate( 'Y-m-d\TH:i:s\Z', time() - 2 );
         $returned_at      = gmdate( 'Y-m-d\TH:i:s\Z' );
@@ -1277,13 +1446,119 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             'status'       => 'active',
         ];
 
+        global $wpdb;
+        $administrator = self::factory()->user->create( [ 'role' => 'administrator' ] );
+        wp_set_current_user( $administrator );
+        $mapping_id = $this->create_bundled_mapping(
+            'gravity_forms',
+            (string) $form_id,
+            'clarification_assistant_v1',
+            'real_time',
+            'real_time',
+            [
+                'realtime_settings' => [
+                    'checkpoint_field_ids'   => [ '1' ],
+                    'storage_target_field_id' => $storage_field_id,
+                    'pre_submit_timeout_ms'   => 1,
+                ],
+            ]
+        );
+        $mapping_key = 'local_first_' . $mapping_id;
+        update_option(
+            'sentient_forms_actions_gravity_forms_' . $form_id,
+            [
+                'actions' => [
+                    [
+                        'id'                         => $mapping_key,
+                        'local_form_mapping_id'      => $mapping_id,
+                        'central_action_id'          => 'clarification_assistant_v1',
+                        'action_name_label'          => 'Real-time Clarification Assistant',
+                        'action_type_indicator'      => 'local_first',
+                        'is_action_enabled_for_form' => true,
+                        'settings'                   => [
+                            'execution_mode'  => 'real_time',
+                            'realtime_settings' => [
+                                'checkpoint_field_ids'    => [ '1' ],
+                                'storage_target_field_id' => $storage_field_id,
+                                'pre_submit_timeout_ms'   => 1,
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $client = new Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client(
+            [
+                'suggestions'           => [],
+                'virtual_questions'     => [
+                    [
+                        'question_id'     => 'exact-artifact-question',
+                        'question'        => 'What result would make this submission successful?',
+                        'reason'          => 'The answer makes the request actionable.',
+                        'target_field_id' => '1',
+                        'required'        => true,
+                        'answer_type'     => 'short_text',
+                    ],
+                ],
+                'conditional_decisions' => [],
+            ]
+        );
+        $execution_service = new Sentient_Forms_Local_Action_Execution_Service(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $client
+        );
+        $controller = new Sentient_Forms_Form_Suggestions_Controller(
+            new Sentient_Forms_Form_Mappings_Repository( $wpdb ),
+            $execution_service
+        );
+        $request = new WP_REST_Request(
+            'POST',
+            '/sentient-forms/v1/gravity_forms/forms/' . $form_id . '/actions/suggest'
+        );
+        $request->set_header(
+            'X-Sentient-Forms-Suggest-Nonce',
+            wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id )
+        );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'mapping_id', $mapping_key );
+        $request->set_param( 'execution_request_id', $request_id );
+        $request->set_param( 'all_known_field_values', [ '1' => 'Exact artifact visitor' ] );
+        $request->set_param( 'visible_field_ids', [ '1' ] );
+        $request->set_param( 'current_page_index', 1 );
+        $request->set_param( 'total_pages', 1 );
+        $request->set_param( 'request_reason', 'pre_submit' );
+        $this->assertTrue( $controller->permission_callback_public_nonce( $request ) );
+
+        $response = $controller->suggest( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response, is_wp_error( $response ) ? $response->get_error_message() : '' );
+        $response_data = $response->get_data();
+        $this->assertSame( 'success', $response_data['status'] ?? null, wp_json_encode( $response_data ) );
+        $this->assertSame( $request_id, $response_data['meta']['execution_request_id'] ?? null );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        $this->assertIsArray( $event, 'The real-time public request must persist its execution event before any Q&A effect is accepted.' );
+        $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertSame(
+            'What result would make this submission successful?',
+            $event['result_json']['structured']['virtual_questions'][0]['question'] ?? null
+        );
+
         $adapter->finalize_async_success(
             [
                 'entry_id'             => $entry_id,
                 'form_id'              => $form_id,
                 'central_action_id'    => 'clarification_assistant_v1',
                 'action_name_label'    => 'Real-time Clarification Assistant',
-                'mapping_id'           => $mapping_id,
+                'mapping_id'           => $mapping_key,
                 'execution_request_id' => $request_id,
                 'submitted_at'         => $submitted_at,
                 'settings'             => [
@@ -1297,18 +1572,10 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             [
                 'status'      => 'succeeded',
                 'result_data' => [
-                    'structured_output_valid' => true,
+                    'structured_output_valid' => (bool) ( $event['result_json']['structured_output_valid'] ?? false ),
                     'structured_output'       => [
-                        'virtual_questions' => [
-                            [
-                                'question_id'     => 'exact-artifact-question',
-                                'question'        => 'What result would make this submission successful?',
-                                'reason'          => 'The answer makes the request actionable.',
-                                'target_field_id' => '1',
-                                'required'        => true,
-                                'answer_type'     => 'short_text',
-                            ],
-                        ],
+                        'virtual_questions'     => $response_data['virtual_questions'] ?? [],
+                        'conditional_decisions' => $response_data['conditional_decisions'] ?? [],
                     ],
                 ],
                 'meta'        => [
@@ -1321,27 +1588,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ][ $storage_field_id ] ?? '' ), true );
         $this->assertIsArray( $stored );
         $this->assertSame( 'sentient_forms_realtime_clarification_qna.v1', $stored['schema'] ?? null );
-        $this->assertSame( $mapping_id, $stored['mappings'][0]['mapping_id'] ?? null );
+        $this->assertSame( $mapping_key, $stored['mappings'][0]['mapping_id'] ?? null );
         $this->assertSame( $request_id, $stored['mappings'][0]['execution_request_id'] ?? null );
         $this->assertSame(
             'What result would make this submission successful?',
             $stored['mappings'][0]['questions'][0]['question'] ?? null
         );
 
-        // The callback fixture proves persisted payload correlation, but it does not
-        // execute the realtime request-creation seam. Identify only this automated
-        // public-seam observation, not the fixture-created provider correlation.
-        $public_seam_id = wp_generate_uuid4();
         return [
-            'request_trace_id'   => null,
+            'request_trace_id'   => $request_id,
             'rejection_trace_id' => null,
-            'submission_id'      => null,
-            'execution_id'       => null,
+            'submission_id'      => (string) $entry_id,
+            'execution_id'       => $request_id,
             'lifecycle_id'       => null,
             'provider_observation_type' => 'automated_public_seam',
-            'provider_observation_id'   => 'public-seam:' . $public_seam_id,
-            'observed_provider_route'   => null,
+            'provider_observation_id'   => 'public-seam:' . $request_id,
+            'observed_provider_route'   => 'openrouter',
             'applied_facets'            => [],
+            'external_provider_call_count' => count( $client->chat_calls ),
         ];
     }
 
@@ -1553,6 +1817,63 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         );
     }
 
+    private function configure_observation_writer_fixture( string $suffix ): void
+    {
+        $this->assignment = [
+            'id'                         => $suffix . '-observation',
+            'action_code'                => 'spam_detection_v1',
+            'form_source'                => 'gravity_forms',
+            'lifecycle'                  => 'after_submission',
+            'required_semantic_outcome'  => 'effect_applied',
+            'facet_scenario_assignment'  => 'base_action',
+            'policy_basis_assignment'    => 'action_catalog',
+        ];
+        $this->expected_effect = [
+            'code'               => 'fixture_effect',
+            'description'        => 'Fixture effect.',
+            'description_sha256' => hash( 'sha256', 'Fixture effect.' ),
+        ];
+        $this->observation_path = trailingslashit( get_temp_dir() )
+            . 'sentient-forms-' . $suffix . '-observation-' . wp_generate_uuid4() . '.json';
+    }
+
+    /** @return array<string, mixed> */
+    private function valid_observation_identities( string $suffix ): array
+    {
+        return [
+            'request_trace_id'          => $suffix . '-request',
+            'rejection_trace_id'        => null,
+            'submission_id'             => $suffix . '-submission',
+            'execution_id'              => $suffix . '-execution',
+            'lifecycle_id'              => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:' . $suffix,
+            'observed_provider_route'   => 'direct_openrouter',
+            'applied_facets'            => [],
+        ];
+    }
+
+    /** @param resource $handle */
+    private function write_observation_bytes( $handle, string $payload ): int | false
+    {
+        if ( is_callable( $this->observation_write_callback ) )
+        {
+            return ( $this->observation_write_callback )( $handle, $payload );
+        }
+
+        return fwrite( $handle, $payload );
+    }
+
+    private function publish_observation_file( string $temporary_path, string $final_path ): bool
+    {
+        if ( is_callable( $this->observation_publish_callback ) )
+        {
+            return ( $this->observation_publish_callback )( $temporary_path, $final_path );
+        }
+
+        return @link( $temporary_path, $final_path );
+    }
+
     /** @param array<string, mixed> $identities */
     private function write_observation( array $identities ): void
     {
@@ -1576,16 +1897,48 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         ];
         $encoded = wp_json_encode( $observation, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
         $this->assertIsString( $encoded, 'Observation must be JSON-encodable before writing.' );
-        $handle = fopen( $this->observation_path, 'x' );
+        $payload        = $encoded . "\n";
+        $temporary_path = $this->observation_path . '.tmp.' . wp_generate_uuid4();
+        $handle         = fopen( $temporary_path, 'x+b' );
         $this->assertIsResource( $handle );
         try
         {
-            $written = fwrite( $handle, $encoded . "\n" );
-            $this->assertGreaterThan( 0, $written );
+            $offset = 0;
+            $length = strlen( $payload );
+            while ( $offset < $length )
+            {
+                $written = $this->write_observation_bytes( $handle, substr( $payload, $offset ) );
+                $this->assertIsInt( $written, 'Writing the complete observation payload failed.' );
+                $this->assertGreaterThan( 0, $written, 'Writing the complete observation payload made no progress.' );
+                $this->assertLessThanOrEqual( $length - $offset, $written, 'Observation writer reported more bytes than supplied.' );
+                $offset += $written;
+            }
+            $this->assertSame( $length, $offset, 'The complete observation payload must be written before publication.' );
+            $this->assertTrue( fflush( $handle ), 'Observation staging bytes must be flushed before publication.' );
+            if ( function_exists( 'fsync' ) )
+            {
+                $this->assertTrue( fsync( $handle ), 'Observation staging bytes must be synchronized before publication.' );
+            }
+
+            $this->assertTrue( fclose( $handle ), 'Observation staging file must close before publication.' );
+            $handle = null;
+            $this->assertTrue(
+                $this->publish_observation_file( $temporary_path, $this->observation_path ),
+                'Complete observation publication must be atomic and must not replace an existing artifact.'
+            );
+            $this->assertTrue( unlink( $temporary_path ), 'Observation staging file must be removed after publication.' );
+            $temporary_path = '';
         }
         finally
         {
-            fclose( $handle );
+            if ( is_resource( $handle ) )
+            {
+                fclose( $handle );
+            }
+            if ( '' !== $temporary_path && file_exists( $temporary_path ) )
+            {
+                unlink( $temporary_path );
+            }
         }
     }
 }

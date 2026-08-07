@@ -6,22 +6,43 @@
  * @package Sentient_Forms
  */
 
-final class Sentient_Forms_Test_Exact_Artifact_Execution_Boundary extends Sentient_Forms_Local_Action_Execution_Service
+final class Sentient_Forms_Test_Exact_Artifact_Validation_OpenRouter_Client implements Sentient_Forms_Provider_Client_Interface
 {
-    /** @var array<int, array<string, mixed>> */
-    public array $calls = [];
+    /** @var array<int, array{api_key:string,payload:array<string,mixed>,options:array<string,mixed>}> */
+    public array $chat_calls = [];
 
-    /** @param array<string, mixed> $result */
-    public function __construct( private array $result )
+    /** @param array<string, mixed> $structured_output */
+    public function __construct( private array $structured_output )
     {
     }
 
-    /** @return array<string, mixed> */
-    public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
+    public function validate_key( string $api_key ): array | WP_Error
     {
-        $this->calls[] = compact( 'mapping_id', 'form', 'entry', 'context' );
+        return [ 'data' => [ 'label' => 'Exact-artifact validation key' ] ];
+    }
 
-        return $this->result;
+    public function chat_completion( string $api_key, array $payload, array $options = [] ): array | WP_Error
+    {
+        $this->chat_calls[] = compact( 'api_key', 'payload', 'options' );
+
+        return [
+            'id'      => 'chatcmpl-exact-artifact-validation',
+            'model'   => $payload['model'] ?? 'openrouter/auto',
+            'choices' => [
+                [
+                    'message'       => [
+                        'role'    => 'assistant',
+                        'content' => wp_json_encode( $this->structured_output ),
+                    ],
+                    'finish_reason' => 'stop',
+                ],
+            ],
+            'usage'   => [
+                'prompt_tokens'     => 8,
+                'completion_tokens' => 5,
+                'total_tokens'      => 13,
+            ],
+        ];
     }
 }
 
@@ -157,7 +178,10 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
      *     trace_id: ?string,
      *     native_hook: string,
      *     native_hooks: array<int, string>,
-     *     provider_calls: int
+     *     provider_calls: int,
+     *     selected_provider_api_key: string,
+     *     selected_model_id: string,
+     *     native_entry_status: ?string
      * }
      */
     public static function run( string $form_source, string $action_code, string $assignment ): array
@@ -179,18 +203,27 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         }
         $form_id = (string) $identity_post_id;
         Sentient_Forms_Test_Exact_Artifact_Validation_Observer::$result = null;
-        $boundary = new Sentient_Forms_Test_Exact_Artifact_Execution_Boundary(
-            self::provider_result( $action_code, $assignment )
+        $client = new Sentient_Forms_Test_Exact_Artifact_Validation_OpenRouter_Client(
+            self::provider_structured_output( $action_code, $assignment )
+        );
+        $execution_service = new Sentient_Forms_Local_Action_Execution_Service(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $client
         );
         $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
             Sentient_Forms_Plugin::instance(),
             null,
             null,
-            $boundary
+            $execution_service
         );
         $mapping_id = self::create_mapping( $form_source, $form_id, $action_code );
-        $hooks = self::hook_names( $form_source );
-        $hook_snapshot = self::isolate_hooks( $hooks );
+        $hook_snapshot = self::snapshot_all_hooks();
+        self::isolate_hooks( self::hook_names( $form_source ) );
         $post_snapshot = $_POST;
 
         try
@@ -206,12 +239,15 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         finally
         {
             $_POST = $post_snapshot;
-            self::restore_hooks( $hook_snapshot );
+            self::restore_all_hooks( $hook_snapshot );
             self::delete_mapping( $mapping_id );
             wp_delete_post( $identity_post_id, true );
         }
 
-        $request_id = $boundary->calls[0]['context']['execution_request_id'] ?? null;
+        $execution_request_ids = Sentient_Forms_Test_Exact_Artifact_Validation_Observer::$result instanceof Sentient_Forms_Validation_Run_Result
+            ? Sentient_Forms_Test_Exact_Artifact_Validation_Observer::$result->get_execution_request_ids()
+            : [];
+        $request_id = array_values( $execution_request_ids )[0] ?? null;
         $native_rejected = (bool) ( $observation['rejected'] ?? false );
         $runtime_blocked = Sentient_Forms_Test_Exact_Artifact_Validation_Observer::blocked();
         $spam_state_applied = Sentient_Forms_Test_Exact_Artifact_Validation_Observer::spam_state_applied();
@@ -231,13 +267,35 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
             ? 'validation-rejection:' . $request_id
             : null;
 
-        if ( 1 !== count( $boundary->calls ) )
+        if ( 1 !== count( $client->chat_calls ) )
         {
             throw new RuntimeException( 'The validation provider boundary must execute exactly once.' );
+        }
+        $provider_call = $client->chat_calls[0];
+        $selected_provider_api_key = isset( $provider_call['api_key'] ) && is_string( $provider_call['api_key'] )
+            ? $provider_call['api_key']
+            : '';
+        $selected_model_id = isset( $provider_call['payload']['model'] ) && is_string( $provider_call['payload']['model'] )
+            ? $provider_call['payload']['model']
+            : '';
+        if ( 'sk-or-exact-artifact-validation' !== $selected_provider_api_key
+            || 'example/exact-artifact-validation' !== $selected_model_id )
+        {
+            throw new RuntimeException( 'The validation assignment did not select its exact fixture credential and model.' );
         }
         if ( ! is_string( $request_id ) || '' === $request_id )
         {
             throw new RuntimeException( 'The validation assignment did not produce its real request ID.' );
+        }
+        global $wpdb;
+        $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id( $request_id );
+        if ( ! is_array( $event ) || 'succeeded' !== ( $event['status'] ?? null ) )
+        {
+            throw new RuntimeException( 'The validation assignment did not persist its real successful execution event.' );
+        }
+        if ( $mapping_id !== (int) ( $event['mapping_id'] ?? 0 ) )
+        {
+            throw new RuntimeException( 'The validation execution event is not linked to the exercised mapping.' );
         }
         if ( 'reject' === $assignment && ( ! $effect_applied || ! is_string( $request_id ) || '' === $request_id ) )
         {
@@ -271,7 +329,12 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
             'native_hooks'    => isset( $observation['native_hooks'] ) && is_array( $observation['native_hooks'] )
                 ? array_values( $observation['native_hooks'] )
                 : [ (string) $observation['native_hook'] ],
-            'provider_calls'  => count( $boundary->calls ),
+            'provider_calls'  => count( $client->chat_calls ),
+            'selected_provider_api_key' => $selected_provider_api_key,
+            'selected_model_id' => $selected_model_id,
+            'native_entry_status' => isset( $observation['native_entry_status'] ) && is_scalar( $observation['native_entry_status'] )
+                ? (string) $observation['native_entry_status']
+                : null,
         ];
     }
 
@@ -286,41 +349,26 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
     }
 
     /** @return array<string, mixed> */
-    private static function provider_result( string $action_code, string $assignment ): array
+    private static function provider_structured_output( string $action_code, string $assignment ): array
     {
         if ( 'spam_detection_v1' === $action_code )
         {
             return [
-                'result_data' => [
-                    'structured_output_valid' => true,
-                    'structured_output'       => [
-                        'classification' => 'reject' === $assignment ? 'spam' : 'ham',
-                        'confidence'     => 0.99,
-                        'justification'  => 'Exact-artifact external-boundary fixture.',
-                        'indicators'     => 'reject' === $assignment
-                            ? [ [ 'type' => 'other', 'evidence' => 'Exact-artifact rejection fixture.', 'weight' => 'high' ] ]
-                            : [],
-                    ],
-                ],
-                'validation'  => [
-                    'is_valid' => 'accept' === $assignment,
-                    'message'  => 'reject' === $assignment ? 'Submission classified as spam.' : '',
-                    'fields'   => [],
-                ],
+                'classification' => 'reject' === $assignment ? 'spam' : 'ham',
+                'confidence'     => 0.99,
+                'justification'  => 'Exact-artifact external-boundary fixture.',
+                'indicators'     => 'reject' === $assignment
+                    ? [ [ 'type' => 'other', 'evidence' => 'Exact-artifact rejection fixture.', 'weight' => 'high' ] ]
+                    : [],
             ];
         }
 
         return [
-            'result_data' => [
-                'structured_output_valid' => true,
-                'structured_output'       => [
-                    'is_valid' => 'accept' === $assignment,
-                    'message'  => 'reject' === $assignment ? 'Please review your submission.' : '',
-                    'fields'   => 'reject' === $assignment
-                        ? [ [ 'field_id' => 'message', 'is_valid' => false, 'message' => 'Please provide useful details.' ] ]
-                        : [],
-                ],
-            ],
+            'is_valid' => 'accept' === $assignment,
+            'message'  => 'reject' === $assignment ? 'Please review your submission.' : '',
+            'fields'   => 'reject' === $assignment
+                ? [ [ 'field_id' => 'message', 'is_valid' => false, 'message' => 'Please provide useful details.' ] ]
+                : [],
         ];
     }
 
@@ -333,6 +381,40 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         {
             throw new RuntimeException( 'Canonical bundled validation action is unavailable.' );
         }
+        $vault     = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted = $vault->encrypt( 'sk-or-exact-artifact-validation' );
+        if ( ! is_string( $encrypted ) )
+        {
+            throw new RuntimeException( 'Unable to encrypt the validation provider fixture credential.' );
+        }
+        $credential_id = ( new Sentient_Forms_Provider_Credentials_Repository( $wpdb ) )->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Exact-artifact validation',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $consent_id = ( new Sentient_Forms_External_Service_Consent_Repository( $wpdb ) )->record(
+            'openrouter',
+            '2026-04-16',
+            get_current_user_id()
+        );
+        $model_id = 'example/exact-artifact-validation';
+        $model_cached = ( new Sentient_Forms_Model_Cache_Repository( $wpdb ) )->upsert(
+            'openrouter',
+            $model_id,
+            [
+                'id'                   => $model_id,
+                'name'                 => 'Exact-artifact validation fixture',
+                'input_modalities'     => [ 'text' ],
+                'output_modalities'    => [ 'text' ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs' ],
+            ],
+            gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS )
+        );
         $template_id = ( new Sentient_Forms_Action_Templates_Repository( $wpdb ) )->upsert_by_code(
             [
                 'source'                   => 'bundled',
@@ -353,7 +435,11 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                 'display_name'         => $catalog['display_name'],
                 'template_id'          => $template_id,
                 'definition_json'      => [ 'template_code' => $action_code ],
-                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => $model_id,
+                    'credential_id' => $credential_id,
+                ],
                 'status'               => 'active',
             ]
         );
@@ -371,7 +457,8 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
                 'enabled'             => true,
             ]
         );
-        if ( ! is_int( $template_id ) || ! is_int( $action_id ) || ! is_int( $mapping_id ) )
+        if ( ! is_int( $credential_id ) || ! is_int( $consent_id ) || true !== $model_cached
+            || ! is_int( $template_id ) || ! is_int( $action_id ) || ! is_int( $mapping_id ) )
         {
             throw new RuntimeException( 'Unable to create the canonical validation mapping.' );
         }
@@ -390,45 +477,71 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
     {
         return match ( $form_source )
         {
-            'gravity_forms'       => [ 'gform_validation' ],
-            'contact_form_7'      => [ 'wpcf7_validate', 'wpcf7_spam', 'sentient_forms_contact_form_7_is_active', 'sentient_forms_contact_form_7_current_submission' ],
-            'wpforms'             => [ 'wpforms_process', 'sentient_forms_wpforms_is_active', 'sentient_forms_wpforms_object' ],
-            'elementor_pro_forms' => [ 'elementor_pro/forms/validation', 'sentient_forms_elementor_is_active', 'sentient_forms_elementor_pro_forms_api_available', 'sentient_forms_elementor_posts_with_data' ],
+            'gravity_forms'       => [
+                'gform_validation',
+                'gform_after_submission',
+                'gform_entry_post_save',
+                'gform_notification',
+                'gform_disable_notification',
+                'gform_gravityformswebhooks_pre_process_feeds',
+                'admin_enqueue_scripts',
+                'gform_tooltips',
+                'gform_field_standard_settings',
+                'gform_pre_render',
+                'gform_pre_validation',
+                'gform_pre_submission_filter',
+                'gform_enqueue_scripts',
+                'sentient_forms_async_evaluation_jobs',
+            ],
+            'contact_form_7'      => [
+                'wpcf7_validate',
+                'wpcf7_spam',
+                'wpcf7_mail_sent',
+                'sentient_forms_contact_form_7_is_active',
+                'sentient_forms_contact_form_7_current_submission',
+            ],
+            'wpforms'             => [
+                'wpforms_process',
+                'wpforms_process_complete',
+                'sentient_forms_wpforms_is_active',
+                'sentient_forms_wpforms_object',
+            ],
+            'elementor_pro_forms' => [
+                'elementor_pro/forms/validation',
+                'elementor_pro/forms/new_record',
+                'sentient_forms_elementor_is_active',
+                'sentient_forms_elementor_pro_forms_api_available',
+                'sentient_forms_elementor_posts_with_data',
+            ],
         };
     }
 
-    /** @param array<int, string> $hooks @return array<string, mixed> */
-    private static function isolate_hooks( array $hooks ): array
+    /** @param array<int, string> $hooks */
+    private static function isolate_hooks( array $hooks ): void
     {
         global $wp_filter;
-        $snapshot = [];
         foreach ( $hooks as $hook )
         {
-            $snapshot[ $hook ] = $wp_filter[ $hook ] ?? null;
             unset( $wp_filter[ $hook ] );
         }
-
-        return $snapshot;
     }
 
-    /** @param array<string, mixed> $snapshot */
-    private static function restore_hooks( array $snapshot ): void
+    /** @return array<string, WP_Hook> */
+    private static function snapshot_all_hooks(): array
     {
         global $wp_filter;
-        foreach ( $snapshot as $hook => $callbacks )
-        {
-            if ( null === $callbacks )
-            {
-                unset( $wp_filter[ $hook ] );
-            }
-            else
-            {
-                $wp_filter[ $hook ] = $callbacks;
-            }
-        }
+
+        return array_map( static fn( WP_Hook $hook ): WP_Hook => clone $hook, $wp_filter );
     }
 
-    /** @return array{rejected: bool, observed_effect: string, native_hook: string} */
+    /** @param array<string, WP_Hook> $snapshot */
+    private static function restore_all_hooks( array $snapshot ): void
+    {
+        global $wp_filter;
+        $wp_filter = $snapshot;
+    }
+
+    /** @return array{rejected: bool, observed_effect: string, native_hook: string, native_hooks: array<int, string>, native_entry_status: string} */
     private static function run_gravity_forms(
         string $form_id,
         Sentient_Forms_Form_Source_Workflow_Runner $runner
@@ -438,17 +551,40 @@ final class Sentient_Forms_Test_Exact_Artifact_Validation_Scenario
         $adapter->register_hooks();
         $_POST['input_2'] = 'Exact-artifact validation fixture.';
         $field = (object) [ 'id' => 2, 'failed_validation' => false, 'validation_message' => '' ];
+        $form = [ 'id' => (int) $form_id, 'fields' => [ $field ] ];
         $result = apply_filters(
             'gform_validation',
-            [ 'is_valid' => true, 'form' => [ 'id' => (int) $form_id, 'fields' => [ $field ] ] ],
+            [ 'is_valid' => true, 'form' => $form ],
             [ 'source' => 'exact-artifact' ]
         );
         $rejected = ! (bool) ( $result['is_valid'] ?? true );
+        $entry_id = (int) $form_id;
+        $entry = [
+            'id'           => $entry_id,
+            'form_id'      => (int) $form_id,
+            'status'       => 'active',
+            'date_created' => gmdate( 'Y-m-d H:i:s' ),
+            '2'            => 'Exact-artifact validation fixture.',
+        ];
+        GFAPI::$forms[ (int) $form_id ] = $form;
+        GFAPI::$entries[ $entry_id ] = $entry;
+
+        try
+        {
+            apply_filters( 'gform_entry_post_save', $entry, $form );
+            $native_entry_status = (string) ( GFAPI::$entries[ $entry_id ]['status'] ?? '' );
+        }
+        finally
+        {
+            unset( GFAPI::$entries[ $entry_id ], GFAPI::$forms[ (int) $form_id ] );
+        }
 
         return [
             'rejected'        => $rejected,
             'observed_effect' => $rejected ? 'gravity_forms_validation_rejected' : 'gravity_forms_validation_accepted',
             'native_hook'     => 'gform_validation',
+            'native_hooks'    => [ 'gform_validation', 'gform_entry_post_save' ],
+            'native_entry_status' => $native_entry_status,
         ];
     }
 

@@ -6,6 +6,7 @@ final class Tests_Exact_Artifact_Validation_Scenario extends WP_UnitTestCase
 {
     public function test_all_canonical_validation_assignments_execute_the_real_native_hooks(): void
     {
+        $hook_registry_before = $this->snapshot_hook_registry();
         $sources = [ 'gravity_forms', 'contact_form_7', 'wpforms', 'elementor_pro_forms' ];
         $actions = [ 'spam_detection_v1', 'content_validation_v1' ];
         $assignments = [ 'accept', 'reject' ];
@@ -34,11 +35,16 @@ final class Tests_Exact_Artifact_Validation_Scenario extends WP_UnitTestCase
                             'elementor_pro_forms' => 'elementor_pro/forms/validation',
                         ][ $source ];
                     $this->assertSame( $expected_hook, $result['native_hook'] ?? null, $key );
-                    $expected_hooks = 'contact_form_7' === $source && 'spam_detection_v1' === $action
-                        ? [ 'wpcf7_validate', 'wpcf7_spam' ]
-                        : [ $expected_hook ];
+                    $expected_hooks = match ( true )
+                    {
+                        'gravity_forms' === $source => [ 'gform_validation', 'gform_entry_post_save' ],
+                        'contact_form_7' === $source && 'spam_detection_v1' === $action => [ 'wpcf7_validate', 'wpcf7_spam' ],
+                        default => [ $expected_hook ],
+                    };
                     $this->assertSame( $expected_hooks, $result['native_hooks'] ?? null, $key );
                     $this->assertSame( 1, $result['provider_calls'] ?? null, $key );
+                    $this->assertSame( 'sk-or-exact-artifact-validation', $result['selected_provider_api_key'] ?? null, $key );
+                    $this->assertSame( 'example/exact-artifact-validation', $result['selected_model_id'] ?? null, $key );
                     $expected_rejection = 'reject' === $assignment
                         && ! ( 'spam_detection_v1' === $action
                             && in_array( $source, [ 'gravity_forms', 'contact_form_7' ], true ) );
@@ -73,11 +79,20 @@ final class Tests_Exact_Artifact_Validation_Scenario extends WP_UnitTestCase
                             : 'contact_form_7_spam_flagged';
                         $this->assertSame( $expected_effect, $result['observed_effect'] ?? null, $key );
                     }
+                    if ( 'gravity_forms' === $source && 'spam_detection_v1' === $action && 'reject' === $assignment )
+                    {
+                        $this->assertSame( 'spam', $result['native_entry_status'] ?? null, $key );
+                    }
                 }
             }
         }
 
         $this->assertCount( 16, $results );
+        $this->assertEquals(
+            $hook_registry_before,
+            $this->snapshot_hook_registry(),
+            'The complete WordPress hook registry must be restored after all 16 validation scenarios.'
+        );
     }
 
     public function test_unsupported_scenario_fails_closed(): void
@@ -85,5 +100,13 @@ final class Tests_Exact_Artifact_Validation_Scenario extends WP_UnitTestCase
         $this->expectException( InvalidArgumentException::class );
 
         Sentient_Forms_Test_Exact_Artifact_Validation_Scenario::run( 'gravity_forms', 'entry_summary_v1', 'accept' );
+    }
+
+    /** @return array<string, WP_Hook> */
+    private function snapshot_hook_registry(): array
+    {
+        global $wp_filter;
+
+        return array_map( static fn( WP_Hook $hook ): WP_Hook => clone $hook, $wp_filter );
     }
 }
