@@ -14,6 +14,7 @@
  */
 
 echo "Starting Sentient Forms class map generation...\n";
+$check_only = in_array( '--check', $argv, true );
 
 // Define the plugin directory. Adjust if this script is placed elsewhere.
 if ( !defined( 'SENTIENT_FORMS_PLUGIN_DIR_FOR_BUILD' ) )
@@ -126,11 +127,14 @@ foreach ( $scan_directories as $scan_dir_relative )
                         }
                         break;
 
-                    case T_CLASS:
                     case T_INTERFACE:
                     case T_TRAIT:
                     case T_ENUM: // T_ENUM requires PHP 8.1+ for the tokenizer
                         $class_like_found = true;
+                        break;
+
+                    case T_CLASS:
+                        $class_like_found = is_named_class_declaration( $tokens, $i );
                         break;
 
                     case T_STRING:
@@ -181,7 +185,8 @@ foreach ( $scan_directories as $scan_dir_relative )
 
 if ( empty( $class_map ) )
 {
-    echo "No classes matching the prefix 'Sentient_Forms_' found. Please check scan_directories, file contents, and plugin structure.\n";
+    fwrite( STDERR, "No classes matching the prefix 'Sentient_Forms_' found. Please check scan_directories, file contents, and plugin structure.\n" );
+    exit( 1 );
 }
 else
 {
@@ -211,15 +216,87 @@ else
         }
     }
 
-    if ( file_put_contents( $output_file, $output_content ) )
+    if ( $check_only )
+    {
+        $current = is_file( $output_file ) ? file_get_contents( $output_file ) : false;
+        if ( ! is_string( $current ) || ! hash_equals( $output_content, $current ) )
+        {
+            fwrite( STDERR, "Class map is stale. Run php build/generate-class-map.php.\n" );
+            exit( 1 );
+        }
+        echo count( $class_map ) . " class-map entries are current.\n";
+    }
+    elseif ( false !== file_put_contents( $output_file, $output_content ) )
     {
         echo "Class map generated successfully at: " . $output_file . "\n";
         echo count( $class_map ) . " classes, interfaces, enums, and traits mapped.\n";
     }
     else
     {
-        echo "Error: Could not write class map to: " . $output_file . "\n";
+        fwrite( STDERR, "Error: Could not write class map to: " . $output_file . "\n" );
+        exit( 1 );
     }
 }
 
 echo "Class map generation finished.\n";
+
+/**
+ * Distinguish a named class declaration from ::class and anonymous classes.
+ *
+ * @param array<int, array{int,string,int}|string> $tokens
+ */
+function is_named_class_declaration( array $tokens, int $index ): bool
+{
+    for ( $cursor = $index - 1; $cursor >= 0; $cursor-- )
+    {
+        $token = $tokens[ $cursor ];
+        if ( is_array( $token ) && in_array( $token[0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true ) )
+        {
+            continue;
+        }
+
+        if ( ']' === $token )
+        {
+            $cursor = skip_attribute_group_backward( $tokens, $cursor );
+            continue;
+        }
+
+        return ! ( is_array( $token ) && in_array( $token[0], [ T_DOUBLE_COLON, T_NEW ], true ) );
+    }
+
+    return true;
+}
+
+/**
+ * Return the cursor immediately before an attribute group ending at $index.
+ *
+ * @param array<int, array{int,string,int}|string> $tokens
+ */
+function skip_attribute_group_backward( array $tokens, int $index ): int
+{
+    $depth = 0;
+    for ( $cursor = $index; $cursor >= 0; $cursor-- )
+    {
+        $token = $tokens[ $cursor ];
+        if ( ']' === $token )
+        {
+            $depth++;
+            continue;
+        }
+        if ( '[' === $token )
+        {
+            $depth--;
+            continue;
+        }
+        if ( is_array( $token ) && T_ATTRIBUTE === $token[0] )
+        {
+            $depth--;
+            if ( 0 === $depth )
+            {
+                return $cursor - 1;
+            }
+        }
+    }
+
+    return $index;
+}

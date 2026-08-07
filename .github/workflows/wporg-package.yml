@@ -14,7 +14,13 @@ name: WordPress.org Package Preflight
       - 'sentient-forms.php'
       - 'composer.json'
       - 'composer.lock'
+      - 'build/generate-class-map.php'
+      - 'contracts/action-facet-policy-catalog.v1.json'
+      - 'contracts/action-source-compatibility.v1.json'
+      - 'scripts/build-deterministic-wporg-zip.py'
       - 'scripts/build-wporg-package.php'
+      - 'scripts/check-action-facet-policy-snapshot.php'
+      - 'scripts/check-action-source-compatibility-snapshot.php'
       - 'scripts/bump-release-version.php'
       - 'scripts/check-text-encoding.php'
       - 'scripts/generate-openrouter-model-recommendations.mjs'
@@ -24,7 +30,12 @@ name: WordPress.org Package Preflight
       - 'scripts/validate-wporg-readme.php'
       - 'scripts/verify-wporg-source.php'
       - 'scripts/write-wporg-release-manifest.php'
+      - 'scripts/tests/check-deterministic-wporg-archive.py'
+      - 'scripts/tests/check-class-map-generator.php'
+      - 'scripts/tests/check-wporg-package-builder-process.php'
+      - 'scripts/tests/check-wporg-deterministic-workflow.py'
       - 'admin-app/**'
+      - '.github/actions/**'
       - '.github/workflows/wporg-package.yml'
       - '.github/workflows/release-please.yml'
       - '.github/workflows/release-pr-sync.yml'
@@ -40,7 +51,13 @@ name: WordPress.org Package Preflight
       - 'sentient-forms.php'
       - 'composer.json'
       - 'composer.lock'
+      - 'build/generate-class-map.php'
+      - 'contracts/action-facet-policy-catalog.v1.json'
+      - 'contracts/action-source-compatibility.v1.json'
+      - 'scripts/build-deterministic-wporg-zip.py'
       - 'scripts/build-wporg-package.php'
+      - 'scripts/check-action-facet-policy-snapshot.php'
+      - 'scripts/check-action-source-compatibility-snapshot.php'
       - 'scripts/bump-release-version.php'
       - 'scripts/check-text-encoding.php'
       - 'scripts/generate-openrouter-model-recommendations.mjs'
@@ -50,7 +67,12 @@ name: WordPress.org Package Preflight
       - 'scripts/validate-wporg-readme.php'
       - 'scripts/verify-wporg-source.php'
       - 'scripts/write-wporg-release-manifest.php'
+      - 'scripts/tests/check-deterministic-wporg-archive.py'
+      - 'scripts/tests/check-class-map-generator.php'
+      - 'scripts/tests/check-wporg-package-builder-process.php'
+      - 'scripts/tests/check-wporg-deterministic-workflow.py'
       - 'admin-app/**'
+      - '.github/actions/**'
       - '.github/workflows/wporg-package.yml'
       - '.github/workflows/release-please.yml'
       - '.github/workflows/release-pr-sync.yml'
@@ -66,6 +88,7 @@ name: WordPress.org Package Preflight
 
 env:
   PHP_VERSION: '8.3'
+  BUN_VERSION: '1.3.0'
 
 permissions:
   contents: read
@@ -87,9 +110,7 @@ jobs:
         id: composer-cache
         uses: actions/cache@v5
         with:
-          path: |
-            ~/.cache/composer
-            vendor
+          path: ~/.cache/composer
           key: ${{ runner.os }}-wporg-package-php${{ env.PHP_VERSION }}-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-wporg-package-php${{ env.PHP_VERSION }}-
@@ -100,16 +121,46 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           coverage: none
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache Bun install artifacts
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-wporg-package-bun${{ env.BUN_VERSION }}-${{ hashFiles('admin-app/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wporg-package-bun${{ env.BUN_VERSION }}-
+
+      - name: Install locked admin dependencies
+        working-directory: admin-app
+        run: bun install --frozen-lockfile
+
+      - name: Build and verify generated admin assets
+        working-directory: admin-app
+        run: |
+          bun run generated:freshness:check
+          bun run generated:whitespace:check
+
+      - name: Install semantic workflow validator
+        run: python3 -m pip install --disable-pip-version-check --no-input PyYAML==6.0.2
+
       - name: Report cache state
         run: |
           echo "composer.lock hash: ${{ hashFiles('composer.lock') }}"
           echo "Composer cache hit: ${{ steps.composer-cache.outputs.cache-hit }}"
 
-      - name: Install runtime PHP dependencies
-        run: composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
-
       - name: Run source-tree WordPress.org preflight
         run: |
+          php scripts/tests/check-class-map-generator.php
+          php build/generate-class-map.php --check
+          php scripts/tests/check-wporg-package-builder-process.php
+          python3 scripts/tests/check-deterministic-wporg-archive.py
+          python3 scripts/tests/check-wporg-deterministic-workflow.py
+          php scripts/check-action-facet-policy-snapshot.php
+          php scripts/check-action-source-compatibility-snapshot.php
           php scripts/check-text-encoding.php --source-tree
           php scripts/validate-release-version.php
           php scripts/verify-wporg-source.php
@@ -117,14 +168,28 @@ jobs:
           php scripts/audit-wporg-licenses.php
           php scripts/validate-wporg-readme.php --offline
 
-      - name: Build clean WordPress.org package
+      - name: Build two independent WordPress.org packages
         id: package
         run: |
-          package_base="${GITHUB_WORKSPACE}/.wporg-package"
-          php scripts/build-wporg-package.php "$package_base"
-          package_dir="${package_base}/sentient-forms"
-          test -d "$package_dir"
-          echo "package-dir=$package_dir" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          package_base_a="${RUNNER_TEMP}/sentient-forms-package-a"
+          package_base_b="${RUNNER_TEMP}/sentient-forms-package-b"
+          php scripts/build-wporg-package.php "$package_base_a"
+          php scripts/build-wporg-package.php "$package_base_b"
+          package_dir_a="${package_base_a}/sentient-forms"
+          package_dir_b="${package_base_b}/sentient-forms"
+          inventory_a="${package_base_a}/sentient-forms.inventory.json"
+          inventory_b="${package_base_b}/sentient-forms.inventory.json"
+          test -d "$package_dir_a"
+          test -d "$package_dir_b"
+          test -f "$inventory_a"
+          test -f "$inventory_b"
+          test -f "$package_dir_a/contracts/action-facet-policy-catalog.v1.json"
+          test -f "$package_dir_a/contracts/action-source-compatibility.v1.json"
+          echo "package-dir=$package_dir_a" >> "$GITHUB_OUTPUT"
+          echo "package-dir-b=$package_dir_b" >> "$GITHUB_OUTPUT"
+          echo "inventory=$inventory_a" >> "$GITHUB_OUTPUT"
+          echo "inventory-b=$inventory_b" >> "$GITHUB_OUTPUT"
 
       - name: Run package WordPress.org preflight
         run: |
@@ -146,20 +211,40 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.official_readme_validation }}
         run: php scripts/validate-wporg-readme.php "${{ steps.package.outputs.package-dir }}"
 
-      - name: Create package zip and manifest
+      - name: Create and compare deterministic package artifacts
         id: package-artifacts
         run: |
           set -euo pipefail
-          package_dir="${{ steps.package.outputs.package-dir }}"
-          zip_path="${GITHUB_WORKSPACE}/.wporg-package/sentient-forms.zip"
+          package_dir_a="${{ steps.package.outputs.package-dir }}"
+          package_dir_b="${{ steps.package.outputs.package-dir-b }}"
+          inventory_a="${{ steps.package.outputs.inventory }}"
+          inventory_b="${{ steps.package.outputs.inventory-b }}"
+          artifact_dir="${RUNNER_TEMP}/sentient-forms-artifacts"
+          mkdir -p "$artifact_dir"
+          zip_path_a="${artifact_dir}/sentient-forms-a.zip"
+          zip_path_b="${artifact_dir}/sentient-forms-b.zip"
+          manifest_a="${artifact_dir}/sentient-forms-a.json"
+          manifest_b="${artifact_dir}/sentient-forms-b.json"
+          source_commit="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse HEAD^{tree})"
+          lock_sha256="$(sha256sum composer.lock | cut -d' ' -f1)"
+          python3 scripts/build-deterministic-wporg-zip.py "$package_dir_a" "$zip_path_a" "$manifest_a" \
+            --source-commit "$source_commit" --source-tree "$source_tree" \
+            --composer-lock-sha256 "$lock_sha256" --expected-inventory "$inventory_a"
+          python3 scripts/build-deterministic-wporg-zip.py "$package_dir_b" "$zip_path_b" "$manifest_b" \
+            --source-commit "$source_commit" --source-tree "$source_tree" \
+            --composer-lock-sha256 "$lock_sha256" --expected-inventory "$inventory_b"
+          cmp --silent "$zip_path_a" "$zip_path_b"
+          tree_a="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["package_tree_sha256"])' "$manifest_a")"
+          tree_b="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["package_tree_sha256"])' "$manifest_b")"
+          test "$tree_a" = "$tree_b"
+          zip_path="${artifact_dir}/sentient-forms.zip"
+          manifest_path="${artifact_dir}/sentient-forms-wporg-manifest.json"
           sha_path="${zip_path}.sha256"
-          manifest_path="${GITHUB_WORKSPACE}/.wporg-package/sentient-forms-wporg-manifest.json"
-          cd "$(dirname "${package_dir}")"
-          zip -qry "${zip_path}" "$(basename "${package_dir}")"
-          sha256sum "${zip_path}" > "${sha_path}"
-          cd "${GITHUB_WORKSPACE}"
-          php scripts/write-wporg-release-manifest.php "${package_dir}" "${zip_path}" "${manifest_path}"
-          echo "zip-path=${zip_path}" >> "$GITHUB_OUTPUT"
+          cp "$zip_path_a" "$zip_path"
+          cp "$manifest_a" "$manifest_path"
+          sha256sum "$zip_path" > "$sha_path"
+          echo "zip-path=$zip_path" >> "$GITHUB_OUTPUT"
           echo "sha-path=${sha_path}" >> "$GITHUB_OUTPUT"
           echo "manifest-path=${manifest_path}" >> "$GITHUB_OUTPUT"
 

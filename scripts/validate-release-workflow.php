@@ -152,9 +152,12 @@ function sentient_forms_validate_reviewed_package_inputs( string $contents, stri
         $issues[] = "{$workflow_name} must package the reviewed admin assets instead of rebuilding them.";
     }
 
-    if ( false !== strpos( $contents, 'bun install --frozen-lockfile' ) )
+    if (
+        false !== strpos( $contents, 'bun install --frozen-lockfile' )
+        && false === strpos( $contents, 'bun run generated:freshness:check' )
+    )
     {
-        $issues[] = "{$workflow_name} must not install unused admin build dependencies while packaging a release.";
+        $issues[] = "{$workflow_name} may install admin dependencies only when verifying generated asset freshness.";
     }
 }
 

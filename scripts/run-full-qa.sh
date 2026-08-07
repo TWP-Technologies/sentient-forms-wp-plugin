@@ -86,7 +86,8 @@ run_admin_spa() {
   if [[ "$run_spa_e2e" == "1" ]]; then
     info "SPA E2E/build (Playwright smoke + build:wp + bundle:check)"
     # Prebuild once; preview:serve will reuse.
-    bun run build:wp
+    bun run generated:freshness:check
+    bun run generated:whitespace:check
     bun run --bun e2e:smoke
     bun run bundle:check
   else

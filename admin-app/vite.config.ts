@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import { createRouterLayoutPlugin } from './scripts/router-layout-plugin.mjs';
+import { createGeneratedWhitespacePlugin } from './scripts/generated-whitespace-plugin.mjs';
 
 const devHost = process.env.SENTIENT_FORMS_DEV_HOST ?? '127.0.0.1';
 const hmrHost = process.env.SENTIENT_FORMS_HMR_HOST ?? devHost;
@@ -11,6 +12,13 @@ const routerType = process.env.SENTIENT_FORMS_ROUTER === 'pathname' ? 'pathname'
 const rootLayoutPath = fileURLToPath(new URL('./src/routes/+layout.ts', import.meta.url));
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        plugins: [createGeneratedWhitespacePlugin()]
+      }
+    }
+  },
   plugins: [
     createRouterLayoutPlugin({ layoutPath: rootLayoutPath, routerType }),
     tailwindcss(),

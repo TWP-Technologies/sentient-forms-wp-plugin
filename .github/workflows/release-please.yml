@@ -30,6 +30,7 @@ permissions:
 
 env:
   PHP_VERSION: '8.3'
+  BUN_VERSION: '1.3.0'
 
 jobs:
   release-please:
@@ -177,24 +178,56 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           coverage: none
 
+      - name: Install semantic workflow validator
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: python3 -m pip install --disable-pip-version-check --no-input PyYAML==6.0.2
+
+      - name: Set up Bun
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache Bun install artifacts
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-release-please-bun${{ env.BUN_VERSION }}-${{ hashFiles('admin-app/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-please-bun${{ env.BUN_VERSION }}-
+
+      - name: Install locked admin dependencies
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        working-directory: admin-app
+        run: bun install --frozen-lockfile
+
+      - name: Build and verify generated admin assets
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        working-directory: admin-app
+        run: |
+          bun run generated:freshness:check
+          bun run generated:whitespace:check
+
       - name: Cache Composer
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         uses: actions/cache@v5
         with:
-          path: |
-            ~/.cache/composer
-            vendor
+          path: ~/.cache/composer
           key: ${{ runner.os }}-release-please-php${{ env.PHP_VERSION }}-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-release-please-php${{ env.PHP_VERSION }}-
 
-      - name: Install PHP dependencies
-        if: ${{ steps.release-state.outputs.publish == 'true' }}
-        run: composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
-
       - name: Run WordPress.org release preflight
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
+          php scripts/tests/check-class-map-generator.php
+          php build/generate-class-map.php --check
+          php scripts/tests/check-wporg-package-builder-process.php
+          python3 scripts/tests/check-deterministic-wporg-archive.py
+          python3 scripts/tests/check-wporg-deterministic-workflow.py
+          php scripts/check-action-facet-policy-snapshot.php
+          php scripts/check-action-source-compatibility-snapshot.php
           php scripts/check-text-encoding.php --source-tree
           php scripts/validate-release-version.php
           php scripts/verify-wporg-source.php
@@ -202,15 +235,29 @@ jobs:
           php scripts/audit-wporg-licenses.php
           php scripts/validate-wporg-readme.php --offline
 
-      - name: Build clean WordPress.org package
+      - name: Build two independent WordPress.org packages
         id: package
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
-          package_base="${GITHUB_WORKSPACE}/.wporg-package"
-          php scripts/build-wporg-package.php "$package_base"
-          package_dir="${package_base}/sentient-forms"
-          test -d "$package_dir"
-          echo "package-dir=$package_dir" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          release_package_base_a="${RUNNER_TEMP}/sentient-forms-release-package-a"
+          release_package_base_b="${RUNNER_TEMP}/sentient-forms-release-package-b"
+          php scripts/build-wporg-package.php "$release_package_base_a"
+          php scripts/build-wporg-package.php "$release_package_base_b"
+          package_dir_a="${release_package_base_a}/sentient-forms"
+          package_dir_b="${release_package_base_b}/sentient-forms"
+          inventory_a="${release_package_base_a}/sentient-forms.inventory.json"
+          inventory_b="${release_package_base_b}/sentient-forms.inventory.json"
+          test -d "$package_dir_a"
+          test -d "$package_dir_b"
+          test -f "$inventory_a"
+          test -f "$inventory_b"
+          test -f "$package_dir_a/contracts/action-facet-policy-catalog.v1.json"
+          test -f "$package_dir_a/contracts/action-source-compatibility.v1.json"
+          echo "package-dir=$package_dir_a" >> "$GITHUB_OUTPUT"
+          echo "package-dir-b=$package_dir_b" >> "$GITHUB_OUTPUT"
+          echo "inventory=$inventory_a" >> "$GITHUB_OUTPUT"
+          echo "inventory-b=$inventory_b" >> "$GITHUB_OUTPUT"
 
       - name: Run package WordPress.org preflight
         if: ${{ steps.release-state.outputs.publish == 'true' }}
@@ -235,22 +282,39 @@ jobs:
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
           set -euo pipefail
-          package_dir="${{ steps.package.outputs.package-dir }}"
+          package_dir_a="${{ steps.package.outputs.package-dir }}"
+          package_dir_b="${{ steps.package.outputs.package-dir-b }}"
+          inventory_a="${{ steps.package.outputs.inventory }}"
+          inventory_b="${{ steps.package.outputs.inventory-b }}"
           version="${{ steps.release-state.outputs.version }}"
           zip_path="${RUNNER_TEMP}/sentient-forms-${version}.zip"
+          zip_path_a="${RUNNER_TEMP}/sentient-forms-${version}-a.zip"
+          zip_path_b="${RUNNER_TEMP}/sentient-forms-${version}-b.zip"
+          manifest_a="${RUNNER_TEMP}/sentient-forms-${version}-a.json"
+          manifest_b="${RUNNER_TEMP}/sentient-forms-${version}-b.json"
           sha_path="${zip_path}.sha256"
-          cd "$(dirname "${package_dir}")"
-          zip -qry "${zip_path}" "$(basename "${package_dir}")"
+          source_commit="$(git rev-parse HEAD)"
+          source_tree="$(git rev-parse HEAD^{tree})"
+          lock_sha256="$(sha256sum composer.lock | cut -d' ' -f1)"
+          python3 scripts/build-deterministic-wporg-zip.py "$package_dir_a" "$zip_path_a" "$manifest_a" \
+            --source-commit "$source_commit" --source-tree "$source_tree" \
+            --composer-lock-sha256 "$lock_sha256" --expected-inventory "$inventory_a"
+          python3 scripts/build-deterministic-wporg-zip.py "$package_dir_b" "$zip_path_b" "$manifest_b" \
+            --source-commit "$source_commit" --source-tree "$source_tree" \
+            --composer-lock-sha256 "$lock_sha256" --expected-inventory "$inventory_b"
+          cmp --silent "$zip_path_a" "$zip_path_b"
+          cp "$zip_path_a" "$zip_path"
           sha256sum "${zip_path}" > "${sha_path}"
           echo "zip-path=${zip_path}" >> "${GITHUB_OUTPUT}"
           echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
+          echo "deterministic-manifest-path=${manifest_a}" >> "${GITHUB_OUTPUT}"
 
       - name: Write release manifest
         id: release-manifest
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
           manifest_path="${RUNNER_TEMP}/sentient-forms-${{ steps.release-state.outputs.version }}-wporg-manifest.json"
-          php scripts/write-wporg-release-manifest.php "${{ steps.package.outputs.package-dir }}" "${{ steps.release-zip.outputs.zip-path }}" "${manifest_path}"
+          cp "${{ steps.release-zip.outputs.deterministic-manifest-path }}" "${manifest_path}"
           echo "manifest-path=${manifest_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload release package assets
