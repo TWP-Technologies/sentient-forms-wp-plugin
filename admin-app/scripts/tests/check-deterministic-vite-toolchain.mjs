@@ -16,9 +16,11 @@ if ('rolldownVersion' in vite) {
   throw new Error('Deterministic generated assets must not use the Rolldown Vite preview.');
 }
 
-if (projectMetadata.scripts?.build !== 'svelte-kit sync && vite build') {
+if (
+  projectMetadata.scripts?.build !== 'bun --bun svelte-kit sync && bun --bun vite build'
+) {
   throw new Error(
-    'Deterministic generated assets require SvelteKit sync before Vite reads the generated tsconfig.'
+    'Deterministic generated assets require locked Bun for SvelteKit sync and Vite build.'
   );
 }
 
