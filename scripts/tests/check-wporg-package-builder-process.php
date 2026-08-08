@@ -131,7 +131,7 @@ PHP
         {
             $errors[] = 'The builder accepted a nested source symlink.';
         }
-        @rmdir( $nested_link );
+        remove_directory_link( $nested_link );
     }
     $relative_output = '.item14-package-relative-output';
     $relative = run_builder( $builder, $plugin_root, $relative_output, $fixture, 3, 8.0 );
@@ -149,7 +149,7 @@ finally
     putenv( 'COMPOSER_AUTH' );
     putenv( 'ITEM14_UNRELATED_SECRET' );
     @unlink( $fixture );
-    @rmdir( $nested_link );
+    remove_directory_link( $nested_link );
     @unlink( $nested_target . '/linked.php' );
     @rmdir( $nested_target );
     remove_owned_directory( $output );
@@ -190,6 +190,17 @@ function create_directory_link( string $target, string $link ): bool
     fclose( $pipes[1] );
     fclose( $pipes[2] );
     return 0 === proc_close( $process ) && is_dir( $link );
+}
+
+function remove_directory_link( string $link ): void
+{
+    if ( is_link( $link ) )
+    {
+        @unlink( $link );
+        return;
+    }
+
+    @rmdir( $link );
 }
 
 /**
