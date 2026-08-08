@@ -47,4 +47,19 @@ if (!taggedRejected) {
   throw new Error('Tagged template raw whitespace did not fail closed.');
 }
 
+const oddBackslash = `const semantic = ${templateDelimiter}alpha\\  \nbeta${templateDelimiter};`;
+let oddBackslashRejected = false;
+try {
+  canonicalizeGeneratedWhitespace(
+    oddBackslash,
+    parseProgram('generated-odd-backslash-whitespace-fixture.js', oddBackslash),
+    'generated-odd-backslash-whitespace-fixture.js'
+  );
+} catch (error) {
+  oddBackslashRejected = String(error).toLowerCase().includes('template escape');
+}
+if (!oddBackslashRejected) {
+  throw new Error('Ambiguous template escape before trailing whitespace did not fail closed.');
+}
+
 console.log('Generated whitespace transform contract passed.');

@@ -70,7 +70,8 @@ def verify_archive_order(job: dict[str, object], step_name: str, upload_name: st
         errors.append(f"{step_name} does not build twice and compare before publication copy")
     for suffix in ("", "-b"):
         variable = "inventory_a" if suffix == "" else "inventory_b"
-        if f"steps.package.outputs.inventory{suffix}" not in run:
+        output_reference = "${{ steps.package.outputs.inventory" + suffix + " }}"
+        if output_reference not in run:
             errors.append(f"{step_name} does not consume package inventory output {suffix or 'a'}")
         if f'--expected-inventory "${variable}"' not in run:
             errors.append(f"{step_name} does not verify package inventory {suffix or 'a'}")
@@ -115,6 +116,13 @@ def main() -> int:
     release = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
     package_job = package.get("jobs", {}).get("wporg-package", {})
     release_job = release.get("jobs", {}).get("publish-release", {})
+    release_push_paths = (release.get("on", {}).get("push") or {}).get("paths", [])
+    for contract_path in {
+        "contracts/action-facet-policy-catalog.v1.json",
+        "contracts/action-source-compatibility.v1.json",
+    }:
+        if not path_is_triggered(contract_path, release_push_paths):
+            errors.append(f"Release Please trigger misses packaged contract: {contract_path}")
 
     triggers = package.get("on", {})
     push_paths = (triggers.get("push") or {}).get("paths", [])
@@ -155,6 +163,12 @@ def main() -> int:
         )
     )
     errors.extend(verify_locked_generated_build(package_job, "Build two independent WordPress.org packages"))
+    try:
+        package_artifacts = step_by_name(package_job, "Create and compare deterministic package artifacts")
+        if "basename" not in package_artifacts.get("run", ""):
+            errors.append("package checksum records an absolute runner path")
+    except ValueError as error:
+        errors.append(str(error))
 
     if release_job.get("needs") != "release-please":
         errors.append("publish-release does not depend on release-please")
@@ -171,6 +185,12 @@ def main() -> int:
         errors.append(str(error))
     errors.extend(verify_archive_order(release_job, "Create release zip", "Upload package artifact"))
     errors.extend(verify_locked_generated_build(release_job, "Build two independent WordPress.org packages"))
+    try:
+        release_zip = step_by_name(release_job, "Create release zip")
+        if "basename" not in release_zip.get("run", ""):
+            errors.append("release checksum records an absolute runner path")
+    except ValueError as error:
+        errors.append(str(error))
 
     if errors:
         print("Deterministic workflow semantic contract failed:", file=sys.stderr)

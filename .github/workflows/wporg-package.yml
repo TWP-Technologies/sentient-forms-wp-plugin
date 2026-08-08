@@ -243,7 +243,7 @@ jobs:
           sha_path="${zip_path}.sha256"
           cp "$zip_path_a" "$zip_path"
           cp "$manifest_a" "$manifest_path"
-          sha256sum "$zip_path" > "$sha_path"
+          ( cd "$(dirname "$zip_path")" && sha256sum "$(basename "$zip_path")" ) > "$sha_path"
           echo "zip-path=$zip_path" >> "$GITHUB_OUTPUT"
           echo "sha-path=${sha_path}" >> "$GITHUB_OUTPUT"
           echo "manifest-path=${manifest_path}" >> "$GITHUB_OUTPUT"

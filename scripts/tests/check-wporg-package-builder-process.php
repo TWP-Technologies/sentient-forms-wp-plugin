@@ -16,6 +16,7 @@ $fixture     = $plugin_root . '/.item14-composer-fixture.phar';
 $output      = $plugin_root . '/.item14-package-process-output';
 $nested_link = $plugin_root . '/assets/.item14-nested-source-link';
 $nested_target = $plugin_root . '/.item14-nested-source-target';
+$empty_source = $plugin_root . '/assets/item14-empty-source-directory';
 $composer_token = 'ghp_item14SensitiveToken1234567890';
 $composer_password = 'item14-composer-password';
 $composer_auth = json_encode(
@@ -133,6 +134,25 @@ PHP
         }
         remove_directory_link( $nested_link );
     }
+    $relative_composer = run_builder(
+        $builder,
+        $plugin_root,
+        $output,
+        basename( $fixture ),
+        3,
+        8.0
+    );
+    if ( 0 !== $relative_composer['status'] )
+    {
+        $errors[] = 'The builder rejected a valid relative Composer PHAR path.';
+    }
+    mkdir( $empty_source, 0775, true );
+    $empty_directory = run_builder( $builder, $plugin_root, $output, $fixture, 3, 8.0 );
+    if ( 0 !== $empty_directory['status'] )
+    {
+        $errors[] = 'The builder rejected an otherwise valid package containing an empty source directory.';
+    }
+    @rmdir( $empty_source );
     $relative_output = '.item14-package-relative-output';
     $relative = run_builder( $builder, $plugin_root, $relative_output, $fixture, 3, 8.0 );
     if ( 0 !== $relative['status'] )
@@ -152,6 +172,7 @@ finally
     remove_directory_link( $nested_link );
     @unlink( $nested_target . '/linked.php' );
     @rmdir( $nested_target );
+    @rmdir( $empty_source );
     remove_owned_directory( $output );
     remove_owned_directory( $plugin_root . '/.item14-package-relative-output' );
 }

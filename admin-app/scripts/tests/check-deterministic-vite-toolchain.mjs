@@ -12,6 +12,12 @@ if (packageMetadata.name !== 'vite') {
   );
 }
 
+if (packageMetadata.version !== '7.2.7' || projectMetadata.devDependencies?.vite !== '7.2.7') {
+  throw new Error(
+    `Deterministic generated assets require exact Vite 7.2.7; resolved ${packageMetadata.version} from ${projectMetadata.devDependencies?.vite}.`
+  );
+}
+
 if ('rolldownVersion' in vite) {
   throw new Error('Deterministic generated assets must not use the Rolldown Vite preview.');
 }

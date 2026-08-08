@@ -43,6 +43,13 @@ export const canonicalizeGeneratedWhitespace = (code, ast, fileName) => {
       throw new Error(`Tagged template contains non-canonical line-end whitespace: ${fileName}`);
     }
     if (range) {
+      let backslashCount = 0;
+      for (let index = start - 1; index >= 0 && code[index] === '\\'; index -= 1) {
+        backslashCount += 1;
+      }
+      if (backslashCount % 2 === 1) {
+        throw new Error(`Template escape precedes non-canonical line-end whitespace: ${fileName}`);
+      }
       output += match[0].replaceAll(' ', '\\x20').replaceAll('\t', '\\t');
     }
     cursor = start + match[0].length;

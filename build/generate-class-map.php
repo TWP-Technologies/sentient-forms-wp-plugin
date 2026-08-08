@@ -255,6 +255,11 @@ function is_named_class_declaration( array $tokens, int $index ): bool
             continue;
         }
 
+        if ( is_array( $token ) && T_READONLY === $token[0] )
+        {
+            continue;
+        }
+
         if ( ']' === $token )
         {
             $cursor = skip_attribute_group_backward( $tokens, $cursor );
@@ -293,7 +298,7 @@ function skip_attribute_group_backward( array $tokens, int $index ): int
             $depth--;
             if ( 0 === $depth )
             {
-                return $cursor - 1;
+                return $cursor;
             }
         }
     }

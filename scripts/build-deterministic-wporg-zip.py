@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import re
 import stat
 import sys
 import zipfile
@@ -54,7 +55,8 @@ def validate_inventory_paths(paths: list[str]) -> None:
             or normalized != relative
             or pure.is_absolute()
             or ".." in pure.parts
-            or ":" in pure.parts[0]
+            or "\\" in relative
+            or any(":" in part for part in pure.parts)
         ):
             raise ValueError(f"package contains a non-normalized path: {relative}")
         identity = relative.casefold()
@@ -169,8 +171,9 @@ def validate_admin_manifest(package_dir: Path, paths: set[str]) -> None:
         if not isinstance(entry, dict):
             raise ValueError("generated admin manifest entries must be objects")
         file_reference = entry.get("file")
-        if isinstance(file_reference, str) and file_reference:
-            references.add(file_reference)
+        if not isinstance(file_reference, str) or not file_reference:
+            raise ValueError("generated admin manifest file references must be non-empty strings")
+        references.add(file_reference)
         css_references = entry.get("css", [])
         if not isinstance(css_references, list) or any(
             not isinstance(reference, str) or not reference for reference in css_references
@@ -197,6 +200,34 @@ def file_inventory(files: list[tuple[str, Path, bytes]]) -> list[dict[str, objec
         for relative, _, contents in files
     ]
     return sorted(inventory, key=lambda entry: str(entry["path"]))
+
+
+def read_release_metadata(package_dir: Path) -> dict[str, str]:
+    try:
+        plugin = (package_dir / "sentient-forms.php").read_text(encoding="utf-8")
+        readme = (package_dir / "readme.txt").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValueError(f"release metadata inputs are unreadable: {error}") from error
+
+    version_match = re.search(r"^\s*\*\s*Version:\s*(.+)$", plugin, re.MULTILINE | re.IGNORECASE)
+    stable_match = re.search(r"^Stable tag:\s*(.+)$", readme, re.MULTILINE | re.IGNORECASE)
+    source_match = re.search(
+        r"const\s+SENTIENT_FORMS_RELEASE_SOURCE_(?:URL|REFERENCE)\s*=\s*'([^']+)';",
+        plugin,
+    )
+    if version_match is None or stable_match is None or source_match is None:
+        raise ValueError("package release metadata is incomplete")
+
+    version = version_match.group(1).strip()
+    stable_tag = stable_match.group(1).strip()
+    source_reference = source_match.group(1).strip()
+    if not version or stable_tag != version or not source_reference:
+        raise ValueError("package release metadata is inconsistent")
+    return {
+        "version": version,
+        "stable_tag": stable_tag,
+        "source_reference": source_reference,
+    }
 
 
 def load_expected_inventory(inventory_path: Path) -> list[dict[str, object]]:
@@ -272,6 +303,7 @@ def main() -> int:
         source_tree = validate_hash(args.source_tree, "source tree", {40, 64})
         lock_sha256 = validate_hash(args.composer_lock_sha256, "Composer lock SHA-256", {64})
         files = collect_files(args.package_dir.absolute())
+        release_metadata = read_release_metadata(args.package_dir.absolute())
         inventory = file_inventory(files)
         expected_inventory = load_expected_inventory(args.expected_inventory.absolute())
         if inventory != expected_inventory:
@@ -282,6 +314,7 @@ def main() -> int:
         zip_bytes = args.zip_path.read_bytes()
         manifest = {
             "schema_version": 1,
+            **release_metadata,
             "source_commit": source_commit,
             "source_tree": source_tree,
             "composer_lock_sha256": lock_sha256,

@@ -454,11 +454,12 @@ function resolve_composer_command(): array
     $lowercase  = strtolower( $configured );
     if ( str_ends_with( $lowercase, '.phar' ) )
     {
-        if ( ! is_file( $configured ) )
+        $resolved = realpath( $configured );
+        if ( false === $resolved || ! is_file( $resolved ) )
         {
             throw new RuntimeException( "COMPOSER_BINARY does not exist: {$configured}" );
         }
-        return [ PHP_BINARY, $configured ];
+        return [ PHP_BINARY, $resolved ];
     }
     if ( 'Windows' === PHP_OS_FAMILY
         && ( str_ends_with( $lowercase, '.bat' ) || str_ends_with( $lowercase, '.cmd' ) ) )
@@ -466,7 +467,11 @@ function resolve_composer_command(): array
         $sibling_phar = dirname( $configured ) . DIRECTORY_SEPARATOR . 'composer.phar';
         if ( is_file( $sibling_phar ) )
         {
-            return [ PHP_BINARY, $sibling_phar ];
+            $resolved = realpath( $sibling_phar );
+            if ( false !== $resolved )
+            {
+                return [ PHP_BINARY, $resolved ];
+            }
         }
         throw new RuntimeException( 'Composer batch wrappers require a sibling composer.phar.' );
     }
@@ -482,7 +487,11 @@ function resolve_composer_command(): array
             . 'composer.phar';
         if ( is_file( $candidate ) )
         {
-            return [ PHP_BINARY, $candidate ];
+            $resolved = realpath( $candidate );
+            if ( false !== $resolved )
+            {
+                return [ PHP_BINARY, $resolved ];
+            }
         }
     }
 

@@ -17,6 +17,8 @@ name: Release Please
       - 'CHANGELOG.md'
       - 'composer.json'
       - 'composer.lock'
+      - 'contracts/action-facet-policy-catalog.v1.json'
+      - 'contracts/action-source-compatibility.v1.json'
       - '.github/actions/**'
       - '.github/workflows/**'
       - 'release-please-config.json'
@@ -304,7 +306,7 @@ jobs:
             --composer-lock-sha256 "$lock_sha256" --expected-inventory "$inventory_b"
           cmp --silent "$zip_path_a" "$zip_path_b"
           cp "$zip_path_a" "$zip_path"
-          sha256sum "${zip_path}" > "${sha_path}"
+          ( cd "$(dirname "${zip_path}")" && sha256sum "$(basename "${zip_path}")" ) > "${sha_path}"
           echo "zip-path=${zip_path}" >> "${GITHUB_OUTPUT}"
           echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
           echo "deterministic-manifest-path=${manifest_a}" >> "${GITHUB_OUTPUT}"

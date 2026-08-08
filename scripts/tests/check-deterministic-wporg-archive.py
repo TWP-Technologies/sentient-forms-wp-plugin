@@ -26,8 +26,12 @@ def populate(package: Path, reverse: bool) -> None:
     files = {
         "CHANGELOG.md": b"# Changelog\n",
         "composer.json": b"{}\n",
-        "readme.txt": b"=== Sentient Forms ===\n",
-        "sentient-forms.php": b"<?php\n",
+        "readme.txt": b"=== Sentient Forms ===\nStable tag: 1.2.3\n",
+        "sentient-forms.php": (
+            b"<?php\n/**\n * Version: 1.2.3\n */\n"
+            b"const SENTIENT_FORMS_RELEASE_SOURCE_URL = "
+            b"'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v1.2.3';\n"
+        ),
         "contracts/action-facet-policy-catalog.v1.json": b"{}\n",
         "contracts/action-source-compatibility.v1.json": b"{}\n",
         "assets/dist/manifest.json": (
@@ -152,6 +156,17 @@ def main() -> int:
                 errors.append("manifest ZIP identity differs from archive bytes")
             if first_manifest["file_count"] != 11:
                 errors.append("manifest file count is not exact")
+            expected_release_metadata = {
+                "version": "1.2.3",
+                "stable_tag": "1.2.3",
+                "source_reference": (
+                    "https://github.com/TWP-Technologies/"
+                    "sentient-forms-wp-plugin/tree/v1.2.3"
+                ),
+            }
+            for key, expected in expected_release_metadata.items():
+                if first_manifest.get(key) != expected:
+                    errors.append(f"manifest release metadata is missing or invalid: {key}")
 
         malformed_schema = json.loads(first_inventory.read_text(encoding="utf-8"))
         malformed_schema["schema_version"] = True
@@ -182,11 +197,33 @@ def main() -> int:
         if size_result.returncode == 0:
             errors.append("archive accepted a boolean inventory file size")
 
+        manifest_path = second / "assets" / "dist" / "manifest.json"
+        manifest_path.write_text(
+            '{"entry":{"file":5,"css":["_app/a.css"]}}\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        write_expected_inventory(second, second_inventory)
+        invalid_manifest_file = run_archiver(
+            second,
+            FIXTURE_ROOT / "invalid-manifest-file.zip",
+            FIXTURE_ROOT / "invalid-manifest-file.json",
+            second_inventory,
+        )
+        if invalid_manifest_file.returncode == 0:
+            errors.append("archive accepted a non-string generated manifest file reference")
+        manifest_path.write_text(
+            '{"entry":{"file":"_app/a.js","css":["_app/a.css"]}}\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+
         (second / "contracts" / "action-facet-policy-catalog.v1.json").unlink()
+        write_expected_inventory(second, second_inventory)
         missing = run_archiver(
             second, FIXTURE_ROOT / "missing.zip", FIXTURE_ROOT / "missing.json", second_inventory
         )
-        if missing.returncode == 0:
+        if missing.returncode == 0 or "missing required files" not in missing.stderr:
             errors.append("archive accepted a missing item-13 contract")
 
         (second / "contracts" / "action-facet-policy-catalog.v1.json").write_bytes(b"{}\n")
@@ -202,17 +239,20 @@ def main() -> int:
             errors.append("archive accepted a missing generated manifest asset")
 
         (second / "assets" / "dist" / "_app" / "a.js").write_bytes(b"")
+        unexpected_path = second / "private" / "unexpected.php"
+        unexpected_path.parent.mkdir(parents=True, exist_ok=True)
+        unexpected_path.write_bytes(b"<?php\n")
         write_expected_inventory(second, second_inventory)
-        (second / "includes" / "unexpected.php").write_bytes(b"<?php\n")
         unexpected = run_archiver(
             second,
             FIXTURE_ROOT / "unexpected.zip",
             FIXTURE_ROOT / "unexpected.json",
             second_inventory,
         )
-        if unexpected.returncode == 0:
+        if unexpected.returncode == 0 or "unexpected inventory" not in unexpected.stderr:
             errors.append("archive accepted unexpected nested inventory")
-        (second / "includes" / "unexpected.php").unlink()
+        unexpected_path.unlink()
+        unexpected_path.parent.rmdir()
 
         root_link = FIXTURE_ROOT / "linked" / "sentient-forms"
         root_link.parent.mkdir(parents=True, exist_ok=True)
@@ -240,7 +280,12 @@ def main() -> int:
             if validator is None:
                 errors.append("archive has no canonical inventory path validator")
             else:
-                for unsafe in ("../escape.php", "/absolute.php"):
+                for unsafe in (
+                    "../escape.php",
+                    "/absolute.php",
+                    "includes/foo\\bar.php",
+                    "includes/foo:bar.php",
+                ):
                     try:
                         validator([unsafe])
                     except ValueError:
@@ -260,7 +305,7 @@ def main() -> int:
                 print(f"- {error}", file=sys.stderr)
             return 1
 
-        print("Deterministic archive test passed: 2 byte-identical builds and 9 fail-closed cases.")
+        print("Deterministic archive test passed: 2 byte-identical builds and 12 fail-closed cases.")
         return 0
     finally:
         shutil.rmtree(FIXTURE_ROOT, ignore_errors=True)

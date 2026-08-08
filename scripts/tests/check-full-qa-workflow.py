@@ -16,11 +16,23 @@ WORKFLOW = ROOT / ".github" / "workflows" / "full-qa.yml"
 def main() -> int:
     errors: list[str] = []
     document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    if document.get("permissions") != {"contents": "read"}:
+        errors.append("Full QA workflow permissions are not restricted to read-only contents")
     triggers = document.get("on", {})
     if any("paths-ignore" in (triggers.get(event) or {}) for event in ("push", "pull_request")):
         errors.append("top-level path filtering can omit required producers")
 
     jobs = document.get("jobs", {})
+    checkout_steps = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses") == "actions/checkout@v6"
+    ]
+    if not checkout_steps or any(
+        step.get("with", {}).get("persist-credentials") is not False for step in checkout_steps
+    ):
+        errors.append("Full QA checkout steps persist repository credentials")
     changes = jobs.get("changes", {})
     full_qa = jobs.get("full_qa", {})
     required = jobs.get("required_full_qa", {})

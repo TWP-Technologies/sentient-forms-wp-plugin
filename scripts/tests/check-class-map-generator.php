@@ -24,6 +24,8 @@ try
         "<?php\n"
         . "\$references = [ Sentient_Forms_Unrelated::class => Sentient_Forms_Not_A_Declaration::value ];\n"
         . "\$anonymous = new #[Item14Marker] class extends Sentient_Forms_Attributed_Anonymous {};\n"
+        . "\$adjacent = new #[Item14First]#[Item14Second] class extends Sentient_Forms_Adjacent_Attributed_Anonymous {};\n"
+        . "\$readonly = new readonly class extends Sentient_Forms_Readonly_Anonymous {};\n"
         . "class Sentient_Forms_Sample {}\n"
     );
     $stale = "<?php\nreturn [];\n";
@@ -56,7 +58,7 @@ try
     $generated_map = include $fixture . '/includes/class-map.php';
     if ( [ 'Sentient_Forms_Sample' ] !== array_keys( is_array( $generated_map ) ? $generated_map : [] ) )
     {
-        $errors[] = 'Class constants or attributed anonymous classes were misclassified as declarations.';
+        $errors[] = 'Class constants or anonymous classes were misclassified as declarations.';
     }
     $green = run_generator( $wrapper, $fixture, $generator, '--check' );
     if ( 0 !== $green['status'] )
@@ -94,6 +96,14 @@ function run_generator( string $wrapper, string $fixture, string $generator, str
         ],
         $pipes
     );
+    if ( ! is_resource( $process ) )
+    {
+        return [
+            'status' => 1,
+            'stdout' => '',
+            'stderr' => 'Unable to start class-map generator.',
+        ];
+    }
     $stdout = (string) stream_get_contents( $pipes[1] );
     fclose( $pipes[1] );
     $stderr = (string) stream_get_contents( $pipes[2] );
