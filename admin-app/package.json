@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "svelte-kit sync && vite build",
     "preview": "vite preview",
     "preview:ci": "SENTIENT_FORMS_ROUTER=pathname bun run build && SENTIENT_FORMS_ROUTER=pathname vite preview --host 127.0.0.1 --port 4173",
     "restore:source": "node scripts/restore-package-source.mjs",
