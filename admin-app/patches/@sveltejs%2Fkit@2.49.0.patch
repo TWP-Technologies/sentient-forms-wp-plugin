@@ -1,0 +1,6 @@
+diff --git a/src/core/sync/create_manifest_data/index.js b/src/core/sync/create_manifest_data/index.js
+--- a/src/core/sync/create_manifest_data/index.js
++++ b/src/core/sync/create_manifest_data/index.js
+@@ -217 +217 @@
+-			const files = fs.readdirSync(dir).map((name) => ({
++			const files = fs.readdirSync(dir).sort().map((name) => ({

@@ -15,7 +15,7 @@
     "build:copy": "node scripts/copy-build.mjs",
     "build:wp": "bun run build:clean && bun run build:spa && bun run build:copy",
     "generated:whitespace:check": "bun scripts/tests/check-generated-whitespace-transform.mjs && bun scripts/tests/check-generated-build-whitespace.mjs",
-    "generated:freshness:check": "bun scripts/tests/check-generated-build-freshness.mjs && bun scripts/check-generated-build-freshness.mjs",
+    "generated:freshness:check": "bun scripts/tests/check-sveltekit-route-discovery.mjs && bun scripts/tests/check-generated-build-freshness.mjs && bun scripts/check-generated-build-freshness.mjs",
     "bundle:check": "node scripts/bundle-check.mjs",
     "bundle:report": "BUNDLE_MAX_KB=999 node scripts/bundle-check.mjs",
     "tailwind:check": "node scripts/check-tailwind.mjs",
@@ -81,5 +81,8 @@
     "@xyflow/svelte": "^1.5.0",
     "sonner-svelte": "0.3.3",
     "zod": "^4.3.5"
+  },
+  "patchedDependencies": {
+    "@sveltejs/kit@2.49.0": "patches/@sveltejs%2Fkit@2.49.0.patch"
   }
 }
