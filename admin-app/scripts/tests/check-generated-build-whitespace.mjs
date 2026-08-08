@@ -2,7 +2,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse } from 'vite';
+import { parseAst } from 'rollup/parseAst';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const outputRoot = path.resolve(here, '..', '..', '..', 'assets', 'dist');
@@ -42,11 +42,11 @@ const whitespaceFailures = async (contents, relative) => {
 
   let literalRanges = [];
   if (path.extname(relative) === '.js') {
-    const result = await parse(relative, contents);
-    if (result.errors.length > 0) {
-      throw new Error(`Generated JavaScript is not parseable: ${relative}`);
+    try {
+      literalRanges = collectStringLiteralRanges(parseAst(contents));
+    } catch (error) {
+      throw new Error(`Generated JavaScript is not parseable: ${relative}`, { cause: error });
     }
-    literalRanges = collectStringLiteralRanges(result.program);
   }
 
   let line = 1;

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { parse } from 'vite';
+import { parseAst } from 'rollup/parseAst';
 import { canonicalizeGeneratedWhitespace } from '../generated-whitespace-plugin.mjs';
 
-const parseProgram = async (fileName, code) => {
-  const result = await parse(fileName, code);
-  if (result.errors.length > 0) {
-    throw new Error(`Unable to parse whitespace-transform fixture: ${fileName}`);
+const parseProgram = (fileName, code) => {
+  try {
+    return parseAst(code);
+  } catch (error) {
+    throw new Error(`Unable to parse whitespace-transform fixture: ${fileName}`, { cause: error });
   }
-  return result.program;
 };
 
 const templateDelimiter = String.fromCharCode(96);
@@ -18,7 +18,7 @@ const source = [
 ].join('\n');
 const canonical = canonicalizeGeneratedWhitespace(
   source,
-  await parseProgram('generated-whitespace-fixture.js', source),
+  parseProgram('generated-whitespace-fixture.js', source),
   'generated-whitespace-fixture.js'
 );
 if (canonical.includes('const formatting = 1;  \n')) {
@@ -37,7 +37,7 @@ let taggedRejected = false;
 try {
   canonicalizeGeneratedWhitespace(
     tagged,
-    await parseProgram('generated-tagged-whitespace-fixture.js', tagged),
+    parseProgram('generated-tagged-whitespace-fixture.js', tagged),
     'generated-tagged-whitespace-fixture.js'
   );
 } catch (error) {
