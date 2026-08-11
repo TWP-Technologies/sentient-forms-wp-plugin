@@ -143,6 +143,26 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->verify_against_public_authorities();
     }
 
+    public function test_source_contract_policy_basis_is_limited_to_pre_execution_rejection(): void
+    {
+        $source_contract_rejection = [
+            'required_semantic_outcome' => 'source_contract_rejection',
+            'facet_scenario_assignment' => 'base_action',
+        ];
+        $successful_base_action = [
+            'required_semantic_outcome' => 'effect_applied',
+            'facet_scenario_assignment' => 'base_action',
+        ];
+        $successful_facet = [
+            'required_semantic_outcome' => 'effect_applied',
+            'facet_scenario_assignment' => 'spam_guidance_rationale_generation',
+        ];
+
+        $this->assertSame( 'source_contract', self::expected_policy_basis( $source_contract_rejection ) );
+        $this->assertSame( 'action_catalog', self::expected_policy_basis( $successful_base_action ) );
+        $this->assertSame( 'action_facet_catalog', self::expected_policy_basis( $successful_facet ) );
+    }
+
     public function test_observation_writer_rejects_unencodable_payload_without_creating_artifact(): void
     {
         $this->assignment = [
@@ -535,7 +555,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         }
         $this->assertNotSame( 'policy_rejection', $this->assignment['required_semantic_outcome'] );
         $facet_code = $this->assignment['facet_scenario_assignment'];
-        $expected_policy_basis = 'base_action' === $facet_code ? 'action_catalog' : 'action_facet_catalog';
+        $expected_policy_basis = self::expected_policy_basis( $this->assignment );
         $this->assertSame(
             $expected_policy_basis,
             $this->assignment['policy_basis_assignment'],
@@ -582,6 +602,19 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         }
 
         return $this->derive_public_effect( $row );
+    }
+
+    /** @param array<string, mixed> $assignment */
+    private static function expected_policy_basis( array $assignment ): string
+    {
+        if ( 'source_contract_rejection' === ( $assignment['required_semantic_outcome'] ?? null ) )
+        {
+            return 'source_contract';
+        }
+
+        return 'base_action' === ( $assignment['facet_scenario_assignment'] ?? null )
+            ? 'action_catalog'
+            : 'action_facet_catalog';
     }
 
     /** @return array<int, string> */
