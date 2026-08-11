@@ -266,6 +266,72 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'spam', $entries[0]['classification'] ); // Second inserted, now at index 0 (prepended)
     }
 
+    public function test_get_log_entries_serializes_empty_pricing_as_object(): void
+    {
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'  => 'gravity_forms',
+            'form_id'      => 1,
+            'entry_id'     => 102,
+            'action_code'  => 'empty_pricing_contract_v1',
+            'action_label' => 'Empty Pricing Contract',
+            'status'       => 'pending',
+        ] );
+
+        $response = $this->controller->get_log_entries( new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' ) );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $wire = json_decode( wp_json_encode( $response->get_data() ) );
+        $this->assertIsObject( $wire );
+        $matched = null;
+        foreach ( $wire->entries ?? [] as $entry )
+        {
+            if ( 'empty_pricing_contract_v1' === ( $entry->action_code ?? null ) )
+            {
+                $matched = $entry;
+                break;
+            }
+        }
+
+        $this->assertIsObject( $matched );
+        $this->assertIsObject( $matched->pricing ?? null );
+        $this->assertIsObject( $matched->details ?? null );
+    }
+
+    public function test_get_log_entries_discards_indexed_pricing_and_details_metadata(): void
+    {
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'  => 'gravity_forms',
+            'form_id'      => 1,
+            'entry_id'     => 103,
+            'action_code'  => 'indexed_metadata_contract_v1',
+            'action_label' => 'Indexed Metadata Contract',
+            'status'       => 'pending',
+            'pricing'      => [ 'unexpected-pricing-item' ],
+            'details'      => [ 'unexpected-details-item' ],
+        ] );
+
+        $response = $this->controller->get_log_entries( new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' ) );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $wire = json_decode( wp_json_encode( $response->get_data() ) );
+        $this->assertIsObject( $wire );
+        $matched = null;
+        foreach ( $wire->entries ?? [] as $entry )
+        {
+            if ( 'indexed_metadata_contract_v1' === ( $entry->action_code ?? null ) )
+            {
+                $matched = $entry;
+                break;
+            }
+        }
+
+        $this->assertIsObject( $matched );
+        $this->assertIsObject( $matched->pricing ?? null );
+        $this->assertSame( [], array_keys( get_object_vars( $matched->pricing ) ) );
+        $this->assertIsObject( $matched->details ?? null );
+        $this->assertSame( [], array_keys( get_object_vars( $matched->details ) ) );
+    }
+
     /**
      * T-PHP-008: Test that action log requires authentication.
      * Tests FR-007: Endpoint requires manage_options capability.
@@ -1259,6 +1325,224 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $this->assertSame( 0, $data['total'] );
         $this->assertSame( [], $data['entries'] );
+    }
+
+    public function test_get_log_entries_prefers_durable_events_over_matching_legacy_pending_rows(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $recorded = $events->record( [
+            'execution_request_id' => 'req-durable-over-legacy-pending',
+            'mapping_id'           => 12,
+            'form_source'          => 'elementor_pro_forms',
+            'form_id'              => '42:formabc',
+            'provider'             => 'sentient_managed',
+            'status'               => 'succeeded',
+            'result_json'          => [
+                'central_action_id' => 'entry_summary_v1',
+                'action_name_label' => 'Entry Summary',
+                'structured'        => [ 'summary' => 'Durable summary completed.' ],
+            ],
+        ] );
+        $this->assertIsInt( $recorded );
+
+        update_option(
+            self::OPTION_KEY,
+            [
+                [
+                    'id'                   => 'legacy-local-pending',
+                    'form_source'          => 'elementor_pro_forms',
+                    'form_id'              => '42:formabc',
+                    'entry_id'             => null,
+                    'action_code'          => 'entry_summary_v1',
+                    'action_label'         => 'Entry Summary',
+                    'status'               => 'pending',
+                    'execution_request_id' => 'req-durable-over-legacy-pending',
+                    'mapping_id'           => 'local_first_12',
+                    'created_at'           => '2026-07-13T01:20:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $response = $this->controller->get_log_entries( new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' ) );
+        $data     = $response->get_data();
+        $matches  = array_values(
+            array_filter(
+                $data['entries'],
+                fn ( array $entry ): bool => 'req-durable-over-legacy-pending' === ( $entry['execution_request_id'] ?? null )
+            )
+        );
+
+        $this->assertCount( 1, $matches );
+        $this->assertStringStartsWith( 'local-event-', $matches[0]['id'] );
+        $this->assertSame( 'success', $matches[0]['status'] );
+    }
+
+    public function test_get_log_entries_sorts_mixed_timestamp_formats_by_instant(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $recorded = $events->record( [
+            'execution_request_id' => 'req-newer-mysql-timestamp',
+            'mapping_id'           => 21,
+            'form_source'          => 'wpforms',
+            'form_id'              => '662',
+            'provider'             => 'sentient_managed',
+            'status'               => 'succeeded',
+            'created_at'           => '2026-07-13 06:20:00',
+            'updated_at'           => '2026-07-13 06:20:01',
+            'result_json'          => [
+                'central_action_id' => 'entry_summary_v1',
+                'action_name_label' => 'Entry Summary',
+                'structured'        => [ 'summary' => 'Newest durable result.' ],
+            ],
+        ] );
+        $this->assertIsInt( $recorded );
+        $this->assertSame(
+            1,
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_execution_events',
+                [
+                    'created_at' => '2026-07-13 06:20:00',
+                    'updated_at' => '2026-07-13 06:20:01',
+                ],
+                [ 'id' => $recorded ],
+                [ '%s', '%s' ],
+                [ '%d' ]
+            )
+        );
+
+        update_option(
+            self::OPTION_KEY,
+            [
+                [
+                    'id'                   => 'older-iso-entry',
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 1,
+                    'entry_id'             => 1,
+                    'action_code'          => 'entry_summary_v1',
+                    'action_label'         => 'Entry Summary',
+                    'status'               => 'error',
+                    'execution_request_id' => 'req-older-iso-timestamp',
+                    'created_at'           => '2026-07-13T07:00:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $original_timezone = date_default_timezone_get();
+
+        try
+        {
+            date_default_timezone_set( 'America/Chicago' );
+
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+            $request->set_param( 'per_page', 1 );
+            $request->set_param( 'action_code', 'entry_summary_v1' );
+            $response = $this->controller->get_log_entries( $request );
+            $data     = $response->get_data();
+
+            $this->assertSame( 'req-older-iso-timestamp', $data['entries'][0]['execution_request_id'] ?? null );
+            $this->assertSame( 'older-iso-entry', $data['entries'][0]['id'] ?? null );
+        }
+        finally
+        {
+            date_default_timezone_set( $original_timezone );
+        }
+    }
+
+    public function test_get_log_entries_filters_mixed_timestamp_formats_by_instant(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $recorded = $events->record( [
+            'execution_request_id' => 'req-mixed-date-filter',
+            'mapping_id'           => 22,
+            'form_source'          => 'wpforms',
+            'form_id'              => '662',
+            'provider'             => 'sentient_managed',
+            'status'               => 'succeeded',
+            'created_at'           => '2026-07-13 06:20:00',
+            'updated_at'           => '2026-07-13 06:20:01',
+            'result_json'          => [
+                'central_action_id' => 'entry_summary_v1',
+                'action_name_label' => 'Entry Summary',
+                'structured'        => [ 'summary' => 'Filterable durable result.' ],
+            ],
+        ] );
+        $this->assertIsInt( $recorded );
+        $this->assertSame(
+            1,
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_execution_events',
+                [
+                    'created_at' => '2026-07-13 06:20:00',
+                    'updated_at' => '2026-07-13 06:20:01',
+                ],
+                [ 'id' => $recorded ],
+                [ '%s', '%s' ],
+                [ '%d' ]
+            )
+        );
+
+        $original_timezone = date_default_timezone_get();
+
+        try
+        {
+            date_default_timezone_set( 'America/Chicago' );
+
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+            $request->set_param( 'action_code', 'entry_summary_v1' );
+            $request->set_param( 'date_from', '2026-07-13T07:00:00+00:00' );
+            $response = $this->controller->get_log_entries( $request );
+            $data     = $response->get_data();
+
+            $this->assertSame( 0, $data['total'] );
+            $this->assertSame( [], $data['entries'] );
+        }
+        finally
+        {
+            date_default_timezone_set( $original_timezone );
+        }
+    }
+
+    public function test_get_log_entries_sorts_same_second_event_ids_numerically(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        for ( $index = 1; $index <= 10; $index++ )
+        {
+            $recorded = $events->record( [
+                'execution_request_id' => 'req-same-second-' . $index,
+                'mapping_id'           => $index,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '793',
+                'provider'             => 'sentient_managed',
+                'status'               => 'succeeded',
+                'created_at'           => '2026-07-13 06:20:00',
+                'updated_at'           => '2026-07-13 06:20:01',
+                'result_json'          => [
+                    'central_action_id' => 'entry_summary_v1',
+                    'action_name_label' => 'Entry Summary',
+                    'structured'        => [ 'summary' => 'Same-second result ' . $index . '.' ],
+                ],
+            ] );
+            $this->assertSame( $index, $recorded );
+        }
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $request->set_param( 'per_page', 1 );
+        $request->set_param( 'action_code', 'entry_summary_v1' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'local-event-10', $data['entries'][0]['id'] ?? null );
+        $this->assertSame( 'req-same-second-10', $data['entries'][0]['execution_request_id'] ?? null );
     }
 
     public function test_log_execution_stays_local_when_proxy_key_present(): void

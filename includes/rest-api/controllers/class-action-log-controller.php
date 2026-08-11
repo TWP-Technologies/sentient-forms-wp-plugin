@@ -675,7 +675,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             fn ( array $entry ): bool => $this->log_entry_matches_filters( $entry, $filters )
         );
 
-        usort( $filtered, fn ( $a, $b ) => strcmp( $b['created_at'] ?? '', $a['created_at'] ?? '' ) );
+        usort( $filtered, [ $this, 'compare_log_entries_newest_first' ] );
 
         $total = count( $filtered );
         $offset = ( $page - 1 ) * $per_page;
@@ -727,7 +727,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         );
 
         $candidates = array_merge( $local_entries, $legacy_filtered );
-        usort( $candidates, fn ( $a, $b ) => strcmp( $b['created_at'] ?? '', $a['created_at'] ?? '' ) );
+        usort( $candidates, [ $this, 'compare_log_entries_newest_first' ] );
 
         $total = $local_total + count( $legacy_filtered );
 
@@ -759,18 +759,69 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         $date_from = isset( $filters['date_from'] ) ? sanitize_text_field( (string) $filters['date_from'] ) : '';
-        if ( '' !== $date_from && ( $entry['created_at'] ?? '' ) < $date_from )
+        if (
+            '' !== $date_from
+            && self::compare_log_timestamp_values( (string) ( $entry['created_at'] ?? '' ), $date_from ) < 0
+        )
         {
             return false;
         }
 
         $date_to = isset( $filters['date_to'] ) ? sanitize_text_field( (string) $filters['date_to'] ) : '';
-        if ( '' !== $date_to && ( $entry['created_at'] ?? '' ) > $date_to )
+        if (
+            '' !== $date_to
+            && self::compare_log_timestamp_values( (string) ( $entry['created_at'] ?? '' ), $date_to ) > 0
+        )
         {
             return false;
         }
 
         return true;
+    }
+
+    private function compare_log_entries_newest_first( array $left, array $right ): int
+    {
+        $left_created  = (string) ( $left['created_at'] ?? '' );
+        $right_created = (string) ( $right['created_at'] ?? '' );
+        $time_comparison = self::compare_log_timestamp_values( $left_created, $right_created );
+
+        if ( 0 !== $time_comparison )
+        {
+            return -$time_comparison;
+        }
+
+        $left_event_id  = self::local_execution_event_sequence( (string) ( $left['id'] ?? '' ) );
+        $right_event_id = self::local_execution_event_sequence( (string) ( $right['id'] ?? '' ) );
+        if ( null !== $left_event_id && null !== $right_event_id && $left_event_id !== $right_event_id )
+        {
+            return $right_event_id <=> $left_event_id;
+        }
+
+        return strcmp( (string) ( $right['id'] ?? '' ), (string) ( $left['id'] ?? '' ) );
+    }
+
+    private static function compare_log_timestamp_values( string $left, string $right ): int
+    {
+        $mysql_utc_pattern = '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/';
+        $left_time  = strtotime( $left . ( 1 === preg_match( $mysql_utc_pattern, $left ) ? ' UTC' : '' ) );
+        $right_time = strtotime( $right . ( 1 === preg_match( $mysql_utc_pattern, $right ) ? ' UTC' : '' ) );
+
+        if ( false !== $left_time && false !== $right_time )
+        {
+            return $left_time <=> $right_time;
+        }
+
+        return strcmp( $left, $right );
+    }
+
+    private static function local_execution_event_sequence( string $id ): ?int
+    {
+        if ( 1 !== preg_match( '/^local-event-(\d+)$/', $id, $matches ) )
+        {
+            return null;
+        }
+
+        return (int) $matches[1];
     }
 
     private function get_execution_events_repository(): ?Sentient_Forms_Execution_Events_Repository
@@ -820,6 +871,18 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 $entry['entry_id'] ?? null,
                 $form_source
             );
+            foreach ( [ 'pricing', 'details' ] as $map_key )
+            {
+                if ( ! array_key_exists( $map_key, $entry ) || null === $entry[ $map_key ] || is_object( $entry[ $map_key ] ) )
+                {
+                    continue;
+                }
+
+                if ( ! is_array( $entry[ $map_key ] ) || array_is_list( $entry[ $map_key ] ) )
+                {
+                    $entries[ $index ][ $map_key ] = (object) [];
+                }
+            }
             $entries[ $index ]['form_context'] = $this->build_form_context( $entry );
         }
 
@@ -1344,15 +1407,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
-            $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
-                ? sanitize_text_field( (string) $entry['execution_request_id'] )
-                : '';
-            if ( '' !== $execution_request_id && isset( $events_by_request_id[ $execution_request_id ] ) )
-            {
-                continue;
-            }
-
-            if ( $this->is_untrusted_local_first_success_legacy_entry( $entry, $events_by_request_id ) )
+            if ( $this->should_filter_local_first_legacy_entry( $entry, $events_by_request_id ) )
             {
                 continue;
             }
@@ -1363,11 +1418,14 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         return $filtered;
     }
 
-    private function is_untrusted_local_first_success_legacy_entry( array $entry, array $events_by_request_id ): bool
+    private function should_filter_local_first_legacy_entry( array $entry, array $events_by_request_id ): bool
     {
-        if ( 'success' !== sanitize_key( (string) ( $entry['status'] ?? '' ) ) )
+        $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
+            ? sanitize_text_field( (string) $entry['execution_request_id'] )
+            : '';
+        if ( '' !== $execution_request_id && isset( $events_by_request_id[ $execution_request_id ] ) )
         {
-            return false;
+            return true;
         }
 
         if ( ! $this->is_local_first_legacy_entry( $entry ) )
@@ -1375,21 +1433,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             return false;
         }
 
-        $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
-            ? sanitize_text_field( (string) $entry['execution_request_id'] )
-            : '';
-        if ( '' === $execution_request_id )
-        {
-            return true;
-        }
-
-        $event = $events_by_request_id[ $execution_request_id ] ?? null;
-        if ( ! is_array( $event ) )
-        {
-            return true;
-        }
-
-        return 'success' !== $this->normalize_local_execution_status( (string) ( $event['status'] ?? '' ) );
+        return 'success' === sanitize_key( (string) ( $entry['status'] ?? '' ) );
     }
 
     private function is_local_first_legacy_entry( array $entry ): bool
