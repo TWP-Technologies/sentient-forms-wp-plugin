@@ -1338,7 +1338,25 @@ const spamGuidanceExampleBoundarySchema = z.object({
 	rationale: z.string(),
 	source: spamGuidanceExampleSourceBoundarySchema.optional()
 });
-const modelSelectionBoundarySchema = modelSelectionSchema;
+const modelSelectionBoundarySchema = z.preprocess((value) => {
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+
+	const selection = { ...(value as Record<string, unknown>) };
+	const legacyModel = selection.model;
+	if (typeof legacyModel === 'string' && legacyModel.length > 0) {
+		if (typeof selection.primary !== 'string' || selection.primary.length === 0) {
+			selection.primary = legacyModel;
+			delete selection.model;
+		} else if (selection.primary === legacyModel) {
+			delete selection.model;
+		}
+	}
+	if (selection.backup === '') selection.backup = null;
+	if (typeof selection.primary === 'string' && typeof selection.is_preset !== 'boolean') {
+		selection.is_preset = selection.primary.startsWith('sf_');
+	}
+	return selection;
+}, modelSelectionSchema);
 const realtimeSettingsBoundaryShape = {
 	auto_refresh_enabled: z.boolean().optional(),
 	field_checkpoints_enabled: z.boolean().optional(),
@@ -1387,7 +1405,10 @@ const formActionConfigBoundaryShape = {
 	updated_at: z.string().optional()
 };
 const formActionConfigBoundarySchema = phpMap(z.object(formActionConfigBoundaryShape));
-const formActionConfigRequestBoundarySchema = z.strictObject(formActionConfigBoundaryShape);
+const formActionConfigRequestBoundarySchema = z.strictObject({
+	...formActionConfigBoundaryShape,
+	model_selection: modelSelectionSchema.optional()
+});
 const spamGuidanceAppendRequestSchema = z.strictObject({
 	target_scope: z.enum(['form', 'mapping', 'action']),
 	label: z.enum(['ham', 'spam']),
@@ -1645,7 +1666,7 @@ const formActionSettingsRequestBoundarySchema = z.strictObject({
 	spam_negative_examples: z.array(strictSpamGuidanceExampleBoundarySchema).optional(),
 	action_customization: z.string().optional(),
 	include_site_context: mappingIncludeSiteContextBoundarySchema.optional(),
-	model_selection: modelSelectionBoundarySchema.optional(),
+	model_selection: modelSelectionSchema.optional(),
 	model_override: z.string().optional(),
 	conditions: strictConditionsBoundarySchema.optional(),
 	prompt_overrides: jsonRecordValueSchema.optional(),
@@ -2228,7 +2249,7 @@ const customActionCreateRequestBoundarySchema = z.strictObject({
 	description: nullableTextSchema.optional(),
 	prompt_overrides: jsonRecordValueSchema.optional(),
 	model_hint: nullableTextSchema.optional(),
-	model_selection: modelSelectionBoundarySchema.nullable().optional(),
+	model_selection: modelSelectionSchema.nullable().optional(),
 	action_kind: z.enum(['template_override', 'custom_definition']),
 	definition: nullableJsonRecordValueSchema.optional(),
 	definition_version: z.number().int(),
