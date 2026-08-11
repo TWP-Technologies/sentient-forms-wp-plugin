@@ -424,6 +424,36 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertSame( 1, $identities['external_provider_call_count'] ?? null );
     }
 
+    public function test_realtime_automated_observation_retains_mocked_route_without_fixture_runtime_ids(): void
+    {
+        $this->assignment = [
+            'action_code'               => 'clarification_assistant_v1',
+            'form_source'               => 'gravity_forms',
+            'lifecycle'                 => 'real_time',
+            'required_semantic_outcome' => 'effect_applied',
+        ];
+        $raw = [
+            'request_trace_id'          => 'fixture-request',
+            'rejection_trace_id'        => null,
+            'submission_id'             => '12345',
+            'execution_id'              => 'fixture-request',
+            'lifecycle_id'              => null,
+            'provider_observation_type' => 'automated_public_seam',
+            'provider_observation_id'   => 'public-seam:fixture-request',
+            'observed_provider_route'   => 'openrouter',
+            'applied_facets'            => [],
+        ];
+
+        $publishable = $this->publishable_assignment_identities( $raw );
+
+        $this->assertSame( 'openrouter', $publishable['observed_provider_route'] ?? null );
+        $this->assertSame( 'public-seam:fixture-request', $publishable['provider_observation_id'] ?? null );
+        foreach ( [ 'request_trace_id', 'rejection_trace_id', 'submission_id', 'execution_id', 'lifecycle_id' ] as $identity )
+        {
+            $this->assertNull( $publishable[ $identity ] ?? null );
+        }
+    }
+
     public function test_exact_artifact_assignment_public_seam(): void
     {
         $this->load_and_verify_assignment();
@@ -461,7 +491,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $this->fail( 'The assignment does not identify a supported behavioral seam.' );
         }
 
-        $this->write_observation( $identities );
+        $this->write_observation( $this->publishable_assignment_identities( $identities ) );
     }
 
     private function load_and_verify_assignment(): void
@@ -1921,6 +1951,32 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         }
 
         return @link( $temporary_path, $final_path );
+    }
+
+    /**
+     * Automated realtime proof exercises a real public request against a mocked
+     * provider boundary. Preserve that boundary observation, but do not publish
+     * fixture-created WordPress IDs as runtime identities.
+     *
+     * @param array<string, mixed> $identities
+     * @return array<string, mixed>
+     */
+    private function publishable_assignment_identities( array $identities ): array
+    {
+        if ( 'clarification_assistant_v1' !== ( $this->assignment['action_code'] ?? null )
+            || 'gravity_forms' !== ( $this->assignment['form_source'] ?? null )
+            || 'real_time' !== ( $this->assignment['lifecycle'] ?? null )
+            || 'effect_applied' !== ( $this->assignment['required_semantic_outcome'] ?? null ) )
+        {
+            return $identities;
+        }
+
+        foreach ( [ 'request_trace_id', 'rejection_trace_id', 'submission_id', 'execution_id', 'lifecycle_id' ] as $identity )
+        {
+            $identities[ $identity ] = null;
+        }
+
+        return $identities;
     }
 
     /** @param array<string, mixed> $identities */
