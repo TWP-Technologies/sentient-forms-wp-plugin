@@ -956,6 +956,10 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
             $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
             $enabled  = $settings->set_enabled( $source, $form_id, 'gravity_forms' !== $source, $administrator );
             $this->assertIsArray( $enabled );
+            if ( in_array( $action, [ 'lead_grading_v1', 'suggested_reply_v1' ], true ) )
+            {
+                $this->create_active_lead_profile_fixture( $source, $form_id );
+            }
             $mapping_id = $this->create_bundled_mapping( $source, $form_id, $action );
 
             do_action_ref_array( $hooks[ $source ], $fixture['native_args'] );
@@ -1294,6 +1298,37 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         $this->assertIsInt( $mapping_id );
 
         return $mapping_id;
+    }
+
+    private function create_active_lead_profile_fixture( string $source, string $form_id ): void
+    {
+        global $wpdb;
+        $profile_id = ( new Sentient_Forms_Lead_Profiles_Repository( $wpdb ) )->save(
+            [
+                'form_source'              => $source,
+                'form_id'                  => $form_id,
+                'status'                   => 'active',
+                'profile_version'          => 1,
+                'consented_at'             => current_time( 'mysql' ),
+                'generated_profile_prompt' => 'Exact-artifact consented Lead Scoring setup.',
+                'good_lead_criteria_json'  => [
+                    'summary_text' => 'Good leads show clear fit, contactability, and a practical next step.',
+                ],
+                'bad_lead_criteria_json'   => [
+                    'summary_text' => 'Bad leads are irrelevant, abusive, or impossible to contact.',
+                ],
+                'grading_rubric_json'      => [
+                    'scale' => [
+                        'A'      => 'Strong fit',
+                        'B'      => 'Likely fit',
+                        'C'      => 'Weak fit',
+                        'Reject' => 'Not a viable lead',
+                    ],
+                ],
+                'handoff_rules_json'       => [],
+            ]
+        );
+        $this->assertIsInt( $profile_id );
     }
 
     /** @return array<string, mixed>|string */
