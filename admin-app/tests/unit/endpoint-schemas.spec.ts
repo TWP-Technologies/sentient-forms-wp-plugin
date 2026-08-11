@@ -765,6 +765,120 @@ describe('admin endpoint schema registry', () => {
 		expect(result.forms[1].actions[0].settings).toEqual({});
 	});
 
+	it('normalizes persisted legacy model selections in overview responses', () => {
+		const action = {
+			central_action_id: 'entry_summary_v1',
+			action_type_indicator: 'local_first' as const,
+			trigger_hooks: ['after_submission']
+		};
+		const result = endpointRegistry['forms.overview'].response.parse({
+			form_source: 'gravity_forms',
+			forms: [
+				{
+					id: 793,
+					title: 'Exact fixture',
+					adapter: 'gravity_forms',
+					actions: [
+						{
+							...action,
+							local_mapping_id: 'empty-backup',
+							settings: {
+								model_selection: {
+									primary: 'sf_default',
+									backup: '',
+									provider: 'sentient_managed'
+								}
+							}
+						},
+						{
+							...action,
+							local_mapping_id: 'missing-preset-flag',
+							settings: {
+								model_selection: { primary: 'openrouter/auto', provider: 'openrouter' }
+							}
+						},
+						{
+							...action,
+							local_mapping_id: 'legacy-model-key',
+							settings: {
+								model_selection: { model: 'openai/gpt-oss-20b:free', provider: 'openrouter' }
+							}
+						}
+					],
+					action_count: 3,
+					enabled_action_count: 3,
+					execution_status: {
+						status: 'unknown',
+						message: null,
+						last_error_code: null
+					}
+				}
+			],
+			generated_at: '2030-01-05T10:00:00Z'
+		});
+
+		expect(result.forms[0].actions[0].settings?.model_selection).toMatchObject({
+			primary: 'sf_default',
+			backup: null,
+			is_preset: true
+		});
+		expect(result.forms[0].actions[1].settings?.model_selection).toMatchObject({
+			primary: 'openrouter/auto',
+			is_preset: false
+		});
+		expect(result.forms[0].actions[2].settings?.model_selection).toEqual({
+			primary: 'openai/gpt-oss-20b:free',
+			is_preset: false,
+			provider: 'openrouter'
+		});
+	});
+
+	it('rejects legacy model selections at mapping and custom-action write boundaries', () => {
+		const legacyModelSelection = { model: 'openrouter/auto', provider: 'openrouter' };
+		expect(
+			endpointRegistry['forms.actions.update'].request.safeParse({
+				settings: { model_selection: legacyModelSelection }
+			}).success
+		).toBe(false);
+		expect(
+			endpointRegistry['customActions.create'].request.safeParse({
+				code: 'local_custom_strict_model_selection',
+				display_name: 'Strict model selection',
+				model_selection: legacyModelSelection,
+				action_kind: 'custom_definition',
+				definition_version: 1,
+				supported_execution_modes: ['after_submission']
+			}).success
+		).toBe(false);
+		expect(
+			endpointRegistry['customActions.update'].request.safeParse({
+				model_selection: legacyModelSelection
+			}).success
+		).toBe(false);
+	});
+
+	it('rejects conflicting canonical and legacy model fields in mapping responses', () => {
+		const action = {
+			central_action_id: 'entry_summary_v1',
+			action_type_indicator: 'local_first' as const,
+			trigger_hooks: ['after_submission']
+		};
+		expect(
+			endpointRegistry['forms.actions.update'].response.safeParse({
+				...action,
+				local_mapping_id: 'conflicting-models',
+				settings: {
+					model_selection: {
+						primary: 'sf_default',
+						model: 'openrouter/auto',
+						is_preset: true,
+						provider: 'openrouter'
+					}
+				}
+			}).success
+		).toBe(false);
+	});
+
 	it('accepts local diagnostics and rejects retired remote telemetry at the admin boundary', () => {
 		const result = endpointRegistry['telemetry.read'].response.parse({
 			local_diagnostics_enabled: true,
