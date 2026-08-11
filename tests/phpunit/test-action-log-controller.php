@@ -1401,6 +1401,19 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             ],
         ] );
         $this->assertIsInt( $recorded );
+        $this->assertSame(
+            1,
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_execution_events',
+                [
+                    'created_at' => '2026-07-13 06:20:00',
+                    'updated_at' => '2026-07-13 06:20:01',
+                ],
+                [ 'id' => $recorded ],
+                [ '%s', '%s' ],
+                [ '%d' ]
+            )
+        );
 
         update_option(
             self::OPTION_KEY,
@@ -1410,24 +1423,35 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
                     'form_source'          => 'gravity_forms',
                     'form_id'              => 1,
                     'entry_id'             => 1,
-                    'action_code'          => 'legacy_remote_action',
-                    'action_label'         => 'Legacy Remote Action',
+                    'action_code'          => 'entry_summary_v1',
+                    'action_label'         => 'Entry Summary',
                     'status'               => 'error',
                     'execution_request_id' => 'req-older-iso-timestamp',
-                    'created_at'           => '2026-07-13T04:50:00+00:00',
+                    'created_at'           => '2026-07-13T07:00:00+00:00',
                 ],
             ],
             false
         );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
-        $request->set_param( 'per_page', 1 );
-        $request->set_param( 'action_code', 'entry_summary_v1' );
-        $response = $this->controller->get_log_entries( $request );
-        $data     = $response->get_data();
+        $original_timezone = date_default_timezone_get();
 
-        $this->assertSame( 'req-newer-mysql-timestamp', $data['entries'][0]['execution_request_id'] ?? null );
-        $this->assertStringStartsWith( 'local-event-', $data['entries'][0]['id'] ?? '' );
+        try
+        {
+            date_default_timezone_set( 'America/Chicago' );
+
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+            $request->set_param( 'per_page', 1 );
+            $request->set_param( 'action_code', 'entry_summary_v1' );
+            $response = $this->controller->get_log_entries( $request );
+            $data     = $response->get_data();
+
+            $this->assertSame( 'req-older-iso-timestamp', $data['entries'][0]['execution_request_id'] ?? null );
+            $this->assertSame( 'older-iso-entry', $data['entries'][0]['id'] ?? null );
+        }
+        finally
+        {
+            date_default_timezone_set( $original_timezone );
+        }
     }
 
     public function test_get_log_entries_filters_mixed_timestamp_formats_by_instant(): void
@@ -1451,15 +1475,39 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             ],
         ] );
         $this->assertIsInt( $recorded );
+        $this->assertSame(
+            1,
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_execution_events',
+                [
+                    'created_at' => '2026-07-13 06:20:00',
+                    'updated_at' => '2026-07-13 06:20:01',
+                ],
+                [ 'id' => $recorded ],
+                [ '%s', '%s' ],
+                [ '%d' ]
+            )
+        );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
-        $request->set_param( 'action_code', 'entry_summary_v1' );
-        $request->set_param( 'date_from', '2026-07-13T05:00:00+00:00' );
-        $response = $this->controller->get_log_entries( $request );
-        $data     = $response->get_data();
+        $original_timezone = date_default_timezone_get();
 
-        $this->assertSame( 1, $data['total'] );
-        $this->assertSame( 'req-mixed-date-filter', $data['entries'][0]['execution_request_id'] ?? null );
+        try
+        {
+            date_default_timezone_set( 'America/Chicago' );
+
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+            $request->set_param( 'action_code', 'entry_summary_v1' );
+            $request->set_param( 'date_from', '2026-07-13T07:00:00+00:00' );
+            $response = $this->controller->get_log_entries( $request );
+            $data     = $response->get_data();
+
+            $this->assertSame( 0, $data['total'] );
+            $this->assertSame( [], $data['entries'] );
+        }
+        finally
+        {
+            date_default_timezone_set( $original_timezone );
+        }
     }
 
     public function test_get_log_entries_sorts_same_second_event_ids_numerically(): void

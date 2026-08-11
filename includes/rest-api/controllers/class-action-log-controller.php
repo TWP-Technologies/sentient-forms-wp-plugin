@@ -802,8 +802,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
     private static function compare_log_timestamp_values( string $left, string $right ): int
     {
-        $left_time  = strtotime( $left );
-        $right_time = strtotime( $right );
+        $mysql_utc_pattern = '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/';
+        $left_time  = strtotime( $left . ( 1 === preg_match( $mysql_utc_pattern, $left ) ? ' UTC' : '' ) );
+        $right_time = strtotime( $right . ( 1 === preg_match( $mysql_utc_pattern, $right ) ? ' UTC' : '' ) );
 
         if ( false !== $left_time && false !== $right_time )
         {
