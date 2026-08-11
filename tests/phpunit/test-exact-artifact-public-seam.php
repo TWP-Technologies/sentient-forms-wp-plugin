@@ -14,8 +14,8 @@ final class Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client implements Sent
     /** @var array<int, array{api_key:string,payload:array<string,mixed>,options:array<string,mixed>}> */
     public array $chat_calls = [];
 
-    /** @param array<string, mixed> $structured_output */
-    public function __construct( private array $structured_output )
+    /** @param array<string, mixed>|string $response_content */
+    public function __construct( private array | string $response_content )
     {
     }
 
@@ -35,7 +35,9 @@ final class Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client implements Sent
                 [
                     'message'       => [
                         'role'    => 'assistant',
-                        'content' => wp_json_encode( $this->structured_output ),
+                        'content' => is_string( $this->response_content )
+                            ? $this->response_content
+                            : wp_json_encode( $this->response_content ),
                     ],
                     'finish_reason' => 'stop',
                 ],
@@ -930,7 +932,7 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         global $wpdb;
         try
         {
-            $client = new Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client( $this->structured_fixture( $action ) );
+            $client = new Sentient_Forms_Test_Exact_Artifact_OpenRouter_Client( $this->provider_response_fixture( $action ) );
             $execution_service = new Sentient_Forms_Local_Action_Execution_Service(
                 null,
                 null,
@@ -1294,12 +1296,24 @@ class Tests_Exact_Artifact_Public_Seam extends WP_UnitTestCase
         return $mapping_id;
     }
 
-    /** @return array<string, mixed> */
-    private function structured_fixture( string $action ): array
+    /** @return array<string, mixed>|string */
+    private function provider_response_fixture( string $action ): array | string
     {
         $catalog = Sentient_Forms_Bundled_Action_Templates::get( $action );
         $this->assertIsArray( $catalog );
+        $this->assertArrayHasKey( 'structured_output_schema', $catalog );
         $schema = $catalog['structured_output_schema'] ?? null;
+        if ( null === $schema )
+        {
+            $this->assertSame(
+                'entry_summary_v1',
+                $action,
+                'Only the intentionally unstructured Entry Summary catalog action may omit a schema.'
+            );
+
+            return 'Exact-artifact entry summary fixture.';
+        }
+
         $this->assertIsArray( $schema );
         $fixture = $this->structured_schema_fixture_value( $schema );
         $this->assertIsArray( $fixture );
