@@ -1877,7 +1877,7 @@ const submissionLedgerRunBoundarySchema = z.object({
 	status: z.string(),
 	provider: nullableTextSchema,
 	model: nullableTextSchema,
-	last_result: nullableJsonRecordValueSchema,
+	last_result: phpMap(nullableJsonRecordValueSchema),
 	last_error_code: nullableTextSchema,
 	last_error_message: nullableTextSchema,
 	created_at: nullableTextSchema.optional().default(null),
