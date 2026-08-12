@@ -41,11 +41,19 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         $this->assertIsArray( $definition );
         $schema = $definition['structured_output_schema'] ?? null;
         $this->assertIsArray( $schema );
-        $this->assertArrayNotHasKey( 'source_action_results', $schema['properties'] ?? [] );
-        $this->assertNotContains( 'source_action_results', $schema['required'] ?? [] );
-        $this->assertStringNotContainsString( 'source_action_results', $definition['prompt_template'] ?? '' );
+        $this->assertIsArray( $schema['properties'] ?? null );
+        $this->assertIsArray( $schema['required'] ?? null );
+        $this->assertIsString( $definition['prompt_template'] ?? null );
+        $this->assertArrayHasKey( 'profile_version', $schema['properties'] );
+        $this->assertContains( 'profile_version', $schema['required'] );
+        $this->assertStringContainsString( '{{form}}', $definition['prompt_template'] );
+        $this->assertStringContainsString( '{{entry}}', $definition['prompt_template'] );
+        $this->assertArrayNotHasKey( 'source_action_results', $schema['properties'] );
+        $this->assertNotContains( 'source_action_results', $schema['required'] );
+        $this->assertStringNotContainsString( 'source_action_results', $definition['prompt_template'] );
 
-        $assert_closed_objects = function ( array $node, string $path = '$' ) use ( &$assert_closed_objects ): void {
+        $assert_closed_objects = function ( array $node, string $path = '$' ) use ( &$assert_closed_objects ): void
+        {
             if ( 'object' === ( $node['type'] ?? null ) )
             {
                 $this->assertArrayHasKey( 'additionalProperties', $node, $path );
