@@ -34,6 +34,41 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         }
     }
 
+    public function test_suggested_reply_structured_output_closes_every_object_schema(): void
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'suggested_reply_v1' );
+
+        $this->assertIsArray( $definition );
+        $schema = $definition['structured_output_schema'] ?? null;
+        $this->assertIsArray( $schema );
+        $this->assertArrayNotHasKey( 'source_action_results', $schema['properties'] ?? [] );
+        $this->assertNotContains( 'source_action_results', $schema['required'] ?? [] );
+        $this->assertStringNotContainsString( 'source_action_results', $definition['prompt_template'] ?? '' );
+
+        $assert_closed_objects = function ( array $node, string $path = '$' ) use ( &$assert_closed_objects ): void {
+            if ( 'object' === ( $node['type'] ?? null ) )
+            {
+                $this->assertArrayHasKey( 'additionalProperties', $node, $path );
+                $this->assertFalse( $node['additionalProperties'], $path );
+            }
+
+            foreach ( $node['properties'] ?? [] as $property => $child )
+            {
+                if ( is_array( $child ) )
+                {
+                    $assert_closed_objects( $child, $path . '.properties.' . $property );
+                }
+            }
+
+            if ( is_array( $node['items'] ?? null ) )
+            {
+                $assert_closed_objects( $node['items'], $path . '.items' );
+            }
+        };
+
+        $assert_closed_objects( $schema );
+    }
+
     public function test_bundled_actions_expose_canonical_lifecycle_hooks_that_match_their_definitions(): void
     {
         $expected_lifecycles = [

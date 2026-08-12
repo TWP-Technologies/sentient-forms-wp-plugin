@@ -1117,7 +1117,7 @@ PROMPT,
                 'source'                   => 'bundled',
                 'code'                     => 'suggested_reply_v1',
                 'display_name'             => 'Suggested Reply and Next Best Action',
-                'description'              => 'Draft a staff-reviewed reply and next best action from the entry, Lead Scoring setup, and available action results.',
+                'description'              => 'Draft a staff-reviewed reply and next best action from the entry and active Lead Scoring setup.',
                 'prompt_template'          => <<<'PROMPT'
 You are a staff assistant drafting a reply and next best action for a completed form entry. Draft only; never send, imply sending, or claim an action was taken.
 
@@ -1133,7 +1133,6 @@ Return only valid JSON in this exact format:
     "short risk flag or empty if none"
   ],
   "do_not_send": false,
-  "source_action_results": {},
   "profile_version": 0
 }
 
@@ -1157,7 +1156,7 @@ PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => [
                     'type'                 => 'object',
-                    'required'             => [ 'next_best_action', 'suggested_reply_draft', 'reply_rationale', 'missing_info_to_request', 'risk_flags', 'do_not_send', 'source_action_results', 'profile_version' ],
+                    'required'             => [ 'next_best_action', 'suggested_reply_draft', 'reply_rationale', 'missing_info_to_request', 'risk_flags', 'do_not_send', 'profile_version' ],
                     'additionalProperties' => false,
                     'properties'           => [
                         'next_best_action'      => [
@@ -1181,10 +1180,6 @@ PROMPT,
                             'items' => [ 'type' => 'string' ],
                         ],
                         'do_not_send'           => [ 'type' => 'boolean' ],
-                        'source_action_results' => [
-                            'type'                 => 'object',
-                            'additionalProperties' => true,
-                        ],
                         'profile_version'        => [
                             'type'    => 'integer',
                             'minimum' => 0,
