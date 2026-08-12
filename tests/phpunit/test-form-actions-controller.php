@@ -4736,6 +4736,38 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $sanitized['skip_on_upstream_spam'] ?? false );
     }
 
+    public function test_sanitize_settings_normalizes_empty_model_selection_credential_to_null(): void
+    {
+        $sanitized = $this->invoke_private(
+            'sanitize_settings',
+            [
+                [
+                    'model_selection' => [
+                        'provider'      => 'openrouter',
+                        'primary'       => 'sf_default',
+                        'credential_id' => '',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertArrayHasKey( 'credential_id', $sanitized['model_selection'] );
+        $this->assertNull( $sanitized['model_selection']['credential_id'] );
+    }
+
+    public function test_sanitize_settings_rejects_non_positive_or_fractional_credential_ids(): void
+    {
+        foreach ( [ -1, 0, 1.5, '-1', '1.5', str_repeat( '9', 40 ) ] as $credential_id )
+        {
+            $sanitized = $this->invoke_private(
+                'sanitize_settings',
+                [ [ 'model_selection' => [ 'credential_id' => $credential_id ] ] ]
+            );
+
+            $this->assertNull( $sanitized['model_selection']['credential_id'] );
+        }
+    }
+
     public function test_validate_mapping_dependencies_rejects_unknown_dependency(): void
     {
         $actions = [
@@ -6137,6 +6169,40 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'yes', $stored['settings_json']['include_site_context'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
+    }
+
+    public function test_update_form_action_item_normalizes_empty_model_selection_credential_to_null(): void
+    {
+        $record     = $this->create_local_first_mapping_fixture( '1' );
+        $mapping_id = 'local_first_' . $record['mapping_id'];
+        $request    = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $mapping_id );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode' => 'after_submission',
+                'model_selection' => [
+                    'primary'       => 'sf_default',
+                    'provider'      => 'openrouter',
+                    'credential_id' => '',
+                ],
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+        $data     = $response->get_data();
+
+        global $wpdb;
+        $stored = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( $record['mapping_id'] );
+
+        $this->assertArrayHasKey( 'credential_id', $data['settings']['model_selection'] );
+        $this->assertNull( $data['settings']['model_selection']['credential_id'] );
+        $this->assertIsArray( $stored );
+        $this->assertArrayHasKey( 'credential_id', $stored['settings_json']['model_selection'] );
+        $this->assertNull( $stored['settings_json']['model_selection']['credential_id'] );
     }
 
 

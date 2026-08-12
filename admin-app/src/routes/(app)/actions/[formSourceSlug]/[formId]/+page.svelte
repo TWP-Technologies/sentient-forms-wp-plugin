@@ -56,6 +56,7 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { licenseState } from '$lib/stores/license.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import { normalizeModelSelectionForPersistence } from '$lib/utils/model-selection-persistence';
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
 		ActionDefinition,
@@ -4185,6 +4186,11 @@
 			dependency_ids: normalizedDependencyIds,
 			trigger_sources: persistableTriggerSources
 		};
+		if (typeof draftSettings.model_selection !== 'undefined') {
+			nextSettings.model_selection = normalizeModelSelectionForPersistence(
+				draftSettings.model_selection
+			);
+		}
 		if (typeof draftSettings.attachment_mapping !== 'undefined') {
 			nextSettings.attachment_mapping = normalizeAttachmentMappingForCurrentSource(
 				draftSettings.attachment_mapping
