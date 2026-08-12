@@ -52,15 +52,16 @@ runs:
       run: |
         set -euo pipefail
         if [ "${INPUT_WP_VERSION}" = "trunk" ]; then
-          wp_core='"WordPress/wordpress-develop#trunk"'
+          wp_core='"WordPress/WordPress#master"'
         else
           latest_version="$(curl --fail --silent --show-error 'https://api.wordpress.org/core/version-check/1.7/' | jq -r '.offers[] | select(.response == "upgrade") | .current' | head -n 1)"
           if ! [[ "${latest_version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
             echo "::error::Unable to resolve a valid latest WordPress version."
             exit 1
           fi
-          git ls-remote --exit-code --tags https://github.com/WordPress/wordpress-develop.git "refs/tags/${latest_version}" >/dev/null
-          wp_core="$(jq -cn --arg ref "WordPress/wordpress-develop#${latest_version}" '$ref')"
+          core_archive="https://wordpress.org/wordpress-${latest_version}.zip"
+          curl --fail --silent --show-error --head "${core_archive}" >/dev/null
+          wp_core="$(jq -cn --arg archive "${core_archive}" '$archive')"
         fi
         cat > .wp-env.json <<JSON
         { "core": ${wp_core}, "port": 8880, "testsPort": 8881, "plugins": [ "https://downloads.wordpress.org/plugin/plugin-check.zip" ], "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" } }

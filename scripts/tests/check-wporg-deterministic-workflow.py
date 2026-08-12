@@ -150,9 +150,9 @@ def main() -> int:
     )
     for required_fragment in {
         "https://api.wordpress.org/core/version-check/1.7/",
-        "https://github.com/WordPress/wordpress-develop.git",
-        "WordPress/wordpress-develop#${latest_version}",
-        "git ls-remote --exit-code --tags",
+        "https://wordpress.org/wordpress-${latest_version}.zip",
+        'curl --fail --silent --show-error --head "${core_archive}"',
+        "WordPress/WordPress#master",
     }:
         if required_fragment not in plugin_check_action:
             errors.append(
