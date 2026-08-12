@@ -574,7 +574,7 @@ test.describe('lead scoring workspace', () => {
 		expect(correctionRequests).toBe(1);
 	});
 
-	test('routes Elementor aggregate setup links to form actions instead of Lead Scoring setup', async ({
+	test('routes Elementor aggregate links to ledger-backed Lead Scoring setup', async ({
 		page
 	}) => {
 		const elementorDashboardResponse = {
@@ -625,16 +625,25 @@ test.describe('lead scoring workspace', () => {
 			page
 				.getByRole('row', { name: /Elementor lead form/ })
 				.getByRole('link', { name: 'Setup' })
-		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
+		).toHaveAttribute(
+			'href',
+			/\/actions\/elementor_pro_forms\/91(?::|%3A)formabc\/lead-value\?view=setup$/
+		);
 		await expect(
 			page
 				.getByTestId('lead-scoring-configured-forms-list')
 				.getByRole('link', { name: 'Setup' })
-		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/91(?::|%3A)formabc$/);
+		).toHaveAttribute(
+			'href',
+			/\/actions\/elementor_pro_forms\/91(?::|%3A)formabc\/lead-value\?view=setup$/
+		);
 		await expect(
 			page
 				.getByTestId('lead-scoring-quick-jump-list')
 				.getByRole('link', { name: 'Set Up' })
-		).toHaveAttribute('href', /\/actions\/elementor_pro_forms\/92(?::|%3A)quote-widget$/);
+		).toHaveAttribute(
+			'href',
+			/\/actions\/elementor_pro_forms\/92(?::|%3A)quote-widget\/lead-value\?view=setup$/
+		);
 	});
 });
