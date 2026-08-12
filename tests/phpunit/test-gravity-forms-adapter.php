@@ -8092,7 +8092,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
         $this->assertSame( 'applied', $native_effect_outcomes['store_result']['status'] ?? null );
         $this->assertSame( 'applied', $native_effect_outcomes['entry_note']['status'] ?? null );
-        $this->assertNotSame( 'missing_entry_id', $native_effect_outcomes['entry_note']['reason'] ?? null );
+        $this->assertArrayHasKey( 'reason', $native_effect_outcomes['entry_note'] ?? [] );
+        $this->assertNotSame( 'missing_entry_id', $native_effect_outcomes['entry_note']['reason'] );
         $this->assertNotEmpty( gform_get_meta( 811, 'sentient_forms_last_response' ) );
 
         $this->assertContains(
