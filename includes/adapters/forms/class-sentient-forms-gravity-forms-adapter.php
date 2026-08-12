@@ -1057,7 +1057,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $effects = $applier->apply( $mapping, $form, $entry, $execution_result, $action );
                 if ( ! is_wp_error( $effects ) )
                 {
-                    $result['effects']    = $effects;
+                    $result['effects']                = $effects;
+                    $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $effects );
                     $event['result_json'] = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
 
                     if ( $this->local_spam_effect_enabled( $mapping ) )

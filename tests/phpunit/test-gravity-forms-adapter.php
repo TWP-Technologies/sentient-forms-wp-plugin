@@ -8082,6 +8082,17 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( '811', $recent_events[0]['entry_id'] ?? null );
         $this->assertContains( 'store_result', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
         $this->assertContains( 'entry_note', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
+        $native_effect_outcomes = [];
+        foreach ( $recent_events[0]['result_json']['native_effect_outcomes'] ?? [] as $outcome )
+        {
+            if ( is_array( $outcome ) && isset( $outcome['effect'] ) )
+            {
+                $native_effect_outcomes[ $outcome['effect'] ] = $outcome;
+            }
+        }
+        $this->assertSame( 'applied', $native_effect_outcomes['store_result']['status'] ?? null );
+        $this->assertSame( 'applied', $native_effect_outcomes['entry_note']['status'] ?? null );
+        $this->assertNotSame( 'missing_entry_id', $native_effect_outcomes['entry_note']['reason'] ?? null );
         $this->assertNotEmpty( gform_get_meta( 811, 'sentient_forms_last_response' ) );
 
         $this->assertContains(
