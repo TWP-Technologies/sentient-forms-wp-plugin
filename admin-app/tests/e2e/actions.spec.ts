@@ -3190,6 +3190,9 @@ test.describe('Actions admin flows', () => {
 				}
 			}
 		});
+		expect(
+			(createdActionPayload?.model_selection_json as Record<string, unknown>)?.selection
+		).toHaveProperty('credential_id', 42);
 		expect(createdActionPayload?.definition_json).toMatchObject({
 			structured_output_schema: {
 				required: ['classification', 'confidence', 'justification']

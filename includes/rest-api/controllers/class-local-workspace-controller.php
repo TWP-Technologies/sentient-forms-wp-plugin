@@ -153,7 +153,9 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
                 'code'                 => $payload['code'] ?? '',
                 'display_name'         => $payload['display_name'] ?? '',
                 'definition_json'      => $this->array_param( $payload, 'definition_json' ),
-                'model_selection_json' => $this->array_param( $payload, 'model_selection_json' ),
+                'model_selection_json' => $this->sanitize_model_selection_json(
+                    $this->array_param( $payload, 'model_selection_json' )
+                ),
                 'status'               => $payload['status'] ?? 'active',
             ]
         );
@@ -552,6 +554,36 @@ class Sentient_Forms_Local_Workspace_Controller extends Sentient_Forms_Abstract_
         }
 
         return is_array( $payload[ $key ] ) ? $payload[ $key ] : null;
+    }
+
+    private function sanitize_model_selection_json( ?array $selection ): ?array
+    {
+        if ( null === $selection )
+        {
+            return null;
+        }
+
+        foreach ( $selection as $key => $value )
+        {
+            if ( 'credential_id' === $key )
+            {
+                $max_safe_integer = 9007199254740991;
+                $parsed           = is_string( $value ) && preg_match( '/^[1-9][0-9]*$/', $value )
+                    ? filter_var( $value, FILTER_VALIDATE_INT, [ 'options' => [ 'min_range' => 1 ] ] )
+                    : false;
+                $selection[ $key ] = is_int( $value ) && $value > 0 && $value <= $max_safe_integer
+                    ? $value
+                    : ( false !== $parsed && $parsed <= $max_safe_integer ? $parsed : null );
+                continue;
+            }
+
+            if ( is_array( $value ) )
+            {
+                $selection[ $key ] = $this->sanitize_model_selection_json( $value );
+            }
+        }
+
+        return $selection;
     }
 
     private function bool_param( array $payload, string $key, bool $default ): bool

@@ -7816,6 +7816,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         {
             $key = sanitize_key( $key );
 
+            if ( 'credential_id' === $key )
+            {
+                $max_safe_integer     = 9007199254740991;
+                $parsed_credential_id = is_string( $value ) && preg_match( '/^[1-9][0-9]*$/', $value )
+                    ? filter_var( $value, FILTER_VALIDATE_INT, [ 'options' => [ 'min_range' => 1 ] ] )
+                    : false;
+                $credential_id = is_int( $value ) && $value > 0 && $value <= $max_safe_integer
+                    ? $value
+                    : ( false !== $parsed_credential_id && $parsed_credential_id <= $max_safe_integer ? $parsed_credential_id : null );
+                $sanitized[ $key ] = $credential_id;
+                continue;
+            }
+
             // CB-EXEC-003/004: Dedicated sanitisation for batch_settings.
             if ( 'batch_settings' === $key && is_array( $value ) )
             {

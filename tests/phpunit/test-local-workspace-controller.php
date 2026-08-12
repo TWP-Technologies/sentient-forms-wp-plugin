@@ -168,6 +168,34 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertTrue( $support_bundle['execution_summary']['recent'][0]['has_result'] );
     }
 
+    public function test_create_custom_action_normalizes_nested_empty_credential_to_null(): void
+    {
+        foreach ( [ '', 9007199254740992 ] as $index => $credential_id )
+        {
+            $custom_action = $this->dispatch_json(
+                'POST',
+                '/sentient-forms/v1/local/custom-actions',
+                [
+                    'code'                 => 'nested_invalid_credential_' . $index,
+                    'display_name'         => 'Nested invalid credential',
+                    'definition_json'      => [ 'prompt' => 'Summarize the entry.' ],
+                    'model_selection_json' => [
+                        'provider'  => 'openrouter',
+                        'selection' => [
+                            'primary'       => 'sf_default',
+                            'credential_id' => $credential_id,
+                        ],
+                    ],
+                    'status'               => 'active',
+                ],
+                201
+            );
+
+            $this->assertArrayHasKey( 'credential_id', $custom_action['model_selection_json']['selection'] );
+            $this->assertNull( $custom_action['model_selection_json']['selection']['credential_id'] );
+        }
+    }
+
     public function test_support_bundle_summarizes_submission_ledger_without_field_values(): void
     {
         global $wpdb;
