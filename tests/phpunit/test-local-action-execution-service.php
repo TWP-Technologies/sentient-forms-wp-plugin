@@ -1580,6 +1580,19 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->seed_openrouter_model_cache();
 
         $fixture = $this->create_local_openrouter_mapping();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'   => 'openrouter/auto',
+                        'is_preset' => false,
+                    ],
+                ],
+            ]
+        );
+        $this->assertNotWPError( $updated );
+
         $client  = new Sentient_Forms_Test_OpenRouter_Client();
         $service = $this->create_service( $client );
 
@@ -1609,6 +1622,213 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $payload = $client->chat_calls[0]['payload'];
         $this->assertSame( 'anthropic/claude-sonnet-4.6', $payload['model'] );
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] ?? null );
+    }
+
+    public function test_saved_mapping_model_selection_overrides_action_default_during_execution(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertNotWPError( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $controller    = new Sentient_Forms_Local_Workspace_Controller( null, null, null, null, $service );
+        $request       = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/form-mappings/' . $fixture['mapping_id'] . '/execute-test' );
+        $request->set_url_params( [ 'id' => $fixture['mapping_id'] ] );
+        $request->set_body_params(
+            [
+                'form'    => [ 'id' => 7, 'title' => 'Contact Form' ],
+                'entry'   => [
+                    'id' => 99,
+                    '1'  => 'Ada Lovelace',
+                    '2'  => 'ada@example.test',
+                ],
+                'context' => [
+                    'hook'     => 'gform_after_submission',
+                    'settings' => [
+                        'include_site_context' => 'always',
+                    ],
+                ],
+            ]
+        );
+        $response = $controller->execute_form_mapping( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 200, $response->get_status() );
+        $result = $response->get_data();
+        $this->assertSame( 'sentient_managed', $result['provider'] );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
+    }
+
+    public function test_runtime_provider_override_drops_incompatible_saved_mapping_credential(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'is_preset'     => false,
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertNotWPError( $updated );
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+        $result        = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'sf_default',
+                        'is_preset' => true,
+                        'provider'  => 'sentient_managed',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'sentient_managed', $result['provider'] );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
+    }
+
+    public function test_runtime_same_provider_preserves_saved_mapping_credential_when_provider_is_inherited(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture               = $this->create_local_openrouter_mapping();
+        $mapping_secret        = 'sk-or-inherited-provider-mapping-secret';
+        $mapping_credential_id = $this->create_ready_openrouter_credential(
+            'Inherited provider mapping credential',
+            $mapping_secret
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'anthropic/claude-sonnet-4.6',
+                        'is_preset'     => false,
+                        'credential_id' => $mapping_credential_id,
+                    ],
+                ],
+            ]
+        );
+        $this->assertNotWPError( $updated );
+
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $result     = $this->create_service( $openrouter )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'anthropic/claude-sonnet-4.6',
+                        'is_preset' => false,
+                        'provider'  => 'openrouter',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $mapping_secret, $openrouter->chat_calls[0]['api_key'] );
+    }
+
+    public function test_invalid_runtime_provider_preserves_saved_mapping_credential(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture               = $this->create_local_openrouter_mapping();
+        $mapping_secret        = 'sk-or-invalid-provider-mapping-secret';
+        $mapping_credential_id = $this->create_ready_openrouter_credential(
+            'Invalid provider mapping credential',
+            $mapping_secret
+        );
+        $updated = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'anthropic/claude-sonnet-4.6',
+                        'is_preset'     => false,
+                        'credential_id' => $mapping_credential_id,
+                    ],
+                ],
+            ]
+        );
+        $this->assertNotWPError( $updated );
+
+        $openrouter = new Sentient_Forms_Test_OpenRouter_Client();
+        $result     = $this->create_service( $openrouter )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'anthropic/claude-sonnet-4.6',
+                        'is_preset' => false,
+                        'provider'  => 'openruter',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] );
+        $this->assertCount( 1, $openrouter->chat_calls );
+        $this->assertSame( $mapping_secret, $openrouter->chat_calls[0]['api_key'] );
     }
 
     public function test_runtime_model_selection_drops_reasoning_for_models_without_reasoning_support(): void

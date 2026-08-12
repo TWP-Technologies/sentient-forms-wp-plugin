@@ -127,6 +127,31 @@ class Sentient_Forms_Local_Action_Execution_Service
         $mapping    = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
         $definition = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
 
+        $mapping_settings = is_array( $mapping['settings_json'] ?? null ) ? $mapping['settings_json'] : [];
+        $context_settings = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+        if ( [] !== $mapping_settings )
+        {
+            $context['settings'] = array_replace_recursive( $mapping_settings, $context_settings );
+
+            $mapping_selection = is_array( $mapping_settings['model_selection'] ?? null ) ? $mapping_settings['model_selection'] : [];
+            $context_selection = is_array( $context_settings['model_selection'] ?? null ) ? $context_settings['model_selection'] : [];
+            $mapping_provider  = sanitize_key( (string) ( $mapping_selection['provider'] ?? '' ) );
+            $context_provider  = sanitize_key( (string) ( $context_selection['provider'] ?? '' ) );
+            if ( '' === $mapping_provider )
+            {
+                $action_selection = $this->model_selection_service->prepare_model_selection_for_action( $action );
+                $mapping_provider = sanitize_key( (string) ( $action_selection['provider'] ?? '' ) );
+            }
+            if (
+                in_array( $context_provider, [ 'openrouter', 'sentient_managed' ], true )
+                && $context_provider !== $mapping_provider
+                && absint( $context_selection['credential_id'] ?? 0 ) <= 0
+            )
+            {
+                unset( $context['settings']['model_selection']['credential_id'] );
+            }
+        }
+
         $effective_action_policy    = $this->resolve_effective_action_policy( $definition );
         if ( is_wp_error( $effective_action_policy ) )
         {
