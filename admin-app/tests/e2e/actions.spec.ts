@@ -2270,7 +2270,7 @@ test.describe('Actions admin flows', () => {
 		);
 	});
 
-	test('does not expose Lead Scoring for Elementor Pro Forms while native submission parity is unproven', async ({
+	test('exposes ledger-backed Lead Scoring for Elementor Pro Forms without native submission parity', async ({
 		page
 	}) => {
 		const elementorFormId = '91:formabc';
@@ -2329,17 +2329,18 @@ test.describe('Actions admin flows', () => {
 				'Elementor Pro Forms APIs are available, but Elementor Form Submissions APIs are unavailable.'
 			)
 		).toBeVisible();
-		await expect(page.locator('header').getByRole('link', { name: 'Lead Scoring' })).toHaveCount(
-			0
+		await expect(page.locator('header').getByRole('link', { name: 'Lead Scoring' })).toHaveAttribute(
+			'href',
+			/\/actions\/elementor_pro_forms\/91(?::|%3A)formabc\/lead-value$/
 		);
 	});
 
-	test('blocks direct Elementor Lead Scoring route while native submission parity is unproven', async ({
+	test('loads Elementor Lead Scoring setup from the Submission Ledger baseline', async ({
 		page
 	}) => {
 		const elementorFormId = '91:formabc';
 		const encodedElementorFormId = encodeURIComponent(elementorFormId);
-		let leadValueRequests = 0;
+		const leadValueRequests: string[] = [];
 
 		await mockWpJson(page, {
 			actions: {
@@ -2360,14 +2361,64 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.route('**/wp-json/sentient-forms/v1/lead-value/**', async (route) => {
-			leadValueRequests += 1;
+			const url = route.request().url();
+			leadValueRequests.push(url);
+			const body = url.includes('/profile')
+				? {
+						profile: null,
+						readiness: {
+							ready: false,
+							blockers: [
+								{
+									key: 'lead_profile_consent',
+									label: 'Lead Scoring consent',
+									met: false,
+									severity: 'blocker',
+									detail: 'Consent is required.'
+								}
+							],
+							requirements: [],
+							site_context: {
+								summary_text: '',
+								word_count: 0,
+								consented: false,
+								consent_status: 'missing'
+							},
+							spam_guidance: { positive_count: 0, negative_count: 0 },
+							good_word_count: 0,
+							bad_word_count: 0
+						}
+					}
+				: url.includes('/historical-runs')
+					? { runs: [] }
+					: {
+							form_source: 'elementor_pro_forms',
+							form_id: elementorFormId,
+							event_count: 0,
+							successful_events: 0,
+							failed_events: 0,
+							grades: { A: 0, B: 0, C: 0, Reject: 0, ungraded: 0 },
+							suggested_replies: 0,
+							metrics: {
+								scored_leads: 0,
+								priority_leads: 0,
+								reply_drafts: 0,
+								rejected_leads: 0,
+								grades: { A: 0, B: 0, C: 0, Reject: 0, ungraded: 0 }
+							},
+							entries: [],
+							entry_page: 1,
+							entry_per_page: 10,
+							entry_total: 0,
+							entry_pages: 0,
+							forms: [],
+							unconfigured_forms: [],
+							historical_runs: []
+						};
 			await route.fulfill({
-				status: 500,
+				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					code: 'unexpected_elementor_lead_value_call',
-					message: 'Elementor Lead Scoring should be blocked before API calls.'
-				})
+				body: JSON.stringify(body)
 			});
 		});
 
@@ -2375,20 +2426,39 @@ test.describe('Actions admin flows', () => {
 			waitUntil: 'networkidle'
 		});
 
-		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toContainText(
-			'Lead Scoring is not available for Elementor Pro Forms yet.'
+		await expect(page.getByRole('heading', { name: 'Setup checklist' })).toBeVisible();
+		await expect(
+			page.getByRole('checkbox', {
+				name: /Use saved context and examples for this form's lead scoring setup/
+			})
+		).toBeVisible();
+		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toHaveCount(0);
+		await expect(page.getByRole('button', { name: 'Dashboard' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Historical' })).toHaveCount(0);
+		await expect(page.getByRole('heading', { name: 'Recent Historical Runs' })).toHaveCount(0);
+		await expect(page.getByText(/run historical scoring/i)).toHaveCount(0);
+		await expect(page.getByRole('checkbox', { name: /Record lead grade/ })).toHaveCount(0);
+		await expect(page.getByRole('checkbox', { name: /Record suggested reply/ })).toHaveCount(0);
+		await expect(page.getByRole('alert')).toContainText(
+			'Native entry notes and historical scoring runs require Gravity Forms.'
 		);
-		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).toContainText(
-			'Lead Scoring needs reliable native entry search, corrections, and notes before staff can safely grade Elementor leads.'
+		expect(leadValueRequests.some((url) => url.includes(`/${encodedElementorFormId}/profile`))).toBe(
+			true
 		);
-		await expect(page.getByTestId('elementor-lead-scoring-unavailable')).not.toContainText(
-			/APIs|fixture|Advanced Solo/i
+		expect(
+			leadValueRequests.some((url) => url.includes(`/${encodedElementorFormId}/dashboard`))
+		).toBe(true);
+		expect(
+			leadValueRequests.some((url) => url.includes(`/${encodedElementorFormId}/historical-runs`))
+		).toBe(true);
+
+		await page.goto(
+			`/actions/elementor_pro_forms/${encodedElementorFormId}/lead-value?view=historical`,
+			{ waitUntil: 'networkidle' }
 		);
-		await expect(page.getByRole('link', { name: 'Back to form actions' })).toHaveAttribute(
-			'href',
-			`/actions/elementor_pro_forms/${encodedElementorFormId}`
-		);
-		expect(leadValueRequests).toBe(0);
+		await expect(page.getByRole('button', { name: 'Historical' })).toHaveCount(0);
+		await expect(page.getByRole('heading', { name: 'Select entries to score' })).toHaveCount(0);
+		await expect(page.getByRole('heading', { name: 'Setup checklist' })).toBeVisible();
 	});
 
 	test('creates a built-in action mapping from the drawer', async ({ page }) => {

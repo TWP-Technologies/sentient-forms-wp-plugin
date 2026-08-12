@@ -66,10 +66,12 @@
 	let { data }: Props = $props();
 
 	const client = createClientFromConfig();
+	const supportsHistoricalRuns = data.formSourceSlug === 'gravity_forms';
+	const supportsNativeEntryNotes = data.formSourceSlug === 'gravity_forms';
 	const viewChoices: Array<{ key: ViewKey; label: string }> = [
 		{ key: 'dashboard', label: 'Dashboard' },
 		{ key: 'setup', label: 'Setup' },
-		{ key: 'historical', label: 'Historical' }
+		...(supportsHistoricalRuns ? [{ key: 'historical' as const, label: 'Historical' }] : [])
 	];
 
 	let view = $state<ViewKey>('dashboard');
@@ -85,7 +87,6 @@
 	let formSpamConfig = $state<FormActionConfig>({});
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
-	const isElementorLeadScoringUnavailable = $derived(data.formSourceSlug === 'elementor_pro_forms');
 
 	let consent = $state(false);
 	let goodCriteria = $state('');
@@ -96,8 +97,8 @@
 	let webhookUrls = $state<string[]>([]);
 	let webhookDraft = $state('');
 	let webhookErrors = $state<string[]>([]);
-	let writeLeadGradeNote = $state(true);
-	let writeSuggestedReplyNote = $state(true);
+	let writeLeadGradeNote = $state(supportsNativeEntryNotes);
+	let writeSuggestedReplyNote = $state(supportsNativeEntryNotes);
 	let skipRejectSuggestedReply = $state(true);
 	let generationModel = $state<
 		'~openai/gpt-latest' | '~google/gemini-pro-latest' | '~anthropic/claude-opus-latest'
@@ -150,11 +151,6 @@
 	let generationPollToken = 0;
 
 	onMount(() => {
-		if (isElementorLeadScoringUnavailable) {
-			loading = false;
-			return;
-		}
-
 		void loadLeadValue();
 	});
 
@@ -192,7 +188,9 @@
 			historicalRuns = runData.runs;
 			applyDrafts(profileData);
 			const requestedView = requestedViewFromLocation();
-			view = requestedView ?? (profileData.readiness.ready ? 'dashboard' : 'setup');
+			const availableRequestedView =
+				requestedView === 'historical' && !supportsHistoricalRuns ? null : requestedView;
+			view = availableRequestedView ?? (profileData.readiness.ready ? 'dashboard' : 'setup');
 			const profile = profileData.profile;
 			const profileId = profile?.id;
 			if (
@@ -241,8 +239,12 @@
 		emailRecipients = current?.handoff_rules?.email_recipients ?? [];
 		webhookUrls =
 			current?.handoff_rules?.webhooks?.map((webhook) => webhook.url).filter(Boolean) ?? [];
-		writeLeadGradeNote = current?.handoff_rules?.entry_notes?.lead_grade ?? true;
-		writeSuggestedReplyNote = current?.handoff_rules?.entry_notes?.suggested_reply ?? true;
+		writeLeadGradeNote = supportsNativeEntryNotes
+			? (current?.handoff_rules?.entry_notes?.lead_grade ?? true)
+			: false;
+		writeSuggestedReplyNote = supportsNativeEntryNotes
+			? (current?.handoff_rules?.entry_notes?.suggested_reply ?? true)
+			: false;
 		skipRejectSuggestedReply = current?.handoff_rules?.reply_rules?.skip_reject_grade ?? true;
 		const metadata = current?.generation_metadata ?? {};
 		const generationSettings =
@@ -870,36 +872,11 @@
 	const gradeChoices: LeadGrade[] = ['A', 'B', 'C', 'Reject'];
 </script>
 
-{#if isElementorLeadScoringUnavailable}
 	<Section
 		heading="Lead Scoring"
-		description="Lead scoring is currently limited to form sources with reliable native entry search, notes, and correction history."
-	>
-		<Card data-testid="elementor-lead-scoring-unavailable">
-			<div class="sf:flex sf:flex-col sf:gap-4 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
-				<div>
-					<p class="sf:text-base sf:font-semibold sf:text-slate-900">
-						Lead Scoring is not available for Elementor Pro Forms yet.
-					</p>
-					<p class="sf:mt-2 sf:max-w-3xl sf:text-sm sf:text-slate-600">
-						Elementor submissions can be captured for ledger and action automation, but Lead
-						Scoring needs reliable native entry search, corrections, and notes before staff can
-						safely grade Elementor leads.
-					</p>
-				</div>
-				<ButtonLink
-					variant="secondary"
-					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`)}
-				>
-					Back to form actions
-				</ButtonLink>
-			</div>
-		</Card>
-	</Section>
-{:else}
-	<Section
-		heading="Lead Scoring"
-		description="Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form."
+		description={supportsHistoricalRuns
+			? 'Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form.'
+			: 'Review scored form entries, tune the setup, and hand off qualified leads from this form through the Sentient Forms Submission Ledger.'}
 	>
 	{#snippet actions()}
 		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-3">
@@ -1210,9 +1187,16 @@
 					<Card class="sf:overflow-hidden sf:p-0">
 						<div class="sf:border-b sf:border-slate-200 sf:px-6 sf:py-6">
 							<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Configuration Setup</h2>
-							<p class="sf:mt-2 sf:text-base sf:text-slate-500">
-								Configure handoff settings, AI models, and automation preferences.
-							</p>
+						<p class="sf:mt-2 sf:text-base sf:text-slate-500">
+							Configure handoff settings, AI models, and automation preferences.
+						</p>
+						{#if !supportsNativeEntryNotes}
+							<Alert variant="info" class="sf:mt-4">
+								Lead grades, corrections, and action results stay available in the Sentient Forms
+								Submission Ledger. Native entry notes and historical scoring runs require Gravity
+								Forms.
+							</Alert>
+						{/if}
 						</div>
 
 						<div class="sf:space-y-8 sf:p-6">
@@ -1408,6 +1392,7 @@
 										</div>
 									</div>
 
+									{#if supportsNativeEntryNotes}
 									<div class="sf:space-y-5 sf:rounded-xl sf:bg-slate-50 sf:p-5">
 										<label class="sf:flex sf:items-start sf:gap-3 sf:text-base sf:text-slate-700">
 											<input
@@ -1450,6 +1435,7 @@
 											</span>
 										</label>
 									</div>
+									{/if}
 								</section>
 
 								<section class="sf:space-y-7">
@@ -1660,7 +1646,9 @@
 						basePath={`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`}
 						showForm={false}
 						onOpenDetail={openEntryDetail}
-						emptyMessage="No scored entries yet. Run lead scoring on new or historical entries to populate this table."
+					emptyMessage={supportsHistoricalRuns
+						? 'No scored entries yet. Run lead scoring on new or historical entries to populate this table.'
+						: 'No scored entries yet. New Elementor submissions scored through the Submission Ledger will appear here.'}
 					/>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
 						<p class="sf:text-xs sf:text-slate-500">
@@ -1689,6 +1677,7 @@
 				</div>
 				<div class="sf:space-y-4">
 					<GradeDistribution grades={dashboard?.grades} />
+					{#if supportsHistoricalRuns}
 					<Card>
 						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Recent Historical Runs</h2>
 						<div class="sf:mt-4 sf:space-y-3">
@@ -1714,6 +1703,7 @@
 							{/each}
 						</div>
 					</Card>
+					{/if}
 				</div>
 			</div>
 		{:else}
@@ -1904,4 +1894,3 @@
 		onJustificationChange={(value) => (correctionJustification = value)}
 	/>
 	</Section>
-{/if}

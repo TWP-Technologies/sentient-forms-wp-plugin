@@ -8,9 +8,9 @@ describe('lead scoring utilities', () => {
 		);
 	});
 
-	it('routes Elementor setup jumps to the form actions page', () => {
+	it('routes Elementor setup jumps to ledger-backed Lead Scoring', () => {
 		expect(setupJumpPath({ form_source: 'elementor_pro_forms', form_id: '91:formabc' })).toBe(
-			'/actions/elementor_pro_forms/91:formabc'
+			'/actions/elementor_pro_forms/91:formabc/lead-value?view=setup'
 		);
 	});
 

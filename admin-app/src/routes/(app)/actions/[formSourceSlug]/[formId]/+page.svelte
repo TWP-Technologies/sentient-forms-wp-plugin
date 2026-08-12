@@ -2054,7 +2054,6 @@
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
-	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_pro_forms');
 	const submissionLedgerSettings = $derived(currentRouteBootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
@@ -4760,14 +4759,12 @@
 				/>
 			</div>
 			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
-			{#if showLeadScoringLink}
-				<ButtonLink
-					variant="secondary"
-					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
-				>
-					Lead Scoring
-				</ButtonLink>
-			{/if}
+			<ButtonLink
+				variant="secondary"
+				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
+			>
+				Lead Scoring
+			</ButtonLink>
 			{#if providerEditUrl}
 				<a
 					href={providerEditUrl}
