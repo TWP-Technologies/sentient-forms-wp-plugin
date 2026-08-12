@@ -1,6 +1,6 @@
 {
     "contract_version": 1,
-    "source_sha256": "b7c9839faeb304ce1389f9303279d85ee0e399dee96cb83ebfd03dc8f4eba16b",
+    "source_sha256": "187b2e4383794fa282a8430d556f0315b05e5256f0b690b256da0a6958e35e96",
     "action_codes": [
         "spam_detection_v1",
         "content_validation_v1",

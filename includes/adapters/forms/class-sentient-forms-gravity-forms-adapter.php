@@ -1057,7 +1057,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $effects = $applier->apply( $mapping, $form, $entry, $execution_result, $action );
                 if ( ! is_wp_error( $effects ) )
                 {
-                    $result['effects']    = $effects;
+                    $result['effects']                = $effects;
+                    $result['native_effect_outcomes'] = Sentient_Forms_Native_Effect_Outcomes::from_execution_effects( $effects );
+                    $execution_result['result']       = $result;
+
+                    if (
+                        in_array( 'store_result', $effects['applied'] ?? [], true )
+                        && function_exists( 'gform_update_meta' )
+                    )
+                    {
+                        $stored_execution = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $execution_result );
+                        $stored_result    = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
+                        gform_update_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $stored_execution ) );
+                        gform_update_meta( $entry_id, '_sentient_forms_local_result', $stored_result );
+                    }
+
                     $event['result_json'] = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
 
                     if ( $this->local_spam_effect_enabled( $mapping ) )
