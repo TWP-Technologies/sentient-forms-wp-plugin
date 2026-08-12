@@ -27,6 +27,7 @@
 		isModelFree as modelIsFree,
 		missingRequiredCapabilities,
 		modelSelectorZdrControl,
+		resolveReadyCredentialId,
 		modelCapabilityCount,
 		modelCostLabel,
 		modelBestRank,
@@ -110,7 +111,10 @@
 	let providerLoading = $state(false);
 	let models = $state<ModelInfo[]>([]);
 	let presets = $state<ModelPreset[]>([]);
-	let loadedProviderCredentials = $state<LocalProviderCredential[]>([]);
+	let loadedProviderCredentials = $state<LocalProviderCredential[]>(
+		Array.isArray(providerCredentials) ? providerCredentials : []
+	);
+	let providerCredentialsKnown = $state(Array.isArray(providerCredentials));
 	let selectionMode = $state<SelectionMode>('presets');
 	let selectedPreset = $state('sf_default');
 	let selectedModel = $state('');
@@ -157,6 +161,7 @@
 	let resolutionRequestToken = 0;
 	let lastEmittedSelectionSignature = '';
 	let lastSyncedExternalValueSignature = '';
+	let providerCredentialsWereSupplied = Array.isArray(providerCredentials);
 
 	const fallbackModel: ModelInfo = {
 		id: 'openrouter/auto',
@@ -364,7 +369,7 @@
 	}
 
 	function defaultCredentialIdForProvider(provider: string): number | null {
-		return credentialsForProvider(provider)[0]?.id ?? null;
+		return resolveReadyCredentialId(readyCredentials(), provider, null);
 	}
 
 	function providerRouteLabel(provider: string): string {
@@ -435,7 +440,15 @@
 		nextValue: ModelSelection | null | undefined,
 		{ force = false }: { force?: boolean } = {}
 	) {
-		const externalValueSignature = selectionSignature(nextValue ?? null);
+		const readyCredentialIdentity = readyCredentials().map((credential) => ({
+			id: credential.id,
+			provider: credential.provider
+		}));
+		const externalValueSignature = JSON.stringify({
+			selection: nextValue ?? null,
+			provider_credentials_known: providerCredentialsKnown,
+			ready_credentials: readyCredentialIdentity
+		});
 		if (!force && externalValueSignature === lastSyncedExternalValueSignature) return;
 		lastSyncedExternalValueSignature = externalValueSignature;
 
@@ -448,10 +461,17 @@
 			providerAllowed(providerFromValue)
 				? providerFromValue
 				: defaultProvider();
-		selectedCredentialId =
-			typeof nextValue?.credential_id === 'number' && nextValue.credential_id > 0
-				? nextValue.credential_id
-				: defaultCredentialIdForProvider(selectedProvider);
+		const requestedCredentialId = nextValue?.credential_id;
+		selectedCredentialId = providerCredentialsKnown
+			? resolveReadyCredentialId(readyCredentials(), selectedProvider, requestedCredentialId)
+			: typeof requestedCredentialId === 'number' && requestedCredentialId > 0
+				? requestedCredentialId
+				: null;
+		const credentialWasRepaired =
+			providerCredentialsKnown &&
+			typeof requestedCredentialId === 'number' &&
+			requestedCredentialId > 0 &&
+			requestedCredentialId !== selectedCredentialId;
 
 		if (!nextValue) {
 			selectionMode = 'presets';
@@ -516,7 +536,8 @@
 		zdrOnly =
 			effectiveManagedZdrRequired || (selectedProvider === MANAGED_PROVIDER && explicitRequireZdr);
 		syncToolSettings(nextValue.tools);
-		if (!readonly && clearUnsupportedToolSelections()) {
+		const unsupportedToolsWereCleared = !readonly && clearUnsupportedToolSelections();
+		if (!readonly && (credentialWasRepaired || unsupportedToolsWereCleared)) {
 			const sanitizedSelection = currentSelection();
 			if (
 				sanitizedSelection.primary.trim() &&
@@ -610,11 +631,13 @@
 	async function loadProviderCredentials() {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
+			providerCredentialsKnown = true;
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 			return;
 		}
 
 		providerLoading = true;
+		let credentialFetchSucceeded = false;
 		try {
 			const credentials = await wpRequestEndpoint('providers.credentials.list', {
 				showNotifications: false
@@ -632,12 +655,15 @@
 				created_at: credential.created_at ?? null,
 				updated_at: credential.updated_at ?? null
 			}));
+			credentialFetchSucceeded = true;
 		} catch (e) {
 			console.warn('Failed to load provider credentials for model selector', e);
-			loadedProviderCredentials = [];
 		} finally {
 			providerLoading = false;
-			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+			if (credentialFetchSucceeded) {
+				providerCredentialsKnown = true;
+				if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+			}
 		}
 	}
 
@@ -1000,6 +1026,13 @@
 	}
 
 	function handleSelectionChange() {
+		if (providerCredentialsKnown) {
+			selectedCredentialId = resolveReadyCredentialId(
+				readyCredentials(),
+				selectedProvider,
+				selectedCredentialId
+			);
+		}
 		const selection = currentSelection();
 		if (!selection.primary.trim()) return;
 		void resolveSelectionPreview(selection);
@@ -1479,8 +1512,14 @@
 	$effect(() => {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
+			providerCredentialsKnown = true;
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+		} else if (providerCredentialsWereSupplied) {
+			loadedProviderCredentials = [];
+			providerCredentialsKnown = false;
+			void loadProviderCredentials();
 		}
+		providerCredentialsWereSupplied = Array.isArray(providerCredentials);
 	});
 
 	$effect(() => {

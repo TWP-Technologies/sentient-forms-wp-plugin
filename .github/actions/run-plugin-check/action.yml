@@ -48,11 +48,23 @@ runs:
     - name: Install wp-env
       shell: bash
       env:
-        WP_VERSION: ${{ inputs.wp-version == 'trunk' && '"WordPress/WordPress#master"' || 'null' }}
+        INPUT_WP_VERSION: ${{ inputs.wp-version }}
       run: |
         set -euo pipefail
+        if [ "${INPUT_WP_VERSION}" = "trunk" ]; then
+          wp_core='"WordPress/WordPress#master"'
+        else
+          latest_version="$(curl --fail --silent --show-error 'https://api.wordpress.org/core/version-check/1.7/' | jq -r '.offers[] | select(.response == "upgrade") | .current' | head -n 1)"
+          if ! [[ "${latest_version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Unable to resolve a valid latest WordPress version."
+            exit 1
+          fi
+          core_archive="https://wordpress.org/wordpress-${latest_version}.zip"
+          curl --fail --silent --show-error --head "${core_archive}" >/dev/null
+          wp_core="$(jq -cn --arg archive "${core_archive}" '$archive')"
+        fi
         cat > .wp-env.json <<JSON
-        { "core": ${WP_VERSION}, "port": 8880, "testsPort": 8881, "plugins": [ "https://downloads.wordpress.org/plugin/plugin-check.zip" ], "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" } }
+        { "core": ${wp_core}, "port": 8880, "testsPort": 8881, "plugins": [ "https://downloads.wordpress.org/plugin/plugin-check.zip" ], "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" } }
         JSON
         cat .wp-env.json
         npm -g --no-fund i @wordpress/env@11.7.0

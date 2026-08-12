@@ -37,7 +37,24 @@ test.describe('Settings context state templates', () => {
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: true, data: [] })
+				body: JSON.stringify({
+					success: true,
+					data: [
+						{
+							id: 12,
+							provider: 'openrouter',
+							label: 'Site Context OpenRouter key',
+							auth_mode: 'manual_key',
+							constant_name: null,
+							status: 'valid',
+							status_json: null,
+							last_validated_at: '2026-05-28T00:00:00Z',
+							created_at: '2026-05-28T00:00:00Z',
+							updated_at: '2026-05-28T00:00:00Z',
+							secret_configured: true
+						}
+					]
+				})
 			})
 		);
 
