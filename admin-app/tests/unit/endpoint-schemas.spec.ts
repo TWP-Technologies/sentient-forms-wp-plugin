@@ -839,10 +839,21 @@ describe('admin endpoint schema registry', () => {
 							settings: {
 								model_selection: { model: 'openai/gpt-oss-20b:free', provider: 'openrouter' }
 							}
+						},
+						{
+							...action,
+							local_mapping_id: 'legacy-empty-credential-id',
+							settings: {
+								model_selection: {
+									primary: 'openrouter/auto',
+									provider: 'openrouter',
+									credential_id: ''
+								}
+							}
 						}
 					],
-					action_count: 3,
-					enabled_action_count: 3,
+					action_count: 4,
+					enabled_action_count: 4,
 					execution_status: {
 						status: 'unknown',
 						message: null,
@@ -867,13 +878,30 @@ describe('admin endpoint schema registry', () => {
 			is_preset: false,
 			provider: 'openrouter'
 		});
+		expect(result.forms[0].actions[3].settings?.model_selection).toEqual({
+			primary: 'openrouter/auto',
+			is_preset: false,
+			provider: 'openrouter',
+			credential_id: null
+		});
 	});
 
 	it('rejects legacy model selections at mapping and custom-action write boundaries', () => {
 		const legacyModelSelection = { model: 'openrouter/auto', provider: 'openrouter' };
+		const legacyEmptyCredentialSelection = {
+			primary: 'openrouter/auto',
+			is_preset: false,
+			provider: 'openrouter',
+			credential_id: ''
+		};
 		expect(
 			endpointRegistry['forms.actions.update'].request.safeParse({
 				settings: { model_selection: legacyModelSelection }
+			}).success
+		).toBe(false);
+		expect(
+			endpointRegistry['forms.actions.update'].request.safeParse({
+				settings: { model_selection: legacyEmptyCredentialSelection }
 			}).success
 		).toBe(false);
 		expect(
@@ -887,8 +915,23 @@ describe('admin endpoint schema registry', () => {
 			}).success
 		).toBe(false);
 		expect(
+			endpointRegistry['customActions.create'].request.safeParse({
+				code: 'local_custom_strict_empty_credential',
+				display_name: 'Strict empty credential',
+				model_selection: legacyEmptyCredentialSelection,
+				action_kind: 'custom_definition',
+				definition_version: 1,
+				supported_execution_modes: ['after_submission']
+			}).success
+		).toBe(false);
+		expect(
 			endpointRegistry['customActions.update'].request.safeParse({
 				model_selection: legacyModelSelection
+			}).success
+		).toBe(false);
+		expect(
+			endpointRegistry['customActions.update'].request.safeParse({
+				model_selection: legacyEmptyCredentialSelection
 			}).success
 		).toBe(false);
 	});

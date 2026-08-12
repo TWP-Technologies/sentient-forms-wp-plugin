@@ -1352,6 +1352,7 @@ const modelSelectionBoundarySchema = z.preprocess((value) => {
 		}
 	}
 	if (selection.backup === '') selection.backup = null;
+	if (selection.credential_id === '') selection.credential_id = null;
 	if (typeof selection.primary === 'string' && typeof selection.is_preset !== 'boolean') {
 		selection.is_preset = selection.primary.startsWith('sf_');
 	}
