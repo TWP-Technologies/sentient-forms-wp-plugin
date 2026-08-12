@@ -2233,6 +2233,10 @@ const formActionConfigResponseBoundarySchema = z.object({
 	action_id: z.string(),
 	config: formActionConfigBoundarySchema
 });
+const actionDefaultsResponseBoundarySchema = z.object({
+	action_id: z.string(),
+	config: formActionConfigBoundarySchema
+});
 const allFormActionConfigsBoundarySchema = z.object({
 	form_source: z.string(),
 	form_id: z.union([z.string(), z.number()]),
@@ -2735,7 +2739,7 @@ export const endpointRegistry = {
 	},
 	'actions.defaults.read': {
 		path: 'actions/{actionId}/defaults',
-		response: formActionConfigResponseBoundarySchema.describe('actions.defaults.read response'),
+		response: actionDefaultsResponseBoundarySchema.describe('actions.defaults.read response'),
 		error: endpointErrorSchema.describe('actions.defaults.read error')
 	},
 	'actions.defaults.batch': {
@@ -2746,7 +2750,7 @@ export const endpointRegistry = {
 	'actions.defaults.update': {
 		path: 'actions/{actionId}/defaults',
 		request: formActionConfigRequestBoundarySchema.describe('actions.defaults.update request'),
-		response: formActionConfigResponseBoundarySchema.describe('actions.defaults.update response'),
+		response: actionDefaultsResponseBoundarySchema.describe('actions.defaults.update response'),
 		error: endpointErrorSchema.describe('actions.defaults.update error')
 	},
 	'customActions.list': {
