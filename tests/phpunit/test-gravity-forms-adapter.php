@@ -8082,8 +8082,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( '811', $recent_events[0]['entry_id'] ?? null );
         $this->assertContains( 'store_result', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
         $this->assertContains( 'entry_note', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
-        $native_effect_outcomes = [];
-        foreach ( $recent_events[0]['result_json']['native_effect_outcomes'] ?? [] as $outcome )
+        $native_effect_outcome_list = $recent_events[0]['result_json']['native_effect_outcomes'] ?? [];
+        $native_effect_outcomes     = [];
+        foreach ( $native_effect_outcome_list as $outcome )
         {
             if ( is_array( $outcome ) && isset( $outcome['effect'] ) )
             {
@@ -8094,7 +8095,21 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'applied', $native_effect_outcomes['entry_note']['status'] ?? null );
         $this->assertArrayHasKey( 'reason', $native_effect_outcomes['entry_note'] ?? [] );
         $this->assertNotSame( 'missing_entry_id', $native_effect_outcomes['entry_note']['reason'] );
-        $this->assertNotEmpty( gform_get_meta( 811, 'sentient_forms_last_response' ) );
+        $stored_execution = json_decode(
+            (string) gform_get_meta( 811, 'sentient_forms_last_response' ),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+        $stored_result = gform_get_meta( 811, '_sentient_forms_local_result' );
+        $this->assertSame(
+            $native_effect_outcome_list,
+            $stored_execution['result']['native_effect_outcomes'] ?? null
+        );
+        $this->assertSame(
+            $native_effect_outcome_list,
+            $stored_result['native_effect_outcomes'] ?? null
+        );
 
         $this->assertContains(
             true,
