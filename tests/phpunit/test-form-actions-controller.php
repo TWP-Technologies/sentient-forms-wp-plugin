@@ -4757,7 +4757,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_sanitize_settings_rejects_non_positive_or_fractional_credential_ids(): void
     {
-        foreach ( [ -1, 0, 1.5, '-1', '1.5', str_repeat( '9', 40 ) ] as $credential_id )
+        foreach ( [ -1, 0, 1.5, '-1', '1.5', 9007199254740992, str_repeat( '9', 40 ) ] as $credential_id )
         {
             $sanitized = $this->invoke_private(
                 'sanitize_settings',

@@ -3299,6 +3299,9 @@
 		}
 
 		const resolvedModel = await resolveLocalBuilderModelSelection();
+		const persistedModelSelection = normalizeModelSelectionForPersistence(
+			localBuilderModelSelection
+		) as ModelSelection;
 		const timestamp = Date.now();
 		const action = await providerClient.createLocalCustomAction(
 			{
@@ -3316,7 +3319,7 @@
 					provider: 'openrouter',
 					model: resolvedModel.model_id,
 					credential_id: credential.id,
-					selection: localBuilderModelSelection,
+					selection: persistedModelSelection,
 					resolution_source: resolvedModel.resolution_source,
 					policy_hint: 'local_models_resolve'
 				},
