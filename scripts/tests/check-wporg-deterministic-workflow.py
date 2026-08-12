@@ -145,6 +145,20 @@ def main() -> int:
         if not path_is_triggered(required, push_paths):
             errors.append(f"package trigger misses required producer input: {required}")
 
+    plugin_check_action = (ROOT / ".github/actions/run-plugin-check/action.yml").read_text(
+        encoding="utf-8"
+    )
+    for required_fragment in {
+        "https://api.wordpress.org/core/version-check/1.7/",
+        "https://github.com/WordPress/wordpress-develop.git",
+        "WordPress/wordpress-develop#${latest_version}",
+        "git ls-remote --exit-code --tags",
+    }:
+        if required_fragment not in plugin_check_action:
+            errors.append(
+                f"Plugin Check latest-version resolver misses fail-closed fragment: {required_fragment}"
+            )
+
     try:
         package_build = step_by_name(package_job, "Build two independent WordPress.org packages")
         if package_build.get("id") != "package":
