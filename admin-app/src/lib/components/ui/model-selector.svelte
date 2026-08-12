@@ -161,6 +161,7 @@
 	let resolutionRequestToken = 0;
 	let lastEmittedSelectionSignature = '';
 	let lastSyncedExternalValueSignature = '';
+	let providerCredentialsWereSupplied = Array.isArray(providerCredentials);
 
 	const fallbackModel: ModelInfo = {
 		id: 'openrouter/auto',
@@ -368,7 +369,7 @@
 	}
 
 	function defaultCredentialIdForProvider(provider: string): number | null {
-		return credentialsForProvider(provider)[0]?.id ?? null;
+		return resolveReadyCredentialId(readyCredentials(), provider, null);
 	}
 
 	function providerRouteLabel(provider: string): string {
@@ -1513,9 +1514,12 @@
 			loadedProviderCredentials = providerCredentials;
 			providerCredentialsKnown = true;
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
-		} else {
+		} else if (providerCredentialsWereSupplied) {
+			loadedProviderCredentials = [];
 			providerCredentialsKnown = false;
+			void loadProviderCredentials();
 		}
+		providerCredentialsWereSupplied = Array.isArray(providerCredentials);
 	});
 
 	$effect(() => {

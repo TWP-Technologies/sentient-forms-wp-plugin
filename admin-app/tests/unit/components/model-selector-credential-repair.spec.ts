@@ -292,4 +292,56 @@ describe('ModelSelector credential repair', () => {
 		expect(changes.at(-1)?.credential_id).toBe(64);
 		expect(view.queryByTestId('model-selector-dialog')).toBeNull();
 	});
+
+	it('clears supplied credentials and reloads when control returns to internal loading', async () => {
+		let resolveCredentials: (credentials: LocalProviderCredential[]) => void = () => undefined;
+		const credentialsResponse = new Promise<LocalProviderCredential[]>((resolve) => {
+			resolveCredentials = resolve;
+		});
+		vi.mocked(wpRequestEndpoint).mockImplementation(async (name: string) => {
+			if (name === 'providers.credentials.list') return credentialsResponse as never;
+			if (name === 'models.catalog') return { models: [], presets: [] } as never;
+			if (name === 'models.resolve') return {} as never;
+			return [] as never;
+		});
+
+		const changes: ModelSelection[] = [];
+		const view = render(ModelSelector, {
+			value: staleSelection,
+			providerCredentials: [credential(61)],
+			managedZdrRequired: false,
+			onchange: (selection: ModelSelection) => changes.push(selection)
+		});
+		await settle();
+		await view.rerender({ providerCredentials: null });
+		await settle();
+
+		expect(changes.some((selection) => selection.credential_id === null)).toBe(false);
+		resolveCredentials([credential(64)]);
+		await settle();
+		expect(changes.at(-1)?.credential_id).toBe(64);
+	});
+
+	it('does not auto-select an ambiguous credential when the execution route changes', async () => {
+		const managedCredential = {
+			...credential(62),
+			provider: 'sentient_managed' as const,
+			label: 'Managed 62'
+		};
+		const changes: ModelSelection[] = [];
+		const view = render(ModelSelector, {
+			value: { ...staleSelection, credential_id: 62, provider: 'sentient_managed' },
+			providerCredentials: [managedCredential, credential(64), credential(65)],
+			managedZdrRequired: false,
+			onchange: (selection: ModelSelection) => changes.push(selection)
+		});
+		await settle();
+		await fireEvent.click(view.getByTestId('model-selector-open'));
+		const routeSelect = view.getByLabelText('Execution route') as HTMLSelectElement;
+		await fireEvent.change(routeSelect, { target: { value: 'openrouter' } });
+		await settle();
+
+		expect(changes.at(-1)?.provider).toBe('openrouter');
+		expect(changes.at(-1)?.credential_id).toBeNull();
+	});
 });

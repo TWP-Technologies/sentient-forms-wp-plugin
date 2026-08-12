@@ -68,7 +68,7 @@ export function resolveReadyCredentialId(
 		return requestedCredentialId;
 	}
 
-	return providerCredentials[0]?.id ?? null;
+	return providerCredentials.length === 1 ? providerCredentials[0].id : null;
 }
 
 export const ZDR_MODEL_TAG_HELPER = 'OpenRouter marks this model as available on ZDR routes.';

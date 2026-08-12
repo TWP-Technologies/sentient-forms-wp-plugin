@@ -62,6 +62,16 @@ describe('model selector presentation utilities', () => {
 		expect(resolveReadyCredentialId(credentials, 'openrouter', 64)).toBe(64);
 		expect(resolveReadyCredentialId(credentials, 'sentient_managed', 61)).toBe(62);
 		expect(resolveReadyCredentialId([], 'openrouter', 61)).toBeNull();
+		expect(
+			resolveReadyCredentialId(
+				[
+					{ id: 64, provider: 'openrouter' },
+					{ id: 65, provider: 'openrouter' }
+				],
+				'openrouter',
+				61
+			)
+		).toBeNull();
 	});
 
 	const models = [
