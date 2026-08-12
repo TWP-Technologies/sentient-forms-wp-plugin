@@ -1547,6 +1547,106 @@ describe('SentientFormsApiClient', () => {
 		expect(result.records[0]?.redaction_summary).toEqual({});
 	});
 
+	it('normalizes empty PHP objects in historical submission ledger action results', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				form_source: 'gravity_forms',
+				form_id: 42,
+				records: [
+					{
+						id: 11,
+						submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+						form_source: 'gravity_forms',
+						form_id: 42,
+						native_entry_id: '99',
+						native_entry_url: null,
+						source_submitted_at: null,
+						captured_at: '2030-01-05T10:00:01Z',
+						logical_fields: {},
+						provider_metadata: null,
+						file_refs: [],
+						redaction_summary: null,
+						action_runs: [
+							{
+								execution_request_id: 'historical-request',
+								mapping_id: 109,
+								status: 'error',
+								provider: null,
+								model: null,
+								last_result: [],
+								last_error_code: 'sentient_forms_provider_credential_not_found',
+								last_error_message: 'Validation action failed open.',
+								created_at: '2030-01-05T10:00:01Z',
+								updated_at: '2030-01-05T10:00:01Z'
+							}
+						],
+						expires_at: null,
+						detail_endpoint:
+							'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+					}
+				],
+				total: 1,
+				per_page: 10,
+				offset: 0
+			})
+		);
+
+		const result = await client.getSubmissionLedgerRecords('gravity_forms', 42, {
+			showNotifications: false
+		});
+
+		expect(result.records[0]?.action_runs[0]?.last_result).toEqual({});
+	});
+
+	it('rejects non-empty arrays in submission ledger action results', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				form_source: 'gravity_forms',
+				form_id: 42,
+				records: [
+					{
+						id: 11,
+						submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+						form_source: 'gravity_forms',
+						form_id: 42,
+						native_entry_id: '99',
+						native_entry_url: null,
+						source_submitted_at: null,
+						captured_at: '2030-01-05T10:00:01Z',
+						logical_fields: {},
+						provider_metadata: null,
+						file_refs: [],
+						redaction_summary: null,
+						action_runs: [
+							{
+								execution_request_id: 'malformed-request',
+								mapping_id: 109,
+								status: 'error',
+								provider: null,
+								model: null,
+								last_result: ['not-an-object'],
+								last_error_code: null,
+								last_error_message: null,
+								created_at: null,
+								updated_at: null
+							}
+						],
+						expires_at: null,
+						detail_endpoint:
+							'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+					}
+				],
+				total: 1,
+				per_page: 10,
+				offset: 0
+			})
+		);
+
+		await expect(
+			client.getSubmissionLedgerRecords('gravity_forms', 42, { showNotifications: false })
+		).rejects.toThrow();
+	});
+
 	it('searches historical spam guidance entries through the spam-specific endpoint', async () => {
 		mockFetch.mockResolvedValue(
 			jsonResponse({
