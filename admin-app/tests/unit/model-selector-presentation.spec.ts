@@ -8,6 +8,7 @@ import {
 	modelSupportsToolChoice,
 	modelSupportsServerTool,
 	providerMonogram,
+	resolveReadyCredentialId,
 	type ModelSelectorFilters
 } from '$lib/utils/model-selector-presentation';
 
@@ -51,6 +52,18 @@ const baseFilters: ModelSelectorFilters = {
 };
 
 describe('model selector presentation utilities', () => {
+	it('replaces a stale saved credential with a ready credential for the selected provider', () => {
+		const credentials = [
+			{ id: 64, provider: 'openrouter' },
+			{ id: 62, provider: 'sentient_managed' }
+		];
+
+		expect(resolveReadyCredentialId(credentials, 'openrouter', 61)).toBe(64);
+		expect(resolveReadyCredentialId(credentials, 'openrouter', 64)).toBe(64);
+		expect(resolveReadyCredentialId(credentials, 'sentient_managed', 61)).toBe(62);
+		expect(resolveReadyCredentialId([], 'openrouter', 61)).toBeNull();
+	});
+
 	const models = [
 		model({
 			id: 'anthropic/claude-sonnet-4.6',

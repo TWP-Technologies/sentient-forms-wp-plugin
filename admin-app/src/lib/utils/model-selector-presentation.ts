@@ -49,6 +49,28 @@ export interface ModelSelectorZdrControlState {
 	helperSentences: string[];
 }
 
+export interface ModelSelectorCredential {
+	id: number;
+	provider: string;
+}
+
+export function resolveReadyCredentialId(
+	credentials: ModelSelectorCredential[],
+	provider: string,
+	requestedCredentialId: number | null | undefined
+): number | null {
+	const providerCredentials = credentials.filter((credential) => credential.provider === provider);
+	if (
+		typeof requestedCredentialId === 'number' &&
+		requestedCredentialId > 0 &&
+		providerCredentials.some((credential) => credential.id === requestedCredentialId)
+	) {
+		return requestedCredentialId;
+	}
+
+	return providerCredentials[0]?.id ?? null;
+}
+
 export const ZDR_MODEL_TAG_HELPER = 'OpenRouter marks this model as available on ZDR routes.';
 export const DIRECT_OPENROUTER_ZDR_ENFORCEMENT_HELPER =
 	'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.';
