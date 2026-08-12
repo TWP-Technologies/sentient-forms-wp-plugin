@@ -682,8 +682,6 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				body: JSON.stringify({
 					success: true,
 					data: {
-						form_source: 'global',
-						form_id: 0,
 						action_id: actionId,
 						config
 					}
@@ -704,8 +702,6 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				body: JSON.stringify({
 					success: true,
 					data: {
-						form_source: 'global',
-						form_id: 0,
 						action_id: actionId,
 						config: actionDefaultsState[actionId]
 					}

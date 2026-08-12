@@ -85,6 +85,42 @@ describe('admin endpoint schema registry', () => {
 		expect(parsed.config.include_site_context).toBe(expected);
 	});
 
+	it.each(['actions.defaults.read', 'actions.defaults.update'] as const)(
+		'accepts the global action-defaults response shape for %s',
+		(endpoint) => {
+			const response = {
+				action_id: 'entry_summary_v1',
+				config: {
+					include_site_context: 'global',
+					model_selection: {
+						primary: 'sf_default',
+						backup: null,
+						is_preset: true,
+						provider: 'sentient_managed',
+						credential_id: 62
+					}
+				}
+			};
+
+			expect(endpointRegistry[endpoint].response.parse(response)).toEqual(response);
+		}
+	);
+
+	it('keeps form-scoped action-config responses distinct from global defaults', () => {
+		expect(
+			endpointRegistry['forms.actionConfigs.read'].response.safeParse({
+				action_id: 'entry_summary_v1',
+				config: {}
+			}).success
+		).toBe(false);
+		expect(
+			endpointRegistry['actions.defaults.read'].response.safeParse({
+				action_id: 'entry_summary_v1',
+				config: { include_site_context: 'sometimes' }
+			}).success
+		).toBe(false);
+	});
+
 	it('keeps persisted mapping writes strict without stripping supported settings', () => {
 		const request = endpointRegistry['forms.actions.update'].request;
 		const supported = request.parse({
