@@ -5565,6 +5565,71 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'spam_indicators_display', $data[0]['settings'] ?? [] );
     }
 
+    public function test_wpforms_form_actions_read_serializes_fully_filtered_effects_as_null(): void
+    {
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $form_id = wp_insert_post(
+            [
+                'post_type'   => 'wpforms',
+                'post_status' => 'publish',
+                'post_title'  => 'WPForms filtered effects',
+            ]
+        );
+        $this->assertIsInt( $form_id );
+
+        global $wpdb;
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' ),
+                'display_name'         => 'Entry Summary',
+                'definition_json'      => [ 'template_code' => 'entry_summary_v1' ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openai/gpt-oss-20b:free',
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => (string) $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'meta'         => [
+                        'sentient_forms_summary' => 'content',
+                    ],
+                    'entry_note'   => [
+                        'path' => 'content',
+                    ],
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/' . $form_id . '/actions' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $data );
+        $this->assertSame( 'local_first_' . $mapping_id, $data[0]['local_mapping_id'] ?? null );
+        $this->assertArrayHasKey( 'effect_mapping_json', $data[0]['settings'] );
+        $this->assertNull( $data[0]['settings']['effect_mapping_json'] ?? null );
+    }
+
     public function test_get_forms_overview_combines_forms_actions_and_statuses(): void
     {
         GFAPI::$forms = [

@@ -434,6 +434,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $effect_mapping = is_array( $row['effect_mapping_json'] ?? null )
             ? $this->filter_effect_mapping_for_form_source_capabilities( $form_source, $row['effect_mapping_json'] )
             : null;
+        if ( [] === $effect_mapping )
+        {
+            $effect_mapping = null;
+        }
         $settings       = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
         if ( ! array_key_exists( 'input_mapping', $settings ) )
         {
