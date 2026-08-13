@@ -3720,6 +3720,128 @@ test.describe('Actions admin flows', () => {
 		expect(triggerSources).not.toHaveProperty('after_submission');
 	});
 
+	test('repairs a stale mapping credential at the save boundary', async ({ page }) => {
+		const staleLinkage = {
+			...baseLinkages[0],
+			settings: {
+				model_selection: {
+					primary: 'sf_default',
+					is_preset: true,
+					provider: 'openrouter',
+					credential_id: 61
+				}
+			}
+		};
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [staleLinkage],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } },
+			localProviders: {
+				credentials: [{ ...limitedOpenRouterCredential, id: 64, status: 'valid' }]
+			}
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const updateRequest = page.waitForRequest(
+			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
+		);
+		await page.getByTestId('mapping-config-save').click();
+		const payload = (await updateRequest).postDataJSON() as Record<string, unknown>;
+		const settings = payload.settings as Record<string, unknown>;
+
+		expect(settings.model_selection).toMatchObject({
+			provider: 'openrouter',
+			credential_id: 64
+		});
+	});
+
+	test('preserves a saved mapping credential when credential loading fails', async ({ page }) => {
+		const savedLinkage = {
+			...baseLinkages[0],
+			settings: {
+				model_selection: {
+					primary: 'sf_default',
+					is_preset: true,
+					provider: 'openrouter',
+					credential_id: 64
+				}
+			}
+		};
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [savedLinkage],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } },
+			localProviders: {
+				credentialsError: { status: 503, body: { code: 'temporarily_unavailable' } }
+			}
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		const updateRequest = page.waitForRequest(
+			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
+		);
+		await page.getByTestId('mapping-config-save').click();
+		const payload = (await updateRequest).postDataJSON() as Record<string, unknown>;
+		const settings = payload.settings as Record<string, unknown>;
+
+		expect(settings.model_selection).toMatchObject({ credential_id: 64 });
+	});
+
+	test('clears a saved mapping credential after an authoritative empty response', async ({ page }) => {
+		const savedLinkage = {
+			...baseLinkages[0],
+			settings: {
+				model_selection: {
+					primary: 'sf_default',
+					is_preset: true,
+					provider: 'openrouter',
+					credential_id: 64
+				}
+			}
+		};
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [savedLinkage],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } },
+			localProviders: { credentials: [] }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		const updateRequest = page.waitForRequest(
+			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
+		);
+		await page.getByTestId('mapping-config-save').click();
+		const payload = (await updateRequest).postDataJSON() as Record<string, unknown>;
+		const settings = payload.settings as Record<string, unknown>;
+
+		expect(settings.model_selection).toMatchObject({ credential_id: null });
+	});
+
 	test('re-evaluates descriptorless lifecycle compatibility when the route source changes', async ({
 		page
 	}) => {
