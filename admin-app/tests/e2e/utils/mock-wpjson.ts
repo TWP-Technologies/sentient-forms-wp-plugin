@@ -33,6 +33,7 @@ type Routes = {
 	};
 	localProviders?: {
 		credentials?: unknown[];
+		credentialsError?: { status?: number; body: unknown };
 	};
 	siteContext?: unknown;
 };
@@ -358,6 +359,13 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		}
 
 		if (urlWithoutQuery.endsWith('/local/providers/credentials') && method === 'GET') {
+			if (routes.localProviders?.credentialsError) {
+				return route.fulfill({
+					status: routes.localProviders.credentialsError.status ?? 500,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(routes.localProviders.credentialsError.body)
+				});
+			}
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -934,7 +942,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					form_source_descriptor: routes.actions?.formSourceDescriptors?.[sourceSlug] ?? null,
 					definitions,
 					custom_actions: customActionsPayload,
-					provider_credentials: routes.localProviders?.credentials ?? [],
+					...(routes.localProviders?.credentialsError
+						? {}
+						: { provider_credentials: routes.localProviders?.credentials ?? [] }),
 					form_action_configs: formActionConfigsFor(sourceSlug, currentFormId),
 					form_fields: routes.actions?.formFields ?? [],
 					action_defaults: Object.fromEntries(

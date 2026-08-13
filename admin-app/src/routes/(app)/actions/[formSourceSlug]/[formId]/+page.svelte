@@ -56,7 +56,10 @@
 	import { notifications } from '$lib/stores/notifications';
 	import { licenseState } from '$lib/stores/license.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
-	import { normalizeModelSelectionForPersistence } from '$lib/utils/model-selection-persistence';
+	import {
+		normalizeModelSelectionForPersistence,
+		reconcileModelSelectionCredentialForPersistence
+	} from '$lib/utils/model-selection-persistence';
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
 		ActionDefinition,
@@ -617,6 +620,7 @@
 	);
 	let providerCredentials = $state<LocalProviderCredential[]>([]);
 	let providerCredentialsLoading = $state(false);
+	let providerCredentialsKnown = $state(false);
 	let providerCredentialsError = $state<string | null>(null);
 	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
 	const localBuilderTemplate = $derived.by(() =>
@@ -1387,14 +1391,17 @@
 
 	async function loadProviderCredentials() {
 		providerCredentialsLoading = true;
+		providerCredentialsKnown = false;
 		providerCredentialsError = null;
 
 		try {
 			providerCredentials = await providerClient.getLocalProviderCredentials({
 				showNotifications: false
 			});
+			providerCredentialsKnown = true;
 		} catch (error) {
 			providerCredentials = [];
+			providerCredentialsKnown = false;
 			providerCredentialsError =
 				error instanceof Error ? error.message : 'Failed to load local OpenRouter status.';
 		} finally {
@@ -1427,6 +1434,7 @@
 
 		if (bootstrap.provider_credentials) {
 			providerCredentials = bootstrap.provider_credentials;
+			providerCredentialsKnown = true;
 			providerCredentialsError = null;
 			providerCredentialsLoading = false;
 		} else {
@@ -4190,8 +4198,9 @@
 			trigger_sources: persistableTriggerSources
 		};
 		if (typeof draftSettings.model_selection !== 'undefined') {
-			nextSettings.model_selection = normalizeModelSelectionForPersistence(
-				draftSettings.model_selection
+			nextSettings.model_selection = reconcileModelSelectionCredentialForPersistence(
+				draftSettings.model_selection,
+				providerCredentialsKnown ? providerCredentials : undefined
 			);
 		}
 		if (typeof draftSettings.attachment_mapping !== 'undefined') {
@@ -4566,7 +4575,7 @@
 								actionSelection={actionDefaultsByActionId[configuringActionId ?? '']
 									?.model_selection ?? null}
 								formSelection={formLevelConfig.model_selection ?? null}
-								{providerCredentials}
+								providerCredentials={providerCredentialsKnown ? providerCredentials : null}
 								onchange={handleFormLevelModelSelectionChange}
 							/>
 						</div>
@@ -6383,7 +6392,7 @@
 									formSelection={currentFormActionConfig.model_selection ?? null}
 									mappingSelection={(draftSettings.model_selection as ModelSelection | undefined) ??
 										null}
-									{providerCredentials}
+										providerCredentials={providerCredentialsKnown ? providerCredentials : null}
 									onchange={handleMappingModelSelectionChange}
 								/>
 
@@ -6877,7 +6886,7 @@
 										label="Local model policy"
 										level="action"
 										templateModelHint="openrouter/auto"
-										{providerCredentials}
+										providerCredentials={providerCredentialsKnown ? providerCredentials : null}
 										allowedProviders={['openrouter']}
 										requiredCapabilities={['structured']}
 										lockRequiredCapabilities={true}
