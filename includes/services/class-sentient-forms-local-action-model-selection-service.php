@@ -13,6 +13,8 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
     private const READY_CREDENTIAL_STATUSES = [ 'valid', 'limited' ];
     private const EXECUTION_MODES           = [ 'sync', 'async', 'real_time' ];
     private const MANAGED_DEFAULT_MODEL     = 'gemini-3-flash-preview';
+    private const SCHEDULED_ACTION_SCAN_BATCH_SIZE = 100;
+    private const SCHEDULED_ACTION_SCAN_MAX_PAGES  = 100;
 
     public function __construct(
         private ?Sentient_Forms_Local_Custom_Actions_Repository $custom_actions = null,
@@ -27,6 +29,775 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $this->credentials    = $this->credentials ?? new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
         $this->form_mappings  = $this->form_mappings ?? new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $this->model_cache    = $this->model_cache ?? new Sentient_Forms_Model_Cache_Repository( $wpdb );
+    }
+
+    /**
+     * Delete a provider credential only when no persisted action or mapping still names it.
+     *
+     * @return bool|WP_Error
+     */
+    public function delete_credential_if_unreferenced( int $credential_id ): bool | WP_Error
+    {
+        $credential_id = absint( $credential_id );
+        global $wpdb;
+        $async_requests = new Sentient_Forms_Async_Request_Store( $wpdb );
+        $actions_table_configured = is_string( $wpdb->actionscheduler_actions ?? null )
+            && '' !== (string) $wpdb->actionscheduler_actions;
+        $actions_table = $actions_table_configured
+                ? (string) $wpdb->actionscheduler_actions
+                : $wpdb->prefix . 'actionscheduler_actions';
+
+        if (
+            ! $this->credentials->uses_transactional_storage()
+            || ! $this->custom_actions->uses_transactional_storage()
+            || ! $this->form_mappings->uses_transactional_storage()
+            || ! $async_requests->uses_transactional_storage()
+            || ! $this->table_uses_transactional_storage( $wpdb->options )
+            || (
+                $actions_table_configured
+                && ! $this->table_uses_transactional_storage( $actions_table )
+            )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_nontransactional_credential_reference_store',
+                __( 'Provider credential references require transactional storage before deletion.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+        }
+
+        return $this->form_mappings->transaction(
+            function () use ( $credential_id ): bool | WP_Error {
+                $references = [];
+
+                $actions = $this->custom_actions->list_all_for_update();
+                if ( is_wp_error( $actions ) )
+                {
+                    $actions->add_data( [ 'status' => 503, 'reference_source' => 'custom_actions' ] );
+                    return $actions;
+                }
+                foreach ( $actions as $action )
+                {
+                    $definition = is_array( $action['definition_json'] ?? null )
+                        ? $action['definition_json']
+                        : [];
+                    if (
+                        $this->contains_credential_reference(
+                            $action['model_selection_json'] ?? null,
+                            $credential_id,
+                            [ 'credential_id', 'backup_credential_id' ]
+                        )
+                        || $this->credential_reference_value_matches(
+                            $definition['credential_id'] ?? null,
+                            $credential_id
+                        )
+                    )
+                    {
+                        $references[] = [
+                            'type' => 'custom_action',
+                            'id'   => absint( $action['id'] ?? 0 ),
+                            'name' => sanitize_text_field(
+                                (string) ( $action['display_name'] ?? $action['code'] ?? '' )
+                            ),
+                        ];
+                    }
+                }
+
+                $mappings = $this->form_mappings->list_all_for_update();
+                if ( is_wp_error( $mappings ) )
+                {
+                    $mappings->add_data( [ 'status' => 503, 'reference_source' => 'form_mappings' ] );
+                    return $mappings;
+                }
+                foreach ( $mappings as $mapping )
+                {
+                    if ( $this->contains_credential_reference( $mapping['settings_json'] ?? null, $credential_id ) )
+                    {
+                        $references[] = [
+                            'type'        => 'form_mapping',
+                            'id'          => absint( $mapping['id'] ?? 0 ),
+                            'form_source' => sanitize_key( (string) ( $mapping['form_source'] ?? '' ) ),
+                            'form_id'     => sanitize_text_field( (string) ( $mapping['form_id'] ?? '' ) ),
+                        ];
+                    }
+                }
+
+                $option_references = $this->option_credential_references_for_update( $credential_id );
+                if ( is_wp_error( $option_references ) )
+                {
+                    $option_references->add_data( [ 'status' => 503, 'reference_source' => 'options' ] );
+                    return $option_references;
+                }
+                $references = array_merge( $references, $option_references );
+
+                $durable_references = $this->durable_execution_credential_references( $credential_id );
+                if ( is_wp_error( $durable_references ) )
+                {
+                    $durable_references->add_data( [ 'status' => 503, 'reference_source' => 'durable_jobs' ] );
+                    return $durable_references;
+                }
+                $references = array_merge( $references, $durable_references );
+
+                $cron_references = $this->wp_cron_execution_credential_references( $credential_id );
+                if ( is_wp_error( $cron_references ) )
+                {
+                    $cron_references->add_data( [ 'status' => 503, 'reference_source' => 'wp_cron' ] );
+                    return $cron_references;
+                }
+                $references = array_merge( $references, $cron_references );
+
+                $scheduled_references = $this->scheduled_execution_credential_references( $credential_id );
+                if ( is_wp_error( $scheduled_references ) )
+                {
+                    $scheduled_references->add_data( [ 'status' => 503, 'reference_source' => 'action_scheduler' ] );
+                    return $scheduled_references;
+                }
+                $references = array_merge( $references, $scheduled_references );
+
+                if ( [] !== $references )
+                {
+                    return new WP_Error(
+                        'sentient_forms_credential_in_use',
+                        __(
+                            'This provider credential is still used by local configuration or queued work. Reassign dependent Actions, update Site Context, and let active jobs finish before deleting it.',
+                            'sentient-forms'
+                        ),
+                        [
+                            'status'     => 409,
+                            'references' => $references,
+                        ]
+                    );
+                }
+
+                return $this->credentials->delete( $credential_id );
+            }
+        );
+    }
+
+    /**
+     * @param array<int, string> $reference_keys
+     */
+    private function contains_credential_reference(
+        mixed $value,
+        int $credential_id,
+        array $reference_keys = [ 'credential_id', 'backup_credential_id' ]
+    ): bool
+    {
+        if ( ! is_array( $value ) || $credential_id <= 0 )
+        {
+            return false;
+        }
+
+        foreach ( $value as $key => $nested )
+        {
+            if (
+                in_array( $key, $reference_keys, true )
+                && $this->credential_reference_value_matches( $nested, $credential_id )
+            )
+            {
+                return true;
+            }
+
+            if (
+                is_array( $nested )
+                && $this->contains_credential_reference( $nested, $credential_id, $reference_keys )
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function credential_reference_value_matches( mixed $value, int $credential_id ): bool
+    {
+        if ( is_int( $value ) )
+        {
+            return $value === $credential_id;
+        }
+        if ( ! is_string( $value ) || 1 !== preg_match( '/^[0-9]+$/', $value ) )
+        {
+            return false;
+        }
+
+        $normalized = ltrim( $value, '0' );
+        return (string) $credential_id === ( '' === $normalized ? '0' : $normalized );
+    }
+
+    /**
+     * Lock and inspect option-backed execution configuration.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    private function option_credential_references_for_update( int $credential_id ): array | WP_Error
+    {
+        global $wpdb;
+
+        $references   = [];
+        $option_names = [
+            'sentient_forms_site_context_settings',
+            'sentient_forms_site_context_generation_job',
+        ];
+
+        foreach ( $option_names as $option_name )
+        {
+            $wpdb->last_error = '';
+            $query = $wpdb->prepare(
+                'SELECT option_name, option_value FROM %i WHERE option_name = %s FOR UPDATE',
+                $wpdb->options,
+                $option_name
+            );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Credential deletion requires a fresh row lock; cached option reads cannot authorize deletion.
+            $row = $wpdb->get_row(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+                $query,
+                ARRAY_A
+            );
+            if ( '' !== $wpdb->last_error )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+            if ( ! is_array( $row ) )
+            {
+                continue;
+            }
+
+            $value = maybe_unserialize( $row['option_value'] ?? null );
+            if ( ! is_array( $value ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+            if (
+                'sentient_forms_site_context_generation_job' === $option_name
+                && ! in_array(
+                    sanitize_key( (string) ( $value['status'] ?? '' ) ),
+                    [ 'queued', 'running', 'in-progress' ],
+                    true
+                )
+            )
+            {
+                continue;
+            }
+
+            if ( $this->contains_credential_reference( $value, $credential_id ) )
+            {
+                $references[] = [
+                    'type' => 'sentient_forms_site_context_settings' === $option_name
+                        ? 'site_context_settings'
+                        : 'site_context_generation_job',
+                    'id'   => $option_name,
+                ];
+            }
+        }
+
+        foreach (
+            [
+                'sentient_forms_form_config_',
+                'sentient_forms_action_defaults_',
+                'sentient_forms_actions_',
+                'sentient_forms_gravity_forms_',
+            ] as $option_prefix
+        )
+        {
+            $wpdb->last_error = '';
+            $query = $wpdb->prepare(
+                'SELECT option_name, option_value FROM %i '
+                    . 'WHERE option_name LIKE %s ORDER BY option_name ASC FOR UPDATE',
+                $wpdb->options,
+                $wpdb->esc_like( $option_prefix ) . '%'
+            );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Credential deletion requires a fresh locked prefix scan; cached option reads could miss execution authority.
+            $rows = $wpdb->get_results(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+                $query,
+                ARRAY_A
+            );
+            if ( ! is_array( $rows ) || '' !== $wpdb->last_error )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+
+            foreach ( $rows as $row )
+            {
+                $value = maybe_unserialize( $row['option_value'] ?? null );
+                if ( ! is_array( $value ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_credential_reference_check_failed',
+                        __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                        [ 'status' => 503 ]
+                    );
+                }
+                if ( $this->contains_credential_reference( $value, $credential_id ) )
+                {
+                    $references[] = [
+                        'type' => 'configuration_option',
+                        'id'   => sanitize_key( (string) ( $row['option_name'] ?? '' ) ),
+                    ];
+                }
+            }
+        }
+
+        return $references;
+    }
+
+    /**
+     * Inspect authoritative pending and running Action Scheduler payloads.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    private function scheduled_execution_credential_references(
+        int $credential_id,
+        ?bool $scheduler_classes_available = null,
+        ?bool $scheduler_functions_available = null
+    ): array | WP_Error
+    {
+        global $wpdb;
+
+        $scheduler_classes_available ??= class_exists( 'ActionScheduler' )
+            && class_exists( 'ActionScheduler_Store' );
+        $scheduler_functions_available ??= function_exists( 'as_schedule_single_action' )
+            || function_exists( 'as_enqueue_async_action' );
+        $scheduler_authority_state = $this->action_scheduler_authority_state(
+            $scheduler_classes_available,
+            $scheduler_functions_available
+        );
+        $scheduler_store = null;
+        if ( $scheduler_classes_available )
+        {
+            try
+            {
+                $scheduler_store = ActionScheduler::store();
+            }
+            catch ( Throwable )
+            {
+                return $this->credential_reference_check_failed_error();
+            }
+            if (
+                ! $scheduler_store instanceof ActionScheduler_DBStore
+                && ! $scheduler_store instanceof ActionScheduler_HybridStore
+            )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_unavailable',
+                    __( 'Provider credential references could not be verified for the active scheduler store.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+        }
+
+        $actions_table = is_string( $wpdb->actionscheduler_actions ?? null )
+            && '' !== (string) $wpdb->actionscheduler_actions
+                ? (string) $wpdb->actionscheduler_actions
+                : $wpdb->prefix . 'actionscheduler_actions';
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- This fail-closed authority probe must observe the exact current scheduler table, not cached state.
+        $table_probe = $wpdb->query( $wpdb->prepare( 'SELECT 1 FROM %i LIMIT 0', $actions_table ) );
+        if ( false === $table_probe )
+        {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- The server error code distinguishes a positively absent table from any unreadable or malformed authority query.
+            $probe_errors = $wpdb->get_results( 'SHOW ERRORS LIMIT 1', ARRAY_A );
+            $probe_code   = is_array( $probe_errors )
+                ? absint( $probe_errors[0]['Code'] ?? 0 )
+                : 0;
+            if ( 1146 !== $probe_code )
+            {
+                return $this->credential_reference_check_failed_error();
+            }
+            if ( 'wp_cron_only' !== $scheduler_authority_state )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_unavailable',
+                    __(
+                        'Provider credential references could not be verified. Try again after Action Scheduler is available.',
+                        'sentient-forms'
+                    ),
+                    [ 'status' => 503 ]
+                );
+            }
+            return [];
+        }
+        if ( ! $this->table_uses_transactional_storage( $actions_table ) )
+        {
+            return new WP_Error(
+                'sentient_forms_nontransactional_credential_reference_store',
+                __( 'Provider credential references require transactional storage before deletion.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+        }
+
+        $wpdb->last_error = '';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Schema compatibility must be established before selecting scheduler payloads.
+        $extended_args_column = $wpdb->get_var(
+            $wpdb->prepare( 'SHOW COLUMNS FROM %i LIKE %s', $actions_table, 'extended_args' )
+        );
+        if ( '' !== $wpdb->last_error )
+        {
+            return $this->credential_reference_check_failed_error();
+        }
+        $has_extended_args = 'extended_args' === (string) $extended_args_column;
+
+        $hybrid_store_action_ids = [];
+        if ( $scheduler_store instanceof ActionScheduler_HybridStore )
+        {
+            $runtime_actions_table = $wpdb->actionscheduler_actions ?? null;
+            $wpdb->actionscheduler_actions = $actions_table;
+            try
+            {
+                $hybrid_store_action_ids = $this->active_scheduler_store_action_ids( $scheduler_store );
+            }
+            finally
+            {
+                $wpdb->actionscheduler_actions = $runtime_actions_table;
+            }
+            if ( is_wp_error( $hybrid_store_action_ids ) )
+            {
+                return $hybrid_store_action_ids;
+            }
+        }
+
+        $references = [];
+        $scanned_action_ids = [];
+        $last_id    = 0;
+        $pending_status = $scheduler_classes_available
+            ? ActionScheduler_Store::STATUS_PENDING
+            : 'pending';
+        $running_status = $scheduler_classes_available
+            ? ActionScheduler_Store::STATUS_RUNNING
+            : 'in-progress';
+        $batch_size = max(
+            1,
+            min(
+                self::SCHEDULED_ACTION_SCAN_BATCH_SIZE,
+                absint(
+                    apply_filters(
+                        'sentient_forms_credential_reference_action_scan_batch_size',
+                        self::SCHEDULED_ACTION_SCAN_BATCH_SIZE
+                    )
+                )
+            )
+        );
+        for ( $page = 0; $page < self::SCHEDULED_ACTION_SCAN_MAX_PAGES; $page++ )
+        {
+            $wpdb->last_error = '';
+            $query = $has_extended_args
+                ? $wpdb->prepare(
+                    'SELECT action_id, hook, status, COALESCE(NULLIF(extended_args, %s), args) AS args FROM %i '
+                        . 'WHERE hook IN (%s, %s) AND status IN (%s, %s) AND action_id > %d '
+                        . 'ORDER BY action_id ASC LIMIT %d FOR UPDATE',
+                    '',
+                    $actions_table,
+                    Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                    'sentient_forms_evaluate_action',
+                    $pending_status,
+                    $running_status,
+                    $last_id,
+                    $batch_size
+                )
+                : $wpdb->prepare(
+                    'SELECT action_id, hook, status, args FROM %i '
+                        . 'WHERE hook IN (%s, %s) AND status IN (%s, %s) AND action_id > %d '
+                        . 'ORDER BY action_id ASC LIMIT %d FOR UPDATE',
+                    $actions_table,
+                    Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                    'sentient_forms_evaluate_action',
+                    $pending_status,
+                    $running_status,
+                    $last_id,
+                    $batch_size
+                );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared in the version-specific branch immediately above execution.
+            $rows = $wpdb->get_results( $query, ARRAY_A );
+            if ( ! is_array( $rows ) || '' !== $wpdb->last_error )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+
+            foreach ( $rows as $row )
+            {
+                $action_id = absint( $row['action_id'] ?? 0 );
+                $args      = json_decode( (string) ( $row['args'] ?? '' ), true );
+                if ( $action_id <= $last_id || ! is_array( $args ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_credential_reference_check_failed',
+                        __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                        [ 'status' => 503 ]
+                    );
+                }
+                $scanned_action_ids[ $action_id ] = $action_id;
+
+                if (
+                    $this->contains_credential_reference(
+                        $args,
+                        $credential_id,
+                        [ 'credential_id', 'backup_credential_id' ]
+                    )
+                )
+                {
+                    $references[] = [
+                        'type'   => 'scheduled_execution',
+                        'id'     => $action_id,
+                        'hook'   => sanitize_key( (string) ( $row['hook'] ?? '' ) ),
+                        'status' => sanitize_key( (string) ( $row['status'] ?? '' ) ),
+                    ];
+                }
+
+                $last_id = $action_id;
+            }
+
+            if ( count( $rows ) < $batch_size )
+            {
+                if ( [] !== array_diff( $hybrid_store_action_ids, $scanned_action_ids ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_credential_reference_check_unavailable',
+                        __( 'Provider credential references could not be verified for unmigrated scheduled actions.', 'sentient-forms' ),
+                        [ 'status' => 503 ]
+                    );
+                }
+                return $references;
+            }
+        }
+
+        return new WP_Error(
+            'sentient_forms_credential_reference_check_too_large',
+            __( 'Provider credential references exceed the safe verification limit. Finish queued work and try again.', 'sentient-forms' ),
+            [ 'status' => 503 ]
+        );
+    }
+
+    /** @return array<int, int>|WP_Error */
+    private function active_scheduler_store_action_ids( ActionScheduler_Store $store ): array | WP_Error
+    {
+        $ids = [];
+        $limit = self::SCHEDULED_ACTION_SCAN_BATCH_SIZE * self::SCHEDULED_ACTION_SCAN_MAX_PAGES + 1;
+        foreach (
+            [ Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK, 'sentient_forms_evaluate_action' ] as $hook
+        )
+        {
+            foreach ( [ ActionScheduler_Store::STATUS_PENDING, ActionScheduler_Store::STATUS_RUNNING ] as $status )
+            {
+                try
+                {
+                    global $wpdb;
+                    $wpdb->last_error = '';
+                    $found = $store->query_actions(
+                        [
+                            'hook'     => $hook,
+                            'status'   => $status,
+                            'per_page' => $limit,
+                        ]
+                    );
+                }
+                catch ( Throwable )
+                {
+                    return $this->credential_reference_check_failed_error();
+                }
+                if ( '' !== $wpdb->last_error )
+                {
+                    return $this->credential_reference_check_failed_error();
+                }
+                if ( ! is_array( $found ) || count( $found ) >= $limit )
+                {
+                    return $this->credential_reference_check_failed_error();
+                }
+                foreach ( $found as $action_id )
+                {
+                    $action_id = absint( $action_id );
+                    if ( $action_id > 0 )
+                    {
+                        $ids[ $action_id ] = $action_id;
+                    }
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    private function action_scheduler_authority_state(
+        bool $classes_available,
+        bool $functions_available
+    ): string
+    {
+        if ( ! $classes_available && ! $functions_available )
+        {
+            return 'wp_cron_only';
+        }
+
+        return $classes_available ? 'ready' : 'unavailable';
+    }
+
+    /** @return array<int, array<string, mixed>>|WP_Error */
+    private function durable_execution_credential_references( int $credential_id ): array | WP_Error
+    {
+        global $wpdb;
+
+        $rows = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )
+            ->list_active_authority_payloads_for_update();
+        if ( is_wp_error( $rows ) )
+        {
+            return new WP_Error(
+                'sentient_forms_credential_reference_check_failed',
+                __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+        }
+
+        $references = [];
+        foreach ( $rows as $row )
+        {
+            if ( $this->contains_credential_reference( $row['payload'] ?? null, $credential_id ) )
+            {
+                $references[] = [
+                    'type'   => 'accepted_sync' === ( $row['record_type'] ?? '' )
+                        ? 'active_execution'
+                        : 'queued_execution',
+                    'id'     => sanitize_text_field( (string) ( $row['request_hash'] ?? '' ) ),
+                    'status' => sanitize_key( (string) ( $row['status'] ?? '' ) ),
+                ];
+            }
+        }
+
+        return $references;
+    }
+
+    /** Whether a directly locked authority table can participate in the deletion transaction. */
+    private function table_uses_transactional_storage( string $table ): bool
+    {
+        global $wpdb;
+
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- SHOW CREATE TABLE is read-only engine introspection for the deletion transaction fence.
+        $show_create_query = $wpdb->prepare( 'SHOW CREATE TABLE %i', $table );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Direct catalog inspection is required before row locks are trusted.
+        $definition = $wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $show_create_query,
+            ARRAY_N
+        );
+        $wpdb->suppress_errors( $previous_suppress_errors );
+
+        return is_array( $definition )
+            && isset( $definition[1] )
+            && 1 === preg_match( '/\bENGINE=(?:InnoDB|XtraDB)\b/i', (string) $definition[1] );
+    }
+
+    /** @return array<int, array<string, mixed>>|WP_Error */
+    private function wp_cron_execution_credential_references( int $credential_id ): array | WP_Error
+    {
+        global $wpdb;
+
+        $wpdb->last_error = '';
+        $query = $wpdb->prepare(
+            'SELECT option_value FROM %i WHERE option_name = %s FOR UPDATE',
+            $wpdb->options,
+            'cron'
+        );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Credential deletion requires a fresh row lock on the WP-Cron authority row.
+        $row = $wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and scalar placeholders.
+            $query,
+            ARRAY_A
+        );
+        if ( '' !== $wpdb->last_error )
+        {
+            return $this->credential_reference_check_failed_error();
+        }
+        if ( null === $row )
+        {
+            return [];
+        }
+
+        $cron = is_array( $row ) ? maybe_unserialize( $row['option_value'] ?? null ) : null;
+        if ( ! is_array( $cron ) )
+        {
+            return $this->credential_reference_check_failed_error();
+        }
+
+        $references = [];
+        foreach ( $cron as $timestamp => $hooks )
+        {
+            if ( 'version' === (string) $timestamp )
+            {
+                continue;
+            }
+            if ( ! is_numeric( $timestamp ) )
+            {
+                return $this->credential_reference_check_failed_error();
+            }
+            if ( ! is_array( $hooks ) )
+            {
+                return $this->credential_reference_check_failed_error();
+            }
+            $execution_hooks = [
+                Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                'sentient_forms_evaluate_action',
+            ];
+            foreach ( $execution_hooks as $execution_hook )
+            {
+                if ( ! array_key_exists( $execution_hook, $hooks ) )
+                {
+                    continue;
+                }
+                $events = $hooks[ $execution_hook ];
+                if ( ! is_array( $events ) )
+                {
+                    return $this->credential_reference_check_failed_error();
+                }
+                foreach ( $events as $event )
+                {
+                    if ( ! is_array( $event ) || ! is_array( $event['args'] ?? null ) )
+                    {
+                        return $this->credential_reference_check_failed_error();
+                    }
+                    if (
+                        $this->contains_credential_reference(
+                            $event['args'] ?? null,
+                            $credential_id,
+                            [ 'credential_id', 'backup_credential_id' ]
+                        )
+                    )
+                    {
+                        $references[] = [
+                            'type'   => 'wp_cron_execution',
+                            'id'     => (string) absint( $timestamp ),
+                            'hook'   => $execution_hook,
+                            'status' => 'queued',
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $references;
+    }
+
+    private function credential_reference_check_failed_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_credential_reference_check_failed',
+            __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+            [ 'status' => 503 ]
+        );
     }
 
     /**
@@ -371,6 +1142,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return $selection;
         }
 
+        if ( 'absent_at_admission' === ( $runtime['backup_authority_status'] ?? '' ) )
+        {
+            unset( $selection['backup_provider'], $selection['backup_credential_id'], $selection['backup_model'] );
+        }
+
         if ( isset( $runtime['provider'] ) && is_scalar( $runtime['provider'] ) )
         {
             $provider = sanitize_key( (string) $runtime['provider'] );
@@ -396,6 +1172,31 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             if ( $credential_id > 0 )
             {
                 $selection['credential_id'] = $credential_id;
+            }
+        }
+
+        if (
+            'absent_at_admission' !== ( $runtime['backup_authority_status'] ?? '' )
+            && isset( $runtime['backup_provider'] )
+            && is_scalar( $runtime['backup_provider'] )
+        )
+        {
+            $backup_provider = sanitize_key( (string) $runtime['backup_provider'] );
+            if ( 'openrouter' === $backup_provider )
+            {
+                $selection['backup_provider'] = $backup_provider;
+            }
+        }
+        if (
+            'absent_at_admission' !== ( $runtime['backup_authority_status'] ?? '' )
+            && isset( $runtime['backup_credential_id'] )
+            && is_scalar( $runtime['backup_credential_id'] )
+        )
+        {
+            $backup_credential_id = absint( $runtime['backup_credential_id'] );
+            if ( $backup_credential_id > 0 )
+            {
+                $selection['backup_credential_id'] = $backup_credential_id;
             }
         }
 

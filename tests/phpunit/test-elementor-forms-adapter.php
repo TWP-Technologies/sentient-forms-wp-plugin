@@ -29,6 +29,11 @@ if ( ! class_exists( 'Sentient_Forms_Test_Elementor_Validation_Action' ) )
             );
         }
 
+        public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+        {
+            return [];
+        }
+
         public function get_id(): string
         {
             return $this->id;

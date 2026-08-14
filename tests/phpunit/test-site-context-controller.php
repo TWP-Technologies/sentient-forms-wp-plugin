@@ -35,6 +35,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         delete_option( 'sentient_forms_site_context' );
         delete_option( 'sentient_forms_site_context_settings' );
         delete_option( 'sentient_forms_site_context_generation_job' );
+        delete_option( 'sentient_forms_site_context_generation_recovery' );
         delete_option( 'sentient_forms_plugin_settings' );
         wp_clear_scheduled_hook( 'sentient_forms_site_context_refresh' );
         wp_clear_scheduled_hook( 'sentient_forms_site_context_first_generation' );
@@ -51,6 +52,504 @@ class SiteContextControllerTest extends WP_UnitTestCase
     {
         $routes = rest_get_server()->get_routes();
         $this->assertArrayHasKey( '/sentient-forms/v1/site-context', $routes );
+    }
+
+    public function test_site_context_settings_writer_respects_the_shared_credential_deletion_fence(): void
+    {
+        global $wpdb;
+
+        $lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_name     = 'sf_action_authority_' . substr(
+            hash( 'sha256', (string) $wpdb->dbname . '|' . (string) $wpdb->options ),
+            0,
+            40
+        );
+        $acquired = $lock_database->get_var( $lock_database->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) );
+        $this->assertSame( 1, (int) $acquired );
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'PUT',
+                '/sentient-forms/v1/site-context',
+                [
+                    'generation_model_selection' => [
+                        'provider'      => 'openrouter',
+                        'primary'       => 'openai/gpt-5.5',
+                        'credential_id' => 987654,
+                    ],
+                ]
+            );
+
+            $this->assertSame( 409, $response->get_status() );
+            $this->assertSame( 'sentient_forms_action_authority_write_locked', $response->get_data()['code'] ?? null );
+            $this->assertFalse( get_option( 'sentient_forms_site_context_settings', false ) );
+        }
+        finally
+        {
+            $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+        }
+    }
+
+    public function test_schedule_helpers_surface_the_shared_fence_failure(): void
+    {
+        global $wpdb;
+
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $settings   = [
+            'consent_status'       => 'granted',
+            'auto_refresh_enabled' => true,
+            'auto_refresh_days'    => 14,
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+
+        $lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_name     = 'sf_action_authority_' . substr(
+            hash( 'sha256', (string) $wpdb->dbname . '|' . (string) $wpdb->options ),
+            0,
+            40
+        );
+        $acquired = $lock_database->get_var( $lock_database->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) );
+        $this->assertSame( 1, (int) $acquired );
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+
+        try
+        {
+            $refresh = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+            $first   = $this->invoke_site_context_private(
+                $controller,
+                'schedule_next_first_generation_attempt',
+                [ $settings ]
+            );
+        }
+        finally
+        {
+            $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $refresh );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $refresh->get_error_code() );
+        $this->assertInstanceOf( WP_Error::class, $first );
+        $this->assertSame( 'sentient_forms_action_authority_write_locked', $first->get_error_code() );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_schedule_helpers_fail_when_wordpress_rejects_the_event(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $refresh_timestamp = time() + ( 2 * DAY_IN_SECONDS );
+        $first_timestamp   = time() + ( 30 * MINUTE_IN_SECONDS );
+        $settings = [
+            'consent_status'                         => 'granted',
+            'auto_refresh_enabled'                   => true,
+            'auto_refresh_days'                      => 14,
+            'next_refresh_at'                        => gmdate( 'Y-m-d H:i:s', $refresh_timestamp ),
+            'first_generation_started_at'            => gmdate( 'Y-m-d H:i:s' ),
+            'first_generation_next_attempt_at'       => gmdate( 'Y-m-d H:i:s', $first_timestamp ),
+            'first_generation_attempt_count'         => 0,
+        ];
+        update_option(
+            'sentient_forms_site_context_settings',
+            $settings,
+            false
+        );
+        wp_schedule_single_event( $refresh_timestamp, 'sentient_forms_site_context_refresh' );
+        wp_schedule_single_event( $first_timestamp, 'sentient_forms_site_context_first_generation' );
+
+        $reject_site_context_event = static function ( mixed $pre, object $event ): mixed {
+            return in_array(
+                $event->hook ?? '',
+                [ 'sentient_forms_site_context_refresh', 'sentient_forms_site_context_first_generation' ],
+                true
+            )
+                ? false
+                : $pre;
+        };
+        add_filter( 'pre_schedule_event', $reject_site_context_event, 10, 2 );
+        try
+        {
+            $refresh = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+            $first   = $this->invoke_site_context_private(
+                $controller,
+                'schedule_next_first_generation_attempt',
+                [ $settings ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_site_context_event, 10 );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $refresh );
+        $this->assertInstanceOf( WP_Error::class, $first );
+        $this->assertSame( $refresh_timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertSame( $first_timestamp, wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings', [] );
+        $this->assertSame( $settings['next_refresh_at'], $stored_settings['next_refresh_at'] ?? null );
+        $this->assertSame( $settings['first_generation_next_attempt_at'], $stored_settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_schedule_helpers_preserve_prior_events_when_replacement_metadata_fails(): void
+    {
+        $controller        = new Sentient_Forms_Site_Context_Controller();
+        $refresh_timestamp = time() + ( 2 * DAY_IN_SECONDS );
+        $first_timestamp   = time() + ( 30 * MINUTE_IN_SECONDS );
+        $settings = [
+            'consent_status'                   => 'granted',
+            'auto_refresh_enabled'             => true,
+            'auto_refresh_days'                => 14,
+            'next_refresh_at'                  => gmdate( 'Y-m-d H:i:s', $refresh_timestamp ),
+            'first_generation_started_at'      => gmdate( 'Y-m-d H:i:s' ),
+            'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', $first_timestamp ),
+            'first_generation_attempt_count'   => 0,
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        wp_schedule_single_event( $refresh_timestamp, 'sentient_forms_site_context_refresh' );
+        wp_schedule_single_event( $first_timestamp, 'sentient_forms_site_context_first_generation' );
+
+        $reject_replacement_metadata = static function ( mixed $value, mixed $old_value ): mixed {
+            if (
+                is_array( $value )
+                && is_array( $old_value )
+                && (
+                    ( $value['next_refresh_at'] ?? null ) !== ( $old_value['next_refresh_at'] ?? null )
+                    || ( $value['first_generation_next_attempt_at'] ?? null ) !== ( $old_value['first_generation_next_attempt_at'] ?? null )
+                )
+            )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_replacement_metadata, 10, 2 );
+        try
+        {
+            $refresh = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+            $first   = $this->invoke_site_context_private(
+                $controller,
+                'schedule_next_first_generation_attempt',
+                [ $settings ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_replacement_metadata, 10 );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $refresh );
+        $this->assertInstanceOf( WP_Error::class, $first );
+        $this->assertSame( $refresh_timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertSame( $first_timestamp, wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings', [] );
+        $this->assertSame( $settings['next_refresh_at'], $stored_settings['next_refresh_at'] ?? null );
+        $this->assertSame( $settings['first_generation_next_attempt_at'], $stored_settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_schedule_helpers_roll_back_when_prior_event_removal_fails(): void
+    {
+        $controller        = new Sentient_Forms_Site_Context_Controller();
+        $refresh_timestamp = time() + ( 2 * DAY_IN_SECONDS );
+        $first_timestamp   = time() + ( 30 * MINUTE_IN_SECONDS );
+        $settings = [
+            'consent_status'                   => 'granted',
+            'auto_refresh_enabled'             => true,
+            'auto_refresh_days'                => 14,
+            'next_refresh_at'                  => gmdate( 'Y-m-d H:i:s', $refresh_timestamp ),
+            'first_generation_started_at'      => gmdate( 'Y-m-d H:i:s' ),
+            'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', $first_timestamp ),
+            'first_generation_attempt_count'   => 0,
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        wp_schedule_single_event( $refresh_timestamp, 'sentient_forms_site_context_refresh' );
+        wp_schedule_single_event( $first_timestamp, 'sentient_forms_site_context_first_generation' );
+
+        $reject_prior_removal = static function ( mixed $pre, int $timestamp, string $hook ) use ( $refresh_timestamp, $first_timestamp ): mixed {
+            if (
+                ( 'sentient_forms_site_context_refresh' === $hook && $refresh_timestamp === $timestamp )
+                || ( 'sentient_forms_site_context_first_generation' === $hook && $first_timestamp === $timestamp )
+            )
+            {
+                return false;
+            }
+
+            return $pre;
+        };
+        add_filter( 'pre_unschedule_event', $reject_prior_removal, 10, 3 );
+        try
+        {
+            $refresh = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+            $first   = $this->invoke_site_context_private(
+                $controller,
+                'schedule_next_first_generation_attempt',
+                [ $settings ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_prior_removal, 10 );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $refresh );
+        $this->assertInstanceOf( WP_Error::class, $first );
+        $this->assertSame( [ $refresh_timestamp ], $this->invoke_site_context_private( $controller, 'scheduled_timestamps_for_hook', [ 'sentient_forms_site_context_refresh' ] ) );
+        $this->assertSame( [ $first_timestamp ], $this->invoke_site_context_private( $controller, 'scheduled_timestamps_for_hook', [ 'sentient_forms_site_context_first_generation' ] ) );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings', [] );
+        $this->assertSame( $settings['next_refresh_at'], $stored_settings['next_refresh_at'] ?? null );
+        $this->assertSame( $settings['first_generation_next_attempt_at'], $stored_settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_schedule_replacement_surfaces_an_incomplete_rollback(): void
+    {
+        $controller        = new Sentient_Forms_Site_Context_Controller();
+        $refresh_timestamp = time() + ( 2 * DAY_IN_SECONDS );
+        $settings = [
+            'consent_status'       => 'granted',
+            'auto_refresh_enabled' => true,
+            'auto_refresh_days'    => 14,
+            'next_refresh_at'      => gmdate( 'Y-m-d H:i:s', $refresh_timestamp ),
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        wp_schedule_single_event( $refresh_timestamp, 'sentient_forms_site_context_refresh' );
+
+        $reject_all_removals = static function ( mixed $pre, int $_timestamp, string $hook ): mixed {
+            return 'sentient_forms_site_context_refresh' === $hook ? false : $pre;
+        };
+        add_filter( 'pre_unschedule_event', $reject_all_removals, 10, 3 );
+        try
+        {
+            $result = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_all_removals, 10 );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_site_context_schedule_rollback_failed', $result->get_error_code() );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings', [] );
+        $this->assertSame( $settings['next_refresh_at'], $stored_settings['next_refresh_at'] ?? null );
+        $this->assertCount(
+            2,
+            $this->invoke_site_context_private( $controller, 'scheduled_timestamps_for_hook', [ 'sentient_forms_site_context_refresh' ] )
+        );
+    }
+
+    public function test_site_context_settings_refuse_a_deleted_credential_before_persisting(): void
+    {
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'primary'       => 'openai/gpt-5.5',
+                    'credential_id' => 987654,
+                ],
+            ]
+        );
+
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_credential_unavailable', $response->get_data()['code'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_settings', false ) );
+    }
+
+    public function test_stale_site_context_settings_cannot_restore_a_deleted_credential(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $controller    = new Sentient_Forms_Site_Context_Controller();
+        $saved         = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'primary'       => 'openai/gpt-5.5',
+                    'credential_id' => $credential_id,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $stale_settings = get_option( 'sentient_forms_site_context_settings' );
+
+        $cleared = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'primary'       => 'openai/gpt-5.5',
+                    'credential_id' => null,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $cleared->get_status() );
+        $deleted = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+            ->delete_credential_if_unreferenced( $credential_id );
+        $this->assertTrue( $deleted );
+
+        $result = $this->invoke_site_context_private( $controller, 'update_settings_record', [ $stale_settings ] );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $result->get_error_code() );
+        $stored = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertNotSame(
+            $credential_id,
+            absint( $stored['generation_model_selection']['credential_id'] ?? 0 )
+        );
+    }
+
+    public function test_stale_settings_cannot_create_a_job_after_credential_deletion(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $controller    = new Sentient_Forms_Site_Context_Controller();
+        $saved         = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'primary'       => 'openai/gpt-5.5',
+                    'credential_id' => $credential_id,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $stale_settings = get_option( 'sentient_forms_site_context_settings' );
+
+        $cleared = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'primary'       => 'openai/gpt-5.5',
+                    'credential_id' => null,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $cleared->get_status() );
+        $this->assertTrue(
+            ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                ->delete_credential_if_unreferenced( $credential_id )
+        );
+
+        $job = $this->site_context_job_fixture( 'stale-create', $stale_settings );
+        $result = $this->invoke_site_context_private( $controller, 'create_generation_job_record', [ $job, null ] );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $result->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job', false ) );
+    }
+
+    public function test_stale_generation_job_cannot_resurrect_or_replace_another_job(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $settings   = get_option( 'sentient_forms_site_context_settings', [] );
+        $job_a      = $this->site_context_job_fixture( 'job-a', $settings );
+        $created_a  = $this->invoke_site_context_private( $controller, 'create_generation_job_record', [ $job_a, null ] );
+        $this->assertIsArray( $created_a );
+
+        $this->invoke_site_context_private( $controller, 'delete_generation_job_record' );
+        $job_b     = $this->site_context_job_fixture( 'job-b', $settings );
+        $created_b = $this->invoke_site_context_private( $controller, 'create_generation_job_record', [ $job_b, null ] );
+        $this->assertIsArray( $created_b );
+
+        $replaced = $this->invoke_site_context_private( $controller, 'update_generation_job_record', [ $created_a ] );
+        $this->assertInstanceOf( WP_Error::class, $replaced );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $replaced->get_error_code() );
+        $this->assertSame( 'job-b', get_option( 'sentient_forms_site_context_generation_job' )['id'] ?? null );
+
+        $this->invoke_site_context_private( $controller, 'delete_generation_job_record' );
+        $resurrected = $this->invoke_site_context_private( $controller, 'update_generation_job_record', [ $created_a ] );
+        $this->assertInstanceOf( WP_Error::class, $resurrected );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $resurrected->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job', false ) );
+    }
+
+    public function test_terminal_job_write_uses_the_latest_running_revision(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $job = [
+            'id'              => 'terminal-race-job',
+            'status'          => 'running',
+            'worker_id'       => 'worker-a',
+            'requested_at'    => current_time( 'mysql' ),
+            'started_at'      => current_time( 'mysql' ),
+            'finished_at'     => null,
+            'error'           => null,
+            'code'            => null,
+            'status_code'     => null,
+            'diagnostics'     => [],
+            '_state_revision' => 4,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $latest = $job;
+        $latest['diagnostics'] = [ 'concurrent_marker' => 'preserved' ];
+        $latest['_state_revision'] = 5;
+        update_option( 'sentient_forms_site_context_generation_job', $latest, false );
+
+        $terminal = $this->invoke_site_context_private(
+            $controller,
+            'terminalize_generation_job_record',
+            [
+                'terminal-race-job',
+                'worker-a',
+                [
+                    'status'      => 'succeeded',
+                    'error'       => null,
+                    'code'        => null,
+                    'status_code' => null,
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $terminal );
+        $this->assertSame( 'succeeded', $terminal['status'] ?? null );
+        $this->assertSame( [ 'concurrent_marker' => 'preserved' ], $terminal['diagnostics'] ?? null );
+        $this->assertSame( 6, $terminal['_state_revision'] ?? null );
+        $this->assertArrayNotHasKey( 'worker_id', $terminal );
+        $this->assertSame( $terminal, get_option( 'sentient_forms_site_context_generation_job' ) );
+    }
+
+    public function test_schedule_metadata_does_not_invalidate_running_generation_settings(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $job['status']    = 'running';
+        $job['worker_id'] = 'schedule-metadata-worker';
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $before = get_option( 'sentient_forms_site_context_settings' );
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+        $after = get_option( 'sentient_forms_site_context_settings' );
+
+        $this->assertSame( $before['_state_revision'] ?? null, $after['_state_revision'] ?? null );
+        $this->assertSame(
+            $job['settings']['_state_revision'] ?? null,
+            $after['_state_revision'] ?? null
+        );
+        $this->assertNotEmpty( $after['next_refresh_at'] ?? null );
+        $this->assertSame( $job_id, get_option( 'sentient_forms_site_context_generation_job' )['id'] ?? null );
     }
 
     public function test_get_context_returns_empty_context_envelope_without_proxy_key(): void
@@ -97,6 +596,99 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertFalse( $http_called );
     }
 
+    public function test_create_context_rolls_back_settings_when_context_storage_fails(): void
+    {
+        $reject_context_write = static fn( mixed $value, mixed $old_value ): mixed => $old_value;
+        add_filter( 'pre_update_option_sentient_forms_site_context', $reject_context_write, 10, 2 );
+        add_filter( 'pre_add_option_sentient_forms_site_context', '__return_false' );
+
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'POST',
+                '/sentient-forms/v1/site-context',
+                [ 'pii_ack' => true ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context', $reject_context_write, 10 );
+            remove_filter( 'pre_add_option_sentient_forms_site_context', '__return_false' );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_write_failed', $response->get_data()['code'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context', false ) );
+        $this->assertSame( 'unset', get_option( 'sentient_forms_site_context_settings', [] )['consent_status'] ?? 'unset' );
+    }
+
+    public function test_generated_context_surfaces_indeterminate_state_when_settings_and_rollback_fail(): void
+    {
+        $previous_context = [
+            'id'                     => 'local-site-context',
+            'license_id'             => 'local',
+            'summary_text'           => 'Previous context.',
+            'source'                 => 'manual',
+            'auto_include'           => true,
+            'pii_ack'                => true,
+            'free_refresh_available' => true,
+            'next_free_refresh_at'   => null,
+            'created_at'             => '2026-08-15 00:00:00',
+            'updated_at'             => '2026-08-15 00:00:00',
+        ];
+        update_option( 'sentient_forms_site_context', $previous_context, false );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                '_state_revision' => 7,
+            ],
+            false
+        );
+
+        $context_writes = 0;
+        $reject_context_rollback = static function ( $value, $old_value ) use ( &$context_writes ) {
+            $context_writes++;
+
+            return 1 === $context_writes ? $value : $old_value;
+        };
+        $reject_settings_write = static fn( $value, $old_value ) => $old_value;
+        add_filter( 'pre_update_option_sentient_forms_site_context', $reject_context_rollback, 10, 2 );
+        add_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_settings_write, 10, 2 );
+        try
+        {
+            $result = $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'commit_generated_context',
+                [
+                    [ '_state_revision' => 7 ],
+                    [ 'summary_text' => 'Generated context.' ],
+                    [ 'route' => 'openrouter' ],
+                    false,
+                    null,
+                    null,
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context', $reject_context_rollback, 10 );
+            remove_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_settings_write, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_site_context_rollback_failed', $result->get_error_code() );
+        $this->assertSame(
+            'sentient_forms_site_context_settings_write_failed',
+            $result->get_error_data()['cause'] ?? null
+        );
+        $this->assertSame( 2, $context_writes );
+        $this->assertSame(
+            'Generated context.',
+            get_option( 'sentient_forms_site_context', [] )['summary_text'] ?? null
+        );
+    }
+
     public function test_create_context_cancels_active_generation_job_before_storing_local_context(): void
     {
         $credential_id = $this->create_openrouter_credential();
@@ -115,7 +707,6 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 ],
             ]
         );
-
         $response = $this->dispatch_site_context_request(
             'POST',
             '/sentient-forms/v1/site-context',
@@ -132,13 +723,85 @@ class SiteContextControllerTest extends WP_UnitTestCase
         );
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+        $canceled_job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $canceled_job );
+        $this->assertSame( 'failed', $canceled_job['status'] ?? null );
+        $this->assertSame( 'site_context_generation_canceled', $canceled_job['code'] ?? null );
 
         $data = $this->run_site_context_generation_job( $job_id );
 
         $this->assertCount( 0, $calls );
         $this->assertSame( 'local_starter', $data['context']['source'] ?? null );
-        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_canceled', $data['generation_job']['code'] ?? null );
+    }
+
+    public function test_create_context_stops_when_active_job_cancellation_cannot_persist(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $job_id        = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $job['status']    = 'running';
+        $job['worker_id'] = wp_generate_uuid4();
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $reject_job_update = static function( mixed $new_value, mixed $old_value ): mixed
+        {
+            return $old_value;
+        };
+        add_filter(
+            'pre_update_option_sentient_forms_site_context_generation_job',
+            $reject_job_update,
+            10,
+            2
+        );
+
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'POST',
+                '/sentient-forms/v1/site-context',
+                [
+                    'pii_ack' => true,
+                    'consent_status' => 'granted',
+                    'generation_model_selection' => [
+                        'primary'       => 'openai/gpt-5.5',
+                        'provider'      => 'openrouter',
+                        'credential_id' => $credential_id,
+                        'is_preset'     => false,
+                    ],
+                ]
+            );
+
+            $this->assertSame( 500, $response->get_status() );
+            $this->assertSame(
+                'sentient_forms_site_context_generation_job_write_failed',
+                $response->get_data()['code'] ?? null
+            );
+            $this->assertFalse( get_option( 'sentient_forms_site_context', false ) );
+            $stored_job = get_option( 'sentient_forms_site_context_generation_job' );
+            $this->assertSame( $job_id, $stored_job['id'] ?? null );
+            $this->assertSame( 'running', $stored_job['status'] ?? null );
+        }
+        finally
+        {
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_job',
+                $reject_job_update,
+                10
+            );
+        }
     }
 
     public function test_update_context_persists_manual_local_context(): void
@@ -202,6 +865,430 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertNull( $data['context'] ?? null );
         $this->assertSame( 'declined', $data['settings']['consent_status'] ?? null );
         $this->assertSame( 'declined', $data['status'] ?? null );
+    }
+
+    public function test_delete_context_rolls_back_withdrawal_when_schedule_cleanup_fails(): void
+    {
+        $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'   => 'Delete cleanup fixture.',
+                'consent_status' => 'granted',
+                'pii_ack'        => true,
+            ]
+        );
+        $timestamp = time() + HOUR_IN_SECONDS;
+        wp_schedule_single_event( $timestamp, 'sentient_forms_site_context_refresh' );
+
+        $reject_removal = static fn( mixed $pre, int $_timestamp, string $hook ): mixed =>
+            'sentient_forms_site_context_refresh' === $hook ? false : $pre;
+        add_filter( 'pre_unschedule_event', $reject_removal, 10, 3 );
+        try
+        {
+            $response = $this->dispatch_site_context_request( 'DELETE', '/sentient-forms/v1/site-context' );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_removal, 10 );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_unschedule_failed', $response->get_data()['code'] ?? null );
+        $this->assertIsArray( get_option( 'sentient_forms_site_context', false ) );
+        $this->assertSame( 'granted', get_option( 'sentient_forms_site_context_settings', [] )['consent_status'] ?? null );
+        $this->assertSame( $timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_clear_refresh_schedule_preserves_metadata_when_unscheduling_fails(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $timestamp  = time() + HOUR_IN_SECONDS;
+        $next_at    = gmdate( 'Y-m-d H:i:s', $timestamp );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'next_refresh_at' => $next_at,
+            ],
+            false
+        );
+        wp_schedule_single_event( $timestamp, 'sentient_forms_site_context_refresh' );
+
+        $reject_removal = static fn( mixed $pre, int $_timestamp, string $hook ): mixed =>
+            'sentient_forms_site_context_refresh' === $hook ? false : $pre;
+        add_filter( 'pre_unschedule_event', $reject_removal, 10, 3 );
+        try
+        {
+            $result = $this->invoke_site_context_private( $controller, 'clear_refresh_schedule' );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_removal, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_site_context_unschedule_failed', $result->get_error_code() );
+        $this->assertSame( $next_at, get_option( 'sentient_forms_site_context_settings', [] )['next_refresh_at'] ?? null );
+        $this->assertSame( $timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_clear_first_generation_schedule_preserves_metadata_when_unscheduling_fails(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $timestamp  = time() + HOUR_IN_SECONDS;
+        $next_at    = gmdate( 'Y-m-d H:i:s', $timestamp );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'first_generation_next_attempt_at' => $next_at,
+            ],
+            false
+        );
+        wp_schedule_single_event( $timestamp, 'sentient_forms_site_context_first_generation' );
+
+        $reject_removal = static fn( mixed $pre, int $_timestamp, string $hook ): mixed =>
+            'sentient_forms_site_context_first_generation' === $hook ? false : $pre;
+        add_filter( 'pre_unschedule_event', $reject_removal, 10, 3 );
+        try
+        {
+            $result = $this->invoke_site_context_private( $controller, 'clear_first_generation_schedule' );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_removal, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_site_context_unschedule_failed', $result->get_error_code() );
+        $this->assertSame(
+            $next_at,
+            get_option( 'sentient_forms_site_context_settings', [] )['first_generation_next_attempt_at'] ?? null
+        );
+        $this->assertSame( $timestamp, wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_clear_schedule_reports_when_partial_removal_cannot_be_rolled_back(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $first      = time() + HOUR_IN_SECONDS;
+        $second     = $first + HOUR_IN_SECONDS;
+        wp_schedule_single_event( $first, 'sentient_forms_site_context_refresh' );
+        wp_schedule_single_event( $second, 'sentient_forms_site_context_refresh' );
+
+        $removal_failed = false;
+        $reject_later_removal = static function ( mixed $pre, int $timestamp, string $hook ) use ( $second, &$removal_failed ): mixed {
+            if ( 'sentient_forms_site_context_refresh' === $hook && $second === $timestamp )
+            {
+                $removal_failed = true;
+                return false;
+            }
+            return $pre;
+        };
+        $reject_restore = static function ( mixed $pre, object $event ) use ( $first, &$removal_failed ): mixed {
+            if ( $removal_failed && 'sentient_forms_site_context_refresh' === $event->hook && $first === $event->timestamp )
+            {
+                return false;
+            }
+            return $pre;
+        };
+        add_filter( 'pre_unschedule_event', $reject_later_removal, 10, 3 );
+        add_filter( 'pre_schedule_event', $reject_restore, 10, 2 );
+        try
+        {
+            $result = $this->invoke_site_context_private(
+                $controller,
+                'clear_schedule_hook_locked',
+                [ 'sentient_forms_site_context_refresh' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_later_removal, 10 );
+            remove_filter( 'pre_schedule_event', $reject_restore, 10 );
+        }
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_site_context_schedule_rollback_failed', $result->get_error_code() );
+    }
+
+    public function test_delete_context_preserves_context_when_consent_withdrawal_cannot_persist(): void
+    {
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'   => 'Context must survive a failed consent withdrawal.',
+                'consent_status' => 'granted',
+                'auto_include'   => true,
+                'pii_ack'        => true,
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertIsArray( $settings );
+        $job = $this->site_context_job_fixture( 'delete-withdrawal-rollback-job', $settings );
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $reject_withdrawal = static function ( mixed $value, mixed $old_value ): mixed {
+            if ( is_array( $value ) && 'declined' === ( $value['consent_status'] ?? null ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_withdrawal, 10, 2 );
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'DELETE',
+                '/sentient-forms/v1/site-context'
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_withdrawal, 10 );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_settings_write_failed', $response->get_data()['code'] ?? null );
+        $this->assertSame(
+            'Context must survive a failed consent withdrawal.',
+            get_option( 'sentient_forms_site_context' )['summary_text'] ?? null
+        );
+        $this->assertSame(
+            'granted',
+            get_option( 'sentient_forms_site_context_settings' )['consent_status'] ?? null
+        );
+        $this->assertSame( $job, get_option( 'sentient_forms_site_context_generation_job' ) );
+    }
+
+    public function test_delete_context_rolls_back_withdrawal_when_context_delete_fails(): void
+    {
+        global $wpdb;
+
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'   => 'Context must survive a failed option deletion.',
+                'consent_status' => 'granted',
+                'auto_include'   => true,
+                'pii_ack'        => true,
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $context  = get_option( 'sentient_forms_site_context' );
+        $this->assertIsArray( $settings );
+        $this->assertIsArray( $context );
+        $job = $this->site_context_job_fixture( 'delete-context-rollback-job', $settings );
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $options_table = $wpdb->options;
+        $reject_context_delete = static function ( string $query ) use ( $options_table ): string {
+            if (
+                str_starts_with( ltrim( $query ), "DELETE FROM `{$options_table}`" )
+                && str_contains( $query, "'sentient_forms_site_context'" )
+            )
+            {
+                return str_replace( "`{$options_table}`", '`sentient_forms_missing_options`', $query );
+            }
+
+            return $query;
+        };
+        $previous_suppress_errors = $wpdb->suppress_errors( true );
+        add_filter( 'query', $reject_context_delete );
+        try
+        {
+            $response = $this->dispatch_site_context_request( 'DELETE', '/sentient-forms/v1/site-context' );
+        }
+        finally
+        {
+            remove_filter( 'query', $reject_context_delete );
+            $wpdb->suppress_errors( $previous_suppress_errors );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_delete_failed', $response->get_data()['code'] ?? null );
+        $this->assertSame( $settings, get_option( 'sentient_forms_site_context_settings' ) );
+        $this->assertSame( $context, get_option( 'sentient_forms_site_context' ) );
+        $this->assertSame( $job, get_option( 'sentient_forms_site_context_generation_job' ) );
+    }
+
+    public function test_stale_scheduled_workers_cannot_rearm_after_consent_withdrawal(): void
+    {
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'         => 'Context scheduled workers must not recreate.',
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'auto_include'         => true,
+                'pii_ack'              => true,
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $stale_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertIsArray( $stale_settings );
+
+        $deleted = $this->dispatch_site_context_request(
+            'DELETE',
+            '/sentient-forms/v1/site-context'
+        );
+        $this->assertSame( 200, $deleted->get_status() );
+
+        $stale_settings['first_generation_started_at']      = gmdate( 'Y-m-d H:i:s' );
+        $stale_settings['first_generation_last_attempt_at'] = gmdate( 'Y-m-d H:i:s' );
+        $stale_settings['first_generation_attempt_count']   = 1;
+        $stale_settings['first_generation_last_error']      = 'Stale worker failure.';
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+        $this->invoke_site_context_private(
+            $controller,
+            'persist_first_generation_attempt_state',
+            [ $stale_settings ]
+        );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'declined', $settings['consent_status'] ?? null );
+        $this->assertEmpty( $settings['next_refresh_at'] ?? null );
+        $this->assertEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+        $this->assertEmpty( $settings['first_generation_last_error'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_refresh_schedule_uses_latest_persisted_interval_instead_of_stale_argument(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 30,
+                '_state_revision'      => 2,
+            ],
+            false
+        );
+
+        $before = time();
+        $result = $this->invoke_site_context_private(
+            $controller,
+            'sync_refresh_schedule',
+            []
+        );
+
+        $this->assertTrue( $result );
+        $scheduled = wp_next_scheduled( 'sentient_forms_site_context_refresh' );
+        $this->assertIsInt( $scheduled );
+        $this->assertGreaterThanOrEqual( $before + ( 30 * DAY_IN_SECONDS ) - 2, $scheduled );
+        $this->assertLessThanOrEqual( time() + ( 30 * DAY_IN_SECONDS ) + 2, $scheduled );
+    }
+
+    public function test_refresh_schedule_preserves_explicit_one_day_retry_override(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 30,
+                '_state_revision'      => 2,
+            ],
+            false
+        );
+
+        $before = time();
+        $result = $this->invoke_site_context_private( $controller, 'schedule_next_refresh', [ 1 ] );
+
+        $this->assertTrue( $result );
+        $scheduled = wp_next_scheduled( 'sentient_forms_site_context_refresh' );
+        $this->assertIsInt( $scheduled );
+        $this->assertGreaterThanOrEqual( $before + DAY_IN_SECONDS - 2, $scheduled );
+        $this->assertLessThanOrEqual( time() + DAY_IN_SECONDS + 2, $scheduled );
+    }
+
+    public function test_stale_first_generation_attempt_cannot_overwrite_newer_attempt_state(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $started_at = gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
+        $current = [
+            'consent_status'                  => 'granted',
+            'first_generation_started_at'      => $started_at,
+            'first_generation_last_attempt_at' => gmdate( 'Y-m-d H:i:s', time() - 60 ),
+            'first_generation_attempt_count'   => 2,
+            'first_generation_last_error'      => 'Newer worker failure.',
+            '_state_revision'                  => 4,
+        ];
+        update_option( 'sentient_forms_site_context_settings', $current, false );
+
+        $stale = $current;
+        $stale['_state_revision']                  = 3;
+        $stale['first_generation_attempt_count']   = 1;
+        $stale['first_generation_last_attempt_at'] = gmdate( 'Y-m-d H:i:s', time() - 120 );
+        $stale['first_generation_last_error']      = 'Stale worker failure.';
+        $result = $this->invoke_site_context_private(
+            $controller,
+            'persist_first_generation_attempt_state',
+            [ $stale ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $result->get_error_code() );
+        $stored = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 2, $stored['first_generation_attempt_count'] ?? null );
+        $this->assertSame( 'Newer worker failure.', $stored['first_generation_last_error'] ?? null );
+    }
+
+    public function test_duplicate_terminal_first_generation_attempt_is_rejected(): void
+    {
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $started_at = gmdate( 'Y-m-d H:i:s', time() - DAY_IN_SECONDS );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status'                  => 'granted',
+                'first_generation_started_at'      => $started_at,
+                'first_generation_last_attempt_at' => gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS ),
+                'first_generation_attempt_count'   => 4,
+                'first_generation_last_error'      => 'Fourth attempt failed.',
+                '_state_revision'                  => 7,
+            ],
+            false
+        );
+        $terminal_attempt = [
+            'consent_status'                  => 'granted',
+            'first_generation_started_at'      => $started_at,
+            'first_generation_last_attempt_at' => gmdate( 'Y-m-d H:i:s' ),
+            'first_generation_attempt_count'   => 5,
+            'first_generation_last_error'      => 'Terminal attempt failed.',
+            '_state_revision'                  => 7,
+        ];
+
+        $first = $this->invoke_site_context_private(
+            $controller,
+            'persist_first_generation_attempt_state',
+            [ $terminal_attempt ]
+        );
+        $second = $this->invoke_site_context_private(
+            $controller,
+            'persist_first_generation_attempt_state',
+            [ $terminal_attempt ]
+        );
+
+        $this->assertTrue( $first );
+        $this->assertWPError( $second );
+        $this->assertSame( 'sentient_forms_site_context_state_stale', $second->get_error_code() );
+        $stored = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 5, $stored['first_generation_attempt_count'] ?? null );
+        $this->assertSame( 'Terminal attempt failed.', $stored['first_generation_last_error'] ?? null );
     }
 
     public function test_auto_refresh_schedules_when_consent_is_granted(): void
@@ -1049,7 +2136,6 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
             ]
         );
-
         $response = $this->dispatch_site_context_request(
             'POST',
             '/sentient-forms/v1/site-context/generate',
@@ -1577,6 +2663,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 ],
             ]
         );
+        $settings_before = get_option( 'sentient_forms_site_context_settings' );
 
         $response = $this->dispatch_site_context_request(
             'PUT',
@@ -1598,6 +2685,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertIsArray( $job );
         $this->assertSame( $job_id, $job['id'] ?? null );
         $this->assertSame( 'queued', $job['status'] ?? null );
+        $this->assertSame( $settings_before, get_option( 'sentient_forms_site_context_settings' ) );
     }
 
     public function test_manual_generation_does_not_commit_after_consent_withdrawal(): void
@@ -1684,9 +2772,225 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertCount( 1, $calls );
         $this->assertSame( 'Manual context saved while generation was running.', $data['context']['summary_text'] ?? null );
         $this->assertSame( 'manual', $data['context']['source'] ?? null );
-        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_canceled', $data['generation_job']['code'] ?? null );
         $this->assertSame( 'granted', $settings['consent_status'] ?? null );
         $this->assertNull( $settings['last_generated_at'] ?? null );
+    }
+
+    public function test_scheduled_generation_keeps_credential_authority_until_worker_stops(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertIsArray( $settings );
+
+        $calls          = [];
+        $delete_attempt = null;
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            function() use ( $credential_id, &$delete_attempt ): void
+            {
+                $reassigned = $this->dispatch_site_context_request(
+                    'PUT',
+                    '/sentient-forms/v1/site-context',
+                    [
+                        'consent_status' => 'granted',
+                        'generation_model_selection' => [
+                            'primary'       => 'openai/gpt-5.5',
+                            'provider'      => 'openrouter',
+                            'credential_id' => null,
+                            'is_preset'     => false,
+                        ],
+                    ]
+                );
+                $this->assertSame( 200, $reassigned->get_status() );
+                $delete_attempt = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                    ->delete_credential_if_unreferenced( $credential_id );
+            }
+        );
+
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $result     = $this->invoke_site_context_private(
+            $controller,
+            'perform_scheduled_generation',
+            [ $settings, false, 'scheduled_refresh' ]
+        );
+
+        $this->assertCount( 1, $calls );
+        $this->assertInstanceOf( WP_Error::class, $delete_attempt );
+        $this->assertSame( 'sentient_forms_credential_in_use', $delete_attempt->get_error_code() );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'site_context_generation_canceled', $result->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context', false ) );
+        $this->assertTrue(
+            ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                ->delete_credential_if_unreferenced( $credential_id )
+        );
+    }
+
+    public function test_scheduled_generation_recovers_when_all_terminal_job_writes_fail(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'consent_status' => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days' => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertIsArray( $settings );
+
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+        $reject_terminal_write = static function ( mixed $value, mixed $old_value ): mixed {
+            if ( is_array( $value ) && in_array( $value['status'] ?? null, [ 'succeeded', 'failed' ], true ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10, 2 );
+        try
+        {
+            $result = $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'perform_scheduled_generation',
+                [ $settings, false, 'scheduled_refresh' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10 );
+        }
+
+        $stored_job = get_option( 'sentient_forms_site_context_generation_job' );
+        $recovery   = get_option( 'sentient_forms_site_context_generation_recovery' );
+        $status     = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' );
+        $status_data = $status->get_data();
+
+        $this->assertCount( 1, $calls );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'running', $stored_job['status'] ?? null );
+        $this->assertSame( $stored_job['id'] ?? null, $recovery['job_id'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_failed',
+            $recovery['code'] ?? null
+        );
+        $this->assertSame( 'failed', $status_data['generation_job']['status'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_failed',
+            $status_data['generation_job']['code'] ?? null
+        );
+
+        $replacement = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $replacement_data = $replacement->get_data();
+        $this->assertSame( 200, $replacement->get_status() );
+        $this->assertSame( 'queued', $replacement_data['generation_job']['status'] ?? null );
+        $this->assertNotSame( $stored_job['id'] ?? null, $replacement_data['generation_job']['id'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_recovery', false ) );
+    }
+
+    public function test_delete_context_keeps_running_generation_credential_authority_until_worker_stops(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertIsArray( $settings );
+
+        $calls           = [];
+        $delete_attempt  = null;
+        $delete_response = null;
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            function() use ( $credential_id, &$delete_attempt, &$delete_response ): void
+            {
+                $delete_response = $this->dispatch_site_context_request(
+                    'DELETE',
+                    '/sentient-forms/v1/site-context'
+                );
+                $delete_attempt = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                    ->delete_credential_if_unreferenced( $credential_id );
+            }
+        );
+
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $result     = $this->invoke_site_context_private(
+            $controller,
+            'perform_scheduled_generation',
+            [ $settings, false, 'scheduled_refresh' ]
+        );
+
+        $this->assertCount( 1, $calls );
+        $this->assertInstanceOf( WP_REST_Response::class, $delete_response );
+        $this->assertSame( 200, $delete_response->get_status() );
+        $this->assertInstanceOf( WP_Error::class, $delete_attempt );
+        $this->assertSame( 'sentient_forms_credential_in_use', $delete_attempt->get_error_code() );
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'site_context_generation_canceled', $result->get_error_code() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context', false ) );
+        $job = get_option( 'sentient_forms_site_context_generation_job', [] );
+        $this->assertSame( 'failed', $job['status'] ?? null );
+        $this->assertSame( 'site_context_generation_canceled', $job['code'] ?? null );
+        $this->assertTrue(
+            ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                ->delete_credential_if_unreferenced( $credential_id )
+        );
     }
 
     public function test_generate_context_caps_site_context_web_search_depth(): void
@@ -1798,6 +3102,266 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 1, $this->count_scheduled_hook( 'sentient_forms_site_context_manual_generation' ) );
     }
 
+    public function test_generate_context_fails_observably_when_no_dispatch_channel_accepts_job(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $reject_manual = static function ( $preempt, $event ) {
+            return is_object( $event ) && 'sentient_forms_site_context_manual_generation' === ( $event->hook ?? '' )
+                ? new WP_Error( 'forced_manual_dispatch_failure', 'Manual dispatch rejected for the test.' )
+                : $preempt;
+        };
+        add_filter( 'pre_schedule_event', $reject_manual, 10, 2 );
+
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'POST',
+                '/sentient-forms/v1/site-context/generate',
+                [
+                    'consent_status' => 'granted',
+                    'generation_model_selection' => [
+                        'primary'       => 'openai/gpt-5.5',
+                        'provider'      => 'openrouter',
+                        'credential_id' => $credential_id,
+                        'is_preset'     => false,
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_manual, 10 );
+        }
+
+        $this->assertSame( 503, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_forms_site_context_generation_dispatch_failed', $data['code'] ?? null );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame( 'failed', $job['status'] ?? null );
+        $this->assertSame( 'sentient_forms_site_context_generation_dispatch_failed', $job['code'] ?? null );
+        $this->assertSame( 0, $this->count_scheduled_hook( 'sentient_forms_site_context_manual_generation' ) );
+    }
+
+    public function test_manual_generation_snapshots_implicit_openrouter_credential(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'openai/gpt-5.5',
+                    'provider'  => 'openrouter',
+                    'is_preset' => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame(
+            $credential_id,
+            $job['settings']['generation_model_selection']['credential_id'] ?? null
+        );
+    }
+
+    public function test_manual_generation_snapshots_implicit_managed_credential(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => '77777777-7777-4777-8777-777777777777',
+            ]
+        );
+        $credential_id = $this->create_managed_credential();
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_research',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame(
+            $credential_id,
+            $job['settings']['generation_model_selection']['credential_id'] ?? null
+        );
+    }
+
+    public function test_scheduled_generation_executes_snapshotted_implicit_openrouter_credential(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'consented_at'   => '2026-08-14 00:00:00',
+                'generation_model_selection' => [
+                    'primary'   => 'openai/gpt-5.5',
+                    'provider'  => 'openrouter',
+                    'is_preset' => false,
+                ],
+            ],
+            false
+        );
+
+        Sentient_Forms_Site_Context_Controller::run_scheduled_first_generation();
+
+        $this->assertCount( 1, $calls );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame( 'succeeded', $job['status'] ?? null );
+        $this->assertSame(
+            $credential_id,
+            $job['settings']['generation_model_selection']['credential_id'] ?? null
+        );
+    }
+
+    public function test_manual_generation_preserves_schedules_when_job_persistence_fails(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $first_timestamp   = time() + MINUTE_IN_SECONDS;
+        $refresh_timestamp = time() + HOUR_IN_SECONDS;
+        $settings = [
+            'consent_status' => 'granted',
+            'consented_at'   => '2026-08-14 00:00:00',
+            'next_refresh_at' => gmdate( 'Y-m-d H:i:s', $refresh_timestamp ),
+            'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', $first_timestamp ),
+            'generation_model_selection' => [
+                'primary'       => 'openai/gpt-5.5',
+                'provider'      => 'openrouter',
+                'credential_id' => $credential_id,
+                'is_preset'     => false,
+            ],
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        $prior_job = $this->site_context_job_fixture( wp_generate_uuid4(), $settings );
+        $prior_job['status'] = 'failed';
+        update_option( 'sentient_forms_site_context_generation_job', $prior_job, false );
+        wp_schedule_single_event( $first_timestamp, 'sentient_forms_site_context_first_generation' );
+        wp_schedule_single_event( $refresh_timestamp, 'sentient_forms_site_context_refresh' );
+
+        $reject_job = static fn( mixed $_new, mixed $old ): mixed => $old;
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job, 10, 2 );
+        try
+        {
+            $response = $this->dispatch_site_context_request( 'POST', '/sentient-forms/v1/site-context/generate' );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job, 10 );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( $prior_job, get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertSame( $first_timestamp, wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $this->assertSame( $refresh_timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_manual_generation_rolls_back_job_when_schedule_removal_fails(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $first_timestamp = time() + MINUTE_IN_SECONDS;
+        $settings = [
+            'consent_status' => 'granted',
+            'consented_at'   => '2026-08-14 00:00:00',
+            'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', $first_timestamp ),
+            'generation_model_selection' => [
+                'primary'       => 'openai/gpt-5.5',
+                'provider'      => 'openrouter',
+                'credential_id' => $credential_id,
+                'is_preset'     => false,
+            ],
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        $prior_job = $this->site_context_job_fixture( wp_generate_uuid4(), $settings );
+        $prior_job['status'] = 'failed';
+        update_option( 'sentient_forms_site_context_generation_job', $prior_job, false );
+        wp_schedule_single_event( $first_timestamp, 'sentient_forms_site_context_first_generation' );
+
+        $reject_removal = static fn( mixed $pre, int $_timestamp, string $hook ): mixed =>
+            'sentient_forms_site_context_first_generation' === $hook ? false : $pre;
+        add_filter( 'pre_unschedule_event', $reject_removal, 10, 3 );
+        try
+        {
+            $response = $this->dispatch_site_context_request( 'POST', '/sentient-forms/v1/site-context/generate' );
+        }
+        finally
+        {
+            remove_filter( 'pre_unschedule_event', $reject_removal, 10 );
+        }
+
+        $this->assertSame( 500, $response->get_status() );
+        $this->assertSame( 'sentient_forms_site_context_unschedule_failed', $response->get_data()['code'] ?? null );
+        $this->assertSame( $prior_job, get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertSame( $first_timestamp, wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( gmdate( 'Y-m-d H:i:s', $first_timestamp ), $stored_settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_manual_generation_commits_after_clearing_a_pending_first_generation_schedule(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $saved = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $this->assertSame( 200, $saved->get_status() );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $this->assertNotEmpty(
+            get_option( 'sentient_forms_site_context_settings' )['first_generation_next_attempt_at'] ?? null
+        );
+
+        $queued = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate'
+        );
+        $this->assertSame( 200, $queued->get_status() );
+        $job_id = (string) ( $queued->get_data()['generation_job']['id'] ?? '' );
+        $this->assertNotSame( '', $job_id );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertCount( 1, $calls );
+    }
+
     public function test_generate_context_does_not_save_new_settings_while_job_is_active(): void
     {
         $credential_id = $this->create_openrouter_credential();
@@ -1837,6 +3401,71 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
         $settings = get_option( 'sentient_forms_site_context_settings' );
         $this->assertSame( 'openai/gpt-5.5', $settings['generation_model_selection']['primary'] ?? null );
+    }
+
+    public function test_generate_context_fences_settings_through_job_admission_and_dispatches_after_release(): void
+    {
+        global $wpdb;
+
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $lock_name = 'sf_action_authority_' . substr(
+            hash( 'sha256', (string) $wpdb->dbname . '|' . (string) $wpdb->options ),
+            0,
+            40
+        );
+        $lock_queries = [
+            'acquire' => 0,
+            'release' => 0,
+        ];
+        $dispatch_lock_queries = null;
+        $observe_lock_queries = static function( string $query ) use ( &$lock_queries, $lock_name ): string
+        {
+            if ( str_contains( $query, $lock_name ) && str_contains( $query, 'GET_LOCK(' ) )
+            {
+                $lock_queries['acquire']++;
+            }
+            if ( str_contains( $query, $lock_name ) && str_contains( $query, 'RELEASE_LOCK(' ) )
+            {
+                $lock_queries['release']++;
+            }
+            return $query;
+        };
+        $observe_dispatch = static function() use ( &$dispatch_lock_queries, &$lock_queries ): bool
+        {
+            $dispatch_lock_queries = $lock_queries;
+            return false;
+        };
+        add_filter( 'query', $observe_lock_queries );
+        add_filter( 'sentient_forms_site_context_generation_http_dispatch_enabled', $observe_dispatch );
+        try
+        {
+            $response = $this->dispatch_site_context_request(
+                'POST',
+                '/sentient-forms/v1/site-context/generate',
+                [
+                    'consent_status' => 'granted',
+                    'generation_model_selection' => [
+                        'primary'       => 'openai/gpt-5.5',
+                        'provider'      => 'openrouter',
+                        'credential_id' => $credential_id,
+                        'is_preset'     => false,
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'query', $observe_lock_queries );
+            remove_filter( 'sentient_forms_site_context_generation_http_dispatch_enabled', $observe_dispatch );
+        }
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( [ 'acquire' => 1, 'release' => 1 ], $lock_queries );
+        $this->assertSame( $lock_queries, $dispatch_lock_queries );
+        $job      = get_option( 'sentient_forms_site_context_generation_job' );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( $settings['_state_revision'] ?? null, $job['settings']['_state_revision'] ?? null );
     }
 
     public function test_generate_context_clears_first_generation_schedule_when_manual_job_is_queued(): void
@@ -2131,6 +3760,487 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertNull( $data['generation_job']['error'] ?? null );
         $this->assertSame( 'succeeded', get_option( 'sentient_forms_site_context_generation_job' )['status'] ?? null );
+    }
+
+    public function test_stale_generation_job_write_failure_has_no_follow_on_side_effects(): void
+    {
+        $settings = [
+            'consent_status'       => 'granted',
+            'auto_refresh_enabled' => true,
+            'auto_refresh_days'    => 14,
+            'last_error'           => 'Preserve this error.',
+        ];
+        update_option( 'sentient_forms_site_context_settings', $settings, false );
+        $controller = new Sentient_Forms_Site_Context_Controller();
+        $job = [
+            'id'              => 'stale-write-failure-job',
+            'status'          => 'queued',
+            'requested_at'    => '2000-01-01 00:00:00',
+            'started_at'      => null,
+            'finished_at'     => null,
+            'error'           => null,
+            'code'            => null,
+            'status_code'     => null,
+            'diagnostics'     => [],
+            '_state_revision' => 1,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+        wp_schedule_single_event( time() + HOUR_IN_SECONDS, 'sentient_forms_site_context_refresh' );
+        $refresh_before = wp_next_scheduled( 'sentient_forms_site_context_refresh' );
+
+        $reject_job_write = static fn( $value, $old_value ) => $old_value;
+        add_filter(
+            'pre_update_option_sentient_forms_site_context_generation_job',
+            $reject_job_write,
+            10,
+            2
+        );
+        try
+        {
+            $this->invoke_site_context_private( $controller, 'maybe_fail_stale_generation_job' );
+        }
+        finally
+        {
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_job',
+                $reject_job_write,
+                10
+            );
+        }
+
+        $stored_job      = get_option( 'sentient_forms_site_context_generation_job' );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'queued', $stored_job['status'] ?? null );
+        $this->assertSame( 'Preserve this error.', $stored_settings['last_error'] ?? null );
+        $this->assertSame( $refresh_before, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_stale_generation_job_recovers_schedules_when_last_error_metadata_cannot_persist(): void
+    {
+        $message = 'Site Context generation could not start in the background.';
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'last_error'           => 'Preserve this error.',
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_site_context_generation_job',
+            [
+                'id'              => 'stale-metadata-failure-job',
+                'status'          => 'queued',
+                'requested_at'    => '2000-01-01 00:00:00',
+                'started_at'      => null,
+                'finished_at'     => null,
+                'error'           => null,
+                'code'            => null,
+                'status_code'     => null,
+                'diagnostics'     => [],
+                '_state_revision' => 1,
+            ],
+            false
+        );
+
+        $reject_last_error = static function ( $value, $old_value ) use ( $message ) {
+            if ( is_array( $value ) && $message === ( $value['last_error'] ?? null ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_last_error, 10, 2 );
+        try
+        {
+            $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'maybe_fail_stale_generation_job'
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_last_error, 10 );
+        }
+
+        $stored_job      = get_option( 'sentient_forms_site_context_generation_job' );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'failed', $stored_job['status'] ?? null );
+        $this->assertSame( 'Preserve this error.', $stored_settings['last_error'] ?? null );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertNotEmpty( $stored_settings['first_generation_next_attempt_at'] ?? null );
+        $this->assertNotEmpty( $stored_settings['next_refresh_at'] ?? null );
+    }
+
+    public function test_schedule_reconciliation_job_write_failure_persists_admin_visible_error(): void
+    {
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'last_error'     => null,
+            ],
+            false
+        );
+        $terminal_job = [
+            'id'              => 'schedule-reconciliation-write-failure',
+            'status'          => 'failed',
+            'requested_at'    => '2026-08-15 00:00:00',
+            'started_at'      => '2026-08-15 00:00:01',
+            'finished_at'     => '2026-08-15 00:00:02',
+            'error'           => 'Generation failed.',
+            'code'            => 'site_context_generation_failed',
+            'status_code'     => 500,
+            'diagnostics'     => [],
+            '_state_revision' => 1,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $terminal_job, false );
+
+        $reject_first_generation = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_first_generation' === ( $event->hook ?? '' ) ? false : $pre;
+        $reject_job_write = static fn( $value, $old_value ) => $old_value;
+        add_filter( 'pre_schedule_event', $reject_first_generation, 10, 2 );
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job_write, 10, 2 );
+        try
+        {
+            $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'reconcile_terminal_generation_schedules',
+                [ $terminal_job ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_first_generation, 10 );
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job_write, 10 );
+        }
+
+        $stored_job      = get_option( 'sentient_forms_site_context_generation_job' );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'site_context_generation_failed', $stored_job['code'] ?? null );
+        $this->assertSame(
+            'Site Context generation finished, but its follow-up schedule could not be saved.',
+            $stored_settings['last_error'] ?? null
+        );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_schedule_reconciliation_job_write_failure_does_not_mark_replacement_job(): void
+    {
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'last_error'     => null,
+            ],
+            false
+        );
+        $terminal_job = [
+            'id'              => 'schedule-reconciliation-replaced-job',
+            'status'          => 'failed',
+            'error'           => 'Generation failed.',
+            'code'            => 'site_context_generation_failed',
+            'status_code'     => 500,
+            'diagnostics'     => [],
+            '_state_revision' => 1,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $terminal_job, false );
+
+        $replacement_job = [
+            'id'              => 'new-generation-job',
+            'status'          => 'queued',
+            '_state_revision' => 2,
+        ];
+        $reject_first_generation = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_first_generation' === ( $event->hook ?? '' ) ? false : $pre;
+        $replace_during_job_write = null;
+        $replace_during_job_write = static function( $value, $old_value ) use ( &$replace_during_job_write, $replacement_job )
+        {
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_job',
+                $replace_during_job_write,
+                10
+            );
+            update_option( 'sentient_forms_site_context_generation_job', $replacement_job, false );
+            return $old_value;
+        };
+        add_filter( 'pre_schedule_event', $reject_first_generation, 10, 2 );
+        add_filter(
+            'pre_update_option_sentient_forms_site_context_generation_job',
+            $replace_during_job_write,
+            10,
+            2
+        );
+        try
+        {
+            $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'reconcile_terminal_generation_schedules',
+                [ $terminal_job ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_first_generation, 10 );
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_job',
+                $replace_during_job_write,
+                10
+            );
+        }
+
+        $stored_job      = get_option( 'sentient_forms_site_context_generation_job' );
+        $stored_settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'new-generation-job', $stored_job['id'] ?? null );
+        $this->assertNull( $stored_settings['last_error'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_schedule_reconciliation_records_recovery_when_job_and_settings_writes_fail(): void
+    {
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'last_error'     => null,
+            ],
+            false
+        );
+        $terminal_job = [
+            'id'              => 'schedule-reconciliation-durable-recovery',
+            'status'          => 'failed',
+            'requested_at'    => '2026-08-15 00:00:00',
+            'started_at'      => '2026-08-15 00:00:01',
+            'finished_at'     => '2026-08-15 00:00:02',
+            'error'           => 'Generation failed.',
+            'code'            => 'site_context_generation_failed',
+            'status_code'     => 500,
+            'diagnostics'     => [],
+            '_state_revision' => 1,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $terminal_job, false );
+
+        $expected_message = 'Site Context generation finished, but its follow-up schedule could not be saved.';
+        $reject_first_generation = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_first_generation' === ( $event->hook ?? '' ) ? false : $pre;
+        $reject_job_write = static fn( mixed $value, mixed $old_value ): mixed => $old_value;
+        $reject_settings_error = static function ( mixed $value, mixed $old_value ) use ( $expected_message ): mixed {
+            if ( is_array( $value ) && $expected_message === ( $value['last_error'] ?? null ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_schedule_event', $reject_first_generation, 10, 2 );
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job_write, 10, 2 );
+        add_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_settings_error, 10, 2 );
+        try
+        {
+            $controller = new Sentient_Forms_Site_Context_Controller();
+            $this->invoke_site_context_private(
+                $controller,
+                'reconcile_terminal_generation_schedules',
+                [ $terminal_job ]
+            );
+            $status = $this->invoke_site_context_private( $controller, 'build_status_response' );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_first_generation, 10 );
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_job_write, 10 );
+            remove_filter( 'pre_update_option_sentient_forms_site_context_settings', $reject_settings_error, 10 );
+        }
+
+        $recovery = get_option( 'sentient_forms_site_context_generation_recovery' );
+        $this->assertSame( $terminal_job, get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertSame( $terminal_job['id'], $recovery['job_id'] ?? null );
+        $this->assertSame(
+            'site_context_generation_schedule_reconciliation_failed',
+            $recovery['code'] ?? null
+        );
+        $this->assertSame( $expected_message, $status['settings']['last_error'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_recovery_alert_does_not_mask_a_newer_revision_of_the_same_job(): void
+    {
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'last_error'     => 'Newer timeout failure.',
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_site_context_generation_job',
+            [
+                'id'              => 'same-job-newer-revision',
+                'status'          => 'failed',
+                'error'           => 'Newer timeout failure.',
+                'code'            => 'site_context_generation_worker_timeout',
+                '_state_revision' => 4,
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_site_context_generation_recovery',
+            [
+                'job_id'       => 'same-job-newer-revision',
+                'job_revision' => 3,
+                'message'      => 'Old terminal-write failure.',
+                'code'         => 'site_context_generation_terminalization_failed',
+            ],
+            false
+        );
+
+        $status = $this->invoke_site_context_private(
+            new Sentient_Forms_Site_Context_Controller(),
+            'build_status_response'
+        );
+
+        $this->assertSame( 'Newer timeout failure.', $status['settings']['last_error'] ?? null );
+    }
+
+    public function test_stale_terminal_job_cannot_reconcile_replacement_job_schedules(): void
+    {
+        $timestamp = time() + ( 3 * DAY_IN_SECONDS );
+        wp_schedule_single_event( $timestamp, 'sentient_forms_site_context_refresh' );
+        $terminal_job = [
+            'id'              => 'old-terminal-job',
+            'status'          => 'succeeded',
+            '_state_revision' => 4,
+        ];
+        $replacement_job = [
+            'id'              => 'replacement-job',
+            'status'          => 'queued',
+            '_state_revision' => 5,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $replacement_job, false );
+
+        $this->invoke_site_context_private(
+            new Sentient_Forms_Site_Context_Controller(),
+            'reconcile_terminal_generation_schedules',
+            [ $terminal_job ]
+        );
+
+        $this->assertSame( $replacement_job, get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertSame( $timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_recovery', false ) );
+    }
+
+    public function test_stale_running_recovery_cannot_reconcile_replacement_job_schedules(): void
+    {
+        $timestamp = time() + ( 3 * DAY_IN_SECONDS );
+        wp_schedule_single_event( $timestamp, 'sentient_forms_site_context_refresh' );
+        $running_job = [
+            'id'              => 'old-running-recovery-job',
+            'status'          => 'running',
+            'worker_id'       => 'old-running-worker',
+            '_state_revision' => 4,
+        ];
+        $replacement_job = [
+            'id'              => 'replacement-running-recovery-job',
+            'status'          => 'queued',
+            '_state_revision' => 5,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $running_job, false );
+
+        $replace_during_recovery = null;
+        $replace_during_recovery = static function( mixed $value ) use ( &$replace_during_recovery, $replacement_job ): mixed
+        {
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_recovery',
+                $replace_during_recovery,
+                10
+            );
+            update_option( 'sentient_forms_site_context_generation_job', $replacement_job, false );
+            return $value;
+        };
+        add_filter(
+            'pre_update_option_sentient_forms_site_context_generation_recovery',
+            $replace_during_recovery,
+            10,
+            1
+        );
+        try
+        {
+            $result = $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'reconcile_running_generation_recovery_schedules',
+                [
+                    $running_job['id'],
+                    $running_job['worker_id'],
+                    'succeeded',
+                    'Terminal status could not be saved.',
+                    'site_context_generation_terminalization_failed',
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter(
+                'pre_update_option_sentient_forms_site_context_generation_recovery',
+                $replace_during_recovery,
+                10
+            );
+        }
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( $replacement_job, get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertSame( $timestamp, wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_terminal_reconciliation_lock_contention_arms_exact_job_retry(): void
+    {
+        global $wpdb;
+
+        $terminal_job = [
+            'id'              => 'terminal-reconciliation-lock-retry',
+            'status'          => 'failed',
+            '_state_revision' => 4,
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $terminal_job, false );
+
+        $lock_database = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+        $lock_name     = 'sf_action_authority_' . substr(
+            hash( 'sha256', (string) $wpdb->dbname . '|' . (string) $wpdb->options ),
+            0,
+            40
+        );
+        $acquired = $lock_database->get_var( $lock_database->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) );
+        $this->assertSame( 1, (int) $acquired );
+        add_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+
+        try
+        {
+            $this->invoke_site_context_private(
+                new Sentient_Forms_Site_Context_Controller(),
+                'reconcile_terminal_generation_schedules',
+                [ $terminal_job ]
+            );
+        }
+        finally
+        {
+            $lock_database->get_var( $lock_database->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+            remove_filter( 'sentient_forms_action_authority_writer_lock_timeout', '__return_zero' );
+        }
+
+        $this->assertSame(
+            $terminal_job,
+            get_option( 'sentient_forms_site_context_generation_job' )
+        );
+        $this->assertNotFalse(
+            wp_next_scheduled(
+                'sentient_forms_site_context_manual_generation',
+                [ $terminal_job['id'] ]
+            )
+        );
     }
 
     public function test_generate_context_omits_unsupported_optional_openrouter_parameters(): void
@@ -2759,9 +4869,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $credential_id = $this->create_openrouter_credential();
         $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
         $calls = [];
+        $second_attempt_job = null;
         add_filter(
             'pre_http_request',
-            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+            static function ( $preempt, array $args, string $url ) use ( &$calls, &$second_attempt_job ) {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -2786,6 +4897,8 @@ class SiteContextControllerTest extends WP_UnitTestCase
                         'cookies'  => [],
                     ];
                 }
+
+                $second_attempt_job = get_option( 'sentient_forms_site_context_generation_job' );
 
                 return [
                     'headers'  => [],
@@ -2851,6 +4964,10 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 2, $data['generation_job']['attempts'] ?? null );
         $this->assertSame( 2, $data['generation_job']['max_attempts'] ?? null );
         $this->assertCount( 2, $calls );
+        $this->assertIsArray( $second_attempt_job );
+        $this->assertSame( 2, $second_attempt_job['attempts'] ?? null );
+        $this->assertNull( $second_attempt_job['code'] ?? null );
+        $this->assertSame( [], $second_attempt_job['diagnostics'] ?? null );
         $this->assertSame( 'google/gemini-pro-latest', $data['context']['metadata']['model'] ?? null );
 
         $settings = get_option( 'sentient_forms_site_context_settings' );
@@ -3086,6 +5203,299 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $settings = get_option( 'sentient_forms_site_context_settings' );
         $this->assertNotEmpty( $settings['next_refresh_at'] ?? null );
         $this->assertNotEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_successful_manual_generation_surfaces_refresh_schedule_failure(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $reject_refresh = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_refresh' === ( $event->hook ?? '' ) ? false : $pre;
+        add_filter( 'pre_schedule_event', $reject_refresh, 10, 2 );
+        try
+        {
+            $data = $this->run_site_context_generation_job( $job_id );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_refresh, 10 );
+        }
+
+        $this->assertCount( 1, $calls );
+        $this->assertNotNull( $data['context'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame(
+            'site_context_generation_schedule_reconciliation_failed',
+            $data['generation_job']['code'] ?? null
+        );
+        $this->assertSame( 'succeeded', $data['generation_job']['diagnostics']['generation_terminal_status'] ?? null );
+        $this->assertNotEmpty( $data['generation_job']['diagnostics']['schedule_error_code'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+    }
+
+    public function test_failed_manual_generation_surfaces_first_generation_schedule_failure(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        add_filter(
+            'pre_http_request',
+            static fn(): array => [
+                'headers'  => [],
+                'response' => [ 'code' => 400, 'message' => 'Bad Request' ],
+                'body'     => wp_json_encode( [ 'error' => [ 'message' => 'Invalid request.' ] ] ),
+                'cookies'  => [],
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $reject_first_generation = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_first_generation' === ( $event->hook ?? '' ) ? false : $pre;
+        add_filter( 'pre_schedule_event', $reject_first_generation, 10, 2 );
+        try
+        {
+            $data = $this->run_site_context_generation_job( $job_id );
+        }
+        finally
+        {
+            remove_filter( 'pre_schedule_event', $reject_first_generation, 10 );
+        }
+
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame(
+            'site_context_generation_schedule_reconciliation_failed',
+            $data['generation_job']['code'] ?? null
+        );
+        $this->assertSame( 'failed', $data['generation_job']['diagnostics']['generation_terminal_status'] ?? null );
+        $this->assertNotEmpty( $data['generation_job']['diagnostics']['generation_error_code'] ?? null );
+        $this->assertSame(
+            'OpenRouter could not complete the Site Context request for the selected model and tool settings.',
+            $data['generation_job']['diagnostics']['generation_error_message'] ?? null
+        );
+        $this->assertSame( 400, $data['generation_job']['diagnostics']['generation_status_code'] ?? null );
+        $this->assertNotEmpty( $data['generation_job']['diagnostics']['schedule_error_code'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_manual_generation_recovers_when_success_terminal_status_cannot_persist(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $reject_terminal_write = static function ( mixed $value, mixed $old_value ): mixed {
+            if ( is_array( $value ) && 'succeeded' === ( $value['status'] ?? null ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10, 2 );
+        try
+        {
+            $data = $this->run_site_context_generation_job( $job_id );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10 );
+        }
+
+        $this->assertCount( 1, $calls );
+        $this->assertNotNull( $data['context'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_failed',
+            $data['generation_job']['code'] ?? null
+        );
+        $this->assertSame(
+            'succeeded',
+            $data['generation_job']['diagnostics']['generation_terminal_status'] ?? null
+        );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+        $this->assertSame(
+            'Site Context generation finished, but its final status could not be saved.',
+            $data['settings']['last_error'] ?? null
+        );
+    }
+
+    public function test_manual_generation_records_recovery_when_all_terminal_job_writes_fail(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $reject_terminal_write = static function ( mixed $value, mixed $old_value ): mixed {
+            if ( is_array( $value ) && in_array( $value['status'] ?? null, [ 'succeeded', 'failed' ], true ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10, 2 );
+        try
+        {
+            $data = $this->run_site_context_generation_job( $job_id );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10 );
+        }
+
+        $recovery = get_option( 'sentient_forms_site_context_generation_recovery' );
+        $stored_job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertCount( 1, $calls );
+        $this->assertNotNull( $data['context'] ?? null );
+        $this->assertSame( 'running', $stored_job['status'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_failed',
+            $data['generation_job']['code'] ?? null
+        );
+        $this->assertSame( $job_id, $recovery['job_id'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_failed',
+            $recovery['code'] ?? null
+        );
+        $this->assertSame(
+            'Site Context generation finished, but its final status could not be saved.',
+            $data['settings']['last_error'] ?? null
+        );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $replacement = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $replacement_data = $replacement->get_data();
+        $this->assertSame( 200, $replacement->get_status() );
+        $this->assertSame( 'queued', $replacement_data['generation_job']['status'] ?? null );
+        $this->assertNotSame( $job_id, $replacement_data['generation_job']['id'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_recovery', false ) );
+    }
+
+    public function test_manual_generation_records_compound_recovery_when_terminal_and_schedule_writes_fail(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $reject_terminal_write = static function ( mixed $value, mixed $old_value ): mixed {
+            if ( is_array( $value ) && in_array( $value['status'] ?? null, [ 'succeeded', 'failed' ], true ) )
+            {
+                return $old_value;
+            }
+
+            return $value;
+        };
+        $reject_refresh = static fn( mixed $pre, object $event ): mixed =>
+            'sentient_forms_site_context_refresh' === ( $event->hook ?? '' ) ? false : $pre;
+        add_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10, 2 );
+        add_filter( 'pre_schedule_event', $reject_refresh, 10, 2 );
+        try
+        {
+            $data = $this->run_site_context_generation_job( $job_id );
+        }
+        finally
+        {
+            remove_filter( 'pre_update_option_sentient_forms_site_context_generation_job', $reject_terminal_write, 10 );
+            remove_filter( 'pre_schedule_event', $reject_refresh, 10 );
+        }
+
+        $recovery = get_option( 'sentient_forms_site_context_generation_recovery' );
+        $this->assertSame( $job_id, $recovery['job_id'] ?? null );
+        $this->assertSame(
+            'site_context_generation_terminalization_and_schedule_failed',
+            $recovery['code'] ?? null
+        );
+        $this->assertSame(
+            'Site Context generation finished, but its final status and follow-up schedule could not be saved.',
+            $data['settings']['last_error'] ?? null
+        );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
     }
 
     public function test_manual_generation_does_not_retry_after_job_is_canceled(): void
@@ -3588,6 +5998,28 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertNotSame( '', $job_id );
 
         return $job_id;
+    }
+
+    /** @return array<string, mixed> */
+    private function site_context_job_fixture( string $job_id, array $settings ): array
+    {
+        return [
+            'id'                  => $job_id,
+            'status'              => 'queued',
+            'requested_at'        => current_time( 'mysql' ),
+            'settings'            => $settings,
+            'dispatch_token_hash' => wp_hash( 'site-context-cas-fixture' ),
+        ];
+    }
+
+    private function invoke_site_context_private(
+        Sentient_Forms_Site_Context_Controller $controller,
+        string $method,
+        array $arguments = []
+    ): mixed
+    {
+        $reflection = new ReflectionMethod( $controller, $method );
+        return $reflection->invokeArgs( $controller, $arguments );
     }
 
     private function run_site_context_generation_job( string $job_id ): array

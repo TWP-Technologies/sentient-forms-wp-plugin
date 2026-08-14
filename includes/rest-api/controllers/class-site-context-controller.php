@@ -19,9 +19,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 {
     use Sentient_Forms_Permission_Utils_Trait;
 
-    private const OPTION_NAME                 = 'sentient_forms_site_context';
-    private const SETTINGS_OPTION_NAME        = 'sentient_forms_site_context_settings';
-    private const GENERATION_JOB_OPTION_NAME  = 'sentient_forms_site_context_generation_job';
+    private const OPTION_NAME                      = 'sentient_forms_site_context';
+    private const SETTINGS_OPTION_NAME             = 'sentient_forms_site_context_settings';
+    private const GENERATION_JOB_OPTION_NAME       = 'sentient_forms_site_context_generation_job';
+    private const GENERATION_RECOVERY_OPTION_NAME = 'sentient_forms_site_context_generation_recovery';
     private const CRON_HOOK                   = 'sentient_forms_site_context_refresh';
     private const FIRST_GENERATION_CRON_HOOK = 'sentient_forms_site_context_first_generation';
     private const MANUAL_GENERATION_CRON_HOOK = 'sentient_forms_site_context_manual_generation';
@@ -46,6 +47,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
     private const OPENROUTER_SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS = 5;
+    private const STATE_REVISION_KEY = '_state_revision';
     private const OPENROUTER_SITE_CONTEXT_SERVER_TOOL_COMPATIBILITY_OVERRIDES = [
         '~openai/gpt-latest' => [
             'web_search'      => false,
@@ -81,16 +83,21 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return;
         }
 
-        $result = $controller->perform_generation( $settings, false );
+        $result = $controller->perform_scheduled_generation( $settings, false, 'scheduled_refresh' );
         if ( is_wp_error( $result ) )
         {
-            $settings['last_error'] = $result->get_error_message();
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            $persisted = $controller->update_settings_metadata(
+                [ 'last_error' => $result->get_error_message() ]
+            );
+            if ( is_wp_error( $persisted ) )
+            {
+                return;
+            }
             $controller->schedule_next_refresh( 1 );
             return;
         }
 
-        $controller->schedule_next_refresh( (int) $settings['auto_refresh_days'] );
+        $controller->sync_refresh_schedule();
     }
 
     /**
@@ -138,7 +145,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return;
         }
 
-        $result = $controller->perform_generation( $settings, false, true );
+        $result = $controller->perform_scheduled_generation( $settings, true, 'first_generation' );
         if ( is_wp_error( $result ) )
         {
             if ( 'site_context_generation_existing_context' === $result->get_error_code() )
@@ -249,15 +256,22 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return;
         }
 
-        $settings['first_generation_started_at']      = null;
-        $settings['first_generation_next_attempt_at'] = null;
-        $settings['first_generation_last_attempt_at'] = null;
-        $settings['first_generation_attempt_count']   = 0;
-        $settings['first_generation_last_error']      = null;
-        $settings['first_generation_exhausted_at']    = null;
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        $persisted = $controller->update_settings_metadata(
+            [
+                'first_generation_started_at'      => null,
+                'first_generation_next_attempt_at' => null,
+                'first_generation_last_attempt_at' => null,
+                'first_generation_attempt_count'   => 0,
+                'first_generation_last_error'      => null,
+                'first_generation_exhausted_at'    => null,
+            ]
+        );
+        if ( is_wp_error( $persisted ) )
+        {
+            return;
+        }
 
-        $controller->sync_first_generation_schedule( $settings );
+        $controller->sync_first_generation_schedule( $persisted );
     }
 
     public function register_routes(): void
@@ -313,34 +327,52 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
      */
     public function create_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $settings = $this->settings_from_request( $request, $this->get_settings_record() );
-        $settings['consent_status'] = 'granted';
-        $settings['consented_at']   = $settings['consented_at'] ?: current_time( 'mysql' );
-        $settings['declined_at']    = null;
-
         $site_url = $request->get_param( 'site_url' ) ?? get_site_url();
-        $context  = $this->build_context_record(
-            $this->generate_local_summary( is_scalar( $site_url ) ? (string) $site_url : get_site_url() ),
-            'local_starter',
-            $request->has_param( 'auto_include' ) ? (bool) $request->get_param( 'auto_include' ) : true,
-            true,
-            $this->get_stored_context()
+        $settings = $this->mutate_context_under_fence(
+            $request,
+            static function( array $settings ): array
+            {
+                $settings['consent_status'] = 'granted';
+                $settings['consented_at']   = $settings['consented_at'] ?: current_time( 'mysql' );
+                $settings['declined_at']    = null;
+                return $settings;
+            },
+            function( ?array $existing ) use ( $request, $site_url ): array
+            {
+                return $this->build_context_record(
+                    $this->generate_local_summary( is_scalar( $site_url ) ? (string) $site_url : get_site_url() ),
+                    'local_starter',
+                    $request->has_param( 'auto_include' ) ? (bool) $request->get_param( 'auto_include' ) : true,
+                    true,
+                    $existing
+                );
+            }
         );
-
-        $this->cancel_active_manual_generation_job();
-        update_option( self::OPTION_NAME, $context, false );
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        $this->sync_refresh_schedule( $settings );
-        $this->clear_first_generation_attempt_state( $settings );
-        $this->clear_first_generation_schedule();
+        if ( is_wp_error( $settings ) )
+        {
+            return $settings;
+        }
+        $scheduled = $this->sync_refresh_schedule();
+        if ( is_wp_error( $scheduled ) )
+        {
+            return $scheduled;
+        }
+        $cleared = $this->clear_first_generation_attempt_state( $settings );
+        if ( is_wp_error( $cleared ) )
+        {
+            return $cleared;
+        }
+        $cleared = $this->clear_first_generation_schedule();
+        if ( is_wp_error( $cleared ) )
+        {
+            return $cleared;
+        }
 
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
 
     public function update_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $settings = $this->settings_from_request( $request, $this->get_settings_record() );
-        $existing = $this->get_stored_context( true );
         $has_summary_text = $request->has_param( 'summary_text' );
         $summary_text     = null;
 
@@ -353,60 +385,90 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-        $this->cancel_active_manual_generation_job();
-
-        if ( $has_summary_text )
-        {
-            if ( '' === trim( $summary_text ) )
+        $settings = $this->mutate_context_under_fence(
+            $request,
+            null,
+            function( ?array $existing ) use ( $request, $has_summary_text, $summary_text ): ?array
             {
-                delete_option( self::OPTION_NAME );
+                if ( $has_summary_text )
+                {
+                    if ( '' === trim( (string) $summary_text ) )
+                    {
+                        return null;
+                    }
+
+                    return $this->build_context_record(
+                        (string) $summary_text,
+                        'manual',
+                        $request->has_param( 'auto_include' )
+                            ? (bool) $request->get_param( 'auto_include' )
+                            : (bool) ( $existing['auto_include'] ?? true ),
+                        $request->has_param( 'pii_ack' )
+                            ? (bool) $request->get_param( 'pii_ack' )
+                            : true,
+                        $existing
+                    );
+                }
+
+                if ( $request->has_param( 'auto_include' ) && is_array( $existing ) )
+                {
+                    $existing['auto_include'] = (bool) $request->get_param( 'auto_include' );
+                    return $this->normalize_context_record( $existing );
+                }
+
+                return $existing;
             }
-            else
-            {
-                $context = $this->build_context_record(
-                    $summary_text,
-                    'manual',
-                    $request->has_param( 'auto_include' )
-                        ? (bool) $request->get_param( 'auto_include' )
-                        : (bool) ( $existing['auto_include'] ?? true ),
-                    $request->has_param( 'pii_ack' )
-                        ? (bool) $request->get_param( 'pii_ack' )
-                        : true,
-                    $existing
-                );
-                update_option( self::OPTION_NAME, $context, false );
-            }
-        }
-        elseif ( $request->has_param( 'auto_include' ) && is_array( $existing ) )
+        );
+        if ( is_wp_error( $settings ) )
         {
-            $existing['auto_include'] = (bool) $request->get_param( 'auto_include' );
-            update_option( self::OPTION_NAME, $this->normalize_context_record( $existing ), false );
+            return $settings;
         }
 
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        $this->sync_refresh_schedule( $settings );
-        $this->sync_first_generation_schedule( $settings );
+        $scheduled = $this->sync_refresh_schedule();
+        if ( is_wp_error( $scheduled ) )
+        {
+            return $scheduled;
+        }
+        $scheduled = $this->sync_first_generation_schedule( $settings );
+        if ( is_wp_error( $scheduled ) )
+        {
+            return $scheduled;
+        }
 
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
 
     public function generate_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $this->maybe_fail_stale_generation_job();
-        if ( $this->generation_job_is_active( $this->get_generation_job_record() ) )
-        {
-            return $this->prepare_item_for_response( $this->build_status_response() );
-        }
+        $dispatch = null;
+        $job = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $request, &$dispatch ): array | WP_Error
+            {
+                $this->maybe_fail_stale_generation_job();
+                $existing = $this->get_generation_job_record();
+                if ( $this->generation_job_is_active( $existing ) )
+                {
+                    return $this->public_generation_job( $existing );
+                }
 
-        $settings = $this->settings_from_request( $request, $this->get_settings_record() );
+                $settings = $this->update_settings_from_request_locked( $request );
+                if ( is_wp_error( $settings ) )
+                {
+                    return $settings;
+                }
 
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-
-        $job = $this->queue_manual_generation( $settings );
+                return $this->queue_manual_generation(
+                    $settings,
+                    static function( string $job_id, string $dispatch_token ) use ( &$dispatch ): void
+                    {
+                        $dispatch = [ $job_id, $dispatch_token ];
+                    }
+                );
+            }
+        );
         if ( is_wp_error( $job ) )
         {
-            $settings['last_error'] = $job->get_error_message();
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            $this->update_settings_metadata( [ 'last_error' => $job->get_error_message() ] );
             $error_data = $job->get_error_data();
             $status     = is_array( $error_data ) && isset( $error_data['status'] )
                 ? max( 400, min( 599, absint( $error_data['status'] ) ) )
@@ -421,23 +483,190 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        if ( is_array( $dispatch ) )
+        {
+            $dispatched = $this->dispatch_manual_generation_job( $dispatch[0], $dispatch[1] );
+            if ( is_wp_error( $dispatched ) )
+            {
+                $failed = $this->fail_queued_generation_dispatch( $dispatch[0], $dispatched );
+                $error  = is_wp_error( $failed ) ? $failed : $dispatched;
+                return $this->prepare_error_response(
+                    $error->get_error_code(),
+                    $error->get_error_message(),
+                    503,
+                    [ 'status' => 503 ]
+                );
+            }
+        }
+
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
 
     public function delete_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        delete_option( self::OPTION_NAME );
+        $settings = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function(): array | WP_Error
+            {
+                $previous_settings = get_option( self::SETTINGS_OPTION_NAME, null );
+                $previous_context  = get_option( self::OPTION_NAME, null );
+                $previous_job      = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                $schedule_snapshots = [
+                    self::CRON_HOOK                    => $this->scheduled_timestamps_for_hook( self::CRON_HOOK ),
+                    self::FIRST_GENERATION_CRON_HOOK   => $this->scheduled_timestamps_for_hook( self::FIRST_GENERATION_CRON_HOOK ),
+                    self::MANUAL_GENERATION_CRON_HOOK  => $this->scheduled_timestamps_for_hook( self::MANUAL_GENERATION_CRON_HOOK ),
+                ];
 
-        $settings = $this->default_settings_record();
-        $settings['consent_status'] = 'declined';
-        $settings['declined_at']    = current_time( 'mysql' );
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        $this->clear_refresh_schedule();
-        $this->clear_first_generation_attempt_state( $settings );
-        $this->clear_first_generation_schedule();
-        $this->clear_manual_generation_job();
+                $settings = $this->withdraw_context_under_fence();
+                if ( is_wp_error( $settings ) )
+                {
+                    $restored = $this->restore_context_delete_snapshot_locked(
+                        $previous_settings,
+                        $previous_context,
+                        $previous_job,
+                        $schedule_snapshots
+                    );
+                    if ( is_wp_error( $restored ) )
+                    {
+                        return $restored;
+                    }
+                    return $settings;
+                }
+
+                foreach (
+                    [
+                        fn(): true | WP_Error => $this->clear_refresh_schedule(),
+                        fn(): true | WP_Error => $this->clear_first_generation_schedule(),
+                        fn(): true | WP_Error => $this->clear_schedule_hook_locked( self::MANUAL_GENERATION_CRON_HOOK ),
+                    ] as $clear_schedule
+                )
+                {
+                    $cleared = $clear_schedule();
+                    if ( ! is_wp_error( $cleared ) )
+                    {
+                        continue;
+                    }
+
+                    $restored = $this->restore_context_delete_snapshot_locked(
+                        $previous_settings,
+                        $previous_context,
+                        $previous_job,
+                        $schedule_snapshots
+                    );
+                    if ( is_wp_error( $restored ) )
+                    {
+                        return $restored;
+                    }
+                    return $cleared;
+                }
+
+                return $settings;
+            }
+        );
+        if ( is_wp_error( $settings ) )
+        {
+            return $settings;
+        }
 
         return $this->prepare_item_for_response( $this->build_status_response() );
+    }
+
+    /**
+     * Restore every authority and schedule observed before Site Context deletion.
+     *
+     * @param array<string, array<int, int>> $schedule_snapshots
+     */
+    private function restore_context_delete_snapshot_locked(
+        mixed $previous_settings,
+        mixed $previous_context,
+        mixed $previous_job,
+        array $schedule_snapshots
+    ): true | WP_Error
+    {
+        $rollback_results = [
+            $this->restore_option_snapshot_locked( self::SETTINGS_OPTION_NAME, $previous_settings ),
+            $this->restore_option_snapshot_locked( self::OPTION_NAME, $previous_context ),
+            $this->restore_option_snapshot_locked( self::GENERATION_JOB_OPTION_NAME, $previous_job ),
+        ];
+        foreach ( $schedule_snapshots as $hook => $timestamps )
+        {
+            $rollback_results[] = $this->restore_schedule_snapshot_locked( $hook, $timestamps );
+        }
+        foreach ( $rollback_results as $rollback_result )
+        {
+            if ( is_wp_error( $rollback_result ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_rollback_failed',
+                    __( 'Site Context could not be restored after deletion failed.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /** @return array<string, mixed>|WP_Error */
+    private function withdraw_context_under_fence(): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function(): array | WP_Error
+            {
+                $job = $this->get_generation_job_record();
+                if ( $this->generation_job_is_active( $job ) )
+                {
+                    $job = $this->canceled_generation_job_record( $job );
+                    $job[ self::STATE_REVISION_KEY ] = max(
+                        0,
+                        absint( $job[ self::STATE_REVISION_KEY ] ?? 0 )
+                    ) + 1;
+                    if ( ! update_option( self::GENERATION_JOB_OPTION_NAME, $job, false ) )
+                    {
+                        $stored_job = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                        if ( $stored_job !== $job )
+                        {
+                            return new WP_Error(
+                                'sentient_forms_site_context_generation_job_write_failed',
+                                __( 'Site Context generation could not be canceled.', 'sentient-forms' ),
+                                [ 'status' => 500 ]
+                            );
+                        }
+                    }
+                }
+
+                $current  = $this->get_settings_record();
+                $settings = $this->default_settings_record();
+                $settings['consent_status'] = 'declined';
+                $settings['declined_at']    = current_time( 'mysql' );
+                $settings[ self::STATE_REVISION_KEY ] = max(
+                    0,
+                    absint( $current[ self::STATE_REVISION_KEY ] ?? 0 )
+                ) + 1;
+                if ( ! update_option( self::SETTINGS_OPTION_NAME, $settings, false ) )
+                {
+                    $stored_settings = get_option( self::SETTINGS_OPTION_NAME, null );
+                    if ( $stored_settings !== $settings )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_settings_write_failed',
+                            __( 'Site Context settings could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                if ( ! delete_option( self::OPTION_NAME ) && false !== get_option( self::OPTION_NAME, false ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_site_context_delete_failed',
+                        __( 'Site Context could not be deleted.', 'sentient-forms' ),
+                        [ 'status' => 500 ]
+                    );
+                }
+
+                return $settings;
+            }
+        );
     }
 
     public function get_item_schema(): ?array
@@ -522,11 +751,22 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
         $context   = $this->get_stored_context( true );
         $settings  = $this->get_settings_record();
+        $current_job = $this->get_generation_job_record();
+        $recovery    = $this->generation_recovery_for_job( $current_job );
+        if (
+            is_array( $recovery )
+            && '' !== trim( (string) ( $recovery['message'] ?? '' ) )
+        )
+        {
+            $settings['last_error'] = sanitize_text_field( (string) $recovery['message'] );
+        }
         $has_text   = is_array( $context ) && '' !== trim( (string) ( $context['summary_text'] ?? '' ) );
         $stale_days = ! empty( $settings['auto_refresh_enabled'] )
             ? (int) $settings['auto_refresh_days']
             : self::MANUAL_STALE_DAYS;
         $is_stale = $has_text && $this->context_is_stale( $context, $stale_days );
+        $public_settings = $settings;
+        unset( $public_settings[ self::STATE_REVISION_KEY ] );
         $status   = 'ready';
         if ( 'declined' === $settings['consent_status'] )
         {
@@ -543,7 +783,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
         return [
             'context'          => $has_text ? $context : null,
-            'settings'         => $settings,
+            'settings'         => $public_settings,
             'has_context'      => $has_text,
             'is_empty'         => ! $has_text,
             'is_stale'         => $is_stale,
@@ -596,6 +836,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'first_generation_attempt_count'   => 0,
             'first_generation_last_error'      => null,
             'first_generation_exhausted_at'    => null,
+            self::STATE_REVISION_KEY            => 0,
         ];
     }
 
@@ -636,6 +877,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             ),
             'first_generation_last_error'      => $this->sanitize_nullable_text( $settings['first_generation_last_error'] ?? null ),
             'first_generation_exhausted_at'    => $this->sanitize_nullable_text( $settings['first_generation_exhausted_at'] ?? null ),
+            self::STATE_REVISION_KEY            => max( 0, absint( $settings[ self::STATE_REVISION_KEY ] ?? 0 ) ),
         ];
     }
 
@@ -698,6 +940,501 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return $this->normalize_settings_record( $settings );
+    }
+
+    /**
+     * Serialize every Site Context settings write with credential deletion.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function update_settings_record( array $settings, bool $force = false ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $settings, $force ): array | WP_Error
+            {
+                $stored   = get_option( self::SETTINGS_OPTION_NAME, [] );
+                $current  = $this->normalize_settings_record( is_array( $stored ) ? $stored : [] );
+                $settings = $this->normalize_settings_record( $settings );
+                if (
+                    ! $force
+                    && $settings[ self::STATE_REVISION_KEY ] !== $current[ self::STATE_REVISION_KEY ]
+                )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $settings[ self::STATE_REVISION_KEY ] = $current[ self::STATE_REVISION_KEY ] + 1;
+                if ( ! update_option( self::SETTINGS_OPTION_NAME, $settings, false ) )
+                {
+                    $stored = get_option( self::SETTINGS_OPTION_NAME, null );
+                    if ( $stored !== $settings )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_settings_write_failed',
+                            __( 'Site Context settings could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                return $settings;
+            }
+        );
+    }
+
+    /**
+     * Merge non-authority scheduling/status fields without invalidating a running job.
+     *
+     * @param array<string, mixed> $metadata
+     */
+    private function update_settings_metadata( array $metadata ): array | WP_Error
+    {
+        $allowed = array_fill_keys(
+            [
+                'last_error',
+                'next_refresh_at',
+                'first_generation_started_at',
+                'first_generation_next_attempt_at',
+                'first_generation_last_attempt_at',
+                'first_generation_attempt_count',
+                'first_generation_last_error',
+                'first_generation_exhausted_at',
+            ],
+            true
+        );
+        $metadata = array_intersect_key( $metadata, $allowed );
+
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $metadata ): array | WP_Error
+            {
+                return $this->update_settings_metadata_locked( $metadata );
+            }
+        );
+    }
+
+    /**
+     * Merge scheduling/status fields after the caller holds the shared write fence.
+     *
+     * @param array<string, mixed> $metadata
+     */
+    private function update_settings_metadata_locked( array $metadata ): array | WP_Error
+    {
+        $settings = $this->get_settings_record();
+        $settings = $this->normalize_settings_record( array_replace( $settings, $metadata ) );
+        if ( ! update_option( self::SETTINGS_OPTION_NAME, $settings, false ) )
+        {
+            $stored = get_option( self::SETTINGS_OPTION_NAME, null );
+            if ( $stored !== $settings )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_settings_write_failed',
+                    __( 'Site Context settings could not be saved.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Persist a generation error only while the observed job still owns the state.
+     *
+     * @param array<string, mixed> $job
+     */
+    private function update_generation_error_if_job_matches( array $job, string $last_error ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job, $last_error ): array | WP_Error
+            {
+                $current = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                $current = is_array( $current ) ? $current : null;
+                if ( ! $this->generation_job_snapshot_matches( $current, $job ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                return $this->update_settings_metadata_locked( [ 'last_error' => $last_error ] );
+            }
+        );
+    }
+
+    /**
+     * Read, validate, and persist request settings under the shared local-state fence.
+     *
+     * @param callable(array<string, mixed>):array<string, mixed>|null $mutator
+     * @return array<string, mixed>|WP_Error
+     */
+    private function update_settings_from_request( WP_REST_Request $request, ?callable $mutator = null ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): array | WP_Error => $this->update_settings_from_request_locked( $request, $mutator )
+        );
+    }
+
+    /**
+     * Persist request settings while the caller owns the shared option-write fence.
+     *
+     * @param callable(array<string, mixed>):array<string, mixed>|null $mutator
+     * @return array<string, mixed>|WP_Error
+     */
+    private function update_settings_from_request_locked(
+        WP_REST_Request $request,
+        ?callable $mutator = null
+    ): array | WP_Error
+    {
+        $settings = $this->settings_from_request( $request, $this->get_settings_record() );
+        if ( null !== $mutator )
+        {
+            $settings = $this->normalize_settings_record( $mutator( $settings ) );
+        }
+
+        if ( $request->has_param( 'generation_model_selection' ) )
+        {
+            $selection     = $settings['generation_model_selection'] ?? [];
+            $credential_id = absint( is_array( $selection ) ? ( $selection['credential_id'] ?? 0 ) : 0 );
+            if ( $credential_id > 0 )
+            {
+                global $wpdb;
+                $credential = ( new Sentient_Forms_Provider_Credentials_Repository( $wpdb ) )->get( $credential_id );
+                $provider   = is_array( $selection )
+                    ? sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) )
+                    : 'openrouter';
+                if (
+                    ! is_array( $credential )
+                    || $provider !== sanitize_key( (string) ( $credential['provider'] ?? '' ) )
+                )
+                {
+                    return new WP_Error(
+                        'sentient_forms_site_context_credential_unavailable',
+                        __( 'Choose an available provider credential before saving Site Context settings.', 'sentient-forms' ),
+                        [ 'status' => 409 ]
+                    );
+                }
+            }
+        }
+
+        $settings[ self::STATE_REVISION_KEY ] = max(
+            0,
+            absint( $settings[ self::STATE_REVISION_KEY ] ?? 0 )
+        ) + 1;
+
+        if ( ! update_option( self::SETTINGS_OPTION_NAME, $settings, false ) )
+        {
+            $stored = get_option( self::SETTINGS_OPTION_NAME, null );
+            if ( $stored !== $settings )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_settings_write_failed',
+                    __( 'Site Context settings could not be saved.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Mutate settings, active generation authority, and context under one fence.
+     *
+     * @param callable(array<string, mixed>):array<string, mixed>|null $settings_mutator
+     * @param callable(array<string, mixed>|null):(array<string, mixed>|null) $context_mutator
+     * @return array<string, mixed>|WP_Error
+     */
+    private function mutate_context_under_fence(
+        WP_REST_Request $request,
+        ?callable $settings_mutator,
+        callable $context_mutator
+    ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $request, $settings_mutator, $context_mutator ): array | WP_Error
+            {
+                $previous_settings = get_option( self::SETTINGS_OPTION_NAME, null );
+                $previous_context  = get_option( self::OPTION_NAME, null );
+                $previous_job      = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                $manual_schedules  = $this->scheduled_timestamps_for_hook( self::MANUAL_GENERATION_CRON_HOOK );
+
+                $settings = $this->update_settings_from_request_locked( $request, $settings_mutator );
+                if ( is_wp_error( $settings ) )
+                {
+                    return $settings;
+                }
+
+                $canceled = $this->cancel_active_manual_generation_job_locked();
+                if ( is_wp_error( $canceled ) )
+                {
+                    $settings_restored = $this->restore_option_snapshot_locked(
+                        self::SETTINGS_OPTION_NAME,
+                        $previous_settings
+                    );
+                    $job_restored = $this->restore_option_snapshot_locked(
+                        self::GENERATION_JOB_OPTION_NAME,
+                        $previous_job
+                    );
+                    $schedule_restored = $this->restore_schedule_snapshot_locked(
+                        self::MANUAL_GENERATION_CRON_HOOK,
+                        $manual_schedules
+                    );
+                    if ( is_wp_error( $settings_restored ) || is_wp_error( $job_restored ) || is_wp_error( $schedule_restored ) )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_rollback_failed',
+                            __( 'Site Context could not be restored after a failed cancellation.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                    return $canceled;
+                }
+
+                $existing = is_array( $previous_context ) ? $this->normalize_context_record( $previous_context ) : null;
+                $context  = $context_mutator( $existing );
+                $persisted = $this->persist_context_record_locked( $context );
+                if ( is_wp_error( $persisted ) )
+                {
+                    $settings_restored = $this->restore_option_snapshot_locked(
+                        self::SETTINGS_OPTION_NAME,
+                        $previous_settings
+                    );
+                    $job_restored = $this->restore_option_snapshot_locked(
+                        self::GENERATION_JOB_OPTION_NAME,
+                        $previous_job
+                    );
+                    $schedule_restored = $this->restore_schedule_snapshot_locked(
+                        self::MANUAL_GENERATION_CRON_HOOK,
+                        $manual_schedules
+                    );
+                    if ( is_wp_error( $settings_restored ) || is_wp_error( $job_restored ) || is_wp_error( $schedule_restored ) )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_rollback_failed',
+                            __( 'Site Context could not be restored after a failed write.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                    return $persisted;
+                }
+
+                return $settings;
+            }
+        );
+    }
+
+    /** @param array<string, mixed>|null $context */
+    private function persist_context_record_locked( ?array $context ): true | WP_Error
+    {
+        if ( null === $context )
+        {
+            if ( ! delete_option( self::OPTION_NAME ) && null !== get_option( self::OPTION_NAME, null ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_delete_failed',
+                    __( 'Site Context could not be deleted.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+            return true;
+        }
+
+        if ( ! update_option( self::OPTION_NAME, $context, false ) && get_option( self::OPTION_NAME, null ) !== $context )
+        {
+            return new WP_Error(
+                'sentient_forms_site_context_write_failed',
+                __( 'Site Context could not be saved.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+        return true;
+    }
+
+    private function restore_option_snapshot_locked( string $option_name, mixed $previous ): true | WP_Error
+    {
+        $restored = null === $previous
+            ? delete_option( $option_name ) || null === get_option( $option_name, null )
+            : update_option( $option_name, $previous, false ) || get_option( $option_name, null ) === $previous;
+        return $restored
+            ? true
+            : new WP_Error( 'sentient_forms_site_context_rollback_failed', __( 'Site Context state could not be restored.', 'sentient-forms' ) );
+    }
+
+    /**
+     * Serialize every Site Context generation-job write with credential deletion.
+     *
+     * @param array<string, mixed> $job
+     */
+    private function update_generation_job_record( array $job ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job ): array | WP_Error
+            {
+                $current          = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                if ( ! is_array( $current ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $current_revision = max( 0, absint( $current[ self::STATE_REVISION_KEY ] ?? 0 ) );
+                $job_revision     = max( 0, absint( $job[ self::STATE_REVISION_KEY ] ?? 0 ) );
+                $current_job_id   = sanitize_text_field( (string) ( $current['id'] ?? '' ) );
+                $job_id           = sanitize_text_field( (string) ( $job['id'] ?? '' ) );
+                if ( '' === $job_id || $job_id !== $current_job_id || $job_revision !== $current_revision )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $job[ self::STATE_REVISION_KEY ] = $current_revision + 1;
+                if ( ! update_option( self::GENERATION_JOB_OPTION_NAME, $job, false ) )
+                {
+                    $stored = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                    if ( $stored !== $job )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_generation_job_write_failed',
+                            __( 'Site Context generation status could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                $this->clear_superseded_generation_recovery_locked( $job );
+                return $job;
+            }
+        );
+    }
+
+    /**
+     * Atomically replace the observed inactive job with a newly queued job.
+     *
+     * @param array<string, mixed>      $job
+     * @param array<string, mixed>|null $observed
+     * @return array<string, mixed>|WP_Error
+     */
+    private function create_generation_job_record( array $job, ?array $observed ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): array | WP_Error => $this->create_generation_job_record_locked( $job, $observed )
+        );
+    }
+
+    /**
+     * @param array<string, mixed>      $job
+     * @param array<string, mixed>|null $observed
+     * @return array<string, mixed>|WP_Error
+     */
+    private function create_generation_job_record_locked( array $job, ?array $observed ): array | WP_Error
+    {
+        $current = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+        $current = is_array( $current ) ? $current : null;
+        if ( ! $this->generation_job_snapshot_matches( $current, $observed ) )
+        {
+            return $this->stale_site_context_state_error();
+        }
+
+        $job_settings     = is_array( $job['settings'] ?? null )
+            ? $this->normalize_settings_record( $job['settings'] )
+            : $this->default_settings_record();
+        $current_settings = $this->get_settings_record();
+        if ( $job_settings[ self::STATE_REVISION_KEY ] !== $current_settings[ self::STATE_REVISION_KEY ] )
+        {
+            return $this->stale_site_context_state_error();
+        }
+
+        $job_settings = $this->snapshot_generation_credential_locked( $job_settings );
+        if ( is_wp_error( $job_settings ) )
+        {
+            return $job_settings;
+        }
+        $selection       = $this->sanitize_model_selection( $job_settings['generation_model_selection'] ?? null );
+        $job['settings'] = $job_settings;
+        $job['provider'] = sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) );
+        $job['model']    = $this->resolve_generation_model( $selection );
+        $job['tools']    = $this->generation_job_tool_names( $selection );
+
+        $job[ self::STATE_REVISION_KEY ] = is_array( $current )
+            ? max( 0, absint( $current[ self::STATE_REVISION_KEY ] ?? 0 ) ) + 1
+            : 1;
+        if ( ! update_option( self::GENERATION_JOB_OPTION_NAME, $job, false ) )
+        {
+            $stored = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+            if ( $stored !== $job )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_generation_job_write_failed',
+                    __( 'Site Context generation could not be queued.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        $this->clear_superseded_generation_recovery_locked( $job );
+        return $job;
+    }
+
+    /** @return array<string, mixed>|WP_Error */
+    private function snapshot_generation_credential_locked( array $settings ): array | WP_Error
+    {
+        if ( 'granted' !== (string) ( $settings['consent_status'] ?? 'unset' ) )
+        {
+            return $settings;
+        }
+
+        $selection  = $this->sanitize_model_selection( $settings['generation_model_selection'] ?? null );
+        $provider   = sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) );
+        $credential = 'sentient_managed' === $provider
+            ? $this->resolve_ready_managed_credential()
+            : $this->resolve_ready_openrouter_credential( $selection );
+        if ( is_wp_error( $credential ) )
+        {
+            return new WP_Error(
+                'sentient_forms_site_context_credential_unavailable',
+                __( 'Choose an available provider credential before generating Site Context.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        $credential_id = absint( $credential['id'] ?? 0 );
+        if ( $credential_id < 1 )
+        {
+            return new WP_Error(
+                'sentient_forms_site_context_credential_unavailable',
+                __( 'Choose an available provider credential before generating Site Context.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        $selection['credential_id']               = $credential_id;
+        $settings['generation_model_selection']   = $selection;
+        return $this->normalize_settings_record( $settings );
+    }
+
+    private function generation_job_snapshot_matches( ?array $current, ?array $observed ): bool
+    {
+        if ( null === $current || null === $observed )
+        {
+            return null === $current && null === $observed;
+        }
+
+        return sanitize_text_field( (string) ( $current['id'] ?? '' ) )
+                === sanitize_text_field( (string) ( $observed['id'] ?? '' ) )
+            && max( 0, absint( $current[ self::STATE_REVISION_KEY ] ?? 0 ) )
+                === max( 0, absint( $observed[ self::STATE_REVISION_KEY ] ?? 0 ) );
+    }
+
+    private function stale_site_context_state_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_site_context_state_stale',
+            __( 'Site Context changed while this operation was running. Refresh and try again.', 'sentient-forms' ),
+            [ 'status' => 409 ]
+        );
+    }
+
+    private function delete_generation_job_record(): bool | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            static fn(): bool => delete_option( self::GENERATION_JOB_OPTION_NAME )
+        );
     }
 
     private function build_generation_access( array $settings ): array
@@ -870,7 +1607,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         );
     }
 
-    private function queue_manual_generation( array $settings ): array | WP_Error
+    private function queue_manual_generation( array $settings, ?callable $on_admitted = null ): array | WP_Error
     {
         $settings = $this->normalize_settings_record( $settings );
         $access   = $this->build_generation_access( $settings );
@@ -919,43 +1656,177 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'dispatch_token_hash' => wp_hash( $dispatch_token ),
         ];
 
-        update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
-        $this->clear_first_generation_schedule();
-        $this->clear_refresh_schedule();
-        $this->dispatch_manual_generation_job( $job_id, $dispatch_token );
+        $created_job = $this->admit_manual_generation_job( $job, $existing );
+        if ( is_wp_error( $created_job ) )
+        {
+            return $created_job;
+        }
+        $job = $created_job;
+        if ( null === $on_admitted )
+        {
+            $this->dispatch_manual_generation_job( $job_id, $dispatch_token );
+        }
+        else
+        {
+            $on_admitted( $job_id, $dispatch_token );
+        }
 
         return $this->public_generation_job( $job );
     }
 
-    private function dispatch_manual_generation_job( string $job_id, string $dispatch_token ): void
+    /**
+     * Persist durable authority before removing schedules; restore the exact prior pair on failure.
+     *
+     * @param array<string, mixed>      $job
+     * @param array<string, mixed>|null $observed
+     * @return array<string, mixed>|WP_Error
+     */
+    private function admit_manual_generation_job( array $job, ?array $observed ): array | WP_Error
     {
-        wp_schedule_single_event( time() + 1, self::MANUAL_GENERATION_CRON_HOOK );
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job, $observed ): array | WP_Error
+            {
+                $previous_job      = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                $previous_settings = get_option( self::SETTINGS_OPTION_NAME, null );
+                $first_schedules   = $this->scheduled_timestamps_for_hook( self::FIRST_GENERATION_CRON_HOOK );
+                $refresh_schedules = $this->scheduled_timestamps_for_hook( self::CRON_HOOK );
+
+                $created = $this->create_generation_job_record_locked( $job, $observed );
+                if ( is_wp_error( $created ) )
+                {
+                    return $created;
+                }
+
+                $settings = $this->update_settings_metadata_locked(
+                    [
+                        'first_generation_next_attempt_at' => null,
+                        'next_refresh_at'                   => null,
+                    ]
+                );
+                $cleared = is_wp_error( $settings )
+                    ? $settings
+                    : $this->clear_schedule_hook_locked( self::FIRST_GENERATION_CRON_HOOK );
+                if ( ! is_wp_error( $cleared ) )
+                {
+                    $cleared = $this->clear_schedule_hook_locked( self::CRON_HOOK );
+                }
+                if ( ! is_wp_error( $cleared ) )
+                {
+                    return $created;
+                }
+
+                $job_restored = $this->restore_option_snapshot_locked(
+                    self::GENERATION_JOB_OPTION_NAME,
+                    $previous_job
+                );
+                $settings_restored = $this->restore_option_snapshot_locked(
+                    self::SETTINGS_OPTION_NAME,
+                    $previous_settings
+                );
+                $first_restored = $this->restore_schedule_snapshot_locked(
+                    self::FIRST_GENERATION_CRON_HOOK,
+                    $first_schedules
+                );
+                $refresh_restored = $this->restore_schedule_snapshot_locked(
+                    self::CRON_HOOK,
+                    $refresh_schedules
+                );
+                if (
+                    is_wp_error( $job_restored )
+                    || is_wp_error( $settings_restored )
+                    || is_wp_error( $first_restored )
+                    || is_wp_error( $refresh_restored )
+                )
+                {
+                    return new WP_Error(
+                        'sentient_forms_site_context_schedule_rollback_failed',
+                        __( 'The prior Site Context generation state could not be restored safely.', 'sentient-forms' ),
+                        [ 'status' => 500 ]
+                    );
+                }
+
+                return $cleared;
+            }
+        );
+    }
+
+    private function dispatch_manual_generation_job( string $job_id, string $dispatch_token ): true | WP_Error
+    {
+        $accepted = false;
+        $scheduled = wp_schedule_single_event( time() + 1, self::MANUAL_GENERATION_CRON_HOOK, [], true );
+        if ( true === $scheduled || false !== wp_next_scheduled( self::MANUAL_GENERATION_CRON_HOOK ) )
+        {
+            $accepted = true;
+        }
 
         if (
             apply_filters( 'sentient_forms_site_context_generation_action_scheduler_enabled', true, $job_id )
             && function_exists( 'as_enqueue_async_action' )
         )
         {
-            as_enqueue_async_action( self::MANUAL_GENERATION_CRON_HOOK, [ $job_id ], 'sentient_forms_async' );
+            $action_id = as_enqueue_async_action( self::MANUAL_GENERATION_CRON_HOOK, [ $job_id ], 'sentient_forms_async' );
+            if ( is_int( $action_id ) && $action_id > 0 )
+            {
+                $accepted = true;
+            }
         }
 
-        if ( ! apply_filters( 'sentient_forms_site_context_generation_http_dispatch_enabled', true, $job_id ) )
+        if ( apply_filters( 'sentient_forms_site_context_generation_http_dispatch_enabled', true, $job_id ) )
         {
-            return;
+            $response = wp_remote_post(
+                admin_url( 'admin-ajax.php' ),
+                [
+                    'blocking'    => false,
+                    'timeout'     => 0.01,
+                    'redirection' => 0,
+                    'body'        => [
+                        'action' => self::MANUAL_GENERATION_CRON_HOOK,
+                        'job_id' => $job_id,
+                        'token'  => $dispatch_token,
+                    ],
+                ]
+            );
+            if ( ! is_wp_error( $response ) )
+            {
+                $accepted = true;
+            }
         }
 
-        wp_remote_post(
-            admin_url( 'admin-ajax.php' ),
-            [
-                'blocking'    => false,
-                'timeout'     => 0.01,
-                'redirection' => 0,
-                'body'        => [
-                    'action' => self::MANUAL_GENERATION_CRON_HOOK,
-                    'job_id' => $job_id,
-                    'token'  => $dispatch_token,
-                ],
-            ]
+        return $accepted
+            ? true
+            : new WP_Error(
+                'sentient_forms_site_context_generation_dispatch_failed',
+                __( 'Site Context generation could not be dispatched. Try again.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+    }
+
+    /** Terminalize an exact queued job when no dispatch channel accepted it. */
+    private function fail_queued_generation_dispatch( string $job_id, WP_Error $dispatch_error ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job_id, $dispatch_error ): array | WP_Error
+            {
+                $current = $this->get_generation_job_record();
+                if ( ! $this->generation_job_matches( $current, $job_id, 'queued' ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $current['status']      = 'failed';
+                $current['error']       = $dispatch_error->get_error_message();
+                $current['code']        = $dispatch_error->get_error_code();
+                $current['status_code'] = 503;
+                $current['finished_at'] = current_time( 'mysql' );
+                $persisted = $this->update_generation_job_record( $current );
+                if ( is_wp_error( $persisted ) )
+                {
+                    return $persisted;
+                }
+
+                $reconciled = $this->reconcile_generation_schedules_for_status( 'failed' );
+                return is_wp_error( $reconciled ) ? $reconciled : $persisted;
+            }
         );
     }
 
@@ -964,6 +1835,15 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $job = $this->get_generation_job_record();
         if ( ! $this->generation_job_is_queued( $job ) )
         {
+            $active_job_id = sanitize_text_field( (string) ( $job['id'] ?? '' ) );
+            if (
+                '' !== $active_job_id
+                && ( '' === $job_id || $active_job_id === $job_id )
+                && in_array( (string) ( $job['status'] ?? '' ), [ 'succeeded', 'failed' ], true )
+            )
+            {
+                $this->reconcile_terminal_generation_schedules( $job );
+            }
             return;
         }
 
@@ -978,7 +1858,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $job['status']     = 'running';
         $job['started_at'] = $job['started_at'] ?: current_time( 'mysql' );
         $job['worker_id']  = $worker_id;
-        update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+        $claimed = $this->update_generation_job_record( $job );
+        if ( is_wp_error( $claimed ) )
+        {
+            return;
+        }
+        $job = $claimed;
 
         $job = $this->get_generation_job_record();
         if ( ! $this->generation_job_matches( $job, $job_id, 'running' ) || $worker_id !== (string) ( $job['worker_id'] ?? '' ) )
@@ -1002,7 +1887,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $job['diagnostics']  = [];
             $job['attempts']     = $attempts;
             $job['max_attempts'] = $max_attempts;
-            update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+            $updated = $this->update_generation_job_record( $job );
+            if ( is_wp_error( $updated ) )
+            {
+                return;
+            }
+            $job = $updated;
 
             $settings = is_array( $job['settings'] ?? null )
                 ? $this->normalize_settings_record( $job['settings'] )
@@ -1048,18 +1938,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $job['status_code'] = $retry_status;
             $job['diagnostics'] = $retry_diagnostics;
             $job['attempts']    = $attempts;
-            update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+            $updated = $this->update_generation_job_record( $job );
+            if ( is_wp_error( $updated ) )
+            {
+                return;
+            }
+            $job = $updated;
         }
         while ( $attempts < $max_attempts );
-
-        $current_job = $this->get_generation_job_record();
-        if ( ! $this->generation_job_matches( $current_job, $job_id, 'running' ) || $worker_id !== (string) ( $current_job['worker_id'] ?? '' ) )
-        {
-            return;
-        }
-
-        $job = $current_job;
-        $job['finished_at'] = current_time( 'mysql' );
 
         if ( is_wp_error( $result ) )
         {
@@ -1070,36 +1956,76 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $error_diagnostics  = is_array( $error_data ) && is_array( $error_data['diagnostics'] ?? null )
                 ? $this->sanitize_generation_job_diagnostics( $error_data['diagnostics'] )
                 : [];
-            $settings = $this->get_settings_record();
-            $settings['last_error'] = $result->get_error_message();
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            $this->update_settings_metadata( [ 'last_error' => $result->get_error_message() ] );
 
-            $job['status']      = 'failed';
-            unset( $job['worker_id'] );
-            $job['error']       = $result->get_error_message();
-            $job['code']        = $result->get_error_code();
-            $job['status_code'] = $error_status;
-            $job['diagnostics'] = $error_diagnostics;
-            $job['attempts']    = $attempts;
-            $job['max_attempts'] = $max_attempts;
-            update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
-            $this->sync_schedules_after_failed_manual_generation();
+            $terminalized = $this->terminalize_generation_job_record(
+                $job_id,
+                $worker_id,
+                [
+                    'status'       => 'failed',
+                    'error'        => $result->get_error_message(),
+                    'code'         => $result->get_error_code(),
+                    'status_code'  => $error_status,
+                    'diagnostics'  => $error_diagnostics,
+                    'attempts'     => $attempts,
+                    'max_attempts' => $max_attempts,
+                ]
+            );
+            if ( is_wp_error( $terminalized ) )
+            {
+                $this->recover_generation_terminalization_failure(
+                    $job_id,
+                    $worker_id,
+                    [
+                        'status'       => 'failed',
+                        'error'        => $result->get_error_message(),
+                        'code'         => $result->get_error_code(),
+                        'status_code'  => $error_status,
+                        'diagnostics'  => $error_diagnostics,
+                        'attempts'     => $attempts,
+                        'max_attempts' => $max_attempts,
+                    ],
+                    $terminalized
+                );
+                return;
+            }
+            $this->reconcile_terminal_generation_schedules( $terminalized );
             return;
         }
 
-        $job['status']      = 'succeeded';
-        unset( $job['worker_id'] );
-        $job['error']       = null;
-        $job['code']        = null;
-        $job['status_code'] = null;
-        $job['diagnostics'] = [];
-        $job['attempts']    = $attempts;
-        $job['max_attempts'] = $max_attempts;
-        update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+        $terminalized = $this->terminalize_generation_job_record(
+            $job_id,
+            $worker_id,
+            [
+                'status'       => 'succeeded',
+                'error'        => null,
+                'code'         => null,
+                'status_code'  => null,
+                'diagnostics'  => [],
+                'attempts'     => $attempts,
+                'max_attempts' => $max_attempts,
+            ]
+        );
+        if ( is_wp_error( $terminalized ) )
+        {
+            $this->recover_generation_terminalization_failure(
+                $job_id,
+                $worker_id,
+                [
+                    'status'       => 'succeeded',
+                    'error'        => null,
+                    'code'         => null,
+                    'status_code'  => null,
+                    'diagnostics'  => [],
+                    'attempts'     => $attempts,
+                    'max_attempts' => $max_attempts,
+                ],
+                $terminalized
+            );
+            return;
+        }
 
-        $this->sync_refresh_schedule( $this->get_settings_record() );
-        $this->clear_first_generation_attempt_state( $this->get_settings_record() );
-        $this->clear_first_generation_schedule();
+        $this->reconcile_terminal_generation_schedules( $terminalized );
     }
 
     private function manual_generation_error_is_retryable( WP_Error $error, int $attempts, int $max_attempts ): bool
@@ -1150,12 +2076,121 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         return is_array( $job ) ? $job : null;
     }
 
-    private function cancel_active_manual_generation_job(): void
+    private function cancel_active_manual_generation_job(): true | WP_Error
     {
-        if ( $this->generation_job_is_active( $this->get_generation_job_record() ) )
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            fn(): true | WP_Error => $this->cancel_active_manual_generation_job_locked()
+        );
+    }
+
+    private function cancel_active_manual_generation_job_locked(): true | WP_Error
+    {
+        $job = $this->get_generation_job_record();
+        if ( ! $this->generation_job_is_active( $job ) )
         {
-            $this->clear_manual_generation_job();
+            return true;
         }
+
+        $canceled = $this->canceled_generation_job_record( $job );
+        $canceled[ self::STATE_REVISION_KEY ] = max(
+            0,
+            absint( $job[ self::STATE_REVISION_KEY ] ?? 0 )
+        ) + 1;
+        if ( ! update_option( self::GENERATION_JOB_OPTION_NAME, $canceled, false ) )
+        {
+            $stored = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+            if ( $stored !== $canceled )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_generation_job_write_failed',
+                    __( 'Site Context generation status could not be saved.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        return $this->clear_schedule_hook_locked( self::MANUAL_GENERATION_CRON_HOOK );
+    }
+
+    /** @param array<string, mixed> $job */
+    private function canceled_generation_job_record( array $job ): array
+    {
+        $job['finished_at'] = 'queued' === (string) ( $job['status'] ?? '' )
+            ? current_time( 'mysql' )
+            : null;
+        $job['error'] = __( 'Site Context generation was canceled by a newer settings or context change.', 'sentient-forms' );
+        $job['code']  = 'site_context_generation_canceled';
+        if ( 'queued' === (string) ( $job['status'] ?? '' ) )
+        {
+            $job['status'] = 'failed';
+            unset( $job['worker_id'] );
+        }
+        else
+        {
+            $job['cancel_requested'] = true;
+        }
+        return $job;
+    }
+
+    /**
+     * Atomically terminalize the latest revision owned by one worker.
+     *
+     * @param array<string, mixed> $terminal_fields
+     * @return array<string, mixed>|WP_Error
+     */
+    private function terminalize_generation_job_record(
+        string $job_id,
+        string $worker_id,
+        array $terminal_fields
+    ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job_id, $worker_id, $terminal_fields ): array | WP_Error
+            {
+                $current = $this->get_generation_job_record();
+                if (
+                    ! $this->generation_job_matches( $current, $job_id, 'running' )
+                    || $worker_id !== (string) ( $current['worker_id'] ?? '' )
+                )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                if ( ! empty( $current['cancel_requested'] ) )
+                {
+                    $terminal_fields = [
+                        'status'      => 'failed',
+                        'error'       => __( 'Site Context generation was canceled before completion.', 'sentient-forms' ),
+                        'code'        => 'site_context_generation_canceled',
+                        'status_code' => 409,
+                    ];
+                }
+
+                $terminal = array_replace( $current, $terminal_fields );
+                $terminal['finished_at'] = current_time( 'mysql' );
+                unset( $terminal['worker_id'] );
+                $terminal[ self::STATE_REVISION_KEY ] = max(
+                    0,
+                    absint( $current[ self::STATE_REVISION_KEY ] ?? 0 )
+                ) + 1;
+
+                if ( ! update_option( self::GENERATION_JOB_OPTION_NAME, $terminal, false ) )
+                {
+                    $stored = get_option( self::GENERATION_JOB_OPTION_NAME, null );
+                    if ( $stored !== $terminal )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_generation_job_write_failed',
+                            __( 'Site Context generation status could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                $this->clear_superseded_generation_recovery_locked( $terminal );
+                return $terminal;
+            }
+        );
     }
 
     private function get_public_generation_job(): ?array
@@ -1166,6 +2201,16 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
     private function public_generation_job( array $job ): array
     {
+        $recovery = $this->generation_recovery_for_job( $job );
+        if ( is_array( $recovery ) && $this->generation_recovery_terminalizes_job( $recovery ) )
+        {
+            $job['status']      = 'failed';
+            $job['error']       = sanitize_text_field( (string) ( $recovery['message'] ?? '' ) );
+            $job['code']        = sanitize_key( (string) ( $recovery['code'] ?? '' ) );
+            $job['status_code'] = 500;
+            $job['finished_at'] = $this->sanitize_nullable_text( $recovery['recorded_at'] ?? null );
+        }
+
         return [
             'id'           => sanitize_text_field( (string) ( $job['id'] ?? '' ) ),
             'status'       => $this->sanitize_generation_job_status( $job['status'] ?? null ),
@@ -1191,7 +2236,48 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return false;
         }
 
+        $recovery = $this->generation_recovery_for_job( $job );
+        if ( is_array( $recovery ) && $this->generation_recovery_terminalizes_job( $recovery ) )
+        {
+            return false;
+        }
+
         return in_array( (string) ( $job['status'] ?? '' ), [ 'queued', 'running' ], true );
+    }
+
+    /** @param array<string, mixed>|null $job */
+    private function generation_recovery_for_job( ?array $job ): ?array
+    {
+        if ( ! is_array( $job ) )
+        {
+            return null;
+        }
+
+        $recovery = get_option( self::GENERATION_RECOVERY_OPTION_NAME, null );
+        if (
+            ! is_array( $recovery )
+            || (string) ( $recovery['job_id'] ?? '' ) !== (string) ( $job['id'] ?? '' )
+            || max( 0, absint( $recovery['job_revision'] ?? 0 ) )
+                !== max( 0, absint( $job[ self::STATE_REVISION_KEY ] ?? 0 ) )
+        )
+        {
+            return null;
+        }
+
+        return $recovery;
+    }
+
+    /** @param array<string, mixed> $recovery */
+    private function generation_recovery_terminalizes_job( array $recovery ): bool
+    {
+        return in_array(
+            sanitize_key( (string) ( $recovery['code'] ?? '' ) ),
+            [
+                'site_context_generation_terminalization_failed',
+                'site_context_generation_terminalization_and_schedule_failed',
+            ],
+            true
+        );
     }
 
     private function generation_job_is_queued( ?array $job ): bool
@@ -1270,19 +2356,351 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'requested_at'    => $this->sanitize_nullable_text( $job['requested_at'] ?? null ),
             'started_at'      => $this->sanitize_nullable_text( $job['started_at'] ?? null ),
         ];
-        update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+        $persisted = $this->update_generation_job_record( $job );
+        if ( is_wp_error( $persisted ) )
+        {
+            return;
+        }
 
-        $settings = $this->get_settings_record();
-        $settings['last_error'] = $message;
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        $this->sync_schedules_after_failed_manual_generation();
+        $this->update_settings_metadata( [ 'last_error' => $message ] );
+        $this->reconcile_terminal_generation_schedules( $persisted );
     }
 
-    private function sync_schedules_after_failed_manual_generation(): void
+    private function sync_schedules_after_failed_manual_generation(): true | WP_Error
     {
         $settings = $this->get_settings_record();
-        $this->sync_first_generation_schedule( $settings );
-        $this->sync_refresh_schedule( $this->get_settings_record() );
+        $scheduled = $this->sync_first_generation_schedule( $settings );
+        if ( is_wp_error( $scheduled ) )
+        {
+            return $scheduled;
+        }
+
+        return $this->sync_refresh_schedule();
+    }
+
+    private function reconcile_generation_schedules_for_status( string $status ): true | WP_Error
+    {
+        if ( 'succeeded' !== $status )
+        {
+            return $this->sync_schedules_after_failed_manual_generation();
+        }
+
+        $reconciled = $this->sync_refresh_schedule();
+        if ( ! is_wp_error( $reconciled ) )
+        {
+            $reconciled = $this->clear_first_generation_attempt_state( $this->get_settings_record() );
+        }
+        if ( ! is_wp_error( $reconciled ) )
+        {
+            $reconciled = $this->clear_first_generation_schedule();
+        }
+
+        return $reconciled;
+    }
+
+    /**
+     * Recover from a terminal job write without leaving future generation unscheduled.
+     *
+     * @param array<string, mixed> $terminal_fields
+     */
+    private function recover_generation_terminalization_failure(
+        string $job_id,
+        string $worker_id,
+        array $terminal_fields,
+        WP_Error $write_error
+    ): void
+    {
+        if ( 'sentient_forms_site_context_generation_job_write_failed' !== $write_error->get_error_code() )
+        {
+            return;
+        }
+
+        $intended_status = sanitize_key( (string) ( $terminal_fields['status'] ?? '' ) );
+        $message = __( 'Site Context generation finished, but its final status could not be saved.', 'sentient-forms' );
+        $diagnostics = $this->sanitize_generation_job_diagnostics( $terminal_fields['diagnostics'] ?? [] );
+        $diagnostics['generation_terminal_status'] = $intended_status;
+        $diagnostics['generation_error_code'] = sanitize_key( (string) ( $terminal_fields['code'] ?? '' ) );
+        $diagnostics['generation_error_message'] = $this->sanitize_nullable_text( $terminal_fields['error'] ?? null );
+        $diagnostics['terminal_write_error_code'] = sanitize_key( $write_error->get_error_code() );
+
+        $fallback_fields = array_replace(
+            $terminal_fields,
+            [
+                'status'       => 'failed',
+                'error'        => $message,
+                'code'         => 'site_context_generation_terminalization_failed',
+                'status_code'  => 500,
+                'diagnostics'  => $diagnostics,
+            ]
+        );
+        $fallback = $this->terminalize_generation_job_record( $job_id, $worker_id, $fallback_fields );
+        if ( ! is_wp_error( $fallback ) )
+        {
+            $visible = $this->update_generation_error_if_job_matches( $fallback, $message );
+            if ( is_wp_error( $visible ) )
+            {
+                $this->record_generation_recovery_if_job_matches(
+                    $fallback,
+                    $message,
+                    'site_context_generation_terminalization_failed'
+                );
+            }
+            $this->reconcile_terminal_generation_schedules( $fallback );
+            return;
+        }
+
+        $recovered = $this->reconcile_running_generation_recovery_schedules(
+            $job_id,
+            $worker_id,
+            $intended_status,
+            $message,
+            'site_context_generation_terminalization_failed'
+        );
+        if ( is_wp_error( $recovered ) )
+        {
+            // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Last-resort diagnostic after fenced job, recovery, and schedule persistence all fail.
+            error_log( 'Sentient Forms could not persist or schedule Site Context terminal-write recovery.' );
+        }
+    }
+
+    private function reconcile_running_generation_recovery_schedules(
+        string $job_id,
+        string $worker_id,
+        string $intended_status,
+        string $message,
+        string $code
+    ): true | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job_id, $worker_id, $intended_status, $message, $code ): true | WP_Error
+            {
+                $current = $this->get_generation_job_record();
+                if (
+                    ! $this->generation_job_matches( $current, $job_id, 'running' )
+                    || $worker_id !== (string) ( $current['worker_id'] ?? '' )
+                )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $recorded = $this->persist_generation_recovery_locked( $current, $message, $code );
+                if ( is_wp_error( $recorded ) )
+                {
+                    return $recorded;
+                }
+
+                if ( ! $this->generation_job_snapshot_matches( $this->get_generation_job_record(), $current ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $reconciled = $this->reconcile_generation_schedules_for_status( $intended_status );
+                if ( ! is_wp_error( $reconciled ) )
+                {
+                    return true;
+                }
+
+                $compound_message = __( 'Site Context generation finished, but its final status and follow-up schedule could not be saved.', 'sentient-forms' );
+                $compound = $this->persist_generation_recovery_locked(
+                    $current,
+                    $compound_message,
+                    'site_context_generation_terminalization_and_schedule_failed'
+                );
+
+                return is_wp_error( $compound ) ? $compound : $reconciled;
+            }
+        );
+    }
+
+    /** @param array<string, mixed> $job */
+    private function record_generation_recovery_if_job_matches(
+        array $job,
+        string $message,
+        string $code
+    ): true | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $job, $message, $code ): true | WP_Error
+            {
+                $current = $this->get_generation_job_record();
+                if ( ! $this->generation_job_snapshot_matches( $current, $job ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                return $this->persist_generation_recovery_locked( $current, $message, $code );
+            }
+        );
+    }
+
+    /** @param array<string, mixed> $job */
+    private function persist_generation_recovery_locked( array $job, string $message, string $code ): true | WP_Error
+    {
+        $recovery = [
+            'job_id'       => sanitize_text_field( (string) ( $job['id'] ?? '' ) ),
+            'job_revision' => max( 0, absint( $job[ self::STATE_REVISION_KEY ] ?? 0 ) ),
+            'message'      => sanitize_text_field( $message ),
+            'code'         => sanitize_key( $code ),
+            'recorded_at'  => current_time( 'mysql' ),
+        ];
+        if ( ! update_option( self::GENERATION_RECOVERY_OPTION_NAME, $recovery, false ) )
+        {
+            $stored = get_option( self::GENERATION_RECOVERY_OPTION_NAME, null );
+            if ( $stored !== $recovery )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_generation_recovery_write_failed',
+                    __( 'Site Context generation recovery status could not be saved.', 'sentient-forms' ),
+                    [ 'status' => 500 ]
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $job */
+    private function clear_superseded_generation_recovery_locked( array $job ): void
+    {
+        $recovery = get_option( self::GENERATION_RECOVERY_OPTION_NAME, null );
+        if ( ! is_array( $recovery ) )
+        {
+            return;
+        }
+
+        if (
+            (string) ( $recovery['job_id'] ?? '' ) !== (string) ( $job['id'] ?? '' )
+            || max( 0, absint( $recovery['job_revision'] ?? 0 ) )
+                !== max( 0, absint( $job[ self::STATE_REVISION_KEY ] ?? 0 ) )
+        )
+        {
+            delete_option( self::GENERATION_RECOVERY_OPTION_NAME );
+        }
+    }
+
+    /** @param array<string, mixed> $terminal_job */
+    private function reconcile_terminal_generation_schedules( array $terminal_job ): void
+    {
+        $reconciled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $terminal_job ): true | WP_Error
+            {
+                $current = $this->get_generation_job_record();
+                if ( ! $this->generation_job_snapshot_matches( $current, $terminal_job ) )
+                {
+                    return $this->stale_site_context_state_error();
+                }
+
+                $this->reconcile_terminal_generation_schedules_locked( $terminal_job );
+                return true;
+            }
+        );
+
+        if ( is_wp_error( $reconciled ) )
+        {
+            $retry = $this->schedule_terminal_reconciliation_retry( $terminal_job );
+            if ( is_wp_error( $retry ) )
+            {
+                // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Last-resort diagnostic when both fenced reconciliation and its durable retry fail.
+                error_log( 'Sentient Forms could not schedule Site Context terminal reconciliation recovery.' );
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $terminal_job */
+    private function schedule_terminal_reconciliation_retry( array $terminal_job ): true | WP_Error
+    {
+        $job_id = sanitize_text_field( (string) ( $terminal_job['id'] ?? '' ) );
+        if ( '' === $job_id )
+        {
+            return $this->stale_site_context_state_error();
+        }
+
+        $args = [ $job_id ];
+        if ( false !== wp_next_scheduled( self::MANUAL_GENERATION_CRON_HOOK, $args ) )
+        {
+            return true;
+        }
+
+        $scheduled = wp_schedule_single_event(
+            time() + MINUTE_IN_SECONDS,
+            self::MANUAL_GENERATION_CRON_HOOK,
+            $args,
+            true
+        );
+        if ( is_wp_error( $scheduled ) )
+        {
+            return $scheduled;
+        }
+        if ( false === $scheduled )
+        {
+            return new WP_Error(
+                'sentient_forms_site_context_terminal_reconciliation_schedule_failed',
+                __( 'Site Context terminal reconciliation could not be scheduled.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $terminal_job */
+    private function reconcile_terminal_generation_schedules_locked( array $terminal_job ): void
+    {
+        $reconciled = $this->reconcile_generation_schedules_for_status(
+            sanitize_key( (string) ( $terminal_job['status'] ?? '' ) )
+        );
+
+        if ( ! is_wp_error( $reconciled ) )
+        {
+            return;
+        }
+
+        $error_data  = $reconciled->get_error_data();
+        $status_code = is_array( $error_data ) && isset( $error_data['status'] )
+            ? max( 400, min( 599, absint( $error_data['status'] ) ) )
+            : 500;
+        $diagnostics = $this->sanitize_generation_job_diagnostics( $terminal_job['diagnostics'] ?? [] );
+        $diagnostics['generation_terminal_status'] = sanitize_key( (string) ( $terminal_job['status'] ?? '' ) );
+        $diagnostics['generation_error_code']      = sanitize_key( (string) ( $terminal_job['code'] ?? '' ) );
+        $diagnostics['generation_error_message']   = $this->sanitize_nullable_text( $terminal_job['error'] ?? null );
+        $diagnostics['generation_status_code']     = is_numeric( $terminal_job['status_code'] ?? null )
+            ? absint( $terminal_job['status_code'] )
+            : null;
+        $diagnostics['schedule_error_code']        = sanitize_key( $reconciled->get_error_code() );
+        $diagnostics['schedule_error_message']     = $reconciled->get_error_message();
+
+        $terminal_job['status']      = 'failed';
+        $terminal_job['error']       = __( 'Site Context generation finished, but its follow-up schedule could not be saved.', 'sentient-forms' );
+        $terminal_job['code']        = 'site_context_generation_schedule_reconciliation_failed';
+        $terminal_job['status_code'] = $status_code;
+        $terminal_job['diagnostics'] = $diagnostics;
+        $persisted = $this->update_generation_job_record( $terminal_job );
+        if ( is_wp_error( $persisted ) )
+        {
+            if ( 'sentient_forms_site_context_generation_job_write_failed' === $persisted->get_error_code() )
+            {
+                $visible = $this->update_generation_error_if_job_matches( $terminal_job, $terminal_job['error'] );
+                if ( is_wp_error( $visible ) )
+                {
+                    $this->record_generation_recovery_if_job_matches(
+                        $terminal_job,
+                        $terminal_job['error'],
+                        'site_context_generation_schedule_reconciliation_failed'
+                    );
+                }
+            }
+            return;
+        }
+
+        $visible = $this->update_generation_error_if_job_matches( $persisted, $terminal_job['error'] );
+        if ( is_wp_error( $visible ) )
+        {
+            $this->record_generation_recovery_if_job_matches(
+                $persisted,
+                $terminal_job['error'],
+                'site_context_generation_schedule_reconciliation_failed'
+            );
+        }
     }
 
     private function generation_job_timestamp( mixed $value ): ?int
@@ -1662,7 +3080,114 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return false;
         }
 
+        if ( ! empty( $job['cancel_requested'] ) )
+        {
+            return false;
+        }
+
         return null === $worker_id || $worker_id === (string) ( $job['worker_id'] ?? '' );
+    }
+
+    /**
+     * Hold durable credential authority for a scheduled generation call.
+     *
+     * @param array<string, mixed> $settings
+     * @return array<string, mixed>|WP_Error
+     */
+    private function perform_scheduled_generation( array $settings, bool $empty_only, string $kind ): array | WP_Error
+    {
+        $settings = $this->normalize_settings_record( $settings );
+        $observed = $this->get_generation_job_record();
+        if ( $this->generation_job_is_active( $observed ) )
+        {
+            return new WP_Error(
+                'site_context_generation_already_running',
+                __( 'Another Site Context generation is already running.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        $selection = $this->sanitize_model_selection( $settings['generation_model_selection'] ?? null );
+        $job_id    = wp_generate_uuid4();
+        $worker_id = wp_generate_uuid4();
+        $job       = [
+            'id'           => $job_id,
+            'status'       => 'running',
+            'kind'         => sanitize_key( $kind ),
+            'requested_at' => current_time( 'mysql' ),
+            'started_at'   => current_time( 'mysql' ),
+            'finished_at'  => null,
+            'error'        => null,
+            'code'         => null,
+            'status_code'  => null,
+            'diagnostics'  => [],
+            'provider'     => sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) ),
+            'model'        => $this->resolve_generation_model( $selection ),
+            'tools'        => $this->generation_job_tool_names( $selection ),
+            'attempts'     => 1,
+            'max_attempts' => 1,
+            'settings'     => $settings,
+            'worker_id'    => $worker_id,
+        ];
+        $created = $this->create_generation_job_record( $job, $observed );
+        if ( is_wp_error( $created ) )
+        {
+            return $created;
+        }
+
+        $settings = is_array( $created['settings'] ?? null )
+            ? $this->normalize_settings_record( $created['settings'] )
+            : $settings;
+
+        $result  = $this->perform_generation( $settings, false, $empty_only, $job_id, $worker_id );
+        $terminal_fields = [];
+        if ( is_wp_error( $result ) )
+        {
+            $error_data = $result->get_error_data();
+            $terminal_fields = [
+                'status'      => 'failed',
+                'error'       => $result->get_error_message(),
+                'code'        => $result->get_error_code(),
+                'status_code' => is_array( $error_data ) && isset( $error_data['status'] )
+                    ? max( 400, min( 599, absint( $error_data['status'] ) ) )
+                    : null,
+            ];
+        }
+        else
+        {
+            $terminal_fields = [
+                'status'      => 'succeeded',
+                'error'       => null,
+                'code'        => null,
+                'status_code' => null,
+            ];
+        }
+
+        $terminalized = $this->terminalize_generation_job_record(
+            $job_id,
+            $worker_id,
+            $terminal_fields
+        );
+        if ( is_wp_error( $terminalized ) )
+        {
+            $this->recover_generation_terminalization_failure(
+                $job_id,
+                $worker_id,
+                $terminal_fields,
+                $terminalized
+            );
+            return $terminalized;
+        }
+        if ( 'site_context_generation_canceled' === (string) ( $terminalized['code'] ?? '' ) )
+        {
+            return new WP_Error(
+                'site_context_generation_canceled',
+                __( 'Site Context generation was canceled before completion.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        return $result;
     }
 
     private function perform_generation( array $settings, bool $manual, bool $empty_only = false, ?string $manual_job_id = null, ?string $manual_worker_id = null ): array | WP_Error
@@ -1762,51 +3287,131 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return $generated;
         }
 
-        if ( $empty_only && null !== $this->get_stored_context() )
-        {
-            return new WP_Error(
-                'site_context_generation_existing_context',
-                __( 'Site Context already exists, so automatic first generation will not overwrite it.', 'sentient-forms' )
-            );
-        }
-
-        if ( ! $this->manual_generation_job_can_commit( $manual_job_id, $manual_worker_id ) )
-        {
-            return new WP_Error(
-                'site_context_generation_canceled',
-                __( 'Site Context generation was canceled before completion.', 'sentient-forms' ),
-                [ 'status' => 409 ]
-            );
-        }
-
-        $context = $this->build_context_record(
-            $generated['summary_text'],
-            'ai_generated',
-            true,
-            true,
-            $this->get_stored_context( true )
+        return $this->commit_generated_context(
+            $settings,
+            $generated,
+            array_merge(
+                $metadata,
+                [
+                    'model'                => $executed_model,
+                    'confidence'           => $generated['confidence'],
+                    'confidence_notes'     => $generated['confidence_notes'],
+                    'legitimate_inquiries' => $generated['legitimate_inquiries'],
+                    'spam_relevance'       => $generated['spam_relevance'],
+                    'source_urls'          => $generated['source_urls'],
+                    'generated_at'         => current_time( 'mysql' ),
+                    'schema_source'        => 'site_context_generation_v1',
+                ]
+            ),
+            $empty_only,
+            $manual_job_id,
+            $manual_worker_id
         );
-        $context['metadata'] = array_merge(
-            $metadata,
-            [
-                'model'                => $executed_model,
-                'confidence'           => $generated['confidence'],
-                'confidence_notes'     => $generated['confidence_notes'],
-                'legitimate_inquiries' => $generated['legitimate_inquiries'],
-                'spam_relevance'       => $generated['spam_relevance'],
-                'source_urls'          => $generated['source_urls'],
-                'generated_at'         => current_time( 'mysql' ),
-                'schema_source'        => 'site_context_generation_v1',
-            ]
+    }
+
+    /**
+     * Revalidate generation authority and persist its result under one shared fence.
+     *
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $generated
+     * @param array<string, mixed> $metadata
+     * @return array<string, mixed>|WP_Error
+     */
+    private function commit_generated_context(
+        array $settings,
+        array $generated,
+        array $metadata,
+        bool $empty_only,
+        ?string $manual_job_id,
+        ?string $manual_worker_id
+    ): array | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $settings, $generated, $metadata, $empty_only, $manual_job_id, $manual_worker_id ): array | WP_Error
+            {
+                $current_settings = $this->get_settings_record();
+                if (
+                    max( 0, absint( $settings[ self::STATE_REVISION_KEY ] ?? 0 ) )
+                    !== max( 0, absint( $current_settings[ self::STATE_REVISION_KEY ] ?? 0 ) )
+                    || 'granted' !== (string) ( $current_settings['consent_status'] ?? 'unset' )
+                    || ! $this->manual_generation_job_can_commit( $manual_job_id, $manual_worker_id )
+                )
+                {
+                    return new WP_Error(
+                        'site_context_generation_canceled',
+                        __( 'Site Context generation was canceled before completion.', 'sentient-forms' ),
+                        [ 'status' => 409 ]
+                    );
+                }
+
+                $previous_context = $this->get_stored_context( true );
+                if ( $empty_only && null !== $previous_context )
+                {
+                    return new WP_Error(
+                        'site_context_generation_existing_context',
+                        __( 'Site Context already exists, so automatic first generation will not overwrite it.', 'sentient-forms' )
+                    );
+                }
+
+                $context = $this->build_context_record(
+                    (string) ( $generated['summary_text'] ?? '' ),
+                    'ai_generated',
+                    true,
+                    true,
+                    $previous_context
+                );
+                $context['metadata'] = $metadata;
+
+                if ( ! update_option( self::OPTION_NAME, $context, false ) )
+                {
+                    $stored_context = get_option( self::OPTION_NAME, null );
+                    if ( $stored_context !== $context )
+                    {
+                        return new WP_Error(
+                            'site_context_generation_write_failed',
+                            __( 'Generated Site Context could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                $current_settings['last_generated_at'] = current_time( 'mysql' );
+                $current_settings['last_error']        = null;
+                $current_settings[ self::STATE_REVISION_KEY ] = max(
+                    0,
+                    absint( $current_settings[ self::STATE_REVISION_KEY ] ?? 0 )
+                ) + 1;
+                if ( ! update_option( self::SETTINGS_OPTION_NAME, $current_settings, false ) )
+                {
+                    $stored_settings = get_option( self::SETTINGS_OPTION_NAME, null );
+                    if ( $stored_settings !== $current_settings )
+                    {
+                        $context_restored = $this->restore_option_snapshot_locked(
+                            self::OPTION_NAME,
+                            $previous_context
+                        );
+                        if ( is_wp_error( $context_restored ) )
+                        {
+                            return new WP_Error(
+                                'sentient_forms_site_context_rollback_failed',
+                                __( 'Generated Site Context could not be restored after its settings failed to save.', 'sentient-forms' ),
+                                [
+                                    'status' => 500,
+                                    'cause'  => 'sentient_forms_site_context_settings_write_failed',
+                                ]
+                            );
+                        }
+                        return new WP_Error(
+                            'sentient_forms_site_context_settings_write_failed',
+                            __( 'Site Context settings could not be saved.', 'sentient-forms' ),
+                            [ 'status' => 500 ]
+                        );
+                    }
+                }
+
+                return $context;
+            }
         );
-
-        $settings['last_generated_at'] = current_time( 'mysql' );
-        $settings['last_error']        = null;
-
-        update_option( self::OPTION_NAME, $context, false );
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-
-        return $context;
     }
 
     private function run_openrouter_generation( string $model, string $prompt, array $selection ): array | WP_Error
@@ -3143,167 +4748,553 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         ];
     }
 
-    private function sync_first_generation_schedule( array $settings ): void
+    private function sync_first_generation_schedule( array $settings ): true | WP_Error
     {
-        $settings = $this->normalize_settings_record( $settings );
-        if ( 'granted' !== $settings['consent_status'] || null !== $this->get_stored_context() )
-        {
-            $this->clear_first_generation_attempt_state( $settings );
-            $this->clear_first_generation_schedule();
-            return;
-        }
-
-        if ( ! empty( $settings['first_generation_exhausted_at'] ) )
-        {
-            $this->clear_first_generation_schedule();
-            return;
-        }
-
-        if ( empty( $settings['first_generation_started_at'] ) )
-        {
-            $settings['first_generation_started_at']      = gmdate( 'Y-m-d H:i:s' );
-            $settings['first_generation_attempt_count']   = 0;
-            $settings['first_generation_last_error']      = null;
-            $settings['first_generation_exhausted_at']    = null;
-            $settings['first_generation_last_attempt_at'] = null;
-        }
-
-        $this->schedule_next_first_generation_attempt( $settings );
+        return $this->schedule_next_first_generation_attempt( $settings );
     }
 
-    private function clear_first_generation_attempt_state( ?array $settings = null ): void
+    private function clear_first_generation_attempt_state( ?array $settings = null ): true | WP_Error
     {
         if ( null === $settings )
         {
             $stored = get_option( self::SETTINGS_OPTION_NAME, [] );
             if ( ! is_array( $stored ) )
             {
-                return;
+                return true;
             }
 
             $settings = $stored;
         }
 
-        $settings['first_generation_started_at']      = null;
-        $settings['first_generation_next_attempt_at'] = null;
-        $settings['first_generation_last_attempt_at'] = null;
-        $settings['first_generation_attempt_count']   = 0;
-        $settings['first_generation_last_error']      = null;
-        $settings['first_generation_exhausted_at']    = null;
-        update_option( self::SETTINGS_OPTION_NAME, $this->normalize_settings_record( $settings ), false );
-    }
-
-    private function persist_first_generation_attempt_state( array $settings ): void
-    {
-        $settings = $this->normalize_settings_record( $settings );
-        if ( (int) $settings['first_generation_attempt_count'] >= count( self::FIRST_GENERATION_OFFSETS ) )
-        {
-            $settings['first_generation_next_attempt_at'] = null;
-            $settings['first_generation_exhausted_at']    = gmdate( 'Y-m-d H:i:s' );
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-            $this->clear_first_generation_schedule();
-            return;
-        }
-
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        $this->schedule_next_first_generation_attempt( $settings );
-    }
-
-    private function schedule_next_first_generation_attempt( array $settings ): void
-    {
-        $settings = $this->normalize_settings_record( $settings );
-        $attempt_index = (int) $settings['first_generation_attempt_count'];
-        if ( $attempt_index >= count( self::FIRST_GENERATION_OFFSETS ) )
-        {
-            $settings['first_generation_next_attempt_at'] = null;
-            $settings['first_generation_exhausted_at']    = gmdate( 'Y-m-d H:i:s' );
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-            $this->clear_first_generation_schedule();
-            return;
-        }
-
-        $started_at = strtotime( (string) ( $settings['first_generation_started_at'] ?: gmdate( 'Y-m-d H:i:s' ) ) . ' UTC' );
-        if ( false === $started_at )
-        {
-            $started_at = time();
-        }
-
-        $timestamp = max(
-            time() + MINUTE_IN_SECONDS,
-            $started_at + self::FIRST_GENERATION_OFFSETS[ $attempt_index ]
+        $persisted = $this->update_settings_metadata(
+            [
+                'first_generation_started_at'      => null,
+                'first_generation_next_attempt_at' => null,
+                'first_generation_last_attempt_at' => null,
+                'first_generation_attempt_count'   => 0,
+                'first_generation_last_error'      => null,
+                'first_generation_exhausted_at'    => null,
+            ]
         );
-
-        $this->clear_first_generation_schedule( false );
-        wp_schedule_single_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK );
-
-        $settings['first_generation_next_attempt_at'] = gmdate( 'Y-m-d H:i:s', $timestamp );
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        return is_wp_error( $persisted ) ? $persisted : true;
     }
 
-    private function clear_first_generation_schedule( bool $clear_next_attempt = true ): void
+    private function persist_first_generation_attempt_state( array $settings ): true | WP_Error
     {
-        while ( $timestamp = wp_next_scheduled( self::FIRST_GENERATION_CRON_HOOK ) )
-        {
-            wp_unschedule_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK );
-        }
-
-        if ( ! $clear_next_attempt )
-        {
-            return;
-        }
-
-        $settings = get_option( self::SETTINGS_OPTION_NAME, [] );
-        if ( is_array( $settings ) && ! empty( $settings['first_generation_next_attempt_at'] ) )
-        {
-            $settings['first_generation_next_attempt_at'] = null;
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-        }
+        return $this->schedule_next_first_generation_attempt( $settings, true );
     }
 
-    private function clear_manual_generation_job(): void
+    private function schedule_next_first_generation_attempt(
+        array $settings,
+        bool $persist_attempt_state = false
+    ): true | WP_Error
     {
-        while ( $timestamp = wp_next_scheduled( self::MANUAL_GENERATION_CRON_HOOK ) )
-        {
-            wp_unschedule_event( $timestamp, self::MANUAL_GENERATION_CRON_HOOK );
-        }
+        $settings = $this->normalize_settings_record( $settings );
+        $scheduled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $settings, $persist_attempt_state ): true | WP_Error
+            {
+                $current = $this->get_settings_record();
+                if ( 'granted' !== $current['consent_status'] || null !== $this->get_stored_context() )
+                {
+                    $persisted = $this->update_settings_metadata_locked(
+                        [
+                            'first_generation_started_at'      => null,
+                            'first_generation_next_attempt_at' => null,
+                            'first_generation_last_attempt_at' => null,
+                            'first_generation_attempt_count'   => 0,
+                            'first_generation_last_error'      => null,
+                            'first_generation_exhausted_at'    => null,
+                        ]
+                    );
+                    if ( is_wp_error( $persisted ) )
+                    {
+                        return $persisted;
+                    }
+                    return $this->clear_first_generation_schedule( false );
+                }
 
-        delete_option( self::GENERATION_JOB_OPTION_NAME );
+                if ( $persist_attempt_state )
+                {
+                    $current_attempt_count = max( 0, absint( $current['first_generation_attempt_count'] ?? 0 ) );
+                    $incoming_attempt_count = max( 0, absint( $settings['first_generation_attempt_count'] ?? 0 ) );
+                    if (
+                        $settings[ self::STATE_REVISION_KEY ] !== $current[ self::STATE_REVISION_KEY ]
+                        || $current_attempt_count >= count( self::FIRST_GENERATION_OFFSETS )
+                        || $incoming_attempt_count !== $current_attempt_count + 1
+                        || $settings['first_generation_started_at'] !== $current['first_generation_started_at']
+                    )
+                    {
+                        return $this->stale_site_context_state_error();
+                    }
+
+                    $settings = $this->normalize_settings_record(
+                        array_replace(
+                            $current,
+                            [
+                                'first_generation_started_at'      => $settings['first_generation_started_at'],
+                                'first_generation_last_attempt_at' => $settings['first_generation_last_attempt_at'],
+                                'first_generation_attempt_count'   => $settings['first_generation_attempt_count'],
+                                'first_generation_last_error'      => $settings['first_generation_last_error'],
+                                'first_generation_exhausted_at'    => $settings['first_generation_exhausted_at'],
+                            ]
+                        )
+                    );
+                }
+                else
+                {
+                    $settings = $current;
+                    if ( ! empty( $settings['first_generation_exhausted_at'] ) )
+                    {
+                        return $this->clear_first_generation_schedule( false );
+                    }
+                    if ( empty( $settings['first_generation_started_at'] ) )
+                    {
+                        $settings['first_generation_started_at']      = gmdate( 'Y-m-d H:i:s' );
+                        $settings['first_generation_attempt_count']   = 0;
+                        $settings['first_generation_last_error']      = null;
+                        $settings['first_generation_exhausted_at']    = null;
+                        $settings['first_generation_last_attempt_at'] = null;
+                    }
+                }
+
+                $attempt_index = (int) $settings['first_generation_attempt_count'];
+                if ( $attempt_index >= count( self::FIRST_GENERATION_OFFSETS ) )
+                {
+                    $persisted = $this->update_settings_metadata_locked(
+                        [
+                            'first_generation_next_attempt_at' => null,
+                            'first_generation_exhausted_at'    => gmdate( 'Y-m-d H:i:s' ),
+                            'first_generation_attempt_count'   => $settings['first_generation_attempt_count'],
+                            'first_generation_last_attempt_at' => $settings['first_generation_last_attempt_at'],
+                            'first_generation_last_error'      => $settings['first_generation_last_error'],
+                        ]
+                    );
+                    if ( is_wp_error( $persisted ) )
+                    {
+                        return $persisted;
+                    }
+                    return $this->clear_first_generation_schedule( false );
+                }
+
+                $started_at = strtotime( (string) ( $settings['first_generation_started_at'] ?: gmdate( 'Y-m-d H:i:s' ) ) . ' UTC' );
+                if ( false === $started_at )
+                {
+                    $started_at = time();
+                }
+
+                $timestamp = max(
+                    time() + MINUTE_IN_SECONDS,
+                    $started_at + self::FIRST_GENERATION_OFFSETS[ $attempt_index ]
+                );
+                $existing_timestamps = $this->scheduled_timestamps_for_hook( self::FIRST_GENERATION_CRON_HOOK );
+                $timestamp = $this->equivalent_scheduled_timestamp( $timestamp, $existing_timestamps );
+                $newly_scheduled = false;
+                if ( ! in_array( $timestamp, $existing_timestamps, true ) )
+                {
+                    $cron_result = wp_schedule_single_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK, [], true );
+                    if ( is_wp_error( $cron_result ) )
+                    {
+                        return $cron_result;
+                    }
+                    if ( true !== $cron_result )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_schedule_failed',
+                            __( 'Site Context generation could not be scheduled.', 'sentient-forms' )
+                        );
+                    }
+                    $newly_scheduled = true;
+                }
+
+                $persisted = $this->update_settings_metadata_locked(
+                    [
+                        'first_generation_started_at'      => $settings['first_generation_started_at'],
+                        'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', $timestamp ),
+                        'first_generation_last_attempt_at' => $settings['first_generation_last_attempt_at'],
+                        'first_generation_attempt_count'   => $settings['first_generation_attempt_count'],
+                        'first_generation_last_error'      => $settings['first_generation_last_error'],
+                        'first_generation_exhausted_at'    => $settings['first_generation_exhausted_at'],
+                    ]
+                );
+                if ( is_wp_error( $persisted ) )
+                {
+                    if ( $newly_scheduled )
+                    {
+                        $rolled_back = wp_unschedule_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK, [], true );
+                        if ( true !== $rolled_back )
+                        {
+                            return new WP_Error(
+                                'sentient_forms_site_context_schedule_rollback_failed',
+                                __( 'The failed Site Context schedule could not be rolled back safely.', 'sentient-forms' )
+                            );
+                        }
+                    }
+                    return $persisted;
+                }
+
+                return $this->remove_superseded_schedule_or_rollback(
+                    self::FIRST_GENERATION_CRON_HOOK,
+                    $timestamp,
+                    $existing_timestamps,
+                    $newly_scheduled,
+                    'first_generation_next_attempt_at',
+                    $settings['first_generation_next_attempt_at'] ?? null
+                );
+            }
+        );
+        if (
+            is_wp_error( $scheduled )
+            && 'sentient_forms_action_authority_write_locked' === $scheduled->get_error_code()
+            && false === wp_next_scheduled( self::FIRST_GENERATION_CRON_HOOK )
+        )
+        {
+            wp_schedule_single_event( time() + MINUTE_IN_SECONDS, self::FIRST_GENERATION_CRON_HOOK );
+        }
+        return $scheduled;
     }
 
-    private function sync_refresh_schedule( array $settings ): void
+    private function clear_first_generation_schedule( bool $clear_next_attempt = true ): true | WP_Error
     {
-        if ( 'granted' === $settings['consent_status'] && ! empty( $settings['auto_refresh_enabled'] ) )
-        {
-            $this->schedule_next_refresh( (int) $settings['auto_refresh_days'] );
-            return;
-        }
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $clear_next_attempt ): true | WP_Error
+            {
+                $settings   = get_option( self::SETTINGS_OPTION_NAME, [] );
+                $timestamps = $this->scheduled_timestamps_for_hook( self::FIRST_GENERATION_CRON_HOOK );
+                $cleared    = $this->clear_schedule_hook_locked( self::FIRST_GENERATION_CRON_HOOK );
+                if ( is_wp_error( $cleared ) )
+                {
+                    return $cleared;
+                }
 
-        $this->clear_refresh_schedule();
+                if ( $clear_next_attempt && is_array( $settings ) && ! empty( $settings['first_generation_next_attempt_at'] ) )
+                {
+                    $persisted = $this->update_settings_metadata_locked( [ 'first_generation_next_attempt_at' => null ] );
+                    if ( is_wp_error( $persisted ) )
+                    {
+                        $restored = $this->restore_schedule_snapshot_locked( self::FIRST_GENERATION_CRON_HOOK, $timestamps );
+                        return is_wp_error( $restored )
+                            ? new WP_Error(
+                                'sentient_forms_site_context_schedule_rollback_failed',
+                                __( 'The prior Site Context schedule could not be restored safely.', 'sentient-forms' )
+                            )
+                            : $persisted;
+                    }
+                }
+
+                return true;
+            }
+        );
     }
 
-    private function schedule_next_refresh( int $days ): void
+    private function sync_refresh_schedule(): true | WP_Error
     {
-        $this->clear_refresh_schedule();
-        $timestamp = time() + DAY_IN_SECONDS * max( 1, $days );
-        wp_schedule_single_event( $timestamp, self::CRON_HOOK );
-
-        $settings = $this->get_settings_record();
-        $settings['next_refresh_at'] = gmdate( 'Y-m-d H:i:s', $timestamp );
-        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        return $this->schedule_next_refresh();
     }
 
-    private function clear_refresh_schedule(): void
+    private function schedule_next_refresh( ?int $override_days = null ): true | WP_Error
     {
-        while ( $timestamp = wp_next_scheduled( self::CRON_HOOK ) )
+        $scheduled = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $override_days ): true | WP_Error
+            {
+                $settings = $this->get_settings_record();
+                if ( 'granted' !== $settings['consent_status'] || empty( $settings['auto_refresh_enabled'] ) )
+                {
+                    $persisted = $this->update_settings_metadata_locked( [ 'next_refresh_at' => null ] );
+                    if ( is_wp_error( $persisted ) )
+                    {
+                        return $persisted;
+                    }
+                    return $this->clear_refresh_schedule( false );
+                }
+
+                $days      = null !== $override_days
+                    ? max( 1, $override_days )
+                    : max( 1, (int) $settings['auto_refresh_days'] );
+                $timestamp = time() + DAY_IN_SECONDS * $days;
+                $existing_timestamps = $this->scheduled_timestamps_for_hook( self::CRON_HOOK );
+                $timestamp = $this->equivalent_scheduled_timestamp( $timestamp, $existing_timestamps );
+                $newly_scheduled = false;
+                if ( ! in_array( $timestamp, $existing_timestamps, true ) )
+                {
+                    $cron_result = wp_schedule_single_event( $timestamp, self::CRON_HOOK, [], true );
+                    if ( is_wp_error( $cron_result ) )
+                    {
+                        return $cron_result;
+                    }
+                    if ( true !== $cron_result )
+                    {
+                        return new WP_Error(
+                            'sentient_forms_site_context_schedule_failed',
+                            __( 'Site Context refresh could not be scheduled.', 'sentient-forms' )
+                        );
+                    }
+                    $newly_scheduled = true;
+                }
+
+                $persisted = $this->update_settings_metadata_locked(
+                    [ 'next_refresh_at' => gmdate( 'Y-m-d H:i:s', $timestamp ) ]
+                );
+                if ( is_wp_error( $persisted ) )
+                {
+                    if ( $newly_scheduled )
+                    {
+                        $rolled_back = wp_unschedule_event( $timestamp, self::CRON_HOOK, [], true );
+                        if ( true !== $rolled_back )
+                        {
+                            return new WP_Error(
+                                'sentient_forms_site_context_schedule_rollback_failed',
+                                __( 'The failed Site Context schedule could not be rolled back safely.', 'sentient-forms' )
+                            );
+                        }
+                    }
+                    return $persisted;
+                }
+
+                return $this->remove_superseded_schedule_or_rollback(
+                    self::CRON_HOOK,
+                    $timestamp,
+                    $existing_timestamps,
+                    $newly_scheduled,
+                    'next_refresh_at',
+                    $settings['next_refresh_at'] ?? null
+                );
+            }
+        );
+        if (
+            is_wp_error( $scheduled )
+            && 'sentient_forms_action_authority_write_locked' === $scheduled->get_error_code()
+            && false === wp_next_scheduled( self::CRON_HOOK )
+        )
         {
-            wp_unschedule_event( $timestamp, self::CRON_HOOK );
+            wp_schedule_single_event( time() + MINUTE_IN_SECONDS, self::CRON_HOOK );
         }
-        $settings = get_option( self::SETTINGS_OPTION_NAME, [] );
-        if ( is_array( $settings ) && ! empty( $settings['next_refresh_at'] ) )
+        return $scheduled;
+    }
+
+    /** @param array<int, int> $existing_timestamps */
+    private function equivalent_scheduled_timestamp( int $timestamp, array $existing_timestamps ): int
+    {
+        foreach ( $existing_timestamps as $existing_timestamp )
         {
-            $settings['next_refresh_at'] = null;
-            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            if ( abs( $existing_timestamp - $timestamp ) <= ( 10 * MINUTE_IN_SECONDS ) )
+            {
+                return $existing_timestamp;
+            }
         }
+
+        return $timestamp;
+    }
+
+    /**
+     * Remove superseded events only after the replacement pair is durable.
+     *
+     * @param array<int, int> $existing_timestamps
+     */
+    private function remove_superseded_schedule_or_rollback(
+        string $hook,
+        int $replacement_timestamp,
+        array $existing_timestamps,
+        bool $newly_scheduled,
+        string $metadata_key,
+        mixed $previous_metadata
+    ): true | WP_Error
+    {
+        foreach ( $existing_timestamps as $existing_timestamp )
+        {
+            if ( $existing_timestamp === $replacement_timestamp )
+            {
+                continue;
+            }
+
+            $removed = wp_unschedule_event( $existing_timestamp, $hook, [], true );
+            if ( true === $removed )
+            {
+                continue;
+            }
+
+            $rollback_error = null;
+            if ( $newly_scheduled )
+            {
+                $replacement_removed = wp_unschedule_event( $replacement_timestamp, $hook, [], true );
+                if ( true !== $replacement_removed )
+                {
+                    $rollback_error = is_wp_error( $replacement_removed ) ? $replacement_removed : new WP_Error(
+                        'sentient_forms_site_context_schedule_rollback_failed',
+                        __( 'The replacement Site Context schedule could not be removed.', 'sentient-forms' )
+                    );
+                }
+            }
+
+            $current_timestamps = $this->scheduled_timestamps_for_hook( $hook );
+            foreach ( $existing_timestamps as $rollback_timestamp )
+            {
+                if ( in_array( $rollback_timestamp, $current_timestamps, true ) )
+                {
+                    continue;
+                }
+                $restored = wp_schedule_single_event( $rollback_timestamp, $hook, [], true );
+                if ( true !== $restored )
+                {
+                    $rollback_error = is_wp_error( $restored ) ? $restored : new WP_Error(
+                        'sentient_forms_site_context_schedule_rollback_failed',
+                        __( 'The prior Site Context schedule could not be restored.', 'sentient-forms' )
+                    );
+                }
+            }
+
+            $metadata_restored = $this->update_settings_metadata_locked( [ $metadata_key => $previous_metadata ] );
+            if ( is_wp_error( $metadata_restored ) )
+            {
+                $rollback_error = $metadata_restored;
+            }
+            if ( is_wp_error( $rollback_error ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_schedule_rollback_failed',
+                    __( 'The prior Site Context schedule could not be restored safely.', 'sentient-forms' )
+                );
+            }
+
+            return is_wp_error( $removed ) ? $removed : new WP_Error(
+                'sentient_forms_site_context_unschedule_failed',
+                __( 'The prior Site Context schedule could not be removed.', 'sentient-forms' )
+            );
+        }
+
+        return true;
+    }
+
+    /** @return array<int, int> */
+    private function scheduled_timestamps_for_hook( string $hook ): array
+    {
+        $cron = _get_cron_array();
+        if ( ! is_array( $cron ) )
+        {
+            return [];
+        }
+
+        $timestamps = [];
+        foreach ( $cron as $timestamp => $hooks )
+        {
+            if ( ! is_array( $hooks ) || ! isset( $hooks[ $hook ] ) || ! is_array( $hooks[ $hook ] ) )
+            {
+                continue;
+            }
+            foreach ( $hooks[ $hook ] as $event )
+            {
+                if ( is_array( $event ) && [] === ( $event['args'] ?? [] ) )
+                {
+                    $timestamps[] = (int) $timestamp;
+                    break;
+                }
+            }
+        }
+
+        sort( $timestamps, SORT_NUMERIC );
+        return array_values( array_unique( $timestamps ) );
+    }
+
+    private function clear_refresh_schedule( bool $clear_next_refresh = true ): true | WP_Error
+    {
+        return Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function() use ( $clear_next_refresh ): true | WP_Error
+            {
+                $settings   = get_option( self::SETTINGS_OPTION_NAME, [] );
+                $timestamps = $this->scheduled_timestamps_for_hook( self::CRON_HOOK );
+                $cleared    = $this->clear_schedule_hook_locked( self::CRON_HOOK );
+                if ( is_wp_error( $cleared ) )
+                {
+                    return $cleared;
+                }
+
+                if ( $clear_next_refresh && is_array( $settings ) && ! empty( $settings['next_refresh_at'] ) )
+                {
+                    $persisted = $this->update_settings_metadata_locked( [ 'next_refresh_at' => null ] );
+                    if ( is_wp_error( $persisted ) )
+                    {
+                        $restored = $this->restore_schedule_snapshot_locked( self::CRON_HOOK, $timestamps );
+                        return is_wp_error( $restored )
+                            ? new WP_Error(
+                                'sentient_forms_site_context_schedule_rollback_failed',
+                                __( 'The prior Site Context schedule could not be restored safely.', 'sentient-forms' )
+                            )
+                            : $persisted;
+                    }
+                }
+
+                return true;
+            }
+        );
+    }
+
+    private function clear_schedule_hook_locked( string $hook ): true | WP_Error
+    {
+        $timestamps = $this->scheduled_timestamps_for_hook( $hook );
+        foreach ( $timestamps as $timestamp )
+        {
+            $removed = wp_unschedule_event( $timestamp, $hook, [], true );
+            if ( true !== $removed )
+            {
+                $restored = $this->restore_schedule_snapshot_locked( $hook, $timestamps );
+                if ( is_wp_error( $restored ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_site_context_schedule_rollback_failed',
+                        __( 'The prior Site Context schedule could not be restored safely.', 'sentient-forms' ),
+                        [ 'status' => 500 ]
+                    );
+                }
+                return new WP_Error(
+                    'sentient_forms_site_context_unschedule_failed',
+                    __( 'A Site Context schedule could not be removed.', 'sentient-forms' ),
+                    [
+                        'status' => 500,
+                        'cause'  => is_wp_error( $removed ) ? $removed->get_error_code() : null,
+                    ]
+                );
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<int, int> $timestamps */
+    private function restore_schedule_snapshot_locked( string $hook, array $timestamps ): true | WP_Error
+    {
+        $current = $this->scheduled_timestamps_for_hook( $hook );
+        foreach ( $current as $timestamp )
+        {
+            if ( in_array( $timestamp, $timestamps, true ) )
+            {
+                continue;
+            }
+            $removed = wp_unschedule_event( $timestamp, $hook, [], true );
+            if ( true !== $removed )
+            {
+                return new WP_Error(
+                    'sentient_forms_site_context_schedule_rollback_failed',
+                    __( 'A replacement Site Context schedule could not be rolled back.', 'sentient-forms' )
+                );
+            }
+        }
+
+        $current = $this->scheduled_timestamps_for_hook( $hook );
+        foreach ( $timestamps as $timestamp )
+        {
+            if ( in_array( $timestamp, $current, true ) )
+            {
+                continue;
+            }
+            $restored = wp_schedule_single_event( $timestamp, $hook, [], true );
+            if ( true !== $restored )
+            {
+                return is_wp_error( $restored ) ? $restored : new WP_Error(
+                    'sentient_forms_site_context_schedule_rollback_failed',
+                    __( 'A prior Site Context schedule could not be restored.', 'sentient-forms' )
+                );
+            }
+        }
+        return true;
     }
 
     private function context_is_stale( array $context, int $days ): bool

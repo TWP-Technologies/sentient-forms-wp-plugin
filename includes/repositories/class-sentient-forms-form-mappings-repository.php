@@ -175,18 +175,58 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
-    private function uses_transactional_storage(): bool
+    /**
+     * Lock and return every mapping while a local-state transaction is active.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    public function list_all_for_update(): array | WP_Error
     {
-        $previous_suppress_errors = $this->wpdb->suppress_errors();
-        $query = $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table_name() );
-        $definition = $this->wpdb->get_row(
+        $this->wpdb->last_error = '';
+        $query = $this->wpdb->prepare(
+            'SELECT * FROM %i ORDER BY id ASC FOR UPDATE',
+            $this->table_name()
+        );
+        $rows = $this->wpdb->get_results(
             // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
             $query,
-            ARRAY_N
+            ARRAY_A
         );
-        $this->wpdb->suppress_errors( $previous_suppress_errors );
-        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
-        return 1 === preg_match( '/\bENGINE=InnoDB\b/i', $create_sql );
+        if ( ! is_array( $rows ) || '' !== $this->wpdb->last_error )
+        {
+            return new WP_Error(
+                'sentient_forms_credential_reference_check_failed',
+                __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+        }
+        foreach ( $rows as $row )
+        {
+            if ( ! $this->credential_authority_json_is_valid( $row['settings_json'] ?? null ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+        }
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    private function credential_authority_json_is_valid( mixed $encoded ): bool
+    {
+        if ( null === $encoded )
+        {
+            return true;
+        }
+        if ( ! is_string( $encoded ) || '' === trim( $encoded ) )
+        {
+            return false;
+        }
+
+        $decoded = json_decode( $encoded, true );
+        return JSON_ERROR_NONE === json_last_error() && is_array( $decoded );
     }
 
     public function create( array $data ): int | WP_Error

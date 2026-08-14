@@ -59,6 +59,41 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         $this->assertTrue( $this->store->should_block( $hash ) );
     }
 
+    public function test_retry_without_authority_payload_preserves_existing_durable_authority(): void
+    {
+        $request_hash = 'authority-preserved-' . wp_generate_password( 32, false, false );
+        $digest       = hash( 'sha256', 'authority-preserved' );
+        $authority    = [ 'credentials' => [] ];
+
+        $this->assertTrue(
+            $this->store->record(
+                $request_hash,
+                [
+                    'action_id'         => 'local_mapping_42',
+                    'status'            => 'failed',
+                    'payload_digest'    => $digest,
+                    'authority_payload' => $authority,
+                ]
+            )
+        );
+        $before = $this->store->get( $request_hash );
+
+        $this->assertTrue(
+            $this->store->record(
+                $request_hash,
+                [
+                    'action_id'      => 'local_mapping_42',
+                    'status'         => 'queued',
+                    'payload_digest' => $digest,
+                ]
+            )
+        );
+        $after = $this->store->get( $request_hash );
+
+        $this->assertSame( $before['telemetry_payload'] ?? null, $after['telemetry_payload'] ?? null );
+        $this->assertSame( $authority, json_decode( (string) ( $after['telemetry_payload'] ?? '' ), true ) );
+    }
+
     public function test_mark_status_fails_closed_when_authoritative_request_is_missing(): void
     {
         $result = $this->store->mark_status(
@@ -256,6 +291,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => $digest,
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
         $this->assertSame( 'claimed', $claim['state'] ?? null );
@@ -350,6 +386,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => $first_digest,
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
         $this->assertSame( 'claimed', $claimed['state'] );
@@ -362,6 +399,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => $other_digest,
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
         $this->assertSame( 'digest_conflict', $mismatch['state'] );
@@ -387,7 +425,10 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         {
             $insert_failure = $this->store->claim_execution(
                 'claim-insert-failure-' . wp_generate_password( 20, false, false ),
-                [ 'payload_digest' => hash( 'sha256', 'claim-insert-failure' ) ]
+                [
+                    'payload_digest'   => hash( 'sha256', 'claim-insert-failure' ),
+                    'authority_payload'=> [ 'credentials' => [] ],
+                ]
             );
         }
         finally
@@ -428,7 +469,10 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
         {
             $retry_failure = $this->store->claim_execution(
                 $request_hash,
-                [ 'payload_digest' => $digest ],
+                [
+                    'payload_digest'    => $digest,
+                    'authority_payload' => [ 'credentials' => [] ],
+                ],
                 true
             );
         }
@@ -459,6 +503,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                     'action_id'      => 'entry_summary_v1',
                     'adapter'        => 'fixture_forms',
                     'payload_digest' => hash( 'sha256', 'locked-accepted-sync' ),
+                    'authority_payload' => [ 'credentials' => [] ],
                 ]
             );
         }
@@ -483,6 +528,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => $first_digest,
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
         $this->assertSame( 'claimed', $claimed['state'] );
@@ -494,6 +540,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => hash( 'sha256', 'changed-payload' ),
+                'authority_payload' => [ 'credentials' => [] ],
             ],
             true
         );
@@ -523,6 +570,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => hash( 'sha256', 'sync-payload' ),
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
 
@@ -538,6 +586,7 @@ class AsyncRequestStoreTest extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'fixture_forms',
                 'payload_digest' => hash( 'sha256', 'accepted-sync-payload' ),
+                'authority_payload' => [ 'credentials' => [] ],
             ]
         );
         $this->assertSame( 'claimed', $claimed['state'] );

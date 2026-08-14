@@ -266,6 +266,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'Contact looks legitimate.', $event['result_json']['result_summary'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+
+        $replayed = $service->replay_succeeded_execution( $result['execution_request_id'] );
+        $this->assertIsArray( $replayed );
+        $this->assertTrue( $replayed['cached'] );
+        $this->assertSame( $event['result_json'], $replayed['result'] );
     }
 
     public function test_terminal_event_persistence_failure_is_propagated_after_provider_success(): void
@@ -1352,6 +1357,14 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $client  = new Sentient_Forms_Test_OpenRouter_Client();
         $service = $this->create_service( $client );
 
+        $credential_snapshot = $service->resolve_credential_authority_snapshot(
+            $fixture['mapping_id'],
+            [ 'settings' => [ 'model_selection' => [ 'provider' => 'openrouter', 'primary' => 'gemini-3-flash-preview' ] ] ]
+        );
+        $this->assertIsArray( $credential_snapshot );
+        $this->assertSame( $fixture['credential_id'], $credential_snapshot['credential_id'] ?? null );
+        $this->assertSame( 'absent_at_admission', $credential_snapshot['backup_authority_status'] ?? null );
+
         $result = $service->execute_mapping(
             $fixture['mapping_id'],
             [ 'id' => 7, 'title' => 'Contact Form' ],
@@ -1388,6 +1401,44 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $event );
         $this->assertContains( 'meta:sentient_forms_summary', $event['result_json']['effects']['applied'] ?? [] );
         $this->assertContains( 'entry_note', $event['result_json']['effects']['applied'] ?? [] );
+    }
+
+    public function test_direct_execution_keeps_frozen_credential_authority_until_provider_returns(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $delete_during_provider = null;
+        $client->before_chat = function() use ( $fixture, &$delete_during_provider ): void
+        {
+            $updated = $this->custom_actions->update(
+                $fixture['action_id'],
+                [
+                    'model_selection_json' => [
+                        'provider' => 'openrouter',
+                        'model'    => 'openrouter/auto',
+                    ],
+                ]
+            );
+            $this->assertIsArray( $updated );
+            $delete_during_provider = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                ->delete_credential_if_unreferenced( $fixture['credential_id'] );
+        };
+
+        $result = $this->create_service( $client )->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 991, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] ?? null );
+        $this->assertInstanceOf( WP_Error::class, $delete_during_provider );
+        $this->assertSame( 'sentient_forms_credential_in_use', $delete_during_provider->get_error_code() );
+        $this->assertContains(
+            'active_execution',
+            wp_list_pluck( $delete_during_provider->get_error_data()['references'] ?? [], 'type' )
+        );
     }
 
     public function test_entry_summary_effect_uses_structured_summary_when_content_is_json(): void
@@ -4038,6 +4089,44 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 1, $client->chat_calls );
     }
 
+    public function test_explicit_successful_execution_replays_after_mapping_is_removed(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+        $form    = [ 'id' => 7, 'title' => 'Contact Form' ];
+        $entry   = [
+            'id' => 99,
+            '1'  => 'Ada Lovelace',
+            '2'  => 'ada@example.test',
+        ];
+        $context = [
+            'hook'                 => 'gform_after_submission',
+            'execution_request_id' => 'direct-replay-after-config-removal',
+        ];
+
+        $first = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+        $this->assertIsArray( $first );
+        $this->assertFalse( $first['cached'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertTrue( $this->mappings->delete( $fixture['mapping_id'] ) );
+
+        $replayed = $service->execute_mapping( $fixture['mapping_id'], $form, $entry, $context );
+
+        $this->assertIsArray( $replayed );
+        $this->assertTrue( $replayed['cached'] );
+        $this->assertSame( $first['execution_request_id'], $replayed['execution_request_id'] );
+        $this->assertSame( 'Contact looks legitimate.', $replayed['result']['result_summary'] );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $changed_entry      = $entry;
+        $changed_entry['2'] = 'grace@example.test';
+        $conflict           = $service->execute_mapping( $fixture['mapping_id'], $form, $changed_entry, $context );
+        $this->assertWPError( $conflict );
+        $this->assertSame( 'sentient_forms_local_execution_digest_conflict', $conflict->get_error_code() );
+        $this->assertCount( 1, $client->chat_calls );
+    }
+
     public function test_local_execution_requires_external_service_consent(): void
     {
         $fixture = $this->create_local_openrouter_mapping( false );
@@ -5224,7 +5313,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
     }
 
     /**
-     * @return array{credential_id: int, mapping_id: int, secret: string}
+     * @return array{action_id: int, credential_id: int, mapping_id: int, secret: string}
      */
     private function create_local_openrouter_mapping(
         bool $record_consent = true,
@@ -5317,6 +5406,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsInt( $mapping_id );
 
         return [
+            'action_id'     => $action_id,
             'credential_id' => $credential_id,
             'mapping_id'    => $mapping_id,
             'secret'        => $secret,
@@ -5776,6 +5866,7 @@ class Sentient_Forms_Test_OpenRouter_Client implements Sentient_Forms_Provider_C
 {
     /** @var array<int, array{api_key: string, payload: array<string, mixed>, options: array<string, mixed>}> */
     public array $chat_calls = [];
+    public ?Closure $before_chat = null;
 
     public function __construct( private WP_Error | array | null $chat_response = null )
     {
@@ -5792,6 +5883,10 @@ class Sentient_Forms_Test_OpenRouter_Client implements Sentient_Forms_Provider_C
 
     public function chat_completion( string $api_key, array $payload, array $options = [] ): array | WP_Error
     {
+        if ( $this->before_chat instanceof Closure )
+        {
+            ( $this->before_chat )();
+        }
         $this->chat_calls[] = [
             'api_key' => $api_key,
             'payload' => $payload,

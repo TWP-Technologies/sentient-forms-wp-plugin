@@ -192,6 +192,117 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         }
     }
 
+    public function test_maybe_upgrade_converts_existing_async_request_table_to_innodb(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_async_requests';
+        $previous_engine_version = get_option( 'sentient_forms_async_requests_engine_version', null );
+        $this->assertNotFalse( $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $table ) ) );
+        delete_option( 'sentient_forms_async_requests_engine_version' );
+        $store = new Sentient_Forms_Async_Request_Store( $this->wpdb );
+        $this->assertFalse( $store->uses_transactional_storage() );
+
+        try
+        {
+            update_option( 'sentient_forms_db_version', SENTIENT_FORMS_DB_VERSION, false );
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            $definition = $this->wpdb->get_row(
+                $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+                ARRAY_N
+            );
+            $this->assertIsArray( $definition );
+            $this->assertMatchesRegularExpression( '/\bENGINE=InnoDB\b/i', (string) ( $definition[1] ?? '' ) );
+            $this->assertSame( '2026.08.14.v1', get_option( 'sentient_forms_async_requests_engine_version' ) );
+            $this->assertTrue( $store->uses_transactional_storage() );
+        }
+        finally
+        {
+            $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            if ( null === $previous_engine_version )
+            {
+                delete_option( 'sentient_forms_async_requests_engine_version' );
+            }
+            else
+            {
+                update_option( 'sentient_forms_async_requests_engine_version', $previous_engine_version, false );
+            }
+        }
+    }
+
+    public function test_maybe_upgrade_converts_credential_authority_tables_to_innodb(): void
+    {
+        $tables = [
+            $this->wpdb->prefix . 'sentient_provider_credentials',
+            $this->wpdb->prefix . 'sentient_custom_actions',
+        ];
+        $option = 'sentient_forms_credential_authority_engine_version';
+        $previous_engine_version = get_option( $option, null );
+        foreach ( $tables as $table )
+        {
+            $this->assertNotFalse( $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $table ) ) );
+        }
+        delete_option( $option );
+
+        try
+        {
+            update_option( 'sentient_forms_db_version', SENTIENT_FORMS_DB_VERSION, false );
+            Sentient_Forms_Installer::maybe_upgrade();
+
+            foreach ( $tables as $table )
+            {
+                $definition = $this->wpdb->get_row(
+                    $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $table ),
+                    ARRAY_N
+                );
+                $this->assertIsArray( $definition );
+                $this->assertMatchesRegularExpression( '/\bENGINE=InnoDB\b/i', (string) ( $definition[1] ?? '' ) );
+            }
+            $this->assertSame( '2026.08.15.v1', get_option( $option ) );
+        }
+        finally
+        {
+            foreach ( $tables as $table )
+            {
+                $this->wpdb->query( $this->wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            }
+            if ( null === $previous_engine_version )
+            {
+                delete_option( $option );
+            }
+            else
+            {
+                update_option( $option, $previous_engine_version, false );
+            }
+        }
+    }
+
+    public function test_maybe_upgrade_repairs_a_missing_async_request_table_when_requested(): void
+    {
+        $table        = $this->wpdb->prefix . 'sentient_async_requests';
+        $backup_table = $this->wpdb->prefix . 'sentient_async_requests_missing_repair_fixture';
+        $this->assertNotFalse( $this->wpdb->query( $this->wpdb->prepare( 'DROP TABLE IF EXISTS %i', $backup_table ) ) );
+        $this->assertNotFalse(
+            $this->wpdb->query(
+                $this->wpdb->prepare( 'RENAME TABLE %i TO %i', $table, $backup_table )
+            )
+        );
+
+        try
+        {
+            update_option( 'sentient_forms_db_version', SENTIENT_FORMS_DB_VERSION, false );
+            Sentient_Forms_Installer::maybe_upgrade( true );
+
+            $this->assertTrue( ( new Sentient_Forms_Async_Request_Store( $this->wpdb ) )->uses_transactional_storage() );
+        }
+        finally
+        {
+            $this->wpdb->query( $this->wpdb->prepare( 'DROP TABLE IF EXISTS %i', $table ) );
+            $this->wpdb->query(
+                $this->wpdb->prepare( 'RENAME TABLE %i TO %i', $backup_table, $table )
+            );
+        }
+    }
+
     public function test_submission_ledger_tables_and_execution_submission_uuid_index_exist(): void
     {
         $settings_table = $this->wpdb->prefix . 'sentient_submission_ledger_settings';

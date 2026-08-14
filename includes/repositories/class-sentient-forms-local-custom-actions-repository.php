@@ -296,6 +296,63 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
     }
 
     /**
+     * Lock and return every custom action while a local-state transaction is active.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    public function list_all_for_update(): array | WP_Error
+    {
+        $this->wpdb->last_error = '';
+        $query = $this->wpdb->prepare(
+            'SELECT * FROM %i ORDER BY id ASC FOR UPDATE',
+            $this->table_name()
+        );
+        $rows = $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query,
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) || '' !== $this->wpdb->last_error )
+        {
+            return new WP_Error(
+                'sentient_forms_credential_reference_check_failed',
+                __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                [ 'status' => 503 ]
+            );
+        }
+        foreach ( $rows as $row )
+        {
+            if (
+                ! $this->credential_authority_json_is_valid( $row['definition_json'] ?? null )
+                || ! $this->credential_authority_json_is_valid( $row['model_selection_json'] ?? null )
+            )
+            {
+                return new WP_Error(
+                    'sentient_forms_credential_reference_check_failed',
+                    __( 'Provider credential references could not be verified. Try again.', 'sentient-forms' ),
+                    [ 'status' => 503 ]
+                );
+            }
+        }
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    private function credential_authority_json_is_valid( mixed $encoded ): bool
+    {
+        if ( null === $encoded )
+        {
+            return true;
+        }
+        if ( ! is_string( $encoded ) || '' === trim( $encoded ) )
+        {
+            return false;
+        }
+
+        $decoded = json_decode( $encoded, true );
+        return JSON_ERROR_NONE === json_last_error() && is_array( $decoded );
+    }
+
+    /**
      * @param array<string, mixed> $args
      */
     public function list_filtered( array $args = [] ): array

@@ -17,6 +17,21 @@ abstract class Sentient_Forms_Local_Repository
 
     abstract protected function table_name(): string;
 
+    /** Whether this repository can participate in atomic local-state mutations. */
+    public function uses_transactional_storage(): bool
+    {
+        $previous_suppress_errors = $this->wpdb->suppress_errors();
+        $query = $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table_name() );
+        $definition = $this->wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query,
+            ARRAY_N
+        );
+        $this->wpdb->suppress_errors( $previous_suppress_errors );
+        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+        return 1 === preg_match( '/\bENGINE=InnoDB\b/i', $create_sql );
+    }
+
     protected function now(): string
     {
         return current_time( 'mysql', true );

@@ -1436,7 +1436,8 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
     public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void
     {
-        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $table               = $this->wpdb->prefix . 'sentient_execution_events';
+        $async_request_table = $this->wpdb->prefix . 'sentient_async_requests';
 
         update_option( 'sentient_forms_delete_data_on_uninstall', false );
         Sentient_Forms_Installer::uninstall();
@@ -1450,9 +1451,14 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         {
             Sentient_Forms_Installer::uninstall();
             $this->assertNull( $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) );
+            $this->assertNull( $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $async_request_table ) ) );
 
             Sentient_Forms_Installer::maybe_upgrade();
             $this->assertSame( $table, $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) );
+            $this->assertSame(
+                $async_request_table,
+                $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $async_request_table ) )
+            );
         }
         finally
         {
@@ -1481,8 +1487,11 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         update_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', 42 );
         update_option( 'sentient_forms_action_results_retirement_version', '2026.07.18.v1', false );
         update_option( 'sentient_forms_form_mappings_engine_version', '2026.07.19.v1', false );
+        update_option( 'sentient_forms_async_requests_engine_version', '2026.08.14.v1', false );
+        update_option( 'sentient_forms_credential_authority_engine_version', '2026.08.15.v1', false );
         update_option( 'sentient_forms_action_authority_migration_journal', [ 'phase' => 'prepared' ], false );
         update_option( 'sentient_forms_action_authority_migration_lock', [ 'token' => 'stale' ], false );
+        update_option( 'sentient_forms_site_context_generation_recovery', [ 'job_id' => 'stale' ], false );
         set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
         update_option( 'sentient_forms_delete_data_on_uninstall', true );
         remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
@@ -1526,8 +1535,11 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             $this->assertFalse( get_option( 'sentient_forms_submission_ledger_retention_backfill_cursor_v1', false ) );
             $this->assertFalse( get_option( 'sentient_forms_action_results_retirement_version', false ) );
             $this->assertFalse( get_option( 'sentient_forms_form_mappings_engine_version', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_async_requests_engine_version', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_credential_authority_engine_version', false ) );
             $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_journal', false ) );
             $this->assertFalse( get_option( 'sentient_forms_action_authority_migration_lock', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_site_context_generation_recovery', false ) );
             $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
             $this->assertSame(
                 '0',
