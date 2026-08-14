@@ -60,6 +60,7 @@
 		normalizeModelSelectionForPersistence,
 		reconcileModelSelectionCredentialForPersistence
 	} from '$lib/utils/model-selection-persistence';
+	import { sanitizeFormActionSettingsForPersistence } from '$lib/utils/form-action-settings-persistence';
 	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
 		ActionDefinition,
@@ -4057,7 +4058,7 @@
 				nextSettings.trigger_sources = draft.triggerSources;
 
 				const payload: Partial<FormActionMutationPayload> = {
-					settings: nextSettings as FormActionMutationPayload['settings']
+					settings: sanitizeFormActionSettingsForPersistence(nextSettings)
 				};
 				const baseHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
 				if (
@@ -4219,11 +4220,12 @@
 		if (!canSkipOnUpstreamSpam || draftSettings.skip_on_upstream_spam !== true) {
 			delete nextSettings.skip_on_upstream_spam;
 		}
+		const persistableSettings = sanitizeFormActionSettingsForPersistence(nextSettings);
 
 		const updatedLinkage: FormActionLinkage = {
 			...linkage,
 			trigger_hooks: normalizedHooks,
-			settings: nextSettings as FormActionLinkage['settings']
+			settings: persistableSettings
 		};
 		const baselineItems = actionsState.items.map((item) => normalizeLinkageForCurrentSource(item));
 		const candidateItems = baselineItems.map((item) =>
@@ -4242,7 +4244,7 @@
 
 		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
 			trigger_hooks: normalizedHooks,
-			settings: nextSettings as FormActionMutationPayload['settings']
+			settings: persistableSettings
 		});
 		if (graphDraftByMappingId[linkage.local_mapping_id]) {
 			const nextDraftMap = { ...graphDraftByMappingId };
