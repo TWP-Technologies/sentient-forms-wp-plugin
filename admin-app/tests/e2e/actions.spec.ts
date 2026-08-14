@@ -5296,7 +5296,7 @@ test.describe('Actions admin flows', () => {
 		const linkages = [
 			{
 				...baseLinkages[0],
-				settings: {}
+				settings: { updated_at: '2030-01-05T10:00:00Z' }
 			}
 		];
 
@@ -5343,6 +5343,7 @@ test.describe('Actions admin flows', () => {
 		const root = (conditions.root ?? {}) as Record<string, unknown>;
 		const rules = (root.rules ?? []) as Array<Record<string, unknown>>;
 
+		expect(settings.updated_at).toBeUndefined();
 		expect(conditions.enabled).toBe(true);
 		expect(root.logic).toBe('all');
 		expect(rules[0]?.field_id).toBe('1');
@@ -5445,7 +5446,7 @@ test.describe('Actions admin flows', () => {
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
-				settings: {}
+				settings: { updated_at: '2030-01-05T10:00:00Z' }
 			}
 		];
 
@@ -5480,6 +5481,7 @@ test.describe('Actions admin flows', () => {
 		await updateRes;
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
+		expect(settings.updated_at).toBeUndefined();
 		expect(settings.dependency_ids).toEqual(['map-1']);
 	});
 
