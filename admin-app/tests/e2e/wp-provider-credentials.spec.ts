@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { z } from 'zod';
 import { requireWpRestHealthy, runWpEval } from './utils/wp-e2e-helpers';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
@@ -7,8 +8,11 @@ const providerDeleteSmokeLabel = 'Provider delete smoke OpenRouter key';
 const providerConstantSmokeLabel = 'Provider constant smoke OpenRouter key';
 const providerConstantName = 'SENTIENT_FORMS_OPENROUTER_E2E_KEY';
 const providerConstantE2EPluginDir = 'sentient-forms-openrouter-constant-e2e';
-const providerConstantE2EPluginEntry =
-	`${providerConstantE2EPluginDir}/${providerConstantE2EPluginDir}.php`;
+const providerConstantE2EPluginEntry = `${providerConstantE2EPluginDir}/${providerConstantE2EPluginDir}.php`;
+const referencedFormMappingSeedSchema = z.union([
+	z.object({ mapping_id: z.number().int().positive() }),
+	z.object({ error: z.string().min(1) })
+]);
 
 function seedOpenRouterCredential(label: string): number {
 	const output = runWpEval(
@@ -140,6 +144,71 @@ echo wp_json_encode([ 'count' => $count ]);
 
 	const parsed = JSON.parse(output) as { count?: number };
 	return Number(parsed.count ?? 0);
+}
+
+function seedReferencedFormMapping(credentialId: number): number {
+	const output = runWpEval(
+		`
+global $wpdb;
+$credential_id = absint( getenv( 'OPENROUTER_CREDENTIAL_ID' ) ?: 0 );
+$mappings      = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+$mapping_id    = $mappings->create(
+	[
+		'form_source'         => 'gravity_forms',
+		'form_id'             => 'provider-delete-guard-e2e',
+		'hook'                => 'validation',
+		'action_kind'         => 'custom_action',
+		'action_id'           => 991001,
+		'input_bindings_json' => [],
+		'execution_mode'      => 'sync',
+		'settings_json'       => [
+			'model_selection' => [
+				'provider'      => 'openrouter',
+				'credential_id' => $credential_id,
+			],
+		],
+		'enabled'             => true,
+	]
+);
+
+if ( is_wp_error( $mapping_id ) ) {
+	echo wp_json_encode([ 'error' => $mapping_id->get_error_message() ]);
+	return;
+}
+
+echo wp_json_encode([ 'mapping_id' => (int) $mapping_id ]);
+`,
+		{
+			OPENROUTER_CREDENTIAL_ID: String(credentialId)
+		}
+	);
+
+	const parsed = referencedFormMappingSeedSchema.safeParse(JSON.parse(output));
+	if (!parsed.success) {
+		throw new Error(`Failed to seed referenced form mapping: ${output}`);
+	}
+	if ('error' in parsed.data) {
+		throw new Error(`Failed to seed referenced form mapping: ${parsed.data.error}`);
+	}
+
+	return parsed.data.mapping_id;
+}
+
+function deleteFormMapping(mappingId: number): void {
+	runWpEval(
+		`
+global $wpdb;
+$wpdb->delete(
+	$wpdb->prefix . 'sentient_form_mappings',
+	[ 'id' => absint( getenv( 'SENTIENT_FORMS_MAPPING_ID' ) ?: 0 ) ],
+	[ '%d' ]
+);
+echo wp_json_encode([ 'deleted' => true ]);
+`,
+		{
+			SENTIENT_FORMS_MAPPING_ID: String(mappingId)
+		}
+	);
 }
 
 function installOpenRouterConstantMuPlugin(constantName: string, secretValue: string): void {
@@ -353,6 +422,61 @@ test.describe('Local provider credentials in real wp-admin', () => {
 		expect(Array.from(sentientRequests)).toEqual([]);
 	});
 
+	test('providers keep a referenced key and explain the deletion conflict', async ({ page }) => {
+		await requireWpRestHealthy(page);
+		let mappingId: number | null = null;
+
+		try {
+			const credentialId = seedOpenRouterCredential(providerDeleteSmokeLabel);
+			mappingId = seedReferencedFormMapping(credentialId);
+			const sentientRequests = new Set<string>();
+			page.on('request', (request) => {
+				if (request.url().includes('sentientforms.com')) {
+					sentientRequests.add(`${request.method()} ${request.url()}`);
+				}
+			});
+
+			await loginToWpAdmin(page);
+			await ensureSentientFormsSpa(page, '/providers');
+
+			const credentialRow = page
+				.getByTestId('providers-openrouter-credential')
+				.filter({ hasText: providerDeleteSmokeLabel })
+				.first();
+
+			await expect(credentialRow).toBeVisible();
+			await credentialRow.getByRole('button', { name: 'Delete' }).click();
+			await expect(
+				credentialRow.getByTestId('providers-openrouter-delete-confirmation')
+			).toContainText('update Site Context if it uses this key');
+
+			const responsePromise = page.waitForResponse((response) => {
+				return (
+					response.request().method() === 'DELETE' &&
+					response.url().includes('/wp-json/sentient-forms/v1/local/providers/credentials/') &&
+					response.status() === 409
+				);
+			});
+			await credentialRow.getByRole('button', { name: 'Delete key' }).click();
+			await responsePromise;
+
+			await expect(credentialRow.getByTestId('providers-openrouter-delete-error')).toContainText(
+				'still used by local configuration or queued work'
+			);
+			await expect(
+				credentialRow.getByTestId('providers-openrouter-delete-references')
+			).toContainText(`Gravity Forms form provider-delete-guard-e2e, mapping #${mappingId}`);
+			await expect(credentialRow).toBeVisible();
+			expect(countOpenRouterCredentialsByLabel(providerDeleteSmokeLabel)).toBe(1);
+			expect(Array.from(sentientRequests)).toEqual([]);
+		} finally {
+			if (mappingId !== null) {
+				deleteFormMapping(mappingId);
+			}
+			deleteOpenRouterCredentialsByLabel(providerDeleteSmokeLabel);
+		}
+	});
+
 	test('providers can validate a server-backed OpenRouter constant without remote Sentient calls', async ({
 		page
 	}) => {
@@ -375,16 +499,16 @@ test.describe('Local provider credentials in real wp-admin', () => {
 			await expect(constantCard).toBeVisible();
 
 			await constantCard.getByLabel('Label').fill(providerConstantSmokeLabel);
-			await constantCard
-				.getByLabel('Constant or environment variable')
-				.fill(providerConstantName);
+			await constantCard.getByLabel('Constant or environment variable').fill(providerConstantName);
 			await constantCard.getByRole('checkbox').check();
 
 			await Promise.all([
 				page.waitForResponse((response) => {
 					return (
 						response.request().method() === 'POST' &&
-						response.url().includes('/wp-json/sentient-forms/v1/local/providers/openrouter/constant') &&
+						response
+							.url()
+							.includes('/wp-json/sentient-forms/v1/local/providers/openrouter/constant') &&
 						response.ok()
 					);
 				}),

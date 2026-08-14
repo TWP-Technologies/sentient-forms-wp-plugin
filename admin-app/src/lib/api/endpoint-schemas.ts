@@ -2332,6 +2332,40 @@ export const endpointErrorSchema = z
 		};
 	});
 
+export const providerCredentialDeleteReferenceSchema = z.object({
+	type: z.string(),
+	id: z.union([z.string(), z.number()]),
+	name: z.string().optional(),
+	form_source: z.string().optional(),
+	form_id: z.union([z.string(), z.number()]).optional(),
+	status: z.string().optional()
+});
+
+export type ProviderCredentialDeleteReference = z.infer<
+	typeof providerCredentialDeleteReferenceSchema
+>;
+
+const providerCredentialDeleteErrorSchema = z
+	.object({
+		code: z.string().optional(),
+		error_code: z.string().optional(),
+		message: z.string().optional(),
+		data: z
+			.object({
+				references: z.array(providerCredentialDeleteReferenceSchema).optional()
+			})
+			.optional()
+	})
+	.transform((payload) => {
+		const code = payload.code ?? payload.error_code ?? 'request_failed';
+		return {
+			code,
+			error_code: code,
+			message: payload.message ?? 'Request failed',
+			references: payload.data?.references ?? []
+		};
+	});
+
 export const endpointRegistry = {
 	'license.activate': {
 		path: 'license/activate',
@@ -2421,7 +2455,7 @@ export const endpointRegistry = {
 		path: 'local/providers/credentials/{id}',
 		request: emptyRequestSchema.describe('providers.credentials.delete request'),
 		response: providerCredentialDeleteSchema.describe('providers.credentials.delete response'),
-		error: endpointErrorSchema.describe('providers.credentials.delete error')
+		error: providerCredentialDeleteErrorSchema.describe('providers.credentials.delete error')
 	},
 	'provider.openrouter.models': {
 		path: 'local/providers/openrouter/models',
