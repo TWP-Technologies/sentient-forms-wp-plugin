@@ -468,7 +468,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
         {
-            $settings['conditions'] = $row['conditions_json'];
+            $settings['conditions'] = $this->sanitize_conditions( $row['conditions_json'], true );
         }
 
         $stored_trigger_sources = isset( $row['settings_json']['trigger_sources'] ) && is_array( $row['settings_json']['trigger_sources'] )
@@ -9166,18 +9166,28 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     /**
      * CB-FORMS-006: Sanitize conditional run settings.
      *
-     * @param array $raw Raw condition config.
+     * @param array $raw                    Raw condition config.
+     * @param bool  $allow_legacy_node_types Whether type-less runtime-compatible nodes are accepted.
      *
      * @return array
      */
-    private function sanitize_conditions( array $raw ): array
+    private function sanitize_conditions( array $raw, bool $allow_legacy_node_types = false ): array
     {
         $node_count = 0;
         $root       = null;
 
         if ( isset( $raw['root'] ) && is_array( $raw['root'] ) )
         {
-            $root = $this->sanitize_condition_node( $raw['root'], 1, $node_count );
+            $root = $this->sanitize_condition_node( $raw['root'], 1, $node_count, $allow_legacy_node_types );
+        }
+
+        if ( $allow_legacy_node_types && is_array( $root ) && 'rule' === ( $root['type'] ?? '' ) )
+        {
+            $root = [
+                'type'  => 'group',
+                'logic' => 'all',
+                'rules' => [ $root ],
+            ];
         }
 
         if ( ! is_array( $root ) )
@@ -9198,13 +9208,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     /**
      * Sanitize a condition node recursively.
      *
-     * @param array $node       Raw condition node.
-     * @param int   $depth      Current recursion depth.
-     * @param int   $node_count Running node counter.
+     * @param array $node                    Raw condition node.
+     * @param int   $depth                   Current recursion depth.
+     * @param int   $node_count              Running node counter.
+     * @param bool  $allow_legacy_node_types Whether type-less runtime-compatible nodes are accepted.
      *
      * @return array|null
      */
-    private function sanitize_condition_node( array $node, int $depth, int &$node_count ): ?array
+    private function sanitize_condition_node(
+        array $node,
+        int $depth,
+        int &$node_count,
+        bool $allow_legacy_node_types = false
+    ): ?array
     {
         if ( $depth > self::MAX_CONDITION_DEPTH )
         {
@@ -9218,6 +9234,18 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $type = sanitize_key( (string) ( $node['type'] ?? '' ) );
+        if ( $allow_legacy_node_types && '' === $type )
+        {
+            if ( isset( $node['rules'] ) && is_array( $node['rules'] ) )
+            {
+                $type = 'group';
+            }
+            elseif ( isset( $node['field_id'], $node['operator'] ) )
+            {
+                $type = 'rule';
+            }
+        }
+
         if ( 'group' === $type )
         {
             $logic = sanitize_key( (string) ( $node['logic'] ?? 'all' ) );
@@ -9230,15 +9258,34 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 {
                     if ( ! is_array( $child ) )
                     {
+                        if ( $allow_legacy_node_types )
+                        {
+                            return null;
+                        }
+
                         continue;
                     }
 
-                    $child_type      = sanitize_key( (string) ( $child['type'] ?? '' ) );
-                    $child_depth     = 'group' === $child_type ? $depth + 1 : $depth;
-                    $sanitized_child = $this->sanitize_condition_node( $child, $child_depth, $node_count );
+                    $child_type  = sanitize_key( (string) ( $child['type'] ?? '' ) );
+                    $child_group = 'group' === $child_type
+                        || ( $allow_legacy_node_types
+                            && '' === $child_type
+                            && isset( $child['rules'] )
+                            && is_array( $child['rules'] ) );
+                    $child_depth = $child_group ? $depth + 1 : $depth;
+                    $sanitized_child = $this->sanitize_condition_node(
+                        $child,
+                        $child_depth,
+                        $node_count,
+                        $allow_legacy_node_types
+                    );
                     if ( null !== $sanitized_child )
                     {
                         $rules[] = $sanitized_child;
+                    }
+                    elseif ( $allow_legacy_node_types )
+                    {
+                        return null;
                     }
                 }
             }

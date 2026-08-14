@@ -5715,6 +5715,351 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'unknown', $forms_by_id[2]['execution_status']['status'] ?? null );
     }
 
+    public function test_get_forms_overview_normalizes_legacy_local_first_conditions(): void
+    {
+        GFAPI::$forms = [
+            7 => [
+                'id'        => 7,
+                'title'     => 'Legacy conditions form',
+                'is_active' => true,
+            ],
+        ];
+
+        global $wpdb;
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'legacy_conditions_action',
+                'display_name'    => 'Legacy conditions action',
+                'definition_json' => [
+                    'prompt_template' => 'Summarize {{entry}}.',
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '7',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'effect_mapping_json' => [],
+                'conditions_json'     => [
+                    'mode'  => 'all',
+                    'rules' => [],
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+
+        $response   = $this->controller->get_forms_overview( $request );
+        $conditions = $response->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+
+        $this->assertSame(
+            [
+                'enabled' => false,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [],
+                ],
+            ],
+            $conditions
+        );
+    }
+
+    public function test_get_forms_overview_preserves_enabled_type_less_legacy_condition_nodes(): void
+    {
+        GFAPI::$forms = [
+            8 => [
+                'id'        => 8,
+                'title'     => 'Enabled legacy conditions form',
+                'is_active' => true,
+            ],
+        ];
+
+        global $wpdb;
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => 'enabled_legacy_conditions_action',
+                'display_name'    => 'Enabled legacy conditions action',
+                'definition_json' => [
+                    'prompt_template' => 'Summarize {{entry}}.',
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $legacy_conditions = [
+            'enabled' => true,
+            'root'    => [
+                'logic' => 'all',
+                'rules' => [
+                    [
+                        'field_id' => 'email',
+                        'operator' => 'contains',
+                        'value'    => '@example.com',
+                    ],
+                ],
+            ],
+        ];
+        $mapping_id       = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '8',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'effect_mapping_json' => [],
+                'conditions_json'     => $legacy_conditions,
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $evaluator = new Sentient_Forms_Condition_Evaluator();
+        $this->assertTrue(
+            $evaluator->should_execute(
+                [ 'settings' => [ 'conditions' => $legacy_conditions ] ],
+                [ 'email' => 'person@example.com' ]
+            ),
+            'The runtime evaluator must continue to recognize type-less legacy nodes.'
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+
+        $response   = $this->controller->get_forms_overview( $request );
+        $conditions = $response->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+
+        $this->assertSame(
+            [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => 'email',
+                            'operator' => 'contains',
+                            'value'    => '@example.com',
+                        ],
+                    ],
+                ],
+            ],
+            $conditions
+        );
+    }
+
+    public function test_get_forms_overview_keeps_malformed_enabled_legacy_tree_fail_closed(): void
+    {
+        GFAPI::$forms = [
+            9 => [
+                'id'        => 9,
+                'title'     => 'Malformed legacy conditions form',
+                'is_active' => true,
+            ],
+        ];
+        $legacy_conditions = [
+            'enabled' => true,
+            'root'    => [
+                'logic' => 'all',
+                'rules' => [
+                    [
+                        'field_id' => 'email',
+                        'operator' => 'contains',
+                        'value'    => '@example.com',
+                    ],
+                    [ 'unexpected' => 'malformed' ],
+                ],
+            ],
+        ];
+        $this->create_overview_conditions_mapping_fixture( '9', 'malformed_legacy_conditions_action', $legacy_conditions );
+
+        $evaluator = new Sentient_Forms_Condition_Evaluator();
+        $this->assertFalse(
+            $evaluator->should_execute(
+                [ 'settings' => [ 'conditions' => $legacy_conditions ] ],
+                [ 'email' => 'person@example.com' ]
+            )
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+
+        $conditions = $this->controller->get_forms_overview( $request )
+            ->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+        $this->assertSame(
+            [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [],
+                ],
+            ],
+            $conditions
+        );
+    }
+
+    public function test_get_forms_overview_wraps_type_less_legacy_root_rule_in_canonical_group(): void
+    {
+        GFAPI::$forms = [
+            10 => [
+                'id'        => 10,
+                'title'     => 'Legacy root rule form',
+                'is_active' => true,
+            ],
+        ];
+        $legacy_conditions = [
+            'enabled' => true,
+            'root'    => [
+                'field_id' => 'email',
+                'operator' => 'contains',
+                'value'    => '@example.com',
+            ],
+        ];
+        $this->create_overview_conditions_mapping_fixture( '10', 'legacy_root_rule_action', $legacy_conditions );
+
+        $evaluator = new Sentient_Forms_Condition_Evaluator();
+        $this->assertTrue(
+            $evaluator->should_execute(
+                [ 'settings' => [ 'conditions' => $legacy_conditions ] ],
+                [ 'email' => 'person@example.com' ]
+            )
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+
+        $conditions = $this->controller->get_forms_overview( $request )
+            ->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+        $this->assertSame(
+            [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => 'email',
+                            'operator' => 'contains',
+                            'value'    => '@example.com',
+                        ],
+                    ],
+                ],
+            ],
+            $conditions
+        );
+    }
+
+    public function test_get_forms_overview_keeps_over_depth_legacy_tree_fail_closed(): void
+    {
+        GFAPI::$forms = [
+            11 => [
+                'id'        => 11,
+                'title'     => 'Over-depth legacy conditions form',
+                'is_active' => true,
+            ],
+        ];
+        $rule = [
+            'field_id' => 'email',
+            'operator' => 'contains',
+            'value'    => '@example.com',
+        ];
+        for ( $depth = 0; $depth < 4; $depth++ )
+        {
+            $rule = [
+                'logic' => 'all',
+                'rules' => [ $rule ],
+            ];
+        }
+
+        $legacy_conditions = [
+            'enabled' => true,
+            'root'    => $rule,
+        ];
+        $this->create_overview_conditions_mapping_fixture( '11', 'over_depth_legacy_conditions_action', $legacy_conditions );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $conditions = $this->controller->get_forms_overview( $request )
+            ->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+
+        $this->assertSame(
+            [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [],
+                ],
+            ],
+            $conditions
+        );
+    }
+
+    public function test_get_forms_overview_keeps_over_node_limit_legacy_tree_fail_closed(): void
+    {
+        GFAPI::$forms = [
+            12 => [
+                'id'        => 12,
+                'title'     => 'Over-node-limit legacy conditions form',
+                'is_active' => true,
+            ],
+        ];
+        $legacy_conditions = [
+            'enabled' => true,
+            'root'    => [
+                'logic' => 'any',
+                'rules' => array_fill(
+                    0,
+                    50,
+                    [
+                        'field_id' => 'email',
+                        'operator' => 'contains',
+                        'value'    => '@example.com',
+                    ]
+                ),
+            ],
+        ];
+        $this->create_overview_conditions_mapping_fixture( '12', 'over_node_limit_legacy_conditions_action', $legacy_conditions );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $conditions = $this->controller->get_forms_overview( $request )
+            ->get_data()['forms'][0]['actions'][0]['settings']['conditions'] ?? null;
+
+        $this->assertSame(
+            [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [],
+                ],
+            ],
+            $conditions
+        );
+    }
+
 
     public function test_elementor_pro_forms_overview_includes_descriptor_and_provider_native_form_id(): void
     {
@@ -6713,6 +7058,46 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'action_id'  => $action_id,
             'mapping_id' => $mapping_id,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $conditions
+     */
+    private function create_overview_conditions_mapping_fixture(
+        string $form_id,
+        string $action_code,
+        array $conditions
+    ): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'            => $action_code,
+                'display_name'    => $action_code,
+                'definition_json' => [ 'prompt_template' => 'Summarize {{entry}}.' ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'effect_mapping_json' => [],
+                'conditions_json'     => $conditions,
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
     }
 
     /**
