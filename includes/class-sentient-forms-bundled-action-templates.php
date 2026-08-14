@@ -1307,7 +1307,7 @@ PROMPT,
                             'type'  => 'array',
                             'items' => [
                                 'type'                 => 'object',
-                                'required'             => [ 'field_id', 'severity', 'message', 'jump_target_field_id' ],
+                                'required'             => [ 'field_id', 'severity', 'message', 'jump_target_field_id', 'depends_on_future_field_ids', 'is_suppressed' ],
                                 'additionalProperties' => false,
                                 'properties'           => [
                                     'field_id'                    => [ 'type' => 'string' ],
@@ -1329,7 +1329,7 @@ PROMPT,
                             'type'  => 'array',
                             'items' => [
                                 'type'                 => 'object',
-                                'required'             => [ 'question_id', 'question', 'required', 'answer_type' ],
+                                'required'             => [ 'question_id', 'question', 'reason', 'target_field_id', 'required', 'answer_type', 'choices' ],
                                 'additionalProperties' => false,
                                 'properties'           => [
                                     'question_id'     => [ 'type' => 'string' ],
@@ -1352,7 +1352,7 @@ PROMPT,
                             'type'  => 'array',
                             'items' => [
                                 'type'                 => 'object',
-                                'required'             => [ 'decision_id', 'condition_key', 'met' ],
+                                'required'             => [ 'decision_id', 'condition_key', 'met', 'confidence', 'reason' ],
                                 'additionalProperties' => false,
                                 'properties'           => [
                                     'decision_id'   => [ 'type' => 'string' ],

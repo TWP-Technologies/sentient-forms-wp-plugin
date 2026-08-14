@@ -77,6 +77,43 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         $assert_closed_objects( $schema );
     }
 
+    public function test_realtime_clarification_strict_schema_requires_every_object_property(): void
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+
+        $this->assertIsArray( $definition );
+        $schema = $definition['structured_output_schema'] ?? null;
+        $this->assertIsArray( $schema );
+
+        $assert_strict_objects = function ( array $node, string $path = '$' ) use ( &$assert_strict_objects ): void
+        {
+            if ( 'object' === ( $node['type'] ?? null ) )
+            {
+                $properties = array_keys( is_array( $node['properties'] ?? null ) ? $node['properties'] : [] );
+                $required   = is_array( $node['required'] ?? null ) ? $node['required'] : [];
+                sort( $properties );
+                sort( $required );
+
+                $this->assertSame( $properties, $required, $path );
+            }
+
+            foreach ( $node['properties'] ?? [] as $property => $child )
+            {
+                if ( is_array( $child ) )
+                {
+                    $assert_strict_objects( $child, $path . '.properties.' . $property );
+                }
+            }
+
+            if ( is_array( $node['items'] ?? null ) )
+            {
+                $assert_strict_objects( $node['items'], $path . '.items' );
+            }
+        };
+
+        $assert_strict_objects( $schema );
+    }
+
     public function test_bundled_actions_expose_canonical_lifecycle_hooks_that_match_their_definitions(): void
     {
         $expected_lifecycles = [
