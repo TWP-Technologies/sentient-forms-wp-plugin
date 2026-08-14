@@ -3527,6 +3527,9 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'question_id'     => $question_id,
                     'question'        => $question,
+                    'reason'          => isset( $item['reason'] ) && is_scalar( $item['reason'] )
+                        ? trim( sanitize_text_field( (string) $item['reason'] ) )
+                        : '',
                     'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] )
                         ? sanitize_text_field( (string) $item['target_field_id'] )
                         : '',

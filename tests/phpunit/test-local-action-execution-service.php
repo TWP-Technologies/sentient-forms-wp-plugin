@@ -4771,6 +4771,52 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertTrue( $result['result']['structured']['conditional_decisions'][0]['met'] );
     }
 
+    public function test_normalizes_missing_realtime_question_reason_for_bundled_schema(): void
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+        $this->assertIsArray( $definition );
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'structured_output_schema' => $definition['structured_output_schema'] ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggestions'           => [],
+                    'virtual_questions'     => [
+                        [
+                            'question_id'     => 'preferred_contact',
+                            'question'        => 'Which contact method should the team use?',
+                            'target_field_id' => '2',
+                            'required'        => false,
+                            'answer_type'     => 'choice',
+                            'choices'         => [ 'Email', 'Phone' ],
+                        ],
+                    ],
+                    'conditional_decisions' => [],
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'real_time' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertTrue( $result['result']['structured_output_valid'] );
+        $this->assertSame( '', $result['result']['structured']['virtual_questions'][0]['reason'] );
+    }
+
     public function test_normalizes_missing_realtime_optional_arrays_before_schema_validation(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
