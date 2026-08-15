@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
+	import {
+		providerCredentialDeleteReferenceSchema,
+		type ProviderCredentialDeleteReference
+	} from '$lib/api/endpoint-schemas';
 	import type {
 		LocalProviderCredential,
 		OpenRouterModelsResponse,
@@ -41,6 +45,7 @@
 	const client = createClientFromConfig();
 	const DISCLOSURE_VERSION = OPENROUTER_DISCLOSURE_VERSION;
 	const MANAGED_DISCLOSURE_VERSION = SENTIENT_MANAGED_DISCLOSURE_VERSION;
+	const DELETE_REFERENCE_RENDER_LIMIT = 25;
 
 	let loading = $state(true);
 	let credentials = $state<LocalProviderCredential[]>([]);
@@ -67,6 +72,15 @@
 	let validatingConstant = $state(false);
 	let deletingCredentialId = $state<number | null>(null);
 	let pendingDeleteCredentialId = $state<number | null>(null);
+	let deleteCredentialErrorId = $state<number | null>(null);
+	let deleteCredentialError = $state<string | null>(null);
+	let deleteCredentialReferences = $state<ProviderCredentialDeleteReference[]>([]);
+	let visibleDeleteCredentialReferences = $derived(
+		deleteCredentialReferences.slice(0, DELETE_REFERENCE_RENDER_LIMIT)
+	);
+	let omittedDeleteCredentialReferenceCount = $derived(
+		Math.max(0, deleteCredentialReferences.length - visibleDeleteCredentialReferences.length)
+	);
 	let managedSetupLoading = $state(false);
 	let managedRevokeLoading = $state(false);
 	let modelCatalogLoading = $state(true);
@@ -216,6 +230,42 @@
 		}
 
 		return requestError instanceof Error ? requestError.message : 'Provider request failed.';
+	}
+
+	function credentialDeleteReferences(requestError: unknown): ProviderCredentialDeleteReference[] {
+		if (!(requestError instanceof ApiClientError) || !isRecord(requestError.payload)) return [];
+		const references = requestError.payload.references;
+		const parsed = providerCredentialDeleteReferenceSchema.array().safeParse(references);
+		return parsed.success ? parsed.data : [];
+	}
+
+	function credentialReferenceLabel(reference: ProviderCredentialDeleteReference): string {
+		const source = reference.form_source
+			? reference.form_source
+					.split('_')
+					.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+					.join(' ')
+			: null;
+		switch (reference.type) {
+			case 'custom_action':
+				return `Action ${reference.name ? `“${reference.name}” ` : ''}(ID ${reference.id})`;
+			case 'form_mapping':
+				return `${source ?? 'Form'} ${reference.form_id ? `form ${reference.form_id}, ` : ''}mapping #${reference.id}`;
+			case 'site_context_settings':
+				return 'Site Context settings';
+			case 'site_context_generation_job':
+				return 'Active Site Context generation';
+			case 'configuration_option':
+				return `Saved Action configuration (${reference.id})`;
+			case 'queued_execution':
+			case 'scheduled_execution':
+			case 'wp_cron_execution':
+				return `${reference.status === 'running' || reference.status === 'in-progress' ? 'Running' : 'Queued'} Action execution (${reference.id})`;
+			case 'active_execution':
+				return `Running Action execution (${reference.id})`;
+			default:
+				return `Local configuration (${reference.id})`;
+		}
 	}
 
 	async function loadCredentials(): Promise<void> {
@@ -408,14 +458,22 @@
 	}
 
 	function confirmCredentialDelete(credential: LocalProviderCredential): void {
+		if (deletingCredentialId !== null) return;
 		pendingDeleteCredentialId = credential.id;
+		deleteCredentialErrorId = null;
+		deleteCredentialError = null;
+		deleteCredentialReferences = [];
 	}
 
 	function cancelCredentialDelete(): void {
 		pendingDeleteCredentialId = null;
+		deleteCredentialErrorId = null;
+		deleteCredentialError = null;
+		deleteCredentialReferences = [];
 	}
 
 	async function deleteProviderCredential(credential: LocalProviderCredential): Promise<void> {
+		if (deletingCredentialId !== null) return;
 		error = null;
 		deletingCredentialId = credential.id;
 
@@ -423,10 +481,16 @@
 			await client.deleteLocalProviderCredential(credential.id, { showNotifications: false });
 			credentials = credentials.filter((candidate) => candidate.id !== credential.id);
 			pendingDeleteCredentialId = null;
+			deleteCredentialErrorId = null;
+			deleteCredentialError = null;
+			deleteCredentialReferences = [];
 			notifications.success(`${credential.label} deleted`);
 		} catch (requestError) {
 			const message = errorMessage(requestError);
 			error = message;
+			deleteCredentialErrorId = credential.id;
+			deleteCredentialError = message;
+			deleteCredentialReferences = credentialDeleteReferences(requestError);
 			notifications.error(message);
 		} finally {
 			deletingCredentialId = null;
@@ -719,8 +783,8 @@
 			<Alert variant="warning">
 				<p class="sf:font-semibold">Privacy depends on the route you choose</p>
 				<p class="sf:mt-1">
-					OpenRouter can mark models as available on Zero Data Retention (ZDR) routes, and
-					Sentient Forms shows those tags to help you choose. ZDR
+					OpenRouter can mark models as available on Zero Data Retention (ZDR) routes, and Sentient
+					Forms shows those tags to help you choose. ZDR
 					<span class="sf:font-semibold sf:italic sf:underline">enforcement</span>
 					for direct OpenRouter users can only be configured in OpenRouter.
 				</p>
@@ -1091,7 +1155,7 @@
 									<Button
 										size="sm"
 										variant="danger"
-										disabled={deletingCredentialId === credential.id}
+										disabled={deletingCredentialId !== null}
 										onclick={() => confirmCredentialDelete(credential)}
 										data-testid={`providers-openrouter-delete-${credential.id}`}
 									>
@@ -1133,13 +1197,57 @@
 										Delete this saved OpenRouter key?
 									</p>
 									<p class="sf:mt-1 sf:text-xs sf:text-slate-700">
-										Actions using this key need another provider key before they can run.
+										Before deleting, reassign dependent Actions, update Site Context if it uses this
+										key, and let queued work finish.
 									</p>
+									{#if deleteCredentialErrorId === credential.id && deleteCredentialError}
+										<p
+											class="sf:mt-2 sf:text-xs sf:font-medium sf:text-danger-700"
+											role="alert"
+											data-testid="providers-openrouter-delete-error"
+										>
+											{deleteCredentialError}
+										</p>
+										{#if deleteCredentialReferences.length > 0}
+											<div
+												class="sf:mt-2 sf:rounded sf:border sf:border-danger-200 sf:bg-white sf:p-2"
+												data-testid="providers-openrouter-delete-references"
+											>
+												<p class="sf:text-xs sf:font-semibold sf:text-slate-800">
+													Resolve these {deleteCredentialReferences.length} blocker{deleteCredentialReferences.length ===
+													1
+														? ''
+														: 's'} first:
+												</p>
+												<ul
+													class="sf:mt-1 sf:list-disc sf:space-y-1 sf:pl-4 sf:text-xs sf:text-slate-700"
+												>
+													{#each visibleDeleteCredentialReferences as reference}
+														<li>{credentialReferenceLabel(reference)}</li>
+													{/each}
+												</ul>
+												{#if omittedDeleteCredentialReferenceCount > 0}
+													<p
+														class="sf:mt-2 sf:text-xs sf:font-medium sf:text-slate-700"
+														data-testid="providers-openrouter-delete-references-omitted"
+													>
+														Showing the first {visibleDeleteCredentialReferences.length}; {omittedDeleteCredentialReferenceCount}
+														more not shown.
+													</p>
+												{/if}
+												<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
+													Reassign saved Actions in Actions, update Site Context, or wait for queued
+													work to finish.
+												</p>
+											</div>
+										{/if}
+									{/if}
 									<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-2">
 										<Button
 											size="sm"
 											variant="danger"
 											loading={deletingCredentialId === credential.id}
+											disabled={deletingCredentialId !== null}
 											onclick={() => deleteProviderCredential(credential)}
 											data-testid={`providers-openrouter-delete-confirm-${credential.id}`}
 										>
@@ -1148,7 +1256,7 @@
 										<Button
 											size="sm"
 											variant="secondary"
-											disabled={deletingCredentialId === credential.id}
+											disabled={deletingCredentialId !== null}
 											onclick={cancelCredentialDelete}
 											data-testid={`providers-openrouter-delete-cancel-${credential.id}`}
 										>
@@ -1219,8 +1327,8 @@
 								New managed-service requests are blocked from this plugin until consent is enabled
 								again. Revocation does not cancel or change the Stripe subscription.
 							{:else}
-								Enable managed service only when this site should use Sentient Forms billing and
-								the central proxy for model runs.
+								Enable managed service only when this site should use Sentient Forms billing and the
+								central proxy for model runs.
 							{/if}
 						</p>
 						{#if managedConsentTimestamp(managedConsent)}

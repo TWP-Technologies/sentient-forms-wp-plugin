@@ -26,6 +26,33 @@ const completeSettingsResponse = {
 };
 
 describe('admin endpoint schema registry', () => {
+	it('preserves sanitized credential deletion blockers for actionable conflict UI', () => {
+		const parsed = endpointRegistry['providers.credentials.delete'].error.parse({
+			code: 'sentient_forms_credential_in_use',
+			message: 'This provider credential is still used.',
+			data: {
+				status: 409,
+				references: [
+					{
+						type: 'form_mapping',
+						id: 109,
+						form_source: 'gravity_forms',
+						form_id: 'credential-delete-guard'
+					}
+				]
+			}
+		});
+
+		expect(parsed.references).toEqual([
+			{
+				type: 'form_mapping',
+				id: 109,
+				form_source: 'gravity_forms',
+				form_id: 'credential-delete-guard'
+			}
+		]);
+	});
+
 	it('accepts the local bootstrap capability shape when no CPS version is cached', () => {
 		const parsed = endpointRegistry['forms.actions.bootstrap'].response.parse({
 			form_source: 'gravity_forms',
