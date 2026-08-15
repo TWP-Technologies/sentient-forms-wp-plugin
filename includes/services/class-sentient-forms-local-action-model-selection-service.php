@@ -1142,7 +1142,13 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return $selection;
         }
 
-        if ( 'absent_at_admission' === ( $runtime['backup_authority_status'] ?? '' ) )
+        $runtime_declares_no_backup = array_key_exists( 'backup', $runtime )
+            && ( ! is_scalar( $runtime['backup'] ) || '' === trim( sanitize_text_field( (string) $runtime['backup'] ) ) )
+            && absint( $runtime['backup_credential_id'] ?? 0 ) <= 0;
+        if (
+            'absent_at_admission' === ( $runtime['backup_authority_status'] ?? '' )
+            || $runtime_declares_no_backup
+        )
         {
             unset( $selection['backup_provider'], $selection['backup_credential_id'], $selection['backup_model'] );
         }
