@@ -1403,6 +1403,64 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'entry_note', $event['result_json']['effects']['applied'] ?? [] );
     }
 
+    public function test_mapping_without_backup_ignores_stale_action_backup_authority(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+
+        $action = $this->custom_actions->get( $fixture['action_id'] );
+        $this->assertIsArray( $action );
+        $updated_action = $this->custom_actions->update(
+            $fixture['action_id'],
+            [
+                'model_selection_json' => array_merge(
+                    $action['model_selection_json'],
+                    [
+                        'backup_provider'      => 'openrouter',
+                        'backup_model'         => 'openrouter/auto',
+                        'backup_credential_id' => 999999,
+                    ]
+                ),
+            ]
+        );
+        $this->assertIsArray( $updated_action );
+
+        $updated_mapping = $this->mappings->update(
+            $fixture['mapping_id'],
+            [
+                'settings_json' => [
+                    'model_selection' => [
+                        'primary'       => 'openrouter/auto',
+                        'backup'        => '',
+                        'provider'      => 'openrouter',
+                        'credential_id' => $fixture['credential_id'],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsArray( $updated_mapping );
+
+        $client   = new Sentient_Forms_Test_OpenRouter_Client();
+        $service  = $this->create_service( $client );
+        $snapshot = $service->resolve_credential_authority_snapshot( $fixture['mapping_id'] );
+
+        $this->assertIsArray( $snapshot );
+        $this->assertSame( $fixture['credential_id'], $snapshot['credential_id'] ?? null );
+        $this->assertSame( 'absent_at_admission', $snapshot['backup_authority_status'] ?? null );
+        $this->assertArrayNotHasKey( 'backup_credential_id', $snapshot );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] ?? null );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( $fixture['secret'], $client->chat_calls[0]['api_key'] ?? null );
+    }
+
     public function test_direct_execution_keeps_frozen_credential_authority_until_provider_returns(): void
     {
         $fixture = $this->create_local_openrouter_mapping();
