@@ -211,6 +211,11 @@ if ( ! class_exists( 'Sentient_Forms_Test_Terminal_Persistence_Local_Execution_S
                 ]
             );
         }
+
+        public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+        {
+            return [];
+        }
     }
 }
 

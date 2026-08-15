@@ -30,6 +30,71 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         parent::tearDown();
     }
 
+    public function test_runtime_authority_snapshot_overrides_saved_backup_credential(): void
+    {
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $selection = $service->prepare_model_selection_for_execution(
+            [
+                'model_selection_json' => [
+                    'provider'             => 'sentient_managed',
+                    'model'                => 'sf_default',
+                    'credential_id'        => 41,
+                    'backup_provider'      => 'openrouter',
+                    'backup_model'         => 'openrouter/auto',
+                    'backup_credential_id' => 61,
+                ],
+            ],
+            [
+                'settings' => [
+                    'model_selection' => [
+                        'provider'             => 'sentient_managed',
+                        'primary'              => 'sf_default',
+                        'credential_id'        => 41,
+                        'backup_provider'      => 'openrouter',
+                        'backup'               => 'openrouter/auto',
+                        'backup_credential_id' => 64,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
+        $this->assertSame( 41, $selection['credential_id'] ?? null );
+        $this->assertSame( 'openrouter', $selection['backup_provider'] ?? null );
+        $this->assertSame( 'openrouter/auto', $selection['backup_model'] ?? null );
+        $this->assertSame( 64, $selection['backup_credential_id'] ?? null );
+    }
+
+    public function test_runtime_authority_snapshot_clears_backup_added_after_admission(): void
+    {
+        $selection = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+            ->prepare_model_selection_for_execution(
+                [
+                    'model_selection_json' => [
+                        'provider'             => 'sentient_managed',
+                        'model'                => 'sf_default',
+                        'credential_id'        => 41,
+                        'backup_provider'      => 'openrouter',
+                        'backup_model'         => 'openrouter/auto',
+                        'backup_credential_id' => 64,
+                    ],
+                ],
+                [
+                    'settings' => [
+                        'model_selection' => [
+                            'provider'                => 'sentient_managed',
+                            'credential_id'           => 41,
+                            'backup_authority_status' => 'absent_at_admission',
+                        ],
+                    ],
+                ]
+            );
+
+        $this->assertArrayNotHasKey( 'backup_provider', $selection );
+        $this->assertArrayNotHasKey( 'backup_model', $selection );
+        $this->assertArrayNotHasKey( 'backup_credential_id', $selection );
+    }
+
     public function test_existing_bundled_action_inherits_catalog_policy_before_execution(): void
     {
         $service = new Sentient_Forms_Local_Action_Model_Selection_Service();

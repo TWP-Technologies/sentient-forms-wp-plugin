@@ -13,6 +13,10 @@ class Sentient_Forms_Installer
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
     private const OPTION_FORM_MAPPINGS_ENGINE_VERSION = 'sentient_forms_form_mappings_engine_version';
     private const FORM_MAPPINGS_ENGINE_VERSION = '2026.07.19.v1';
+    private const OPTION_ASYNC_REQUESTS_ENGINE_VERSION = 'sentient_forms_async_requests_engine_version';
+    private const ASYNC_REQUESTS_ENGINE_VERSION = '2026.08.14.v1';
+    private const OPTION_CREDENTIAL_AUTHORITY_ENGINE_VERSION = 'sentient_forms_credential_authority_engine_version';
+    private const CREDENTIAL_AUTHORITY_ENGINE_VERSION = '2026.08.15.v1';
     private const OPTION_SETTINGS = 'sentient_forms_settings';
     private const OPTION_ACTION_RESULTS_RETIREMENT_VERSION = 'sentient_forms_action_results_retirement_version';
     private const ACTION_RESULTS_RETIREMENT_VERSION = '2026.07.18.v1';
@@ -130,6 +134,14 @@ class Sentient_Forms_Installer
         }
 
         if ( ! self::ensure_form_mappings_transactional_storage() )
+        {
+            return;
+        }
+        if ( ! self::ensure_credential_authority_transactional_storage() )
+        {
+            return;
+        }
+        if ( ! self::ensure_async_requests_transactional_storage() )
         {
             return;
         }
@@ -986,7 +998,14 @@ class Sentient_Forms_Installer
             KEY status_idx (status),
             KEY record_type_idx (record_type),
             KEY last_seen_idx (last_seen_at)
-        ) {$charset_collate};";
+        ) ENGINE=InnoDB {$charset_collate};";
+
+        if ( ! self::table_exists( $table_name ) )
+        {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Activation must execute this static, plugin-owned DDL when repair_missing_tables is requested; identifiers and collation are supplied by WordPress.
+            $wpdb->query( $sql );
+            return;
+        }
 
         dbDelta( $sql );
     }
@@ -1090,7 +1109,7 @@ class Sentient_Forms_Installer
             }
         }
 
-        return true;
+        return self::table_exists( $wpdb->prefix . 'sentient_async_requests' );
     }
 
     /**
@@ -1154,6 +1173,121 @@ class Sentient_Forms_Installer
             || self::FORM_MAPPINGS_ENGINE_VERSION === get_option( self::OPTION_FORM_MAPPINGS_ENGINE_VERSION, '' );
     }
 
+    /** Upgrade the durable execution-authority store before row-lock scans are trusted. */
+    private static function ensure_async_requests_transactional_storage(): bool
+    {
+        if ( self::ASYNC_REQUESTS_ENGINE_VERSION === get_option( self::OPTION_ASYNC_REQUESTS_ENGINE_VERSION, '' ) )
+        {
+            return true;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'sentient_async_requests';
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        $show_create_query = $wpdb->prepare( 'SHOW CREATE TABLE %i', $table );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Read-only engine introspection cannot use the object cache.
+        $definition = $wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $show_create_query,
+            ARRAY_N
+        );
+        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+
+        if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+        {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Versioned repair for the plugin-owned durable authority table.
+            $converted = $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            if ( false === $converted )
+            {
+                $wpdb->suppress_errors( $previous_suppress_errors );
+                return false;
+            }
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Verify the engine conversion directly.
+            $definition = $wpdb->get_row(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above with an identifier placeholder.
+                $show_create_query,
+                ARRAY_N
+            );
+            $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+        }
+        $wpdb->suppress_errors( $previous_suppress_errors );
+
+        if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+        {
+            return false;
+        }
+
+        $updated = update_option(
+            self::OPTION_ASYNC_REQUESTS_ENGINE_VERSION,
+            self::ASYNC_REQUESTS_ENGINE_VERSION,
+            false
+        );
+        return $updated
+            || self::ASYNC_REQUESTS_ENGINE_VERSION === get_option( self::OPTION_ASYNC_REQUESTS_ENGINE_VERSION, '' );
+    }
+
+    /** Upgrade plugin-owned credential authority tables before deletion row locks are trusted. */
+    private static function ensure_credential_authority_transactional_storage(): bool
+    {
+        if (
+            self::CREDENTIAL_AUTHORITY_ENGINE_VERSION
+            === get_option( self::OPTION_CREDENTIAL_AUTHORITY_ENGINE_VERSION, '' )
+        )
+        {
+            return true;
+        }
+
+        global $wpdb;
+        $tables = [
+            $wpdb->prefix . 'sentient_provider_credentials',
+            $wpdb->prefix . 'sentient_custom_actions',
+        ];
+        $previous_suppress_errors = $wpdb->suppress_errors();
+        foreach ( $tables as $table )
+        {
+            $show_create_query = $wpdb->prepare( 'SHOW CREATE TABLE %i', $table );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Versioned installer engine verification cannot use the object cache.
+            $definition = $wpdb->get_row(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+                $show_create_query,
+                ARRAY_N
+            );
+            $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+            if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+            {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- One versioned repair converts plugin-owned credential authority tables to the engine required by deletion transactions.
+                $converted = $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+                if ( false === $converted )
+                {
+                    $wpdb->suppress_errors( $previous_suppress_errors );
+                    return false;
+                }
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Verify the physical engine before recording the migration marker.
+                $definition = $wpdb->get_row(
+                    // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above with an identifier placeholder.
+                    $show_create_query,
+                    ARRAY_N
+                );
+                $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+            }
+            if ( 1 !== preg_match( '/\bENGINE=InnoDB\b/i', $create_sql ) )
+            {
+                $wpdb->suppress_errors( $previous_suppress_errors );
+                return false;
+            }
+        }
+        $wpdb->suppress_errors( $previous_suppress_errors );
+
+        $updated = update_option(
+            self::OPTION_CREDENTIAL_AUTHORITY_ENGINE_VERSION,
+            self::CREDENTIAL_AUTHORITY_ENGINE_VERSION,
+            false
+        );
+        return $updated
+            || self::CREDENTIAL_AUTHORITY_ENGINE_VERSION
+                === get_option( self::OPTION_CREDENTIAL_AUTHORITY_ENGINE_VERSION, '' );
+    }
+
     private static function create_local_first_tables(): void
     {
         global $wpdb;
@@ -1179,7 +1313,7 @@ class Sentient_Forms_Installer
                 KEY provider_idx (provider),
                 KEY status_idx (status),
                 KEY updated_idx (updated_at)
-            ) {$charset_collate};",
+            ) ENGINE=InnoDB {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_external_service_consents (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 provider VARCHAR(50) NOT NULL,
@@ -1229,7 +1363,7 @@ class Sentient_Forms_Installer
                 KEY external_id_idx (external_id),
                 KEY template_idx (template_id),
                 KEY status_idx (status)
-            ) {$charset_collate};",
+            ) ENGINE=InnoDB {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_form_mappings (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 external_id VARCHAR(191) NULL,

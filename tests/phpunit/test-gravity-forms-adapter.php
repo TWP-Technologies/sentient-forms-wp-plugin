@@ -181,6 +181,12 @@ final class Sentient_Forms_Test_Validation_Local_Execution_Service extends Senti
     /** @var callable */
     private $on_execute;
 
+    /** @var array<string, mixed> */
+    public array $credential_snapshot = [];
+
+    /** @var array<string, mixed>|null */
+    private ?array $last_result = null;
+
     public function __construct( Sentient_Forms_Plugin $plugin, callable $on_execute )
     {
         $this->on_execute = $on_execute;
@@ -193,7 +199,24 @@ final class Sentient_Forms_Test_Validation_Local_Execution_Service extends Senti
 
     public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
     {
-        return $this->execute( (string) ( $context['central_action_id'] ?? $mapping_id ), $form, $entry, $context );
+        $result = $this->execute( (string) ( $context['central_action_id'] ?? $mapping_id ), $form, $entry, $context );
+        if ( is_array( $result ) )
+        {
+            $this->last_result = $result;
+        }
+        return $result;
+    }
+
+    public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+    {
+        return $this->credential_snapshot;
+    }
+
+    public function replay_succeeded_execution( string $execution_request_id ): array | WP_Error
+    {
+        return is_array( $this->last_result )
+            ? $this->last_result
+            : new WP_Error( 'sentient_forms_validation_execution_evidence_missing', 'Missing validation fixture evidence.' );
     }
 }
 
@@ -356,6 +379,11 @@ final class Sentient_Forms_Test_Spy_Local_Action_Execution_Service extends Senti
     {
     }
 
+    public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+    {
+        return [];
+    }
+
     public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
     {
         $this->calls[] = compact( 'mapping_id', 'form', 'entry', 'context' );
@@ -405,8 +433,18 @@ final class Sentient_Forms_Test_Configurable_Local_Action_Execution_Service exte
 
     public bool $return_execution_wrapper = false;
 
+    public array | WP_Error $credential_snapshot = [];
+
+    public int $credential_snapshot_calls = 0;
+
     public function __construct()
     {
+    }
+
+    public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+    {
+        ++$this->credential_snapshot_calls;
+        return $this->credential_snapshot;
     }
 
     public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error
@@ -2043,6 +2081,53 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->truncate_local_first_runtime_tables();
         delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_synchronous_terminal_success_replays_before_live_credential_resolution(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $form_id = 990233;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'sync_terminal_replay',
+            'after_submission',
+            [ 'async' => false ]
+        );
+        $local_execution = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+        $local_execution->record_execution_events = true;
+        $local_execution->results[ $fixture['mapping_id'] ] = [
+            'result_data' => [ 'summary' => 'Canonical accepted result.' ],
+        ];
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner(
+            Sentient_Forms_Plugin::instance(),
+            null,
+            null,
+            $local_execution
+        );
+        $payload = [
+            'entry' => [ 'id' => 1990233, 'form_id' => $form_id, 'status' => 'active' ],
+            'form'  => [ 'id' => $form_id, 'title' => 'Terminal replay', 'fields' => [] ],
+        ];
+
+        $first = $runner->run_accepted_submission_with_outcome( $this->adapter, $payload );
+        $local_execution->credential_snapshot = new WP_Error(
+            'sentient_forms_provider_credential_not_found',
+            'The credential was deleted after terminalization.'
+        );
+        $second = $runner->run_accepted_submission_with_outcome( $this->adapter, $payload );
+
+        $this->assertSame( 'succeeded', $first->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $this->assertSame( 'replayed_success', $second->get_mapping_outcomes()[ $fixture['runtime_key'] ] ?? null );
+        $this->assertSame( 1, $local_execution->credential_snapshot_calls );
+        $this->assertCount( 1, $local_execution->calls );
+        $this->assertSame(
+            'Canonical accepted result.',
+            $second->get_execution_result( $fixture['runtime_key'] )['result_data']['summary'] ?? null
+        );
+
+        $this->truncate_local_first_runtime_tables();
     }
 
     public function test_synchronous_accepted_failure_is_visible_in_linked_action_log(): void
@@ -5660,6 +5745,282 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertStringContainsString( 'lacks sufficient detail', $result['form']['validation_message'] );
     }
 
+    public function test_validation_execution_keeps_resolved_credential_authority_active(): void
+    {
+        global $wpdb;
+
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $form_id = 99023;
+        $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation' );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'         => 'openrouter',
+                'label'            => 'Validation authority fixture',
+                'auth_mode'        => 'manual_key',
+                'encrypted_secret' => 'encrypted-validation-authority-fixture',
+                'status'           => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $delete_during_execution = null;
+        $execution = new Sentient_Forms_Test_Validation_Local_Execution_Service(
+            Sentient_Forms_Plugin::instance(),
+            function () use ( $credential_id, &$delete_during_execution ): array {
+                $delete_during_execution = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+                    ->delete_credential_if_unreferenced( $credential_id );
+
+                return [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+                    ],
+                ];
+            }
+        );
+        $execution->credential_snapshot = [
+            'provider'      => 'openrouter',
+            'model'         => 'openrouter/auto',
+            'credential_id' => $credential_id,
+        ];
+        $this->set_local_execution_service( $execution );
+
+        try
+        {
+            $this->adapter->handle_validation(
+                [
+                    'is_valid' => true,
+                    'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+                ]
+            );
+
+            $this->assertInstanceOf( WP_Error::class, $delete_during_execution );
+            $this->assertSame( 'sentient_forms_credential_in_use', $delete_during_execution->get_error_code() );
+            $references = $delete_during_execution->get_error_data()['references'] ?? [];
+            $this->assertNotEmpty(
+                array_filter(
+                    $references,
+                    static fn( array $reference ): bool => 'active_execution' === ( $reference['type'] ?? '' )
+                )
+            );
+        }
+        finally
+        {
+            $wpdb->query( "DELETE FROM {$wpdb->prefix}sentient_async_requests" );
+            $this->truncate_local_first_runtime_tables();
+        }
+    }
+
+    public function test_completed_validation_replay_preserves_the_original_rejection(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $form_id = 990231;
+        $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation' );
+
+        $execution = new Sentient_Forms_Test_Validation_Local_Execution_Service(
+            Sentient_Forms_Plugin::instance(),
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'is_valid' => false,
+                        'message'  => 'The replayed submission remains blocked.',
+                        'fields'   => [],
+                    ],
+                ],
+            ]
+        );
+        $this->set_local_execution_service( $execution );
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $execution );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $first = $runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+        $cache = new ReflectionProperty( $runner, 'validation_execution_cache' );
+        $cache->setAccessible( true );
+        $cache->setValue( $runner, [] );
+        $replayed = $runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+
+        $first_native    = $this->adapter->apply_validation_result( $validation, $first );
+        $replayed_native = $this->adapter->apply_validation_result( $validation, $replayed );
+        $this->assertFalse( $first_native['is_valid'] );
+        $this->assertFalse( $replayed_native['is_valid'] );
+        $this->assertStringContainsString( 'remains blocked', (string) $replayed_native['form']['validation_message'] );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_active_duplicate_validation_fails_closed(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $form_id = 990232;
+        $fixture = $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation' );
+
+        $execution = new Sentient_Forms_Test_Validation_Local_Execution_Service(
+            Sentient_Forms_Plugin::instance(),
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+                ],
+            ]
+        );
+        $this->set_local_execution_service( $execution );
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $execution );
+        $validation = [
+            'is_valid' => true,
+            'form'     => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ],
+        ];
+
+        $first      = $runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+        $request_id = (string) ( $first->get_execution_request_ids()[ $fixture['runtime_key'] ] ?? '' );
+        $this->assertNotSame( '', $request_id );
+        $marked = Sentient_Forms_Plugin::instance()->get_async_request_store()->mark_status(
+            $request_id,
+            'running',
+            null,
+            'accepted_sync'
+        );
+        $this->assertTrue( $marked );
+        $cache = new ReflectionProperty( $runner, 'validation_execution_cache' );
+        $cache->setAccessible( true );
+        $cache->setValue( $runner, [] );
+
+        $duplicate = $runner->run_validation( $this->adapter, $validation, [ 'source' => 'form-submit' ] );
+        $native    = $this->adapter->apply_validation_result( $validation, $duplicate );
+        $this->assertFalse( $native['is_valid'] );
+        $this->assertStringContainsString( 'still being validated', (string) $native['form']['validation_message'] );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_validation_claim_conflict_states_are_classified_unsafe(): void
+    {
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance() );
+        $classifier = new ReflectionMethod( $runner, 'validation_claim_state_is_unsafe' );
+        $classifier->setAccessible( true );
+
+        foreach ( [ 'active', 'indeterminate', 'conflict', 'digest_conflict', 'record_type_conflict' ] as $claim_state )
+        {
+            $this->assertTrue( $classifier->invoke( $runner, $claim_state ), $claim_state );
+        }
+        $this->assertFalse( $classifier->invoke( $runner, 'failed' ) );
+    }
+
+    public function test_validation_claim_persistence_failure_fails_closed(): void
+    {
+        global $wpdb;
+
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $form_id = 990234;
+        $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation' );
+        $execution = new Sentient_Forms_Test_Validation_Local_Execution_Service(
+            Sentient_Forms_Plugin::instance(),
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+                ],
+            ]
+        );
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $execution );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $fail_claim = static function ( string $query ) use ( $request_table ): string {
+            return str_starts_with( ltrim( $query ), 'INSERT IGNORE' ) && str_contains( $query, $request_table )
+                ? 'SENTIENT FORMS FORCED VALIDATION CLAIM FAILURE'
+                : $query;
+        };
+        add_filter( 'query', $fail_claim );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $result = $runner->run_validation(
+                $this->adapter,
+                [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+                [ 'source' => 'form-submit' ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_claim );
+        }
+
+        $native = $this->adapter->apply_validation_result(
+            [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+            $result
+        );
+        $this->assertFalse( $native['is_valid'] );
+        $this->assertStringContainsString( 'still being validated', (string) $native['form']['validation_message'] );
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_validation_terminal_write_failure_fails_closed(): void
+    {
+        global $wpdb;
+
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $form_id = 990235;
+        $this->create_local_mapping_fixture( $form_id, 'content_validation_v1', 'gform_validation' );
+        $execution = new Sentient_Forms_Test_Validation_Local_Execution_Service(
+            Sentient_Forms_Plugin::instance(),
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [ 'is_valid' => true, 'message' => '', 'fields' => [] ],
+                ],
+            ]
+        );
+        $runner = new Sentient_Forms_Form_Source_Workflow_Runner( Sentient_Forms_Plugin::instance(), null, null, $execution );
+        $request_table = $wpdb->prefix . 'sentient_async_requests';
+        $terminal_writes = 0;
+        $fail_terminal   = static function ( string $query ) use ( $request_table, &$terminal_writes ): string {
+            if (
+                str_starts_with( ltrim( $query ), 'UPDATE `' . $request_table . '`' )
+                && str_contains( $query, "status = 'success'" )
+            )
+            {
+                ++$terminal_writes;
+                return 'SENTIENT FORMS FORCED VALIDATION TERMINAL FAILURE';
+            }
+
+            return $query;
+        };
+        add_filter( 'query', $fail_terminal );
+        $suppressed = $wpdb->suppress_errors( true );
+        try
+        {
+            $result = $runner->run_validation(
+                $this->adapter,
+                [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+                [ 'source' => 'form-submit' ]
+            );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_terminal );
+        }
+
+        $this->assertSame( 1, $terminal_writes );
+        $native = $this->adapter->apply_validation_result(
+            [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+            $result
+        );
+        $this->assertFalse( $native['is_valid'] );
+        $this->assertStringContainsString( 'still being validated', (string) $native['form']['validation_message'] );
+        $this->truncate_local_first_runtime_tables();
+    }
+
     /**
      * Test the validation hook blocks when local execution returns content_validation_v1 structured output.
      */
@@ -9065,10 +9426,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'sentient_execution_events',
                 'sentient_submission_ledger_settings',
                 'sentient_submission_ledger',
+                'sentient_async_requests',
             ] as $table
         )
         {
-            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+            $wpdb->query( "DELETE FROM {$wpdb->prefix}{$table}" );
         }
     }
 

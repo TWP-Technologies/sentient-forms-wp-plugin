@@ -313,7 +313,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $table = $wpdb->prefix . $table_name;
             if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
             {
-                $wpdb->query( "TRUNCATE TABLE {$table}" );
+                $wpdb->query( "DELETE FROM {$table}" );
             }
         }
     }
@@ -1148,6 +1148,59 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNotEmpty( $context['job_id'] );
     }
 
+    public function test_evaluation_job_persists_credential_authority_for_deletion_guard(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Evaluation authority fixture',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-evaluation-authority-fixture',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $scheduled = $this->plugin->dispatch_action_evaluation(
+            [
+                'adapter_id' => 'gravity_forms',
+                'entry_id'   => 516,
+                'form_id'    => 25,
+                'action_id'  => 'entry_evaluation',
+                'payload'    => [ 'result' => 'authority' ],
+                'context'    => [
+                    'settings' => [
+                        'model_selection' => [
+                            'provider'      => 'openrouter',
+                            'credential_id' => $credential_id,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+        $rows = $this->plugin->get_async_request_store()->list_active_authority_payloads_for_update();
+        $this->assertIsArray( $rows );
+        $evaluation_rows = array_values(
+            array_filter( $rows, static fn( array $row ): bool => 'evaluation' === ( $row['record_type'] ?? '' ) )
+        );
+        $this->assertNotEmpty( $evaluation_rows );
+        $this->assertSame(
+            $credential_id,
+            $evaluation_rows[0]['payload']['credentials'][0]['credential_id'] ?? null
+        );
+
+        $deleted = ( new Sentient_Forms_Local_Action_Model_Selection_Service() )
+            ->delete_credential_if_unreferenced( $credential_id );
+        $this->assertInstanceOf( WP_Error::class, $deleted );
+        $this->assertSame( 'sentient_forms_credential_in_use', $deleted->get_error_code() );
+    }
+
     public function test_dispatch_evaluation_holds_writer_fence_through_enqueue_and_metadata(): void
     {
         $reset_result = null;
@@ -1935,6 +1988,161 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertCount( 1, $jobs );
         $this->assertArrayNotHasKey( 'form', $jobs[0]['args'][0] ?? [] );
         $this->assertArrayNotHasKey( 'entry', $jobs[0]['args'][0] ?? [] );
+    }
+
+    public function test_schedule_local_mapping_persists_minimal_credential_authority(): void
+    {
+        global $wpdb;
+
+        $this->truncate_local_first_runtime_tables();
+
+        $credentials   = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $actions       = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings      = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'         => 'openrouter',
+                'label'            => 'Async authority fixture',
+                'auth_mode'        => 'manual_key',
+                'encrypted_secret' => 'encrypted-async-authority-secret',
+                'status'           => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $action_id = $actions->create(
+            [
+                'code'                 => 'async_authority_omitted_credential',
+                'display_name'         => 'Async authority omitted credential',
+                'definition_json'      => [ 'prompt_template' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'    => 'gravity_forms',
+                'form_id'        => '905',
+                'hook'           => 'gform_after_submission',
+                'action_kind'    => 'custom_action',
+                'action_id'      => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode' => 'async',
+                'enabled'        => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+        $request_hash  = 'local-credential-authority-' . wp_generate_uuid4();
+        try
+        {
+            $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+                $mapping_id,
+                [ 'id' => 905 ],
+                [ 'id' => 1905 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => '905',
+                    'entry_id'             => '1905',
+                    'execution_request_id' => $request_hash,
+                    'settings'             => [
+                        'model_selection' => [ 'provider' => 'openrouter', 'primary' => 'openrouter/auto' ],
+                    ],
+                ]
+            );
+            $this->assertTrue( $scheduled );
+
+            $row       = $this->plugin->get_async_request_store()->get( $request_hash );
+            $authority = json_decode( (string) ( $row['telemetry_payload'] ?? '' ), true );
+            $this->assertSame(
+                [ 'credentials' => [ [ 'credential_id' => $credential_id ] ] ],
+                $authority
+            );
+            $this->assertArrayNotHasKey( 'settings', $authority );
+        }
+        finally
+        {
+            $wpdb->delete(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ]
+            );
+            $mappings->delete( $mapping_id );
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+            $credentials->delete( $credential_id );
+        }
+    }
+
+    public function test_unavailable_admission_removes_stale_primary_and_backup_credential_authority(): void
+    {
+        global $wpdb;
+
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        $actions  = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id = $actions->create(
+            [
+                'code'                 => 'async_unavailable_authority',
+                'display_name'         => 'Async unavailable authority',
+                'definition_json'      => [ 'prompt_template' => 'Summarize {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'        => 'gravity_forms',
+                'form_id'            => '906',
+                'hook'               => 'gform_after_submission',
+                'action_kind'        => 'custom_action',
+                'action_id'          => $action_id,
+                'input_bindings_json'=> [],
+                'execution_mode'     => 'async',
+                'enabled'            => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+        $request_hash = 'local-unavailable-authority-' . wp_generate_uuid4();
+
+        try
+        {
+            $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+                $mapping_id,
+                [ 'id' => 906 ],
+                [ 'id' => 1906 ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => '906',
+                    'entry_id'             => '1906',
+                    'execution_request_id' => $request_hash,
+                    'settings'             => [
+                        'model_selection' => [
+                            'provider'             => 'openrouter',
+                            'primary'              => 'openrouter/auto',
+                            'credential_id'        => 999991,
+                            'backup_credential_id' => 999992,
+                        ],
+                    ],
+                ]
+            );
+            $this->assertTrue( $scheduled );
+
+            $row       = $this->plugin->get_async_request_store()->get( $request_hash );
+            $authority = json_decode( (string) ( $row['telemetry_payload'] ?? '' ), true );
+            $this->assertSame( [ 'credentials' => [] ], $authority );
+
+            $jobs      = $GLOBALS['__sentient_forms_async_queue']['enqueued'] ?? [];
+            $scheduled_context = $jobs[ array_key_last( $jobs ) ]['args'][0]['context'] ?? [];
+            $selection = $scheduled_context['settings']['model_selection'] ?? [];
+            $this->assertSame( 'unavailable_at_admission', $selection['credential_authority_status'] ?? null );
+            $this->assertArrayNotHasKey( 'credential_id', $selection );
+            $this->assertArrayNotHasKey( 'backup_credential_id', $selection );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_async_requests', [ 'request_hash' => $request_hash ], [ '%s' ] );
+            $mappings->delete( $mapping_id );
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+        }
     }
 
     public function test_schedule_local_mapping_holds_writer_fence_through_enqueue_and_metadata(): void
@@ -3399,7 +3607,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			] as $table
 		)
 		{
-			$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+			$wpdb->query( "DELETE FROM {$wpdb->prefix}{$table}" );
 		}
 	}
 

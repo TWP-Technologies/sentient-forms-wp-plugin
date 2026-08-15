@@ -1332,6 +1332,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
                 'action_id'      => 'entry_summary_v1',
                 'adapter'        => 'gravity_forms',
                 'payload_digest' => hash( 'sha256', 'accepted-sync-reset-race' ),
+                'authority_payload' => [ 'credentials' => [] ],
             ],
             false,
             'accepted_sync'

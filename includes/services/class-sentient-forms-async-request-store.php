@@ -17,9 +17,61 @@ class Sentient_Forms_Async_Request_Store
     {
     }
 
+    /** @return array{credentials: array<int, array{credential_id: int}>} */
+    public static function credential_authority_payload( array $value ): array
+    {
+        $credential_ids = [];
+        $collect = static function( mixed $nested_value ) use ( &$collect, &$credential_ids ): void
+        {
+            if ( ! is_array( $nested_value ) )
+            {
+                return;
+            }
+
+            foreach ( $nested_value as $key => $nested )
+            {
+                if ( in_array( $key, [ 'credential_id', 'backup_credential_id' ], true ) )
+                {
+                    $credential_id = absint( $nested );
+                    if ( $credential_id > 0 )
+                    {
+                        $credential_ids[ $credential_id ] = $credential_id;
+                    }
+                }
+                if ( is_array( $nested ) )
+                {
+                    $collect( $nested );
+                }
+            }
+        };
+        $collect( $value );
+
+        return [
+            'credentials' => array_map(
+                static fn( int $credential_id ): array => [ 'credential_id' => $credential_id ],
+                array_values( $credential_ids )
+            ),
+        ];
+    }
+
     private function table(): string
     {
         return $this->wpdb->prefix . 'sentient_async_requests';
+    }
+
+    /** Whether durable execution authority can participate in row-lock transactions. */
+    public function uses_transactional_storage(): bool
+    {
+        $previous_suppress_errors = $this->wpdb->suppress_errors();
+        $query = $this->wpdb->prepare( 'SHOW CREATE TABLE %i', $this->table() );
+        $definition = $this->wpdb->get_row(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder.
+            $query,
+            ARRAY_N
+        );
+        $this->wpdb->suppress_errors( $previous_suppress_errors );
+        $create_sql = is_array( $definition ) ? (string) ( $definition[1] ?? '' ) : '';
+        return 1 === preg_match( '/\bENGINE=InnoDB\b/i', $create_sql );
     }
 
     private function ttl(): int
@@ -74,7 +126,25 @@ class Sentient_Forms_Async_Request_Store
         $status      = $context['status'] ?? 'queued';
         $digest      = $context['payload_digest'] ?? null;
         $record_type = $context['record_type'] ?? 'job';
-        $telemetry_payload = isset( $context['telemetry_payload'] ) ? wp_json_encode( $context['telemetry_payload'] ) : null;
+        $has_authority_payload = array_key_exists( 'authority_payload', $context );
+        $stored_payload = $has_authority_payload
+            ? $context['authority_payload']
+            : ( $context['telemetry_payload'] ?? null );
+        if ( $has_authority_payload )
+        {
+            $authority_payload = $this->normalize_authority_payload( $stored_payload );
+            if ( is_wp_error( $authority_payload ) )
+            {
+                return $authority_payload;
+            }
+            $authority_valid = $this->validate_authority_credentials_for_update( $authority_payload );
+            if ( is_wp_error( $authority_valid ) )
+            {
+                return $authority_valid;
+            }
+            $stored_payload = $authority_payload;
+        }
+        $telemetry_payload = null !== $stored_payload ? wp_json_encode( $stored_payload ) : null;
 
         $existing = $this->get( $request_hash, $record_type );
         if ( $existing )
@@ -104,6 +174,10 @@ class Sentient_Forms_Async_Request_Store
 
             $first_seen = $existing['first_seen_at'] ?? $now;
             $digest     = is_scalar( $digest ) && '' !== (string) $digest ? (string) $digest : $stored_digest;
+            if ( ! $has_authority_payload && in_array( $record_type, [ 'job', 'accepted_sync', 'evaluation' ], true ) )
+            {
+                $telemetry_payload = $existing['telemetry_payload'] ?? null;
+            }
             $update_query = $this->wpdb->prepare(
                 "UPDATE %i SET action_id = %s, adapter = %s, status = %s, first_seen_at = %s, last_seen_at = %s, payload_digest = %s, telemetry_payload = %s WHERE request_hash = %s AND record_type = %s AND status IN ('failed', 'error', 'retry_pending', 'dependency_wait')",
                 $this->table(),
@@ -219,8 +293,26 @@ class Sentient_Forms_Async_Request_Store
             return [ 'state' => 'digest_conflict', 'record' => null ];
         }
 
+        $requires_authority = 'accepted_sync' === $record_type;
+        $has_authority      = array_key_exists( 'authority_payload', $context );
+        $encoded_authority  = null;
+        if ( $requires_authority || $has_authority )
+        {
+            $authority_payload = $this->normalize_authority_payload( $context['authority_payload'] ?? null );
+            if ( is_wp_error( $authority_payload ) )
+            {
+                return $authority_payload;
+            }
+            $authority_valid = $this->validate_authority_credentials_for_update( $authority_payload );
+            if ( is_wp_error( $authority_valid ) )
+            {
+                return $authority_valid;
+            }
+            $encoded_authority = wp_json_encode( $authority_payload );
+        }
+
         $insert_query = $this->wpdb->prepare(
-            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+            'INSERT IGNORE INTO %i (request_hash, action_id, adapter, record_type, status, first_seen_at, last_seen_at, payload_digest, telemetry_payload) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
             $this->table(),
             $request_hash,
             $action_id,
@@ -229,7 +321,8 @@ class Sentient_Forms_Async_Request_Store
             'running',
             $now,
             $now,
-            $digest
+            $digest,
+            $encoded_authority
         );
         // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and scalar value placeholders.
         $inserted = $this->wpdb->query( $insert_query );
@@ -272,9 +365,10 @@ class Sentient_Forms_Async_Request_Store
         if ( $retry_failed_safely && in_array( $status, [ 'failed', 'error' ], true ) )
         {
             $claim_query = $this->wpdb->prepare(
-                "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
+                "UPDATE %i SET status = 'running', last_seen_at = %s, last_error = NULL, telemetry_payload = %s WHERE request_hash = %s AND record_type = %s AND payload_digest = %s AND status IN ('failed', 'error')",
                 $this->table(),
                 $now,
+                $encoded_authority,
                 $request_hash,
                 $record_type,
                 $digest
@@ -782,6 +876,132 @@ class Sentient_Forms_Async_Request_Store
             ),
             ARRAY_A
         ) ?: [];
+    }
+
+    /**
+     * Lock and return durable authority payloads for nonterminal local jobs.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    public function list_active_authority_payloads_for_update(): array | WP_Error
+    {
+        $this->wpdb->last_error = '';
+        $query = $this->wpdb->prepare(
+            "SELECT request_hash, record_type, status, telemetry_payload FROM %i WHERE record_type IN ('job', 'accepted_sync', 'evaluation') AND status IN ('queued', 'running', 'retry_pending', 'dependency_wait') ORDER BY request_hash ASC FOR UPDATE",
+            $this->table()
+        );
+        $rows = $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder; the fresh locked rows are the credential-deletion authority.
+            $query,
+            ARRAY_A
+        );
+        if ( ! is_array( $rows ) || '' !== $this->wpdb->last_error )
+        {
+            return new WP_Error(
+                'sentient_forms_async_authority_read_failed',
+                __( 'Queued execution authority could not be verified.', 'sentient-forms' )
+            );
+        }
+
+        $authority_rows = [];
+        foreach ( $rows as $row )
+        {
+            $encoded = $row['telemetry_payload'] ?? null;
+            $decoded = is_string( $encoded ) && '' !== trim( $encoded )
+                ? json_decode( $encoded, true )
+                : null;
+            if ( JSON_ERROR_NONE !== json_last_error() )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_authority_read_failed',
+                    __( 'Queued execution authority could not be verified.', 'sentient-forms' )
+                );
+            }
+
+            $payload = $this->normalize_authority_payload( $decoded );
+            if ( is_wp_error( $payload ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_authority_read_failed',
+                    __( 'Queued execution authority could not be verified.', 'sentient-forms' )
+                );
+            }
+
+            $authority_rows[] = [
+                'request_hash' => sanitize_text_field( (string) ( $row['request_hash'] ?? '' ) ),
+                'record_type'  => sanitize_key( (string) ( $row['record_type'] ?? '' ) ),
+                'status'       => sanitize_key( (string) ( $row['status'] ?? '' ) ),
+                'payload'      => $payload,
+            ];
+        }
+
+        return $authority_rows;
+    }
+
+    /** @return array{credentials: array<int, array{credential_id: int}>}|WP_Error */
+    private function normalize_authority_payload( mixed $payload ): array | WP_Error
+    {
+        if (
+            ! is_array( $payload )
+            || ! array_key_exists( 'credentials', $payload )
+            || ! is_array( $payload['credentials'] )
+            || ! array_is_list( $payload['credentials'] )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_async_authority_payload_invalid',
+                __( 'Execution credential authority is invalid.', 'sentient-forms' )
+            );
+        }
+
+        $credentials = [];
+        foreach ( $payload['credentials'] as $credential )
+        {
+            if (
+                ! is_array( $credential )
+                || ! isset( $credential['credential_id'] )
+                || ! is_int( $credential['credential_id'] )
+                || $credential['credential_id'] <= 0
+            )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_authority_payload_invalid',
+                    __( 'Execution credential authority is invalid.', 'sentient-forms' )
+                );
+            }
+            $credentials[ $credential['credential_id'] ] = [
+                'credential_id' => $credential['credential_id'],
+            ];
+        }
+
+        return [ 'credentials' => array_values( $credentials ) ];
+    }
+
+    private function validate_authority_credentials_for_update( array $payload ): true | WP_Error
+    {
+        foreach ( $payload['credentials'] as $credential )
+        {
+            $this->wpdb->last_error = '';
+            $query = $this->wpdb->prepare(
+                'SELECT id FROM %i WHERE id = %d FOR UPDATE',
+                $this->wpdb->prefix . 'sentient_provider_credentials',
+                $credential['credential_id']
+            );
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Authority must be validated against a fresh locked credential row before queued or synchronous work is admitted.
+            $stored_id = $this->wpdb->get_var(
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and integer placeholders.
+                $query
+            );
+            if ( '' !== $this->wpdb->last_error || (int) $stored_id !== $credential['credential_id'] )
+            {
+                return new WP_Error(
+                    'sentient_forms_async_authority_credential_unavailable',
+                    __( 'An execution credential is no longer available.', 'sentient-forms' )
+                );
+            }
+        }
+
+        return true;
     }
 
     public function enqueue_telemetry( string $event_type, array $payload ): string

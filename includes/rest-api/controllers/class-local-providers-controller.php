@@ -172,7 +172,7 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             );
         }
 
-        $deleted = $this->credentials->delete( $id );
+        $deleted = $this->model_selection_service->delete_credential_if_unreferenced( $id );
         if ( is_wp_error( $deleted ) )
         {
             return $deleted;

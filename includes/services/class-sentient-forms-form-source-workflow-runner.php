@@ -214,17 +214,30 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             {
                 try
                 {
-                    $result = $this->execute_validation_mapping(
-                        $action_id,
-                        $form_source,
-                        $form_id,
-                        $native_hook,
-                        $form,
-                        $entry,
-                        $mapping_key,
-                        $mapping,
-                        $dependency_context
-                    );
+                    $result = $this->is_local_first_mapping( $mapping )
+                        ? $this->execute_claimed_validation_mapping(
+                            $action_id,
+                            $form_source,
+                            $form_id,
+                            $native_hook,
+                            $form,
+                            $entry,
+                            $mapping_key,
+                            $mapping,
+                            $dependency_context,
+                            $request_id
+                        )
+                        : $this->execute_validation_mapping(
+                            $action_id,
+                            $form_source,
+                            $form_id,
+                            $native_hook,
+                            $form,
+                            $entry,
+                            $mapping_key,
+                            $mapping,
+                            $dependency_context
+                        );
                 }
                 catch ( Throwable )
                 {
@@ -241,11 +254,18 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             if ( is_wp_error( $result ) )
             {
+                $must_fail_closed = $this->validation_execution_error_must_fail_closed( $result );
                 $mapping_outcomes[ $mapping_key ] = 'failed';
                 $errors[ $mapping_key ] = [
                     'code'    => $this->safe_error_code( $result, 'validation_action_failed' ),
-                    'message' => __( 'Validation action failed open.', 'sentient-forms' ),
+                    'message' => $must_fail_closed
+                        ? __( 'This submission is still being validated. Please try again.', 'sentient-forms' )
+                        : __( 'Validation action failed open.', 'sentient-forms' ),
                 ];
+                if ( $must_fail_closed && null === $form_error )
+                {
+                    $form_error = $errors[ $mapping_key ]['message'];
+                }
                 $this->log_validation_failure(
                     $form_source,
                     $form_id,
@@ -361,7 +381,9 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
         array $entry,
         string $mapping_id,
         array $mapping,
-        array $dependency_context
+        array $dependency_context,
+        array $credential_snapshot = [],
+        ?Sentient_Forms_Local_Execution_Claim $execution_claim = null
     ): array | bool | WP_Error
     {
         if ( $this->is_local_first_mapping( $mapping ) )
@@ -372,24 +394,36 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 return new WP_Error( 'sentient_forms_missing_local_mapping_id', __( 'Local form mapping id is missing.', 'sentient-forms' ) );
             }
 
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+            if ( [] !== $credential_snapshot )
+            {
+                $settings = array_replace_recursive( $settings, [ 'model_selection' => $credential_snapshot ] );
+            }
+
+            $context = [
+                'hook'                  => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+                'native_hook'           => $native_hook,
+                'form_source'           => $form_source,
+                'mapping_id'            => $mapping_id,
+                'local_mapping_id'      => $mapping_id,
+                'local_form_mapping_id' => $local_mapping_id,
+                'form_id'               => $form_id,
+                'entry_id'              => $entry['id'] ?? null,
+                'central_action_id'     => $action_id,
+                'settings'              => $settings,
+            ] + $dependency_context;
+            if ( $execution_claim instanceof Sentient_Forms_Local_Execution_Claim )
+            {
+                $context['local_execution_claim'] = $execution_claim;
+            }
+
             return $this->get_local_execution_service()->execute_mapping(
                 $local_mapping_id,
                 $form,
                 $entry,
-                [
-                    'hook'                  => Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
-                    'native_hook'           => $native_hook,
-                    'form_source'           => $form_source,
-                    'mapping_id'            => $mapping_id,
-                    'local_mapping_id'      => $mapping_id,
-                    'local_form_mapping_id' => $local_mapping_id,
-                    'form_id'               => $form_id,
-                    'entry_id'              => $entry['id'] ?? null,
-                    'central_action_id'     => $action_id,
-                    'settings'              => isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
-                        ? $mapping['settings']
-                        : [],
-                ] + $dependency_context
+                $context
             );
         }
 
@@ -405,6 +439,221 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $mapping,
             '',
             $dependency_context
+        );
+    }
+
+    /**
+     * Keep validation credential authority durable for the full provider attempt.
+     *
+     * @param array<string, mixed> $form
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $dependency_context
+     */
+    private function execute_claimed_validation_mapping(
+        string $action_id,
+        string $form_source,
+        string $form_id,
+        string $native_hook,
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $mapping,
+        array $dependency_context,
+        string $execution_request_id
+    ): array | bool | WP_Error
+    {
+        $local_mapping_id = absint( $mapping['local_form_mapping_id'] ?? 0 );
+        if ( $local_mapping_id <= 0 || '' === $execution_request_id )
+        {
+            return new WP_Error(
+                'sentient_forms_validation_execution_identity_missing',
+                __( 'Validation action execution identity is missing.', 'sentient-forms' )
+            );
+        }
+
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        $digest = hash(
+            'sha256',
+            (string) wp_json_encode(
+                [
+                    'action_code' => $action_id,
+                    'mapping_id'  => $mapping_id,
+                    'settings'    => $settings,
+                ]
+            )
+        );
+        $request_store = $this->plugin->get_async_request_store();
+        $admission = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+            function () use ( $local_mapping_id, $settings, $request_store, $execution_request_id, $action_id, $form_source, $digest ): array | WP_Error {
+                $existing = $request_store->get( $execution_request_id, 'accepted_sync' );
+                $credential_snapshot = [];
+                if ( ! is_array( $existing ) )
+                {
+                    $credential_snapshot = $this->get_local_execution_service()->resolve_credential_authority_snapshot(
+                        $local_mapping_id,
+                        [ 'settings' => $settings ]
+                    );
+                    if ( is_wp_error( $credential_snapshot ) )
+                    {
+                        return $credential_snapshot;
+                    }
+                }
+
+                $claim = $request_store->claim_execution(
+                    $execution_request_id,
+                    [
+                        'action_id'         => $action_id,
+                        'adapter'           => $form_source,
+                        'payload_digest'    => $digest,
+                        'authority_payload' => Sentient_Forms_Async_Request_Store::credential_authority_payload( $credential_snapshot ),
+                    ],
+                    false,
+                    'accepted_sync'
+                );
+                if ( is_wp_error( $claim ) )
+                {
+                    return $claim;
+                }
+
+                return [
+                    'claim'               => $claim,
+                    'credential_snapshot' => $credential_snapshot,
+                ];
+            }
+        );
+        if ( is_wp_error( $admission ) )
+        {
+            return $this->validation_orchestration_error( $admission );
+        }
+
+        $claim = is_array( $admission['claim'] ?? null ) ? $admission['claim'] : [];
+        $claim_state = sanitize_key( (string) ( $claim['state'] ?? '' ) );
+        if ( 'success' === $claim_state )
+        {
+            $replayed = $this->get_local_execution_service()->replay_succeeded_execution( $execution_request_id );
+            if ( is_wp_error( $replayed ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_validation_execution_indeterminate',
+                    __( 'Completed validation evidence could not be replayed safely.', 'sentient-forms' )
+                );
+            }
+            return $replayed;
+        }
+        if ( $this->validation_claim_state_is_unsafe( $claim_state ) )
+        {
+            return new WP_Error(
+                'sentient_forms_validation_execution_indeterminate',
+                __( 'Validation action execution is already active or its identity is unsafe to replay.', 'sentient-forms' )
+            );
+        }
+        if ( 'claimed' !== $claim_state )
+        {
+            return new WP_Error(
+                'sentient_forms_validation_execution_previous_failure',
+                __( 'Validation action execution previously failed.', 'sentient-forms' )
+            );
+        }
+        $execution_claim = Sentient_Forms_Local_Execution_Claim::from_request_store_claim(
+            $claim,
+            $execution_request_id,
+            'accepted_sync'
+        );
+        if ( is_wp_error( $execution_claim ) )
+        {
+            $finished = $request_store->finish_execution( $execution_request_id, 'failed', $execution_claim->get_error_message(), 'accepted_sync' );
+            return $this->validation_orchestration_error(
+                is_wp_error( $finished ) ? $finished : $execution_claim
+            );
+        }
+
+        try
+        {
+            $result = $this->execute_validation_mapping(
+                $action_id,
+                $form_source,
+                $form_id,
+                $native_hook,
+                $form,
+                $entry,
+                $mapping_id,
+                $mapping,
+                $dependency_context,
+                is_array( $admission['credential_snapshot'] ?? null ) ? $admission['credential_snapshot'] : [],
+                $execution_claim
+            );
+        }
+        catch ( Throwable )
+        {
+            $result = new WP_Error(
+                'sentient_forms_validation_execution_exception',
+                __( 'Validation action failed open.', 'sentient-forms' )
+            );
+        }
+
+        $terminal_status = is_wp_error( $result ) ? 'failed' : 'success';
+        if ( is_wp_error( $result ) && $this->is_terminal_event_persistence_failure( $result ) )
+        {
+            $terminal_status = 'indeterminate';
+        }
+        $finished = $request_store->finish_execution(
+            $execution_request_id,
+            $terminal_status,
+            is_wp_error( $result ) ? $result->get_error_message() : null,
+            'accepted_sync'
+        );
+
+        return is_wp_error( $finished )
+            ? $this->validation_orchestration_error( $finished )
+            : $result;
+    }
+
+    private function validation_execution_error_must_fail_closed( WP_Error $error ): bool
+    {
+        return in_array(
+            $error->get_error_code(),
+            [
+                'sentient_forms_validation_execution_indeterminate',
+                'sentient_forms_validation_execution_evidence_missing',
+                'sentient_forms_validation_execution_evidence_invalid',
+            ],
+            true
+        );
+    }
+
+    private function validation_orchestration_error( WP_Error $error ): WP_Error
+    {
+        $code = $error->get_error_code();
+        $must_fail_closed = str_starts_with( $code, 'sentient_forms_async_request_' )
+            || str_starts_with( $code, 'sentient_forms_async_authority_' )
+            || in_array(
+                $code,
+                [
+                    'sentient_forms_action_authority_write_locked',
+                    'sentient_forms_local_execution_claim_invalid',
+                    'sentient_forms_validation_execution_indeterminate',
+                ],
+                true
+            );
+        if ( ! $must_fail_closed )
+        {
+            return $error;
+        }
+
+        return new WP_Error(
+            'sentient_forms_validation_execution_indeterminate',
+            __( 'Validation action execution authority is indeterminate.', 'sentient-forms' ),
+            [ 'cause_code' => $code ]
+        );
+    }
+
+    private function validation_claim_state_is_unsafe( string $claim_state ): bool
+    {
+        return in_array(
+            $claim_state,
+            [ 'active', 'indeterminate', 'conflict', 'digest_conflict', 'record_type_conflict' ],
+            true
         );
     }
 
@@ -1103,7 +1352,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         $submission_uuid,
                         $execution_request_ids[ (string) $mapping_id ] ?? '',
                         $mapping_native_effect_outcomes,
-                        fn ( Sentient_Forms_Local_Execution_Claim $execution_claim ): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
+                        fn ( Sentient_Forms_Local_Execution_Claim $execution_claim, array $credential_snapshot ): array | WP_Error => $this->get_local_execution_service()->execute_mapping(
                             absint( $action_settings['local_form_mapping_id'] ?? 0 ),
                             $form,
                             $entry,
@@ -1115,9 +1364,12 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                                 'form_id'          => $form_id,
                                 'entry_id'         => $native_entry_id,
                                 'submission_uuid'  => $submission_uuid,
-                                'settings'         => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                                    ? $action_settings['settings']
-                                    : [],
+                                'settings'         => array_replace_recursive(
+                                    isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                                        ? $action_settings['settings']
+                                        : [],
+                                    [ 'model_selection' => $credential_snapshot ]
+                                ),
                                 'local_execution_claim' => $execution_claim,
                             ] + $dependency_context
                         )
@@ -1168,7 +1420,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     $submission_uuid,
                     $execution_request_ids[ (string) $mapping_id ] ?? '',
                     $mapping_native_effect_outcomes,
-                    fn ( Sentient_Forms_Local_Execution_Claim $_execution_claim ): array | bool | WP_Error => $this->execute_synchronous_mapping(
+                    fn ( Sentient_Forms_Local_Execution_Claim $_execution_claim, array $_credential_snapshot ): array | bool | WP_Error => $this->execute_synchronous_mapping(
                         $central_action_id,
                         $form_source,
                         $form_id,
@@ -1220,7 +1472,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      * Claim and execute one synchronous accepted mapping exactly once.
      *
      * @param array<string, mixed> $mapping
-     * @param callable(Sentient_Forms_Local_Execution_Claim): (array<string, mixed>|bool|WP_Error) $execute
+     * @param callable(Sentient_Forms_Local_Execution_Claim, array<string, mixed>): (array<string, mixed>|bool|WP_Error) $execute
      *
      * @return array{outcome: string, result: array<string, mixed>|bool|WP_Error|null, native_effect_outcomes: array<int, array{effect: string, status: string, reason: string}>}
      */
@@ -1258,7 +1510,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             )
         );
         $request_store = $this->plugin->get_async_request_store();
-        $claim         = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
+        $admission     = Sentient_Forms_Legacy_Action_Authority_Migrator::with_option_write_lock(
             function () use ( $request_store, $execution_request_id, $mapping, $form_source, $digest, $settings ): array | WP_Error {
                 $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
                 if ( is_array( $plugin_settings ) && ! empty( $plugin_settings['execution_global_disabled'] ) )
@@ -1269,26 +1521,59 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                     );
                 }
 
-                return $request_store->claim_execution(
+                $local_mapping_id = absint( $mapping['local_form_mapping_id'] ?? 0 );
+                $existing        = $request_store->get( $execution_request_id, 'accepted_sync' );
+                $existing_status = is_array( $existing )
+                    ? sanitize_key( (string) ( $existing['status'] ?? '' ) )
+                    : '';
+                $requires_new_authority = ! is_array( $existing )
+                    || (
+                        ! empty( $settings['synchronous_retry_safe'] )
+                        && in_array( $existing_status, [ 'failed', 'error' ], true )
+                    );
+                $credential_snapshot = $requires_new_authority && $local_mapping_id > 0
+                    ? $this->get_local_execution_service()->resolve_credential_authority_snapshot(
+                        $local_mapping_id,
+                        [ 'settings' => $settings ]
+                    )
+                    : [];
+                if ( is_wp_error( $credential_snapshot ) )
+                {
+                    return $credential_snapshot;
+                }
+
+                $claim = $request_store->claim_execution(
                     $execution_request_id,
                     [
                         'action_id'      => $this->central_action_id( $mapping ),
                         'adapter'        => $form_source,
                         'payload_digest' => $digest,
+                        'authority_payload' => Sentient_Forms_Async_Request_Store::credential_authority_payload( $credential_snapshot ),
                     ],
                     ! empty( $settings['synchronous_retry_safe'] ),
                     'accepted_sync'
                 );
+                if ( is_wp_error( $claim ) )
+                {
+                    return $claim;
+                }
+
+                return [
+                    'claim'               => $claim,
+                    'credential_snapshot' => $credential_snapshot,
+                ];
             }
         );
-        if ( is_wp_error( $claim ) )
+        if ( is_wp_error( $admission ) )
         {
             return [
                 'outcome'                => 'failed',
-                'result'                 => $claim,
+                'result'                 => $admission,
                 'native_effect_outcomes' => $native_effect_outcomes,
             ];
         }
+        $claim = is_array( $admission['claim'] ?? null ) ? $admission['claim'] : [];
+        $credential_snapshot = is_array( $admission['credential_snapshot'] ?? null ) ? $admission['credential_snapshot'] : [];
         $claim_state = sanitize_key( (string) ( $claim['state'] ?? 'conflict' ) );
 
         if ( 'digest_conflict' === $claim_state )
@@ -1477,7 +1762,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
         try
         {
-            $result = $execute( $execution_claim );
+            $result = $execute( $execution_claim, $credential_snapshot );
         }
         catch ( Throwable )
         {

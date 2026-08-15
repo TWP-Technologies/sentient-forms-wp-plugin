@@ -39,6 +39,11 @@ if ( ! class_exists( 'Sentient_Forms_Test_WPForms_Validation_Action' ) )
                 $form['id'] ?? ''
             );
         }
+
+        public function resolve_credential_authority_snapshot( int $mapping_id, array $context = [] ): array | WP_Error
+        {
+            return [];
+        }
     }
 }
 

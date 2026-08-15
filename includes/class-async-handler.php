@@ -21,7 +21,7 @@ class Sentient_Forms_Async_Handler
 	private const MAX_ATTEMPTS = 3;
 	private const BASE_BACKOFF_SECONDS = 60;
 	private const ACTION_SCHEDULER_GROUP = 'sentient_forms_async';
-	private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
+	public const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
 	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
 	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
     private const LEGACY_ELEMENTOR_FORM_SOURCE = 'elementor_forms';
@@ -960,6 +960,38 @@ class Sentient_Forms_Async_Handler
             $execution_request_id = $this->generate_local_mapping_request_id( $local_mapping_id, $form_source, $form_id, $entry_lookup_id, $context );
         }
 
+        $explicit_authority = Sentient_Forms_Async_Request_Store::credential_authority_payload( $context );
+        $credential_snapshot = $this->plugin->get_local_action_execution_service()->resolve_credential_authority_snapshot(
+            $local_mapping_id,
+            $context
+        );
+        if (
+            is_wp_error( $credential_snapshot )
+            && 'sentient_forms_local_mapping_not_executable' === $credential_snapshot->get_error_code()
+        )
+        {
+            // Legacy identifier-only rows can be requeued only when they carry no
+            // credential authority. The worker will still fail closed if the
+            // referenced mapping does not exist when execution begins.
+            $credential_snapshot = ! empty( $explicit_authority['credentials'] )
+                ? ( is_array( $context['settings']['model_selection'] ?? null ) ? $context['settings']['model_selection'] : [] )
+                : [];
+        }
+        if ( is_wp_error( $credential_snapshot ) )
+        {
+            return $credential_snapshot;
+        }
+        $context['settings'] = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+        $existing_selection = is_array( $context['settings']['model_selection'] ?? null )
+            ? $context['settings']['model_selection']
+            : [];
+        if ( 'unavailable_at_admission' === ( $credential_snapshot['credential_authority_status'] ?? '' ) )
+        {
+            $existing_selection  = $this->strip_credential_authority_keys( $existing_selection );
+            $credential_snapshot = $this->strip_credential_authority_keys( $credential_snapshot );
+        }
+        $context['settings']['model_selection'] = array_replace_recursive( $existing_selection, $credential_snapshot );
+
         $job_context = $this->normalize_context(
             array_merge(
                 $context,
@@ -996,6 +1028,9 @@ class Sentient_Forms_Async_Handler
                 'adapter'        => $form_source,
                 'status'         => 'queued',
                 'payload_digest' => $payload_digest,
+                'authority_payload' => Sentient_Forms_Async_Request_Store::credential_authority_payload(
+                    $payload
+                ),
             ]
         );
         if ( is_wp_error( $recorded ) )
@@ -1090,6 +1125,22 @@ class Sentient_Forms_Async_Handler
         }
 
         return false;
+    }
+
+    /** Remove stale credential authority from every nested model-selection layer. */
+    private function strip_credential_authority_keys( array $selection ): array
+    {
+        unset( $selection['credential_id'], $selection['backup_credential_id'] );
+
+        foreach ( $selection as $key => $value )
+        {
+            if ( is_array( $value ) )
+            {
+                $selection[ $key ] = $this->strip_credential_authority_keys( $value );
+            }
+        }
+
+        return $selection;
     }
 
     /**
@@ -2072,6 +2123,12 @@ class Sentient_Forms_Async_Handler
         $request_store         = $this->get_request_store();
 
         $payload_digest = wp_hash( wp_json_encode( $payload_data ) );
+        $authority_payload = Sentient_Forms_Async_Request_Store::credential_authority_payload(
+            [
+                'settings'         => is_array( $job['settings'] ?? null ) ? $job['settings'] : [],
+                'context_settings' => is_array( $job['context']['settings'] ?? null ) ? $job['context']['settings'] : [],
+            ]
+        );
         $recorded = $request_store->record(
             $evaluation_request_id,
             [
@@ -2080,6 +2137,7 @@ class Sentient_Forms_Async_Handler
                 'status'         => 'queued',
                 'record_type'    => 'evaluation',
                 'payload_digest' => $payload_digest,
+                'authority_payload' => $authority_payload,
             ]
         );
         if ( is_wp_error( $recorded ) )

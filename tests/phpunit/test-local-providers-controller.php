@@ -437,7 +437,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
         $response = rest_get_server()->dispatch( $request );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 200, $response->get_status(), (string) wp_json_encode( $response->get_data() ) );
         $data = $response->get_data();
         $this->assertTrue( $data['deleted'] );
         $this->assertSame( $id, $data['credential']['id'] );
@@ -445,6 +445,1440 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'encrypted_secret', $data['credential'] );
         $this->assertStringNotContainsString( $secret, wp_json_encode( $data ) );
         $this->assertNull( $credentials->get( $id ) );
+    }
+
+    public function test_delete_credential_refuses_an_active_mapping_reference(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $mappings    = new Sentient_Forms_Form_Mappings_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Referenced OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => 'credential-delete-guard',
+                'hook'                => 'validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => 991001,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'settings_json'       => [
+                    'model_selection' => [
+                        'provider'      => 'openrouter',
+                        'credential_id' => $id,
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 409, $response->get_status() );
+            $data = $response->get_data();
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] );
+            $this->assertSame( $mapping_id, $data['data']['references'][0]['id'] ?? null );
+            $this->assertSame( 'form_mapping', $data['data']['references'][0]['type'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $mappings->delete( $mapping_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_an_active_mapping_backup_reference(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $mappings    = new Sentient_Forms_Form_Mappings_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Referenced mapping fallback key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => 'credential-delete-backup-guard',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => 991002,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'settings_json'       => [
+                    'model_selection' => [
+                        'provider'             => 'sentient_managed',
+                        'backup_credential_id' => (string) $id,
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] ?? null );
+            $this->assertSame( $mapping_id, $data['data']['references'][0]['id'] ?? null );
+            $this->assertSame( 'form_mapping', $data['data']['references'][0]['type'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $mappings->delete( $mapping_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_custom_action_definition_and_backup_references(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $actions     = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Referenced custom Action key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $action_id = $actions->create(
+            [
+                'code'                 => 'credential_delete_guard_' . wp_generate_password( 8, false ),
+                'display_name'         => 'Credential delete guard Action',
+                'definition_json'      => [
+                    'provider'      => 'openrouter',
+                    'credential_id' => $id,
+                ],
+                'model_selection_json' => [
+                    'provider'             => 'sentient_managed',
+                    'backup_credential_id' => (string) $id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 409, $response->get_status() );
+            $data = $response->get_data();
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] );
+            $this->assertSame( $action_id, $data['data']['references'][0]['id'] ?? null );
+            $this->assertSame( 'custom_action', $data['data']['references'][0]['type'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_malformed_custom_action_authority_json(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $actions     = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Malformed Action authority key' );
+        $action_id   = $actions->create(
+            [
+                'code'                 => 'malformed_authority_' . wp_generate_password( 8, false ),
+                'display_name'         => 'Malformed authority fixture',
+                'definition_json'      => [ 'provider' => 'openrouter' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+        $wpdb->update(
+            $wpdb->prefix . 'sentient_custom_actions',
+            [ 'model_selection_json' => '{malformed' ],
+            [ 'id' => $action_id ],
+            [ '%s' ],
+            [ '%d' ]
+        );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_custom_actions',
+                [ 'model_selection_json' => 'null' ],
+                [ 'id' => $action_id ],
+                [ '%s' ],
+                [ '%d' ]
+            );
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_malformed_mapping_authority_json(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $mappings    = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Malformed mapping authority key' );
+        $mapping_id  = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => 'malformed-authority',
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => 991003,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'settings_json'       => [ 'model_selection' => [ 'provider' => 'openrouter' ] ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+        $wpdb->update(
+            $wpdb->prefix . 'sentient_form_mappings',
+            [ 'settings_json' => '{malformed' ],
+            [ 'id' => $mapping_id ],
+            [ '%s' ],
+            [ '%d' ]
+        );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_form_mappings',
+                [ 'settings_json' => 'null' ],
+                [ 'id' => $mapping_id ],
+                [ '%s' ],
+                [ '%d' ]
+            );
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_form_mappings', [ 'id' => $mapping_id ], [ '%d' ] );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_an_isolated_custom_action_definition_reference(): void
+    {
+        $this->assert_custom_action_reference_blocks_delete(
+            [ 'credential_id' => '{credential_id}' ],
+            [ 'provider' => 'openrouter' ]
+        );
+    }
+
+    public function test_delete_credential_refuses_an_isolated_custom_action_primary_reference(): void
+    {
+        $this->assert_custom_action_reference_blocks_delete(
+            [],
+            [
+                'provider'   => 'openrouter',
+                'selection'  => [ 'credential_id' => '{credential_id}' ],
+            ]
+        );
+    }
+
+    public function test_delete_credential_refuses_an_isolated_custom_action_backup_reference(): void
+    {
+        $this->assert_custom_action_reference_blocks_delete(
+            [],
+            [
+                'provider'             => 'sentient_managed',
+                'backup_credential_id' => '{credential_id}',
+            ]
+        );
+    }
+
+    public function test_delete_credential_refuses_site_context_settings_and_active_job_references(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Referenced Site Context key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'credential_id' => $id,
+                ],
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_site_context_generation_job',
+            [
+                'job_id'   => 'credential-delete-guard-job',
+                'status'   => 'queued',
+                'settings' => [
+                    'generation_model_selection' => [
+                        'provider'      => 'openrouter',
+                        'credential_id' => (string) $id,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 409, $response->get_status() );
+            $data       = $response->get_data();
+            $references = $data['data']['references'] ?? [];
+            $types      = wp_list_pluck( $references, 'type' );
+
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] );
+            $this->assertContains( 'site_context_settings', $types );
+            $this->assertContains( 'site_context_generation_job', $types );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            delete_option( 'sentient_forms_site_context_settings' );
+            delete_option( 'sentient_forms_site_context_generation_job' );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_an_isolated_site_context_settings_reference(): void
+    {
+        $this->assert_site_context_option_reference_blocks_delete(
+            'sentient_forms_site_context_settings',
+            [
+                'generation_model_selection' => [
+                    'provider'      => 'openrouter',
+                    'credential_id' => '{credential_id}',
+                ],
+            ],
+            'site_context_settings'
+        );
+    }
+
+    public function test_delete_credential_refuses_an_isolated_active_site_context_job_reference(): void
+    {
+        $this->assert_site_context_option_reference_blocks_delete(
+            'sentient_forms_site_context_generation_job',
+            [
+                'status'   => 'running',
+                'settings' => [
+                    'generation_model_selection' => [
+                        'provider'      => 'openrouter',
+                        'credential_id' => '{credential_id}',
+                    ],
+                ],
+            ],
+            'site_context_generation_job'
+        );
+    }
+
+    public function test_delete_credential_refuses_a_pending_local_mapping_execution(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Queued execution key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $payload = [
+            'execution_request_id' => 'credential-delete-guard-' . wp_generate_uuid4(),
+            'extended_args_fixture' => str_repeat( 'x', 300 ),
+            'context'              => [
+                'settings' => [
+                    'model_selection' => [
+                        'provider'      => 'openrouter',
+                        'credential_id' => $id,
+                    ],
+                ],
+            ],
+        ];
+        $action_id = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 409, $response->get_status() );
+            $data       = $response->get_data();
+            $references = $data['data']['references'] ?? [];
+
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] );
+            $this->assertSame( 'scheduled_execution', $references[0]['type'] ?? null );
+            $this->assertSame( $action_id, $references[0]['id'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            as_unschedule_action( Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK, [ $payload ], 'sentient_forms_async' );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_a_durable_queued_execution_after_scheduler_dequeue(): void
+    {
+        global $wpdb;
+
+        $credentials  = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id           = $this->create_delete_guard_credential( $credentials, 'Durable queued execution key' );
+        $request_hash = 'credential-delete-durable-' . wp_generate_uuid4();
+        $recorded     = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->record(
+            $request_hash,
+            [
+                'action_id'        => 'local_mapping_991',
+                'adapter'          => 'gravity_forms',
+                'status'           => 'queued',
+                'payload_digest'   => hash( 'sha256', $request_hash ),
+                'authority_payload' => [
+                    'credentials' => [ [ 'credential_id' => $id ] ],
+                ],
+            ]
+        );
+        $this->assertTrue( $recorded );
+
+        try
+        {
+            $data       = $this->dispatch_credential_delete( $id, 409 );
+            $references = $data['data']['references'] ?? [];
+            $this->assertContains( 'queued_execution', wp_list_pluck( $references, 'type' ) );
+            $this->assertContains( $request_hash, wp_list_pluck( $references, 'id' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ]
+            );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_queued_execution_admission_rejects_a_deleted_credential(): void
+    {
+        global $wpdb;
+
+        $credentials  = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id           = $this->create_delete_guard_credential( $credentials, 'Stale queued execution key' );
+        $request_hash = 'credential-delete-stale-queue-' . wp_generate_uuid4();
+        $this->assertTrue( $credentials->delete( $id ) );
+
+        $recorded = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->record(
+            $request_hash,
+            [
+                'action_id'         => 'local_mapping_993',
+                'adapter'           => 'gravity_forms',
+                'status'            => 'queued',
+                'payload_digest'    => hash( 'sha256', $request_hash ),
+                'authority_payload' => [
+                    'credentials' => [ [ 'credential_id' => $id ] ],
+                ],
+            ]
+        );
+
+        $this->assertInstanceOf( WP_Error::class, $recorded );
+        $this->assertSame( 'sentient_forms_async_authority_credential_unavailable', $recorded->get_error_code() );
+        $this->assertNull( ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->get( $request_hash ) );
+    }
+
+    public function test_delete_credential_refuses_an_active_synchronous_execution(): void
+    {
+        global $wpdb;
+
+        $credentials  = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id           = $this->create_delete_guard_credential( $credentials, 'Active synchronous execution key' );
+        $request_hash = 'active-sync-' . wp_generate_uuid4();
+        $store        = new Sentient_Forms_Async_Request_Store( $wpdb );
+        $claimed      = $store->claim_execution(
+            $request_hash,
+            [
+                'action_id'         => 'local_mapping_994',
+                'adapter'           => 'gravity_forms',
+                'payload_digest'    => hash( 'sha256', $request_hash ),
+                'authority_payload' => [
+                    'credentials' => [ [ 'credential_id' => $id ] ],
+                ],
+            ]
+        );
+        $this->assertSame( 'claimed', $claimed['state'] ?? null );
+
+        try
+        {
+            $data       = $this->dispatch_credential_delete( $id, 409 );
+            $references = $data['data']['references'] ?? [];
+            $this->assertContains( 'active_execution', wp_list_pluck( $references, 'type' ) );
+            $this->assertContains( $request_hash, wp_list_pluck( $references, 'id' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $store->finish_execution( $request_hash, 'success', null, 'accepted_sync' );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_missing_durable_authority_payload(): void
+    {
+        global $wpdb;
+
+        $credentials  = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id           = $this->create_delete_guard_credential( $credentials, 'Legacy durable execution key' );
+        $request_hash = 'credential-delete-missing-authority-' . wp_generate_uuid4();
+        $recorded     = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->record(
+            $request_hash,
+            [
+                'action_id'      => 'local_mapping_992',
+                'adapter'        => 'gravity_forms',
+                'status'         => 'queued',
+                'payload_digest' => hash( 'sha256', $request_hash ),
+            ]
+        );
+        $this->assertTrue( $recorded );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ]
+            );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_malformed_durable_authority_payload(): void
+    {
+        global $wpdb;
+
+        $credentials  = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id           = $this->create_delete_guard_credential( $credentials, 'Malformed durable execution key' );
+        $request_hash = 'malformed-authority-' . wp_generate_uuid4();
+        $recorded     = ( new Sentient_Forms_Async_Request_Store( $wpdb ) )->record(
+            $request_hash,
+            [
+                'action_id'         => 'local_mapping_993',
+                'adapter'           => 'gravity_forms',
+                'status'            => 'running',
+                'payload_digest'    => hash( 'sha256', $request_hash ),
+                'authority_payload' => [ 'credentials' => [] ],
+            ]
+        );
+        $this->assertTrue( $recorded );
+        $this->assertNotFalse(
+            $wpdb->update(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'telemetry_payload' => wp_json_encode( 'malformed-scalar' ) ],
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ],
+                [ '%s' ]
+            )
+        );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete(
+                $wpdb->prefix . 'sentient_async_requests',
+                [ 'request_hash' => $request_hash ],
+                [ '%s' ]
+            );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_nontransactional_async_authority_store(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Nontransactional async authority' );
+        $table       = $wpdb->prefix . 'sentient_async_requests';
+        $this->assertNotFalse( $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $table ) ) );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_nontransactional_credential_reference_store', $data['code'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=InnoDB', $table ) );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_nontransactional_options_authority_store(): void
+    {
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id             = $this->create_delete_guard_credential( $credentials, 'Nontransactional options authority' );
+        $original_table = $wpdb->options;
+        $fixture_table  = $wpdb->prefix . 'options_myisam_credential_guard_fixture';
+        $this->assertNotFalse( $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) ) );
+        $this->assertNotFalse(
+            $wpdb->query(
+                $wpdb->prepare( 'CREATE TABLE %i LIKE %i', $fixture_table, $original_table )
+            )
+        );
+        $this->assertNotFalse( $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $fixture_table ) ) );
+        $wpdb->options = $fixture_table;
+
+        try
+        {
+            $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+            $result  = $service->delete_credential_if_unreferenced( $id );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_nontransactional_credential_reference_store', $result->get_error_code() );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->options = $original_table;
+            $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_nontransactional_action_scheduler_store(): void
+    {
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id             = $this->create_delete_guard_credential( $credentials, 'Nontransactional scheduler authority' );
+        $original_table = $wpdb->actionscheduler_actions;
+        $fixture_table  = $wpdb->prefix . 'actionscheduler_actions_myisam_credential_guard_fixture';
+        $this->assertNotFalse( $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) ) );
+        $this->assertNotFalse(
+            $wpdb->query(
+                $wpdb->prepare( 'CREATE TABLE %i LIKE %i', $fixture_table, $original_table )
+            )
+        );
+        $this->assertNotFalse( $wpdb->query( $wpdb->prepare( 'ALTER TABLE %i ENGINE=MyISAM', $fixture_table ) ) );
+        $wpdb->actionscheduler_actions = $fixture_table;
+
+        try
+        {
+            $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+            $result  = $service->delete_credential_if_unreferenced( $id );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_nontransactional_credential_reference_store', $result->get_error_code() );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->actionscheduler_actions = $original_table;
+            $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_a_wp_cron_fallback_execution(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'WP-Cron fallback execution key' );
+        $payload     = $this->local_mapping_payload_with_credential( $id );
+        $timestamp   = time() + HOUR_IN_SECONDS;
+        $scheduled   = wp_schedule_single_event(
+            $timestamp,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ]
+        );
+        $this->assertTrue( $scheduled );
+
+        try
+        {
+            $data       = $this->dispatch_credential_delete( $id, 409 );
+            $references = $data['data']['references'] ?? [];
+            $this->assertContains( 'wp_cron_execution', wp_list_pluck( $references, 'type' ) );
+            $this->assertContains( (string) $timestamp, wp_list_pluck( $references, 'id' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            wp_unschedule_event(
+                $timestamp,
+                Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                [ $payload ]
+            );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_wp_cron_credential_reference_scan_fails_closed_for_malformed_authority(): void
+    {
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method  = new ReflectionMethod( $service, 'wp_cron_execution_credential_references' );
+        $previous_cron = get_option( 'cron', null );
+        update_option( 'cron', 'malformed-cron-authority', false );
+
+        try
+        {
+            $result = $method->invoke( $service, 123 );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $result->get_error_code() );
+        }
+        finally
+        {
+            if ( null === $previous_cron )
+            {
+                delete_option( 'cron' );
+            }
+            else
+            {
+                update_option( 'cron', $previous_cron, false );
+            }
+        }
+    }
+
+    public function test_wp_cron_credential_reference_scan_fails_closed_for_malformed_target_event(): void
+    {
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method  = new ReflectionMethod( $service, 'wp_cron_execution_credential_references' );
+        $previous_cron = get_option( 'cron', null );
+        update_option(
+            'cron',
+            [
+                time() + HOUR_IN_SECONDS => [
+                    Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK => [
+                        'malformed-event' => [ 'args' => 'not-an-array' ],
+                    ],
+                ],
+                'version' => 2,
+            ],
+            false
+        );
+
+        try
+        {
+            $result = $method->invoke( $service, 123 );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $result->get_error_code() );
+        }
+        finally
+        {
+            if ( null === $previous_cron )
+            {
+                delete_option( 'cron' );
+            }
+            else
+            {
+                update_option( 'cron', $previous_cron, false );
+            }
+        }
+    }
+
+    public function test_scheduler_authority_distinguishes_wp_cron_only_from_broken_action_scheduler(): void
+    {
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method  = new ReflectionMethod( $service, 'action_scheduler_authority_state' );
+
+        $this->assertSame( 'wp_cron_only', $method->invoke( $service, false, false ) );
+        $this->assertSame( 'unavailable', $method->invoke( $service, false, true ) );
+        $this->assertSame( 'ready', $method->invoke( $service, true, false ) );
+        $this->assertSame( 'ready', $method->invoke( $service, true, true ) );
+    }
+
+    public function test_scheduler_table_remains_authority_without_runtime_symbols(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Dormant scheduler authority key' );
+        $payload     = $this->local_mapping_payload_with_credential( $id );
+        $action_id   = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+            $method  = new ReflectionMethod( $service, 'scheduled_execution_credential_references' );
+            $method->setAccessible( true );
+            $references = $method->invoke( $service, $id, false, false );
+
+            $this->assertIsArray( $references );
+            $this->assertSame( $action_id, $references[0]['id'] ?? null );
+            $this->assertSame( 'scheduled_execution', $references[0]['type'] ?? null );
+            $this->assertSame( 'pending', $references[0]['status'] ?? null );
+        }
+        finally
+        {
+            ActionScheduler::store()->delete_action( $action_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_missing_action_scheduler_table_fails_closed_when_runtime_is_active(): void
+    {
+        global $wpdb;
+
+        $service       = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method        = new ReflectionMethod( $service, 'scheduled_execution_credential_references' );
+        $original_table = $wpdb->actionscheduler_actions;
+        $wpdb->actionscheduler_actions = $wpdb->prefix . 'missing_actionscheduler_authority';
+
+        try
+        {
+            $result = $method->invoke( $service, 123, true, true );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_credential_reference_check_unavailable', $result->get_error_code() );
+        }
+        finally
+        {
+            $wpdb->actionscheduler_actions = $original_table;
+        }
+    }
+
+    public function test_unreadable_action_scheduler_schema_fails_closed_without_runtime_symbols(): void
+    {
+        global $wpdb;
+
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method  = new ReflectionMethod( $service, 'scheduled_execution_credential_references' );
+        $fail_schema_read = static function ( string $query ): string {
+            return str_starts_with( trim( $query ), 'SELECT 1 FROM ' )
+                ? 'SENTIENT FORMS FORCED SCHEDULER SCHEMA FAILURE'
+                : $query;
+        };
+        add_filter( 'query', $fail_schema_read );
+        $suppressed = $wpdb->suppress_errors( true );
+
+        try
+        {
+            $result = $method->invoke( $service, 123, false, false );
+            $this->assertInstanceOf( WP_Error::class, $result );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $result->get_error_code() );
+        }
+        finally
+        {
+            $wpdb->suppress_errors( $suppressed );
+            remove_filter( 'query', $fail_schema_read );
+        }
+    }
+
+    public function test_legacy_action_scheduler_table_without_extended_args_is_scanned(): void
+    {
+        global $wpdb;
+
+        $service        = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method         = new ReflectionMethod( $service, 'scheduled_execution_credential_references' );
+        $original_table = $wpdb->actionscheduler_actions;
+        $fixture_table  = $wpdb->prefix . 'actionscheduler_actions_legacy_authority';
+        $credential_id  = 123;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Isolated legacy-schema compatibility fixture.
+        $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) );
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Isolated legacy-schema compatibility fixture.
+        $created = $wpdb->query(
+            $wpdb->prepare(
+                'CREATE TABLE %i ('
+                    . 'action_id bigint unsigned NOT NULL AUTO_INCREMENT, '
+                    . 'hook varchar(191) NOT NULL, '
+                    . 'status varchar(20) NOT NULL, '
+                    . 'args longtext DEFAULT NULL, '
+                    . 'PRIMARY KEY (action_id)'
+                    . ') ENGINE=InnoDB',
+                $fixture_table
+            )
+        );
+        $this->assertNotFalse( $created );
+        $inserted = $wpdb->insert(
+            $fixture_table,
+            [
+                'hook'   => Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                'status' => 'pending',
+                'args'   => wp_json_encode( [ 'credential_id' => $credential_id ] ),
+            ],
+            [ '%s', '%s', '%s' ]
+        );
+        $this->assertSame( 1, $inserted );
+        $action_id = (int) $wpdb->insert_id;
+        $wpdb->actionscheduler_actions = $fixture_table;
+
+        try
+        {
+            $stored = $wpdb->get_row(
+                $wpdb->prepare( 'SELECT action_id, hook, status, args FROM %i WHERE action_id = %d', $fixture_table, $action_id ),
+                ARRAY_A
+            );
+            $this->assertIsArray( $stored );
+            $this->assertSame( $credential_id, json_decode( (string) ( $stored['args'] ?? '' ), true )['credential_id'] ?? null );
+            $references = $method->invoke( $service, $credential_id, false, false );
+
+            $this->assertIsArray( $references );
+            $this->assertSame( $action_id, $references[0]['id'] ?? null );
+            $this->assertSame( 'scheduled_execution', $references[0]['type'] ?? null );
+            $this->assertSame( 'pending', $references[0]['status'] ?? null );
+        }
+        finally
+        {
+            $wpdb->actionscheduler_actions = $original_table;
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Isolated legacy-schema compatibility fixture cleanup.
+            $wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $fixture_table ) );
+        }
+    }
+
+    public function test_non_transactional_action_scheduler_store_fails_closed(): void
+    {
+        $service        = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $method         = new ReflectionMethod( $service, 'scheduled_execution_credential_references' );
+        $store_property = new ReflectionProperty( ActionScheduler_Store::class, 'store' );
+        $original_store = $store_property->getValue();
+        $store_property->setValue( null, new ActionScheduler_wpPostStore() );
+
+        try
+        {
+            $result = $method->invoke( $service, 123, true, true );
+            $this->assertWPError( $result );
+            $this->assertSame( 'sentient_forms_credential_reference_check_unavailable', $result->get_error_code() );
+        }
+        finally
+        {
+            $store_property->setValue( null, $original_store );
+        }
+    }
+
+    public function test_delete_credential_refuses_a_pending_evaluation_execution(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Pending evaluation key' );
+        $payload     = $this->local_mapping_payload_with_credential( $id );
+        $action_id   = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            'sentient_forms_evaluate_action',
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertContains( $action_id, wp_list_pluck( $data['data']['references'] ?? [], 'id' ) );
+        }
+        finally
+        {
+            ActionScheduler::store()->delete_action( $action_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_a_running_local_mapping_execution(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Running execution key' );
+        $payload     = $this->local_mapping_payload_with_credential( $id );
+        $action_id   = as_schedule_single_action(
+            time() - MINUTE_IN_SECONDS,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+
+        ActionScheduler::store()->log_execution( $action_id );
+        $this->assertSame( ActionScheduler_Store::STATUS_RUNNING, ActionScheduler::store()->get_status( $action_id ) );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertSame( 'scheduled_execution', $data['data']['references'][0]['type'] ?? null );
+            $this->assertSame( 'in-progress', $data['data']['references'][0]['status'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            ActionScheduler::store()->delete_action( $action_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_scans_the_scheduler_table_without_a_runtime_table_property(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Uninitialized scheduler key' );
+        $payload     = $this->local_mapping_payload_with_credential( $id );
+        $action_id   = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+        $actions_table = $wpdb->actionscheduler_actions;
+        $wpdb->actionscheduler_actions = '';
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertContains( $action_id, wp_list_pluck( $data['data']['references'] ?? [], 'id' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->actionscheduler_actions = $actions_table;
+            ActionScheduler::store()->delete_action( $action_id );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_scans_a_second_scheduler_page(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Second scheduler page key' );
+        $action_ids  = [];
+
+        try
+        {
+            for ( $index = 0; $index < 100; $index++ )
+            {
+                $action_ids[] = as_schedule_single_action(
+                    time() + HOUR_IN_SECONDS,
+                    Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                    [ [ 'context' => [ 'index' => $index ] ] ],
+                    'sentient_forms_async'
+                );
+            }
+            $action_ids[] = as_schedule_single_action(
+                time() + HOUR_IN_SECONDS,
+                Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+                [ $this->local_mapping_payload_with_credential( $id ) ],
+                'sentient_forms_async'
+            );
+
+            $data       = $this->dispatch_credential_delete( $id, 409 );
+            $references = $data['data']['references'] ?? [];
+            $this->assertContains( end( $action_ids ), wp_list_pluck( $references, 'id' ) );
+        }
+        finally
+        {
+            foreach ( $action_ids as $action_id )
+            {
+                if ( is_int( $action_id ) && $action_id > 0 )
+                {
+                    ActionScheduler::store()->delete_action( $action_id );
+                }
+            }
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_when_scheduler_authority_cannot_be_read(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Unreadable scheduler key' );
+        $table       = $wpdb->actionscheduler_actions;
+        $wpdb->actionscheduler_actions = $wpdb->options;
+        $suppress_errors = $wpdb->suppress_errors( true );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 503, $response->get_status() );
+            $this->assertSame(
+                'sentient_forms_credential_reference_check_failed',
+                $response->get_data()['code'] ?? null
+            );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->actionscheduler_actions = $table;
+            $wpdb->suppress_errors( $suppress_errors );
+            $wpdb->last_error = '';
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_an_option_backed_action_default_reference(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Option-backed Action default key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $option_name = 'sentient_forms_action_defaults_credential_delete_guard';
+        update_option(
+            $option_name,
+            [
+                'model_selection' => [
+                    'provider'             => 'sentient_managed',
+                    'backup_credential_id' => (string) $id,
+                ],
+            ],
+            false
+        );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 409, $response->get_status() );
+            $data       = $response->get_data();
+            $references = $data['data']['references'] ?? [];
+
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] );
+            $this->assertContains( 'configuration_option', wp_list_pluck( $references, 'type' ) );
+            $this->assertContains( $option_name, wp_list_pluck( $references, 'id' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            delete_option( $option_name );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_fails_closed_for_a_non_array_configuration_option(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Malformed option guard key' );
+        $option_name = 'sentient_forms_action_defaults_malformed_guard';
+        update_option( $option_name, wp_json_encode( [ 'credential_id' => $id ] ), false );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 503 );
+            $this->assertSame( 'sentient_forms_credential_reference_check_failed', $data['code'] ?? null );
+            $this->assertSame( 'options', $data['data']['reference_source'] ?? null );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            delete_option( $option_name );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_refuses_a_legacy_zero_padded_runtime_id(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Zero-padded legacy key' );
+        $option_name = 'sentient_forms_action_defaults_credential_delete_zero_padded';
+        update_option(
+            $option_name,
+            [ 'model_selection' => [ 'credential_id' => '00' . $id ] ],
+            false
+        );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertContains( $option_name, wp_list_pluck( $data['data']['references'] ?? [], 'id' ) );
+        }
+        finally
+        {
+            delete_option( $option_name );
+            $credentials->delete( $id );
+        }
+    }
+
+    /**
+     * @dataProvider credential_option_prefix_provider
+     */
+    public function test_delete_credential_refuses_each_option_backed_authority_prefix( string $option_prefix ): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Option authority key' );
+        $option_name = $option_prefix . 'credential_delete_guard_' . wp_generate_password( 6, false );
+        update_option(
+            $option_name,
+            [ 'model_selection' => [ 'credential_id' => (string) $id ] ],
+            false
+        );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertContains( sanitize_key( $option_name ), wp_list_pluck( $data['data']['references'] ?? [], 'id' ) );
+        }
+        finally
+        {
+            delete_option( $option_name );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function credential_option_prefix_provider(): array
+    {
+        return [
+            'form config'     => [ 'sentient_forms_form_config_' ],
+            'action defaults' => [ 'sentient_forms_action_defaults_' ],
+            'actions'         => [ 'sentient_forms_actions_' ],
+            'gravity forms'   => [ 'sentient_forms_gravity_forms_' ],
+        ];
+    }
+
+    public function test_delete_credential_allows_historical_jobs_and_nonsemantic_numeric_matches(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Deletable historical reference key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $option_name = 'sentient_forms_action_defaults_credential_delete_nonreference';
+        update_option(
+            $option_name,
+            [
+                'model_selection' => [
+                    'credential_id' => $id . '-not-an-id',
+                ],
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_site_context_generation_job',
+            [
+                'status'   => 'completed',
+                'settings' => [
+                    'generation_model_selection' => [ 'credential_id' => $id ],
+                ],
+            ],
+            false
+        );
+
+        $payload = [
+            'context' => [
+                'settings' => [
+                    'model_selection' => [ 'credential_id' => $id ],
+                ],
+            ],
+        ];
+        $action_id = as_schedule_single_action(
+            time() + HOUR_IN_SECONDS,
+            Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            'sentient_forms_async'
+        );
+        $this->assertIsInt( $action_id );
+        ActionScheduler::store()->mark_complete( $action_id );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+            $this->assertNull( $credentials->get( $id ) );
+        }
+        finally
+        {
+            ActionScheduler::store()->delete_action( $action_id );
+            delete_option( $option_name );
+            delete_option( 'sentient_forms_site_context_generation_job' );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_rolls_back_when_storage_refuses_the_delete(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Rollback-protected key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $trigger_name      = $wpdb->prefix . 'sentient_test_credential_delete_guard';
+        $credentials_table = $wpdb->prefix . 'sentient_provider_credentials';
+        $wpdb->query( $wpdb->prepare( 'DROP TRIGGER IF EXISTS %i', $trigger_name ) );
+        $created = $wpdb->query(
+            $wpdb->prepare(
+                'CREATE TRIGGER %i BEFORE DELETE ON %i FOR EACH ROW SIGNAL SQLSTATE %s SET MESSAGE_TEXT = %s',
+                $trigger_name,
+                $credentials_table,
+                '45000',
+                'forced credential delete failure'
+            )
+        );
+        $this->assertNotFalse( $created );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 500, $response->get_status() );
+            $data = $response->get_data();
+            $this->assertSame( 'sentient_forms_db_delete_failed', $data['code'] );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->query( $wpdb->prepare( 'DROP TRIGGER IF EXISTS %i', $trigger_name ) );
+            $credentials->delete( $id );
+        }
+    }
+
+    public function test_delete_credential_ignores_nonruntime_definition_fields(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $actions     = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $id          = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Definition schema number key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-test-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $action_id = $actions->create(
+            [
+                'code'            => 'credential_delete_nonruntime_definition_' . wp_generate_password( 8, false ),
+                'display_name'    => 'Nonruntime definition field',
+                'definition_json' => [
+                    'structured_output_schema' => [
+                        'properties' => [
+                            'credential_id' => $id,
+                        ],
+                    ],
+                ],
+                'status'          => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+            $this->assertNull( $credentials->get( $id ) );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+            $credentials->delete( $id );
+        }
     }
 
     public function test_delete_credential_returns_not_found_for_missing_row(): void
@@ -1230,6 +2664,127 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( 'license-managed-test', $rows[0]['status_json']['license_id'] );
     }
 
+    /**
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $selection
+     */
+    private function assert_custom_action_reference_blocks_delete( array $definition, array $selection ): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $actions     = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Isolated custom Action key' );
+        $replace_id  = static function( mixed $value ) use ( &$replace_id, $id ): mixed
+        {
+            if ( is_array( $value ) )
+            {
+                return array_map( $replace_id, $value );
+            }
+
+            return '{credential_id}' === $value ? (string) $id : $value;
+        };
+        $action_id = $actions->create(
+            [
+                'code'                 => 'credential_delete_isolated_' . wp_generate_password( 8, false ),
+                'display_name'         => 'Isolated credential reference',
+                'definition_json'      => $replace_id( $definition ),
+                'model_selection_json' => $replace_id( $selection ),
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        try
+        {
+            $before = $credentials->get( $id );
+            $data   = $this->dispatch_credential_delete( $id, 409 );
+            $after  = $credentials->get( $id );
+
+            $this->assertSame( 'custom_action', $data['data']['references'][0]['type'] ?? null );
+            $this->assertSame( $action_id, $data['data']['references'][0]['id'] ?? null );
+            $this->assertSame( $before['encrypted_secret'] ?? null, $after['encrypted_secret'] ?? null );
+        }
+        finally
+        {
+            $wpdb->delete( $wpdb->prefix . 'sentient_custom_actions', [ 'id' => $action_id ], [ '%d' ] );
+            $credentials->delete( $id );
+        }
+    }
+
+    /** @param array<string, mixed> $value */
+    private function assert_site_context_option_reference_blocks_delete( string $option_name, array $value, string $expected_type ): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $this->create_delete_guard_credential( $credentials, 'Isolated Site Context key' );
+        $encoded     = str_replace( '"{credential_id}"', (string) $id, (string) wp_json_encode( $value ) );
+        $value       = json_decode( $encoded, true );
+        $this->assertIsArray( $value );
+        update_option( $option_name, $value, false );
+
+        try
+        {
+            $data = $this->dispatch_credential_delete( $id, 409 );
+            $this->assertContains( $expected_type, wp_list_pluck( $data['data']['references'] ?? [], 'type' ) );
+            $this->assertIsArray( $credentials->get( $id ) );
+        }
+        finally
+        {
+            delete_option( $option_name );
+            $credentials->delete( $id );
+        }
+    }
+
+    private function create_delete_guard_credential(
+        Sentient_Forms_Provider_Credentials_Repository $credentials,
+        string $label
+    ): int
+    {
+        $id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => $label,
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => 'encrypted-delete-guard-secret',
+                'status'            => 'valid',
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+        return $id;
+    }
+
+    /** @return array<string, mixed> */
+    private function local_mapping_payload_with_credential( int $credential_id ): array
+    {
+        return [
+            'execution_request_id' => 'credential-delete-guard-' . wp_generate_uuid4(),
+            'context'              => [
+                'settings' => [
+                    'model_selection' => [
+                        'provider'      => 'openrouter',
+                        'credential_id' => $credential_id,
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function dispatch_credential_delete( int $credential_id, int $expected_status ): array
+    {
+        $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $credential_id ) );
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( $expected_status, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        if ( 409 === $expected_status )
+        {
+            $this->assertSame( 'sentient_forms_credential_in_use', $data['code'] ?? null );
+        }
+        return $data;
+    }
+
     private function mock_openrouter_key_response( ?callable $on_request = null ): void
     {
         $callback = function ( $preempt, $args, $url ) use ( $on_request ) {
@@ -1322,9 +2877,52 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
     {
         global $wpdb;
 
-        foreach ( [ 'sentient_provider_credentials', 'sentient_external_service_consents', 'sentient_model_cache' ] as $table )
+        foreach (
+            [
+                'sentient_provider_credentials',
+                'sentient_external_service_consents',
+                'sentient_model_cache',
+                'sentient_form_mappings',
+                'sentient_custom_actions',
+                'sentient_async_requests',
+            ] as $table
+        )
         {
-            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+            $wpdb->query( "DELETE FROM {$wpdb->prefix}{$table}" );
+        }
+
+        foreach (
+            [
+                'sentient_forms_site_context_settings',
+                'sentient_forms_site_context_generation_job',
+            ] as $option_name
+        )
+        {
+            delete_option( $option_name );
+        }
+
+        foreach (
+            [
+                'sentient_forms_form_config_',
+                'sentient_forms_action_defaults_',
+                'sentient_forms_actions_',
+                'sentient_forms_gravity_forms_',
+            ] as $option_prefix
+        )
+        {
+            $wpdb->query(
+                $wpdb->prepare(
+                    'DELETE FROM %i WHERE option_name LIKE %s',
+                    $wpdb->options,
+                    $wpdb->esc_like( $option_prefix ) . '%'
+                )
+            );
+        }
+
+        wp_clear_scheduled_hook( Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK );
+        if ( function_exists( 'as_unschedule_all_actions' ) )
+        {
+            as_unschedule_all_actions( Sentient_Forms_Async_Handler::LOCAL_MAPPING_HOOK, [], 'sentient_forms_async' );
         }
     }
 }
