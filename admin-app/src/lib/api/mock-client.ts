@@ -543,12 +543,12 @@ export class MockSentientFormsApiClient {
 				lifecycles: {
 					validation: {
 						id: 'validation',
-						supported: false,
+						supported: true,
 						label: 'Validation',
-						native_hook: null,
+						native_hook: 'wpcf7_validate',
 						execution_mode: 'blocking',
 						requires_ledger: false,
-						unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
+						unsupported_reason: null
 					},
 					after_submission: {
 						id: 'after_submission',

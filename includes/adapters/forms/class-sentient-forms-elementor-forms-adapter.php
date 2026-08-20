@@ -92,7 +92,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         else
         {
             $availability = 'available';
-            $message      = __( 'Elementor Pro Forms APIs are available. Sentient Forms can run after-submission actions after ledger opt-in.', 'sentient-forms' );
+            $message      = __( 'Elementor Pro Forms APIs are available. Sentient Forms can run validation actions and, after Submission Ledger opt-in, after-submission actions.', 'sentient-forms' );
             $reason       = null;
         }
 

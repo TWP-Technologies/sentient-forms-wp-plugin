@@ -6,7 +6,7 @@ afterEach(() => {
 });
 
 describe('MockSentientFormsApiClient form source descriptors', () => {
-	it('describes Contact Form 7 as after-submission only and ledger-required', async () => {
+	it('describes Contact Form 7 validation plus ledger-backed after-submission', async () => {
 		const client = new MockSentientFormsApiClient();
 
 		const bootstrap = await client.getFormActionsBootstrap('contact_form_7', 77);
@@ -17,8 +17,8 @@ describe('MockSentientFormsApiClient form source descriptors', () => {
 			is_active: true,
 			lifecycles: {
 				validation: {
-					supported: false,
-					native_hook: null
+					supported: true,
+					native_hook: 'wpcf7_validate'
 				},
 				after_submission: {
 					supported: true,

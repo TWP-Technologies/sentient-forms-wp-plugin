@@ -199,12 +199,12 @@ const wpformsLiteFormSourceDescriptor = {
 	is_active: true,
 	lifecycles: {
 		validation: {
-			supported: false,
+			supported: true,
 			label: 'Validation',
-			native_hook: null,
+			native_hook: 'wpforms_process',
 			execution_mode: 'blocking',
 			requires_ledger: false,
-			unsupported_reason: 'WPForms validation blocking is not supported.'
+			unsupported_reason: null
 		},
 		after_submission: {
 			supported: true,
@@ -268,12 +268,12 @@ const elementorFormsFreeDescriptor = {
 	requires_pro: true,
 	lifecycles: {
 		validation: {
-			supported: false,
+			supported: true,
 			label: 'Validation',
-			native_hook: null,
+			native_hook: 'elementor_pro/forms/validation',
 			execution_mode: 'blocking',
 			requires_ledger: false,
-			unsupported_reason: 'Elementor Pro Forms validation blocking is not supported.'
+			unsupported_reason: null
 		},
 		after_submission: {
 			supported: false,
@@ -319,7 +319,7 @@ const elementorFormsProLimitedDescriptor = {
 	is_active: true,
 	availability: 'available',
 	availability_message:
-		'Elementor Pro Forms APIs are available. Sentient Forms can run after-submission actions after ledger opt-in.',
+		'Elementor Pro Forms APIs are available. Sentient Forms can run validation actions and, after Submission Ledger opt-in, after-submission actions.',
 	requires_pro: true,
 	lifecycles: {
 		...elementorFormsFreeDescriptor.lifecycles,
@@ -4090,17 +4090,19 @@ test.describe('Actions admin flows', () => {
 		expect(formConfigWarnings).toEqual([]);
 	});
 
-	test('marks an unsupported persisted lifecycle invalid and blocks unchanged save', async ({ page }) => {
+	test('marks an unsupported persisted realtime lifecycle invalid and blocks unchanged save', async ({
+		page
+	}) => {
 		const unsupportedMapping = {
 			...baseLinkages[0],
 			form_id: wpformsFormId,
-			local_mapping_id: 'unsupported-validation-mapping',
+			local_mapping_id: 'unsupported-realtime-mapping',
 			central_action_id: 'lifecycle-repair-action',
 			action_name_label: 'Lifecycle repair action',
-			trigger_hooks: ['validation'],
+			trigger_hooks: ['real_time'],
 			settings: {
 				trigger_sources: {
-					validation: { type: 'hook_root' }
+					real_time: { type: 'hook_root' }
 				}
 			}
 		};
@@ -4112,7 +4114,7 @@ test.describe('Actions admin flows', () => {
 						id: 'lifecycle-repair-action',
 						label: 'Lifecycle repair action',
 						source: 'bundled',
-						hooks: ['validation', 'after_submission'],
+						hooks: ['real_time', 'after_submission'],
 						base_credit_cost: 2,
 						model_hint: 'openrouter/auto'
 					}
@@ -4135,7 +4137,7 @@ test.describe('Actions admin flows', () => {
 		await row.getByRole('button', { name: 'Configure' }).click();
 
 		const modal = page.getByTestId('mapping-config-modal');
-		await expect(modal.getByTestId('mapping-trigger-hook-validation')).toBeChecked();
+		await expect(modal.getByTestId('mapping-trigger-hook-real_time')).toBeChecked();
 		await expect(modal.getByTestId('unsupported-lifecycle-repair-alert')).toContainText(
 			/unsupported.*remove.*repair/i
 		);
@@ -4242,7 +4244,7 @@ test.describe('Actions admin flows', () => {
 		}
 	});
 
-	test('presents WPForms Lite as ledger-only after-submission support without native entry claims', async ({
+	test('presents WPForms Lite as validation plus ledger-backed after-submission support without native entry claims', async ({
 		page
 	}) => {
 		await mockWpJson(page, {
@@ -4519,7 +4521,7 @@ test.describe('Actions admin flows', () => {
 
 		await expect(page.getByTestId('form-source-availability-alert')).toHaveCount(0);
 		await expect(page.getByTestId('form-source-limitations-alert')).toContainText(
-			'Validation blocking and realtime assistance are not supported'
+			'Realtime assistance is not supported'
 		);
 		await expect(page.getByTestId('form-source-limitations-alert')).toContainText(
 			'Elementor Form Submissions APIs are unavailable'

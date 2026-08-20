@@ -84,8 +84,8 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             'label'                => __( 'Contact Form 7', 'sentient-forms' ),
             'availability'         => $is_active ? 'available' : 'not_installed',
             'availability_message' => $is_active
-                ? __( 'Contact Form 7 is active. Sentient Forms can run after-submission actions after ledger opt-in.', 'sentient-forms' )
-                : __( 'Install and activate Contact Form 7 to configure Sentient Forms after-submission actions.', 'sentient-forms' ),
+                ? __( 'Contact Form 7 is active. Sentient Forms can run validation actions and, after Submission Ledger opt-in, after-submission actions.', 'sentient-forms' )
+                : __( 'Install and activate Contact Form 7 to configure Sentient Forms validation and after-submission actions.', 'sentient-forms' ),
             'forms_discovery'      => [
                 'supported' => $is_active,
                 'reason'    => $is_active ? null : __( 'Contact Form 7 must be active before forms can be listed.', 'sentient-forms' ),
