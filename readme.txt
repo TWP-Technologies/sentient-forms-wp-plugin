@@ -2,7 +2,7 @@
 Contributors: twptech
 Tags: forms, ai, automation, openrouter, form-automation
 Requires at least: 6.8
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 8.2
 Stable tag: 0.12.0
 License: GPLv2 or later

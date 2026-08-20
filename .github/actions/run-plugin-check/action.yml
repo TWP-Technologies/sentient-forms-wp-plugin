@@ -117,18 +117,13 @@ runs:
 
         results_path="${RUNNER_TEMP}/plugin-check-results.txt"
         echo "::group::Run Plugin Check"
-        wp-env run cli wp plugin check "${PLUGIN_SLUG}" --format=json ${exclude_files} ${exclude_dirs} --slug="${PLUGIN_SLUG}" --require=./wp-content/plugins/plugin-check/cli.php > "${results_path}"
+        # Direct OpenRouter execution is intentional and remains available on
+        # WordPress 6.8+, before the WordPress AI Client was introduced.
+        wp-env run cli wp plugin check "${PLUGIN_SLUG}" --format=json ${exclude_files} ${exclude_dirs} --ignore-codes=PluginCheck.CodeAnalysis.AIProvider.DirectIntegration --slug="${PLUGIN_SLUG}" --require=./wp-content/plugins/plugin-check/cli.php > "${results_path}"
         cat "${results_path}"
         echo "::endgroup::"
 
-        result="$(tr -d '\r' < "${results_path}")"
-        if [ "${result}" = "Success: Checks complete. No errors found." ]; then
-          echo "Plugin Check completed with no findings."
-          exit 0
-        fi
-
-        echo "::error::Plugin Check reported findings or unexpected output. Strict mode fails closed."
-        exit 1
+        php .github/actions/run-plugin-check/evaluate-results.php "${results_path}"
 
     - name: Upload Plugin Check results
       if: ${{ always() }}
