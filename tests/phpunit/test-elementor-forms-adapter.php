@@ -305,7 +305,10 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( [ 'first' => 'Ada', 'last' => 'Lovelace' ], $seen['entry']['full_name'] ?? null );
         $this->assertSame( [ 'full_name', 'email' ], $seen['execution_context']['native_validation_context']['record_field_ids'] ?? null );
         $this->assertSame(
-            [ [ 'field_id' => 'native-full-name', 'message' => 'Provide your full name.' ] ],
+            [
+                [ 'field_id' => 'native-full-name', 'message' => 'Provide your full name.' ],
+                [ 'field_id' => 'sentient_forms:validation', 'message' => 'Please review your submission.' ],
+            ],
             $handler->field_error_calls
         );
         $this->assertSame( [ 'Please review your submission.' ], $handler->form_error_calls );
@@ -502,12 +505,20 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             $handler
         );
 
-        $this->assertSame( [], $handler->field_error_calls );
-        $this->assertSame( [], $handler->errors );
+        $this->assertSame(
+            [
+                [
+                    'field_id' => 'sentient_forms:validation',
+                    'message'  => 'Review the submitted fields.',
+                ],
+            ],
+            $handler->field_error_calls
+        );
+        $this->assertSame( [ 'sentient_forms:validation' => 'Review the submitted fields.' ], $handler->errors );
         $this->assertSame( [ 'Review the submitted fields.' ], $handler->form_error_calls );
     }
 
-    public function test_validation_spam_blocks_only_with_safe_form_error(): void
+    public function test_validation_spam_blocks_with_safe_form_error_without_native_spam_mutation(): void
     {
         add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
         add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
@@ -546,13 +557,171 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             $handler
         );
 
-        $this->assertSame( [], $handler->field_error_calls );
+        $this->assertSame(
+            [
+                [
+                    'field_id' => 'sentient_forms:validation',
+                    'message'  => 'This submission could not be processed. Please review it and try again.',
+                ],
+            ],
+            $handler->field_error_calls
+        );
         $this->assertSame(
             [ 'This submission could not be processed. Please review it and try again.' ],
             $handler->form_error_calls
         );
         $this->assertStringNotContainsString( 'Private classification details', implode( ' ', $handler->form_error_calls ) );
         $this->assertSame( 0, $adapter->native_mutation_calls );
+    }
+
+    public function test_rejected_spam_submission_never_enters_the_accepted_submission_lifecycle(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id   = $this->create_elementor_form_page();
+        $form_id   = $page_id . ':formabc';
+        $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        $record    = $this->elementor_submission_record( null, [ 'id' => 'formabc', 'post_id' => $page_id ] );
+        $executions = [
+            'validation'       => 0,
+            'after_submission' => 0,
+        ];
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
+            'spam_analysis',
+            static function ( array $seen ) use ( &$executions ): array {
+                $hook = (string) ( $seen['hook'] ?? '' );
+                if ( array_key_exists( $hook, $executions ) )
+                {
+                    ++$executions[ $hook ];
+                }
+
+                return [
+                    'result_data' => [
+                        'structured_output_valid' => true,
+                        'structured_output'       => [
+                            'classification' => 'spam',
+                            'confidence'     => 0.99,
+                            'justification'  => 'Private classification details.',
+                            'indicators'     => [],
+                        ],
+                    ],
+                ];
+            }
+        );
+        $adapter = new Sentient_Forms_Test_Elementor_Validation_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
+
+        $custom_actions    = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $validation_action = $custom_actions->get_by_code( $action->get_id() );
+        $this->assertIsArray( $validation_action );
+
+        $synchronous_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'elementor_pro_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => (int) $validation_action['id'],
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $synchronous_mapping_id );
+
+        $async_action_id = $custom_actions->create(
+            [
+                'code'                 => 'elementor_rejected_async_sentinel',
+                'display_name'         => 'Elementor rejected async sentinel',
+                'definition_json'      => [ 'prompt' => 'This Action must not run for a rejected submission.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter', 'model' => 'openrouter/auto' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $async_action_id );
+        $async_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'elementor_pro_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $async_action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $async_mapping_id );
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled(
+            'elementor_pro_forms',
+            $form_id,
+            true,
+            self::factory()->user->create( [ 'role' => 'administrator' ] )
+        );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        $adapter->init();
+        do_action( 'elementor_pro/forms/validation', $record, $handler );
+
+        // Elementor Pro's Form_Record::validate() admits new_record only when this collection is empty.
+        if ( empty( $handler->errors ) )
+        {
+            do_action( 'elementor_pro/forms/new_record', $record, $handler );
+        }
+
+        $ledger_rows = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )
+            ->list_for_form( 'elementor_pro_forms', $form_id );
+        $after_submission_events = array_values(
+            array_filter(
+                ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->list_recent(),
+                static fn( array $event ): bool => in_array(
+                    (int) ( $event['mapping_id'] ?? 0 ),
+                    [ $synchronous_mapping_id, $async_mapping_id ],
+                    true
+                )
+            )
+        );
+
+        $this->assertSame(
+            [
+                'safe_form_errors'       => [ 'This submission could not be processed. Please review it and try again.' ],
+                'elementor_rejected'      => true,
+                'ledger_rows'             => 0,
+                'after_submission_runs'   => 0,
+                'scheduled_jobs'          => 0,
+                'validation_executions'   => 1,
+                'accepted_executions'     => 0,
+            ],
+            [
+                'safe_form_errors'       => $handler->form_error_calls,
+                'elementor_rejected'      => ! empty( $handler->errors ),
+                'ledger_rows'             => count( $ledger_rows ),
+                'after_submission_runs'   => count( $after_submission_events ),
+                'scheduled_jobs'          => count( $scheduled_jobs ),
+                'validation_executions'   => $executions['validation'],
+                'accepted_executions'     => $executions['after_submission'],
+            ]
+        );
     }
 
     public function test_validation_provider_and_unstructured_failures_leave_ajax_handler_errors_unchanged(): void
@@ -2123,6 +2292,11 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         $stored = ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )
             ->get_by_submission_uuid( (string) $submission_uuid );
+        $this->assertCount(
+            1,
+            ( new Sentient_Forms_Submission_Ledger_Repository( $wpdb ) )
+                ->list_for_form( 'elementor_pro_forms', $form_id )
+        );
         $this->assertSame( 'Ada Lovelace', $stored['logical_fields_json']['full_name'] ?? null );
         $this->assertSame( 'resume', $stored['file_refs_json'][0]['field_id'] ?? null );
         $this->assertArrayNotHasKey( 'captcha', $stored['logical_fields_json'] ?? [] );

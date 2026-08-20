@@ -21,6 +21,9 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private const NATIVE_VALIDATION_HOOK = 'elementor_pro/forms/validation';
 
+    /** The colon keeps this admission sentinel outside Elementor's valid field-id grammar. */
+    private const FORM_VALIDATION_ERROR_KEY = 'sentient_forms:validation';
+
     private Sentient_Forms_Plugin $plugin;
 
     private ?Sentient_Forms_Form_Source_Workflow_Runner $workflow_runner = null;
@@ -293,6 +296,7 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         foreach ( array_values( array_unique( array_filter( $form_errors ) ) ) as $message )
         {
             $handler->add_error_message( $message );
+            $handler->add_error( self::FORM_VALIDATION_ERROR_KEY, $message );
         }
 
         return $native_validation;
