@@ -21,8 +21,8 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
     private const NATIVE_VALIDATION_HOOK = 'elementor_pro/forms/validation';
 
-    /** The colon keeps this admission sentinel outside Elementor's valid field-id grammar. */
-    private const FORM_VALIDATION_ERROR_KEY = 'sentient_forms:validation';
+    /** Selector-safe base for a form error key resolved away from native field identifiers. */
+    private const FORM_VALIDATION_ERROR_KEY = 'sentient-forms-validation';
 
     private Sentient_Forms_Plugin $plugin;
 
@@ -293,10 +293,13 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             }
         }
 
+        $form_validation_error_key = $this->form_validation_error_key(
+            $this->validation_native_response_keys( $record )
+        );
         foreach ( array_values( array_unique( array_filter( $form_errors ) ) ) as $message )
         {
             $handler->add_error_message( $message );
-            $handler->add_error( self::FORM_VALIDATION_ERROR_KEY, $message );
+            $handler->add_error( $form_validation_error_key, $message );
         }
 
         return $native_validation;
@@ -1911,6 +1914,50 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
 
         $field_id = strtolower( trim( (string) $field_id ) );
         return 1 === preg_match( '/^[a-z0-9_-]+$/', $field_id ) ? $field_id : '';
+    }
+
+    /**
+     * Resolve a selector-safe form error key that cannot overwrite a native field error.
+     *
+     * @param array<int, string> $native_response_keys Elementor response keys reserved by native fields.
+     */
+    private function form_validation_error_key( array $native_response_keys ): string
+    {
+        $used_keys = array_fill_keys( $native_response_keys, true );
+        $key       = self::FORM_VALIDATION_ERROR_KEY;
+        $suffix    = 2;
+
+        while ( isset( $used_keys[ $key ] ) )
+        {
+            $key = self::FORM_VALIDATION_ERROR_KEY . '-' . $suffix;
+            $suffix++;
+        }
+
+        return $key;
+    }
+
+    /**
+     * List native Elementor response keys without depending on logical alias resolution.
+     *
+     * @return array<int, string>
+     */
+    private function validation_native_response_keys( mixed $record ): array
+    {
+        $response_keys = [];
+        foreach ( $this->record_fields( $record ) as $field_key => $field )
+        {
+            $response_key = $this->exact_validation_field_id( $field_key );
+            if ( '' === $response_key )
+            {
+                $response_key = $this->record_field_id( $field_key, $field );
+            }
+            if ( '' !== $response_key )
+            {
+                $response_keys[ $response_key ] = true;
+            }
+        }
+
+        return array_keys( $response_keys );
     }
 
     private function record_form_setting( mixed $record, string $key ): mixed
