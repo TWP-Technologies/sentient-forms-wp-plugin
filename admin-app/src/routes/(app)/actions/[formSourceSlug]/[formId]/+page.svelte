@@ -484,6 +484,10 @@
 			messages.push(
 				`Validation blocking and realtime assistance are not supported for ${currentFormAdapterLabel} in this release.`
 			);
+		} else if (validationUnsupported) {
+			messages.push(`Validation blocking is not supported for ${currentFormAdapterLabel} in this release.`);
+		} else if (realtimeUnsupported) {
+			messages.push(`Realtime assistance is not supported for ${currentFormAdapterLabel} in this release.`);
 		}
 
 		const nativeSubmissionReason = descriptorRequirementString(

@@ -342,6 +342,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertSame( 'Contact Form 7', $descriptor['label'] );
         $this->assertFalse( $descriptor['is_active'] );
         $this->assertSame( 'not_installed', $descriptor['availability'] );
+        $this->assertStringContainsString( 'validation and after-submission actions', $descriptor['availability_message'] );
         $this->assertFalse( $descriptor['forms_discovery']['supported'] );
         $this->assertFalse( $descriptor['field_manifest']['supported'] );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
@@ -448,6 +449,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
             $this->assertInstanceOf( Sentient_Forms_Native_Validation_Effects_Adapter_Interface::class, $adapter );
             $this->assertTrue( $descriptor['is_active'] );
             $this->assertSame( 'available', $descriptor['availability'] );
+            $this->assertStringContainsString( 'validation actions', $descriptor['availability_message'] );
+            $this->assertStringContainsString( 'after-submission actions', $descriptor['availability_message'] );
             $this->assertTrue( $descriptor['forms_discovery']['supported'] );
             $this->assertNull( $descriptor['forms_discovery']['reason'] );
             $this->assertTrue( $descriptor['field_manifest']['supported'] );
@@ -647,6 +650,7 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertSame( 'WPForms', $descriptor['label'] );
         $this->assertFalse( $descriptor['is_active'] );
         $this->assertSame( 'not_installed', $descriptor['availability'] );
+        $this->assertStringContainsString( 'validation and after-submission actions', $descriptor['availability_message'] );
         $this->assertFalse( $descriptor['forms_discovery']['supported'] );
         $this->assertFalse( $descriptor['field_manifest']['supported'] );
         $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
@@ -693,6 +697,8 @@ class AdapterRegistryTest extends WP_UnitTestCase
             $this->assertSame( 'wpforms', $descriptor['slug'] );
             $this->assertTrue( $descriptor['is_active'] );
             $this->assertSame( 'available', $descriptor['availability'] );
+            $this->assertStringContainsString( 'validation actions', $descriptor['availability_message'] );
+            $this->assertStringContainsString( 'after-submission actions', $descriptor['availability_message'] );
             $this->assertTrue( $descriptor['forms_discovery']['supported'] );
             $this->assertTrue( $descriptor['field_manifest']['supported'] );
             $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );

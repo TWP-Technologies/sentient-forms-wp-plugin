@@ -6,7 +6,9 @@ from __future__ import annotations
 from fnmatch import fnmatchcase
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -14,6 +16,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_WORKFLOW = ROOT / ".github" / "workflows" / "wporg-package.yml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release-please.yml"
+PLUGIN_CHECK_EVALUATOR = ROOT / ".github" / "actions" / "run-plugin-check" / "evaluate-results.php"
 
 
 def step_by_name(job: dict[str, object], name: str) -> dict[str, object]:
@@ -110,6 +113,31 @@ def verify_locked_generated_build(job: dict[str, object], package_step_name: str
     return errors
 
 
+def verify_plugin_check_evaluator() -> list[str]:
+    errors: list[str] = []
+    cases = {
+        "empty": (b"", 0),
+        "exact-success": (b"Success: Checks complete. No errors found.\n", 0),
+        "unexpected-finding": (b'{"code":"unexpected"}\n', 1),
+    }
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        for name, (contents, expected_returncode) in cases.items():
+            results_path = Path(temporary_directory) / f"{name}.txt"
+            results_path.write_bytes(contents)
+            completed = subprocess.run(
+                ["php", str(PLUGIN_CHECK_EVALUATOR), str(results_path)],
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
+            )
+            if completed.returncode != expected_returncode:
+                errors.append(
+                    f"Plugin Check evaluator case {name} returned {completed.returncode}, "
+                    f"expected {expected_returncode}"
+                )
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     package = yaml.safe_load(PACKAGE_WORKFLOW.read_text(encoding="utf-8"))
@@ -158,6 +186,13 @@ def main() -> int:
             errors.append(
                 f"Plugin Check latest-version resolver misses fail-closed fragment: {required_fragment}"
             )
+    for required_fragment in {
+        "--ignore-codes=PluginCheck.CodeAnalysis.AIProvider.DirectIntegration",
+        'php .github/actions/run-plugin-check/evaluate-results.php "${results_path}"',
+    }:
+        if required_fragment not in plugin_check_action:
+            errors.append(f"Plugin Check strict evaluator wiring misses: {required_fragment}")
+    errors.extend(verify_plugin_check_evaluator())
 
     try:
         package_build = step_by_name(package_job, "Build two independent WordPress.org packages")

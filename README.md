@@ -2,7 +2,7 @@
 
 Sentient Forms is a local-first WordPress plugin for AI-assisted form automation. The current public release supports Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms, with builder-specific capability boundaries documented in `readme.txt`.
 
-The plugin stores site-owned configuration in WordPress: provider settings, external-service consent records, action templates, custom actions, form mappings, execution events, selected results, migration runs, and model cache data. Sentient Forms Managed Execution remains optional for managed account setup, billing, metering, model execution, support diagnostics, and operational controls. Site owners can also run supported workflows directly through their own OpenRouter account.
+The plugin stores site-owned configuration in WordPress: provider settings, external-service consent records, Action templates, custom Actions, form mappings, Execution Events, Submission Ledger records, selected results, migration runs, and model cache data. Webmasters can create and manage their own Actions, including starting from a built-in Action. Sentient Forms Managed Execution remains optional for managed account setup, billing, metering, model execution, support diagnostics, and operational controls. Site owners can also run supported workflows directly through their own OpenRouter account.
 
 ## WordPress.org Submission Surface
 
@@ -29,8 +29,10 @@ Do not submit an older public release ZIP after security or compliance fixes lan
 - Consent-gated provider setup, managed-service setup, telemetry, Site Context generation, and realtime assistant flows.
 - Local workspace REST endpoints for templates, custom actions, mappings, execution events, support bundles, and mapping test runs.
 - Local prompt rendering, structured JSON result extraction, idempotent execution-event recording, Gravity Forms-style result effects, ledger-backed review surfaces for supported non-Gravity builders, and post-execution notes/email/hooks/webhooks where the adapter supports them.
-- Realtime Clarification Assistant suggestions for mapped Gravity Forms fields when an administrator enables the action and accepts the relevant external-service disclosure. Contact Form 7, WPForms, and Elementor Pro Forms support after-submission actions through the Sentient Forms Submission Ledger; Elementor Pro Forms requires Elementor Pro Forms APIs. Validation blocking, realtime suggestions, native spam status, native submission-entry parity, webhook suppression, and notification suppression are not supported for those builders in this release.
-- Privacy export/erase hooks, scheduled execution-event retention cleanup, configurable uninstall behavior, and redacted support bundles.
+- Spam Detection and Content Quality Validation during validation on Gravity Forms, Contact Form 7, WPForms, and Elementor Pro Forms. Contact Form 7, WPForms, and Elementor Pro Forms support validation plus ledger-backed after-submission workflows; Elementor Pro Forms requires Elementor Pro Forms APIs.
+- Realtime Clarification Assistant suggestions for mapped Gravity Forms fields when an administrator enables the Action and accepts the relevant external-service disclosure. Realtime assistance is not available for Contact Form 7, WPForms, or Elementor Pro Forms. Native notes, spam status, notification controls, webhook controls, and entry links remain descriptor-specific rather than universal.
+- Authenticated Spam Guidance that sends selected historical submission excerpts through OpenRouter direct execution or Sentient Forms Managed Execution to improve Spam Detection guidance and save a generated rationale. An active subscription is required; eligible managed credits are used first, with paid Direct OpenRouter fallback when configured and eligible.
+- Privacy export/erase hooks, separate retention and cleanup controls for Execution Events and Submission Ledger records, configurable uninstall behavior, and redacted support bundles.
 - WordPress.org source/package scanners, release-version checks, readme validation, license audit, and a repeatable clean package-directory builder.
 
 ## External Services and Consent
@@ -41,15 +43,15 @@ Current external-service categories disclosed in `readme.txt`:
 
 - OpenRouter direct execution.
 - Sentient Forms Managed Execution.
-- Optional Sentient Forms telemetry.
 - Administrator-configured webhooks.
 - Realtime Clarification Assistant.
+- Spam Guidance using selected historical submission excerpts to produce a generated rationale.
 
-No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
+No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. Diagnostic consent records remain local metadata; the plugin does not remotely queue or deliver those diagnostic events.
 
 ## Development Workflow
 
-1. **WordPress stack**: Boot the local Docker compose environment or point the plugin at an existing WordPress instance running one of the supported form builders. Activate the plugin with `wp plugin activate sentient-forms`. Gravity Forms has the deepest native workflow support; Contact Form 7, WPForms, and Elementor Pro Forms require the Sentient Forms Submission Ledger for after-submission review workflows. Elementor Pro Forms also requires Elementor Pro Forms APIs.
+1. **WordPress stack**: Boot the local Docker compose environment or point the plugin at an existing WordPress instance running one of the supported form builders. Activate the plugin with `wp plugin activate sentient-forms`. Gravity Forms has the deepest native workflow support. Contact Form 7, WPForms, and Elementor Pro Forms support validation, require the Sentient Forms Submission Ledger for after-submission review workflows, and do not support realtime assistance. Elementor Pro Forms also requires Elementor Pro Forms APIs.
 2. **Admin SPA**: From `admin-app/`, run `bun install` once, then use:
    - `bun run dev` for local SPA development.
    - `bun run build:wp` before committing UI changes; this copies hashed assets into `assets/dist/`.
@@ -89,7 +91,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 
 ## Release Readiness
 
-Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.9.x copy, that means Gravity Forms native workflows plus Contact Form 7, WPForms, and Elementor Pro Forms after-submission ledger workflows, without implying Gravity Forms-style parity for builders that do not support it.
+Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported workflows in that release. For 0.12.0 copy, that means validation proof on all four Form Sources, Gravity Forms realtime proof, and after-submission native or Submission Ledger proof without implying Gravity Forms-style native parity for builders that do not support it.
 
 For WordPress.org submission, prefer the latest validated GitHub release ZIP and manifest over an ad hoc local ZIP. The public source tag named in `readme.txt` and `assets/dist/SOURCE.md` must exist before upload. If a local rebuild is necessary, run the same package checks against the rebuilt package and preserve the package path/hash in release evidence.
 

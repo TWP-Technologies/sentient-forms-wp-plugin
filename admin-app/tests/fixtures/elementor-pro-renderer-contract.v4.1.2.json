@@ -1,0 +1,6 @@
+{
+  "elementor_pro_version": "4.1.2",
+  "asset_path": "/wp-content/plugins/elementor-pro/assets/js/form.6745bc3535708a0363a0.bundle.js",
+  "asset_sha256": "49c702a28da7cbe4a6bf73130a2ef7e02edc510651401c9c25379bc314b5effa",
+  "error_selector_fragment": "$form.find('#form-field-' + key)"
+}

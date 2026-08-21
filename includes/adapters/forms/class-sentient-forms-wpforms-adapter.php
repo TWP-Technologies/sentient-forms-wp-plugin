@@ -108,8 +108,8 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             'label'                => __( 'WPForms', 'sentient-forms' ),
             'availability'         => $is_active ? 'available' : 'not_installed',
             'availability_message' => $is_active
-                ? __( 'WPForms is active. Sentient Forms can run after-submission actions after ledger opt-in.', 'sentient-forms' )
-                : __( 'Install and activate WPForms to configure Sentient Forms after-submission actions.', 'sentient-forms' ),
+                ? __( 'WPForms is active. Sentient Forms can run validation actions and, after Submission Ledger opt-in, after-submission actions.', 'sentient-forms' )
+                : __( 'Install and activate WPForms to configure Sentient Forms validation and after-submission actions.', 'sentient-forms' ),
             'forms_discovery'      => [
                 'supported' => $is_active,
                 'reason'    => $is_active ? null : __( 'WPForms must be active before forms can be listed.', 'sentient-forms' ),

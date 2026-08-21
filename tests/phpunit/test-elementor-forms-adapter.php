@@ -307,7 +307,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame(
             [
                 [ 'field_id' => 'native-full-name', 'message' => 'Provide your full name.' ],
-                [ 'field_id' => 'sentient_forms:validation', 'message' => 'Please review your submission.' ],
+                [ 'field_id' => 'sentient-forms-validation', 'message' => 'Please review your submission.' ],
             ],
             $handler->field_error_calls
         );
@@ -508,13 +508,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame(
             [
                 [
-                    'field_id' => 'sentient_forms:validation',
+                    'field_id' => 'sentient-forms-validation',
                     'message'  => 'Review the submitted fields.',
                 ],
             ],
             $handler->field_error_calls
         );
-        $this->assertSame( [ 'sentient_forms:validation' => 'Review the submitted fields.' ], $handler->errors );
+        $this->assertSame( [ 'sentient-forms-validation' => 'Review the submitted fields.' ], $handler->errors );
         $this->assertSame( [ 'Review the submitted fields.' ], $handler->form_error_calls );
     }
 
@@ -560,7 +560,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame(
             [
                 [
-                    'field_id' => 'sentient_forms:validation',
+                    'field_id' => 'sentient-forms-validation',
                     'message'  => 'This submission could not be processed. Please review it and try again.',
                 ],
             ],
@@ -572,6 +572,154 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         );
         $this->assertStringNotContainsString( 'Private classification details', implode( ' ', $handler->form_error_calls ) );
         $this->assertSame( 0, $adapter->native_mutation_calls );
+    }
+
+    public function test_validation_form_error_key_does_not_overwrite_a_matching_native_field_error(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id   = $this->create_elementor_form_page(
+            [
+                [
+                    'custom_id'   => 'sentient-forms-validation',
+                    'field_label' => 'Legacy programmatic field',
+                    'field_type'  => 'text',
+                ],
+            ]
+        );
+        $form_id   = $page_id . ':formabc';
+        $handler   = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
+            'imported_content_validation_v1_elementor_form_error_collision',
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'is_valid' => false,
+                        'message'  => 'Review the submitted fields.',
+                        'fields'   => [
+                            [
+                                'field_id' => 'sentient-forms-validation',
+                                'is_valid' => false,
+                                'message'  => 'Correct this field.',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
+        $adapter->init();
+
+        do_action(
+            'elementor_pro/forms/validation',
+            $this->elementor_submission_record(
+                [
+                    'sentient-forms-validation' => [
+                        'id'    => 'sentient-forms-validation',
+                        'title' => 'Legacy programmatic field',
+                        'type'  => 'text',
+                        'value' => 'Invalid',
+                    ],
+                ],
+                [ 'id' => 'formabc', 'form_post_id' => $page_id ]
+            ),
+            $handler
+        );
+
+        $this->assertSame(
+            [
+                [ 'field_id' => 'sentient-forms-validation', 'message' => 'Correct this field.' ],
+                [ 'field_id' => 'sentient-forms-validation-2', 'message' => 'Review the submitted fields.' ],
+            ],
+            $handler->field_error_calls
+        );
+        $this->assertSame(
+            [
+                'sentient-forms-validation'   => 'Correct this field.',
+                'sentient-forms-validation-2' => 'Review the submitted fields.',
+            ],
+            $handler->errors
+        );
+    }
+
+    public function test_validation_form_error_key_reserves_native_keys_when_field_aliases_are_ambiguous(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = $this->create_elementor_form_page(
+            [
+                [
+                    'custom_id'   => 'other',
+                    'field_label' => 'First cross alias',
+                    'field_type'  => 'text',
+                ],
+                [
+                    'custom_id'   => 'sentient-forms-validation',
+                    'field_label' => 'Second cross alias',
+                    'field_type'  => 'text',
+                ],
+            ]
+        );
+        $form_id = $page_id . ':formabc';
+        $handler = new Sentient_Forms_Test_Elementor_Ajax_Handler();
+        $handler->add_error( 'sentient-forms-validation', 'Existing Elementor field error.' );
+        $action = new Sentient_Forms_Test_Elementor_Validation_Action(
+            'imported_content_validation_v1_elementor_ambiguous_alias_collision',
+            static fn(): array => [
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'is_valid' => false,
+                        'message'  => 'Review the submitted fields.',
+                        'fields'   => [],
+                    ],
+                ],
+            ]
+        );
+        $adapter = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $this->configure_validation_mapping( $adapter, $form_id, $action );
+        $adapter->init();
+
+        do_action(
+            'elementor_pro/forms/validation',
+            $this->elementor_submission_record(
+                [
+                    'sentient-forms-validation' => [
+                        'id'    => 'other',
+                        'title' => 'First cross alias',
+                        'type'  => 'text',
+                        'value' => 'First',
+                    ],
+                    'other' => [
+                        'id'    => 'sentient-forms-validation',
+                        'title' => 'Second cross alias',
+                        'type'  => 'text',
+                        'value' => 'Second',
+                    ],
+                ],
+                [ 'id' => 'formabc', 'form_post_id' => $page_id ]
+            ),
+            $handler
+        );
+
+        $this->assertSame(
+            [
+                [ 'field_id' => 'sentient-forms-validation', 'message' => 'Existing Elementor field error.' ],
+                [ 'field_id' => 'sentient-forms-validation-2', 'message' => 'Review the submitted fields.' ],
+            ],
+            $handler->field_error_calls
+        );
+        $this->assertSame(
+            [
+                'sentient-forms-validation'   => 'Existing Elementor field error.',
+                'sentient-forms-validation-2' => 'Review the submitted fields.',
+            ],
+            $handler->errors
+        );
     }
 
     public function test_rejected_spam_submission_never_enters_the_accepted_submission_lifecycle(): void
