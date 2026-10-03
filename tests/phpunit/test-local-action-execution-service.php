@@ -387,6 +387,112 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'running', $events->get_by_request_id( 'failed-terminal-event-lock-failure' )['status'] ?? null );
     }
 
+    public function test_local_mapping_execution_keeps_admitted_spam_failure_policy_after_mapping_edits(): void
+    {
+        $seen_contexts = [];
+        $capture       = static function (
+            string $execution_request_id,
+            string $action_code,
+            array $form,
+            array $entry,
+            array $context
+        ) use ( &$seen_contexts ): string {
+            $case = isset( $context['snapshot_test_case'] ) && is_scalar( $context['snapshot_test_case'] )
+                ? (string) $context['snapshot_test_case']
+                : '';
+            if ( '' !== $case )
+            {
+                $seen_contexts[ $case ][] = $context;
+            }
+
+            return $execution_request_id;
+        };
+        add_filter( 'sentient_forms_execution_request_id', $capture, 10, 5 );
+
+        try
+        {
+            $cases = [
+                'default_hold_after_allow_edit' => [
+                    'admitted_policy' => 'hold',
+                    'live_policy'     => 'allow_delivery',
+                ],
+                'allow_after_hold_edit' => [
+                    'admitted_policy' => 'allow_delivery',
+                    'live_policy'     => 'hold',
+                ],
+                'legacy_without_capture' => [
+                    'admitted_policy' => null,
+                    'live_policy'     => 'allow_delivery',
+                ],
+            ];
+
+            foreach ( $cases as $case => $policy )
+            {
+                $fixture = $this->create_local_openrouter_mapping(
+                    true,
+                    null,
+                    [],
+                    [ 'code' => 'contact_spam_triage_' . $case ]
+                );
+                $updated = $this->mappings->update(
+                    $fixture['mapping_id'],
+                    [
+                        'settings_json' => [
+                            'spam_failure_delivery_policy' => $policy['live_policy'],
+                        ],
+                    ]
+                );
+                $this->assertIsArray( $updated );
+
+                $context = [
+                    'hook'               => 'gform_after_submission',
+                    'job_type'           => 'local_mapping',
+                    'mapping_id'         => 'local_first_' . $fixture['mapping_id'],
+                    'local_mapping_id'   => 'local_first_' . $fixture['mapping_id'],
+                    'local_form_mapping_id' => $fixture['mapping_id'],
+                    'central_action_id'  => 'spam_detection_v1',
+                    'snapshot_test_case' => $case,
+                ];
+                if ( null !== $policy['admitted_policy'] )
+                {
+                    $context['spam_failure_delivery_policy'] = $policy['admitted_policy'];
+                    $context['settings'] = [
+                        'spam_failure_delivery_policy' => $policy['admitted_policy'],
+                    ];
+                }
+
+                $result = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client() )->execute_mapping(
+                    $fixture['mapping_id'],
+                    [ 'id' => 7, 'title' => 'Contact Form' ],
+                    [ 'id' => 99 + $fixture['mapping_id'], '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+                    $context
+                );
+                $this->assertIsArray( $result );
+            }
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_execution_request_id', $capture, 10 );
+        }
+
+        foreach ( [ 'default_hold_after_allow_edit' => 'hold', 'allow_after_hold_edit' => 'allow_delivery' ] as $case => $expected_policy )
+        {
+            $this->assertNotEmpty( $seen_contexts[ $case ] ?? [] );
+            foreach ( $seen_contexts[ $case ] as $context )
+            {
+                $this->assertSame( $expected_policy, $context['spam_failure_delivery_policy'] ?? null );
+                $this->assertSame( $expected_policy, $context['settings']['spam_failure_delivery_policy'] ?? null );
+            }
+        }
+
+        $this->assertNotEmpty( $seen_contexts['legacy_without_capture'] ?? [] );
+        foreach ( $seen_contexts['legacy_without_capture'] as $context )
+        {
+            $this->assertArrayNotHasKey( 'spam_failure_delivery_policy', $context );
+            $this->assertArrayNotHasKey( 'spam_failure_delivery_policy', $context['settings'] ?? [] );
+        }
+    }
+
     public function test_selected_input_mapping_projects_direct_provider_prompt_and_records_a_safe_manifest(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

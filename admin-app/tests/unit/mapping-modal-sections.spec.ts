@@ -9,8 +9,8 @@ import {
 describe('mapping modal section expansion helpers', () => {
 	it('creates expected defaults for spam mappings', () => {
 		expect(createInitialMappingModalSectionExpansion(true)).toEqual({
-			core: true,
-			guidance: true,
+			core: false,
+			guidance: false,
 			spam_advanced: false,
 			input_mapping: false,
 			attachment_mapping: false,
@@ -71,7 +71,7 @@ describe('mapping modal section expansion helpers', () => {
 		const toggled = toggleMappingModalSectionExpansion(initial, 'conditions');
 
 		expect(toggled.conditions).toBe(true);
-		expect(toggled.core).toBe(true);
-		expect(toggled.guidance).toBe(true);
+		expect(toggled.core).toBe(false);
+		expect(toggled.guidance).toBe(false);
 	});
 });

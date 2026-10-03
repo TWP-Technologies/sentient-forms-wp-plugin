@@ -626,7 +626,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
             : [];
 
-        $this->apply_validation_local_execution_results_to_entry( $execution_request_ids, $entry, $form );
+        $this->apply_validation_local_execution_results_to_entry( $execution_request_ids, $entry, $form, $validation_result );
 
         $cache_key = $this->accepted_submission_cache_key( $entry, $form );
         if ( ! isset( $this->accepted_submission_outcomes[ $cache_key ] ) )
@@ -980,7 +980,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      *
      * @return void
      */
-    private function apply_validation_local_execution_results_to_entry( array $execution_request_ids, array $entry, array $form ): void
+    private function apply_validation_local_execution_results_to_entry(
+        array $execution_request_ids,
+        array $entry,
+        array $form,
+        ?Sentient_Forms_Validation_Run_Result $validation_result = null
+    ): void
     {
         $entry_id = absint( $entry['id'] ?? 0 );
         $form_id  = absint( $form['id'] ?? 0 );
@@ -1106,6 +1111,36 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 );
                 $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
                 $runtime_mapping = $this->normalize_local_first_form_mapping( $mapping ) ?? $mapping;
+                $admitted_mapping = null;
+                if ( $validation_result instanceof Sentient_Forms_Validation_Run_Result )
+                {
+                    foreach ( $validation_result->get_resolved_mappings() as $candidate_mapping )
+                    {
+                        if (
+                            is_array( $candidate_mapping )
+                            && absint( $candidate_mapping['local_form_mapping_id'] ?? 0 ) === $mapping_id
+                        )
+                        {
+                            $admitted_mapping = $candidate_mapping;
+                            break;
+                        }
+                    }
+                }
+                $admitted_settings = is_array( $admitted_mapping ) && is_array( $admitted_mapping['settings'] ?? null )
+                    ? $admitted_mapping['settings']
+                    : [];
+                if (
+                    is_array( $admitted_mapping )
+                    && (
+                        array_key_exists( 'spam_failure_delivery_policy', $admitted_mapping )
+                        || array_key_exists( 'spam_failure_delivery_policy', $admitted_settings )
+                    )
+                )
+                {
+                    $runtime_mapping['spam_failure_delivery_policy'] = $admitted_mapping['spam_failure_delivery_policy']
+                        ?? $admitted_settings['spam_failure_delivery_policy'];
+                    $runtime_mapping['job_type']                     = 'local_mapping';
+                }
                 $this->record_failed_spam_delivery_state( $entry_id, $runtime_mapping, $form_id );
                 $events->record( $event );
             }
@@ -1607,6 +1642,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             : '';
 
         if ( ! $this->local_spam_effect_enabled( $mapping ) && ! $this->is_spam_action_id( $action_id ) )
+        {
+            return;
+        }
+
+        if (
+            $this->has_captured_spam_failure_delivery_policy( $mapping )
+            && ! $this->should_hold_deferred_delivery_for_captured_spam_failure( $mapping )
+        )
         {
             return;
         }
@@ -6992,8 +7035,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $this->resolve_deferred_delivery_after_async_completion(
             $context,
-            fn (): bool => ! $is_local_mapping_error && $this->should_suppress_notifications_on_spam_for_context( $context ),
-            fn (): bool => ! $is_local_mapping_error && $this->should_suppress_webhooks_on_spam_for_context( $context ),
+            fn (): bool => $is_local_mapping_error
+                ? $this->should_hold_deferred_delivery_for_captured_spam_failure( $context )
+                : $this->should_suppress_notifications_on_spam_for_context( $context ),
+            fn (): bool => $is_local_mapping_error
+                ? $this->should_hold_deferred_delivery_for_captured_spam_failure( $context )
+                : $this->should_suppress_webhooks_on_spam_for_context( $context ),
         );
     }
 
@@ -7523,6 +7570,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        if (
+            $this->has_captured_spam_failure_delivery_policy( $context )
+            && ! in_array( $current_mapping_id, $pending_mapping_ids, true )
+        )
+        {
+            return;
+        }
+
         if ( $should_suppress )
         {
             $this->update_entry_meta(
@@ -7581,6 +7636,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        if (
+            $this->has_captured_spam_failure_delivery_policy( $context )
+            && ! in_array( $current_mapping_id, $pending_mapping_ids, true )
+        )
+        {
+            return;
+        }
+
         if ( $should_suppress )
         {
             $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS );
@@ -7623,10 +7686,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
+        if ( $this->has_captured_spam_failure_delivery_policy( $context ) && ! $this->extract_structured_output_valid( $result ) )
+        {
+            return $this->should_hold_deferred_delivery_for_captured_spam_failure( $context );
+        }
+
         $classification = $this->extract_spam_classification_for_context( $context, $result );
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
-            return false;
+            return $this->should_hold_deferred_delivery_for_unusable_captured_spam_result( $context, $result );
         }
 
         $confidence = $this->extract_spam_confidence_for_context( $context, $result );
@@ -7653,16 +7721,69 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
+        if ( $this->has_captured_spam_failure_delivery_policy( $context ) && ! $this->extract_structured_output_valid( $result ) )
+        {
+            return $this->should_hold_deferred_delivery_for_captured_spam_failure( $context );
+        }
+
         $classification = $this->extract_spam_classification_for_context( $context, $result );
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
-            return false;
+            return $this->should_hold_deferred_delivery_for_unusable_captured_spam_result( $context, $result );
         }
 
         $confidence = $this->extract_spam_confidence_for_context( $context, $result );
         $threshold  = $this->get_spam_confidence_threshold_for_context( $context );
 
         return ( $confidence ?? 1.0 ) >= $threshold;
+    }
+
+    /**
+     * A captured policy exists only on checks admitted after this preference was introduced.
+     *
+     * @param array<string, mixed> $context
+     */
+    private function has_captured_spam_failure_delivery_policy( array $context ): bool
+    {
+        return $this->is_local_mapping_completion_context( $context )
+            && array_key_exists( 'spam_failure_delivery_policy', $context );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function should_hold_deferred_delivery_for_captured_spam_failure( array $context ): bool
+    {
+        if ( ! $this->has_captured_spam_failure_delivery_policy( $context ) )
+        {
+            return false;
+        }
+
+        return ! is_scalar( $context['spam_failure_delivery_policy'] )
+            || 'allow_delivery' !== sanitize_key( (string) $context['spam_failure_delivery_policy'] );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $result
+     */
+    private function should_hold_deferred_delivery_for_unusable_captured_spam_result( array $context, array $result ): bool
+    {
+        if ( ! $this->should_hold_deferred_delivery_for_captured_spam_failure( $context ) )
+        {
+            return false;
+        }
+
+        if ( ! $this->extract_structured_output_valid( $result ) )
+        {
+            return true;
+        }
+
+        return ! in_array(
+            $this->extract_spam_classification_for_context( $context, $result ),
+            [ 'ham', 'legitimate', 'spam', 'likely_spam' ],
+            true
+        );
     }
 
     /**

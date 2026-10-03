@@ -20,6 +20,7 @@ const baseConfig: SentientFormsConfig = {
 	siteUrl: previewOrigin,
 	localSiteIdentifier: 'local-dev',
 	formSources: defaultFormSources,
+	currentUser: { id: 1, canManage: true },
 	license: {
 		status: 'inactive',
 		licenseKeyMasked: '',

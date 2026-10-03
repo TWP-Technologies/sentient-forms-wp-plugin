@@ -1432,6 +1432,148 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->truncate_local_first_runtime_tables();
     }
 
+    public function test_gravity_forms_accepted_spam_mapping_captures_default_failure_delivery_policy(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id = 781;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => true ]
+        );
+        $scheduled_jobs = [];
+        $capture = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $capture, 10, 5 );
+
+        try
+        {
+            $this->adapter->handle_accepted_submission(
+                [ 'id' => 1703, 'form_id' => $form_id, '1' => 'A message pending classification.' ],
+                [ 'id' => $form_id, 'title' => 'Spam policy capture', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $capture, 10 );
+        }
+
+        $this->assertCount( 1, $scheduled_jobs );
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( $fixture['mapping_id'], $payload['local_mapping_id'] ?? null );
+        $this->assertSame( 'hold', $payload['context']['spam_failure_delivery_policy'] ?? null );
+        $this->assertSame( 'hold', $payload['context']['settings']['spam_failure_delivery_policy'] ?? null );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_gravity_forms_accepted_spam_mapping_captures_explicit_allow_failure_delivery_policy(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id = 783;
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => true, 'spam_failure_delivery_policy' => 'allow_delivery' ]
+        );
+        $scheduled_jobs = [];
+        $capture = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $capture, 10, 5 );
+
+        try
+        {
+            $this->adapter->handle_accepted_submission(
+                [ 'id' => 1705, 'form_id' => $form_id, '1' => 'A message with delivery allowed.' ],
+                [ 'id' => $form_id, 'title' => 'Allow spam policy capture', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $capture, 10 );
+        }
+
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( 'allow_delivery', $payload['context']['spam_failure_delivery_policy'] ?? null );
+        $this->assertSame( 'allow_delivery', $payload['context']['settings']['spam_failure_delivery_policy'] ?? null );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_admitted_spam_mapping_keeps_captured_default_hold_after_mapping_edit(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id = 782;
+        $entry_id = 1704;
+        $fixture = $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_detection_v1',
+            'after_submission',
+            [ 'async' => true ]
+        );
+        $scheduled_jobs = [];
+        $capture = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $capture, 10, 5 );
+
+        try
+        {
+            $this->adapter->handle_accepted_submission(
+                [ 'id' => $entry_id, 'form_id' => $form_id, '1' => 'A message admitted before the edit.' ],
+                [ 'id' => $form_id, 'title' => 'Frozen spam policy', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $capture, 10 );
+        }
+
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( 'hold', $payload['context']['spam_failure_delivery_policy'] ?? null );
+
+        global $wpdb;
+        $updated = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->update(
+            $fixture['mapping_id'],
+            [ 'settings_json' => [ 'async' => true, 'spam_failure_delivery_policy' => 'allow_delivery' ] ]
+        );
+        $this->assertNotWPError( $updated );
+
+        $mapping_id = (string) ( $payload['context']['action_id'] ?? '' );
+        $delivery_adapter = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+        $delivery_adapter->finalize_async_error(
+            $payload['context'],
+            new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+        );
+
+        $this->assertSame( [], $delivery_adapter->dispatched_notifications );
+        $this->assertSame( [], $delivery_adapter->dispatched_webhooks );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
     public function test_gravity_forms_accepted_execution_continues_when_optional_ledger_capture_fails(): void
     {
         global $wpdb;
@@ -2662,6 +2804,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             [ 'id' => 1712, 'form_id' => $form_id, 'status' => 'active' ],
             [ 'id' => $form_id, 'title' => 'Failed local execution', 'fields' => [] ]
         );
+
+        $this->assertSame( 'hold', $local_execution->calls[0]['context']['spam_failure_delivery_policy'] ?? null );
+        $this->assertSame( 'hold', $local_execution->calls[0]['context']['settings']['spam_failure_delivery_policy'] ?? null );
 
         global $wpdb;
         $event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
@@ -4894,6 +5039,229 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( [ 'feed_crm' ], $adapter->dispatched_webhooks[0]['feed_ids'] ?? [] );
         $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
         $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
+    public function test_finalize_async_error_holds_captured_hold_policy_and_releases_captured_allow_policy(): void
+    {
+        $form_id    = 52;
+        $entry_id   = 709;
+        $mapping_id = 'local_first_52';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+        $hold       = $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id );
+        $hold['spam_failure_delivery_policy'] = 'hold';
+
+        $adapter->finalize_async_error(
+            $hold,
+            new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+        );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+
+        $this->seed_deferred_notification_state( $entry_id, $mapping_id );
+        $this->seed_deferred_webhook_state( $entry_id, $mapping_id );
+
+        $allow = $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id );
+        $allow['spam_failure_delivery_policy'] = 'allow_delivery';
+        $adapter->finalize_async_error(
+            $allow,
+            new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_notifications );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+    }
+
+    public function test_finalize_async_success_holds_only_unusable_captured_spam_result(): void
+    {
+        $form_id    = 53;
+        $entry_id   = 710;
+        $mapping_id = 'local_first_53';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+        $hold       = $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id );
+        $hold['spam_failure_delivery_policy'] = 'hold';
+
+        $adapter->finalize_async_success(
+            $hold,
+            [
+                'result' => [
+                    'structured_output_valid' => false,
+                    'structured'              => [],
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+
+        $this->seed_deferred_notification_state( $entry_id, $mapping_id );
+        $this->seed_deferred_webhook_state( $entry_id, $mapping_id );
+
+        $adapter->finalize_async_success(
+            $hold,
+            [
+                'result' => [
+                    'structured_output_valid' => true,
+                    'verdict'                 => [
+                        'kind'  => 'ham',
+                        'score' => 0.99,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_notifications );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+
+        $this->seed_deferred_notification_state( $entry_id, $mapping_id );
+        $this->seed_deferred_webhook_state( $entry_id, $mapping_id );
+        $allow = $hold;
+        $allow['spam_failure_delivery_policy'] = 'allow_delivery';
+
+        $adapter->finalize_async_success(
+            $allow,
+            [
+                'result' => [
+                    'structured_output_valid' => false,
+                    'verdict'                 => [
+                        'kind'  => 'spam',
+                        'score' => 0.99,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 2, $adapter->dispatched_notifications );
+        $this->assertCount( 2, $adapter->dispatched_webhooks );
+    }
+
+    public function test_finalize_async_success_replays_captured_hold_for_trusted_legitimate_spam_result(): void
+    {
+        $form_id    = 56;
+        $entry_id   = 713;
+        $mapping_id = 'local_first_legitimate';
+        $adapter    = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $mapping_id );
+        $context    = $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id );
+        $context['spam_failure_delivery_policy'] = 'hold';
+
+        $adapter->finalize_async_success(
+            $context,
+            [
+                'result' => [
+                    'structured_output_valid' => true,
+                    'verdict'                 => [
+                        'kind'  => 'legitimate',
+                        'score' => 0.99,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 1, $adapter->dispatched_notifications );
+        $this->assertCount( 1, $adapter->dispatched_webhooks );
+    }
+
+    public function test_mixed_failure_policies_hold_each_delivery_channel_in_both_completion_orders(): void
+    {
+        $complete = function ( int $form_id, int $entry_id, array $completion_order ): void {
+            $hold_mapping_id  = 'local_first_hold_' . $entry_id;
+            $allow_mapping_id = 'local_first_allow_' . $entry_id;
+            $adapter = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $hold_mapping_id );
+
+            gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ $hold_mapping_id, $allow_mapping_id ] );
+            gform_update_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids', [ $hold_mapping_id, $allow_mapping_id ] );
+
+            foreach ( $completion_order as $policy )
+            {
+                $mapping_id = 'hold' === $policy ? $hold_mapping_id : $allow_mapping_id;
+                $context = $this->local_spam_delivery_context( $form_id, $entry_id, $mapping_id );
+                $context['spam_failure_delivery_policy'] = 'hold' === $policy ? 'hold' : 'allow_delivery';
+
+                $adapter->finalize_async_error(
+                    $context,
+                    new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+                );
+
+                $this->assertSame( [], $adapter->dispatched_notifications );
+                $this->assertSame( [], $adapter->dispatched_webhooks );
+            }
+
+            $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+            $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+
+            $allow_context = $this->local_spam_delivery_context( $form_id, $entry_id, $allow_mapping_id );
+            $allow_context['spam_failure_delivery_policy'] = 'allow_delivery';
+            $adapter->finalize_async_error(
+                $allow_context,
+                new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+            );
+
+            $this->assertSame( [], $adapter->dispatched_notifications );
+            $this->assertSame( [], $adapter->dispatched_webhooks );
+        };
+
+        $complete( 54, 711, [ 'allow', 'hold' ] );
+        $complete( 55, 712, [ 'hold', 'allow' ] );
+    }
+
+    public function test_captured_hold_failure_only_resolves_channels_held_by_its_mapping(): void
+    {
+        $complete = function ( int $form_id, int $entry_id, array $completion_order ): void {
+            $notification_mapping_id = 'local_first_notification_' . $entry_id;
+            $webhook_mapping_id      = 'local_first_webhook_' . $entry_id;
+            $adapter                 = $this->create_deferred_delivery_adapter( $form_id, $entry_id, $notification_mapping_id );
+
+            $this->seed_deferred_notification_state( $entry_id, $notification_mapping_id );
+            $this->seed_deferred_webhook_state( $entry_id, $webhook_mapping_id );
+
+            $notification_context = $this->local_spam_delivery_context( $form_id, $entry_id, $notification_mapping_id );
+            $notification_context['spam_failure_delivery_policy'] = 'hold';
+            $notification_context['settings']['effect_mapping_json']['spam']['suppress_webhooks_on_spam'] = false;
+
+            $webhook_context = $this->local_spam_delivery_context( $form_id, $entry_id, $webhook_mapping_id );
+            $webhook_context['spam_failure_delivery_policy'] = 'hold';
+            $webhook_context['settings']['effect_mapping_json']['spam']['suppress_notifications_on_spam'] = false;
+
+            foreach ( $completion_order as $completion )
+            {
+                if ( 'webhook_failure' === $completion )
+                {
+                    $adapter->finalize_async_error(
+                        $webhook_context,
+                        new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+                    );
+                    continue;
+                }
+
+                $adapter->finalize_async_success(
+                    $notification_context,
+                    [
+                        'result' => [
+                            'structured_output_valid' => true,
+                            'verdict'                 => [
+                                'kind'  => 'ham',
+                                'score' => 0.99,
+                            ],
+                        ],
+                    ]
+                );
+            }
+
+            $adapter->finalize_async_error(
+                $webhook_context,
+                new WP_Error( 'synthetic_local_failure', 'Synthetic local provider failure.' )
+            );
+
+            $this->assertCount( 1, $adapter->dispatched_notifications );
+            $this->assertSame( [], $adapter->dispatched_webhooks );
+            $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+            $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        };
+
+        $complete( 56, 713, [ 'webhook_failure', 'notification_ham' ] );
+        $complete( 57, 714, [ 'notification_ham', 'webhook_failure' ] );
     }
 
     private function create_deferred_delivery_adapter(
@@ -8622,7 +8990,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'This entry should save even though validation analysis failed.', $record['logical_fields_json']['project_details'] ?? null );
     }
 
-    public function test_entry_post_save_replays_failed_spam_validation_action_with_delivery_suppression(): void
+    public function test_entry_post_save_preserves_captured_allow_for_failed_spam_validation_after_mapping_edit(): void
     {
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_first_runtime_tables();
@@ -8690,15 +9058,31 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'settings_json'       => [
                     'suppress_notifications_on_spam' => true,
                     'suppress_webhooks_on_spam'      => true,
+                    'spam_failure_delivery_policy'   => 'allow_delivery',
                 ],
                 'enabled'             => true,
             ]
         );
         $this->assertIsInt( $mapping_id );
 
-        $http_filter = static function ( $preempt, array $args, string $url ): mixed {
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( $mappings, $mapping_id ): mixed {
             if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
             {
+                $updated = $mappings->update(
+                    $mapping_id,
+                    [
+                        'settings_json' => [
+                            'suppress_notifications_on_spam' => true,
+                            'suppress_webhooks_on_spam'      => true,
+                            'spam_failure_delivery_policy'   => 'hold',
+                        ],
+                    ]
+                );
+                if ( is_wp_error( $updated ) )
+                {
+                    return $updated;
+                }
+
                 return [
                     'headers'  => [],
                     'body'     => wp_json_encode(
@@ -8758,14 +9142,104 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         remove_filter( 'pre_http_request', $http_filter, 10 );
 
         $this->assertTrue( $result['is_valid'] );
-        $this->assertSame( 'suppress', gform_get_meta( 813, 'sentient_forms_spam_notification_preference' ) );
-        $this->assertSame( 'suppress', gform_get_meta( 813, 'sentient_forms_spam_webhook_preference' ) );
+        $this->assertNull( gform_get_meta( 813, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertNull( gform_get_meta( 813, 'sentient_forms_spam_webhook_preference' ) );
 
         $recent_events = $events->list_recent( 1 );
         $this->assertCount( 1, $recent_events );
         $this->assertSame( 'failed', $recent_events[0]['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( '813', $recent_events[0]['entry_id'] ?? null );
+
+        $default_hold_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '328',
+                'hook'                => 'gform_validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => $template['effect_mapping_json'],
+                'settings_json'       => [
+                    'suppress_notifications_on_spam' => true,
+                    'suppress_webhooks_on_spam'      => true,
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $default_hold_mapping_id );
+
+        $default_hold_http_filter = static function ( $preempt, array $args, string $url ) use ( $mappings, $default_hold_mapping_id ): mixed {
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                $updated = $mappings->update(
+                    $default_hold_mapping_id,
+                    [
+                        'settings_json' => [
+                            'suppress_notifications_on_spam' => true,
+                            'suppress_webhooks_on_spam'      => true,
+                            'spam_failure_delivery_policy'   => 'allow_delivery',
+                        ],
+                    ]
+                );
+                if ( is_wp_error( $updated ) )
+                {
+                    return $updated;
+                }
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-local-spam-validation-default-hold',
+                            'model'   => 'anthropic/claude-sonnet-4.6',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => 'I cannot provide JSON, but this should be treated as safe.',
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 17,
+                                'completion_tokens' => 11,
+                                'total_tokens'      => 28,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $default_hold_http_filter, 10, 3 );
+        $default_hold_result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'                => 328,
+                    'failed_validation' => false,
+                    'fields'            => [],
+                ],
+            ]
+        );
+        $this->adapter->handle_validation_entry_post_save(
+            [ 'id' => 814, 'form_id' => 328, '3' => 'A message admitted before the edit.' ],
+            [ 'id' => 328, 'title' => 'Default Hold Validation Failure Replay Form', 'fields' => [] ]
+        );
+        remove_filter( 'pre_http_request', $default_hold_http_filter, 10 );
+
+        $this->assertTrue( $default_hold_result['is_valid'] );
+        $this->assertSame( 'suppress', gform_get_meta( 814, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertSame( 'suppress', gform_get_meta( 814, 'sentient_forms_spam_webhook_preference' ) );
     }
 
     public function test_handle_after_submission_queues_local_openrouter_async_mapping_from_local_tables(): void

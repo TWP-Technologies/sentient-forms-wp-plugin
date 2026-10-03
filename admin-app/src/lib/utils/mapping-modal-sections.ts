@@ -17,8 +17,8 @@ export function createInitialMappingModalSectionExpansion(
 	isSpamAction: boolean
 ): MappingModalSectionExpansion {
 	return {
-		core: true,
-		guidance: isSpamAction,
+		core: !isSpamAction,
+		guidance: false,
 		spam_advanced: false,
 		input_mapping: false,
 		attachment_mapping: false,

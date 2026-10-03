@@ -2382,6 +2382,56 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'suppress_webhooks_on_spam', $response->get_error_data()['field'] ?? null );
     }
 
+    public function test_update_form_action_item_persists_mapping_owned_spam_failure_delivery_policy(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+        $local_mapping_id = 'local_first_' . $record['mapping_id'];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $local_mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $local_mapping_id );
+        $request->set_param(
+            'settings',
+            [
+                'spam_failure_delivery_policy' => 'allow_delivery',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 'allow_delivery', $response->get_data()['settings']['spam_failure_delivery_policy'] ?? null );
+
+        global $wpdb;
+        $mapping_id = (int) str_replace( 'local_first_', '', $local_mapping_id );
+        $stored = ( new Sentient_Forms_Form_Mappings_Repository( $wpdb ) )->get( $mapping_id );
+        $this->assertSame( 'allow_delivery', $stored['settings_json']['spam_failure_delivery_policy'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_invalid_spam_failure_delivery_policy(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+        $local_mapping_id = 'local_first_' . $record['mapping_id'];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $local_mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $local_mapping_id );
+        $request->set_param(
+            'settings',
+            [
+                'spam_failure_delivery_policy' => 'release_everything',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'spam_failure_delivery_policy', $response->get_error_data()['field'] ?? null );
+    }
+
     public function test_update_form_action_item_rejects_string_spam_confidence_threshold(): void {
         $record = $this->create_local_first_mapping_fixture( '1' );
 
@@ -6326,6 +6376,19 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
         $this->assertSame( 'your-name', $data['form_fields'][0]['id'] ?? null );
         $this->assertTrue( $data['form_fields'][0]['storage_eligible'] ?? false );
+        $this->assertSame( '{}', wp_json_encode( $data['form']['settings'] ?? null ) );
+
+        update_option(
+            'sentient_forms_actions_contact_form_7_42',
+            [ 'preserved_setting' => [ 'nested' => true ] ]
+        );
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame(
+            '{"preserved_setting":{"nested":true}}',
+            wp_json_encode( $response->get_data()['form']['settings'] ?? null )
+        );
+        delete_option( 'sentient_forms_actions_contact_form_7_42' );
     }
 
     public function test_wpforms_bootstrap_exposes_paid_like_native_links_and_ledger_state_without_unsupported_claims(): void

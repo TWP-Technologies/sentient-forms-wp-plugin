@@ -376,7 +376,7 @@ async function updateAction(
 	linkage: FormActionLinkage,
 	payload: Partial<FormActionMutationPayload>,
 	successMessage = 'Action updated'
-) {
+): Promise<boolean> {
 	const previousItems = [...formActionsState.items];
 	// optimistic update
 	formActionsState.items = formActionsState.items.map((item) =>
@@ -397,10 +397,12 @@ async function updateAction(
 
 		notifications.success(successMessage);
 		await refresh(formSourceSlug, formId);
+		return true;
 	} catch (error) {
 		formActionsState.items = previousItems;
 		const message = friendlyMessageFromError(error, 'Failed to update action');
 		notifications.error(message);
+		return false;
 	}
 }
 

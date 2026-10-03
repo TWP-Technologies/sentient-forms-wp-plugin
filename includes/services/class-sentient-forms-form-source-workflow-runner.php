@@ -196,6 +196,20 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 continue;
             }
 
+            if ( $this->is_local_first_mapping( $mapping ) )
+            {
+                $failure_policy = $this->captured_spam_failure_delivery_policy( $mapping );
+                if ( null !== $failure_policy )
+                {
+                    $mapping['settings'] = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                        ? $mapping['settings']
+                        : [];
+                    $mapping['settings']['spam_failure_delivery_policy'] = $failure_policy;
+                    $mapping['spam_failure_delivery_policy']             = $failure_policy;
+                    $resolved_mappings[ $mapping_key ]                   = $mapping;
+                }
+            }
+
             $dependency_context = $this->dependency_context(
                 $mapping_key,
                 $dependency_ids,
@@ -397,6 +411,11 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
                 ? $mapping['settings']
                 : [];
+            $failure_policy = $this->captured_spam_failure_delivery_policy( $mapping );
+            if ( null !== $failure_policy )
+            {
+                $settings['spam_failure_delivery_policy'] = $failure_policy;
+            }
             if ( [] !== $credential_snapshot )
             {
                 $settings = array_replace_recursive( $settings, [ 'model_selection' => $credential_snapshot ] );
@@ -414,6 +433,10 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                 'central_action_id'     => $action_id,
                 'settings'              => $settings,
             ] + $dependency_context;
+            if ( null !== $failure_policy )
+            {
+                $context['spam_failure_delivery_policy'] = $failure_policy;
+            }
             if ( $execution_claim instanceof Sentient_Forms_Local_Execution_Claim )
             {
                 $context['local_execution_claim'] = $execution_claim;
@@ -1341,6 +1364,16 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
 
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
+                $failure_policy = $this->captured_spam_failure_delivery_policy( $action_settings );
+                if ( null !== $failure_policy )
+                {
+                    $action_settings['settings'] = isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                        ? $action_settings['settings']
+                        : [];
+                    $action_settings['settings']['spam_failure_delivery_policy'] = $failure_policy;
+                    $dependency_context['spam_failure_delivery_policy'] = $failure_policy;
+                }
+
                 if ( ! $should_async )
                 {
                     $run = $this->execute_claimed_synchronous_mapping(
@@ -3375,26 +3408,56 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
             return false;
         }
 
+        $context = [
+            'hook'                  => $native_hook,
+            'form_source'           => $form_source,
+            'mapping_id'            => $mapping_id,
+            'local_mapping_id'      => $mapping_id,
+            'local_form_mapping_id' => $local_mapping_id,
+            'form_id'               => $form_id,
+            'entry_id'              => null,
+            'submission_uuid'       => $submission_uuid,
+            'action_name_label'     => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
+            'central_action_id'     => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
+            'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                ? $action_settings['settings']
+                : [],
+        ] + $async_context;
+
+        $failure_policy = $this->captured_spam_failure_delivery_policy( $action_settings );
+        if ( null !== $failure_policy )
+        {
+            $context['spam_failure_delivery_policy'] = $failure_policy;
+            $context['settings']['spam_failure_delivery_policy'] = $failure_policy;
+        }
+
         return $this->plugin->get_async_handler()->schedule_local_mapping(
             $local_mapping_id,
             $form,
             $entry,
-            [
-                'hook'                  => $native_hook,
-                'form_source'           => $form_source,
-                'mapping_id'            => $mapping_id,
-                'local_mapping_id'      => $mapping_id,
-                'local_form_mapping_id' => $local_mapping_id,
-                'form_id'               => $form_id,
-                'entry_id'              => null,
-                'submission_uuid'       => $submission_uuid,
-                'action_name_label'     => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
-                'central_action_id'     => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
-                'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                    ? $action_settings['settings']
-                    : [],
-            ] + $async_context
+            $context
         );
+    }
+
+    /**
+     * Capture the mapping-owned terminal delivery policy for one newly admitted spam check.
+     *
+     * @param array<string, mixed> $action_settings
+     */
+    private function captured_spam_failure_delivery_policy( array $action_settings ): ?string
+    {
+        if ( 'spam_detection_v1' !== $this->central_action_id( $action_settings ) )
+        {
+            return null;
+        }
+
+        $settings = isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+            ? $action_settings['settings']
+            : [];
+
+        return 'allow_delivery' === ( $settings['spam_failure_delivery_policy'] ?? null )
+            ? 'allow_delivery'
+            : 'hold';
     }
 
     /**
