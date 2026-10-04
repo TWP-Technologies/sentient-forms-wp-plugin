@@ -380,6 +380,36 @@ test.describe('spam failure delivery mapping editor', () => {
 		await expect(configure).toBeFocused();
 	});
 
+	for (const viewport of [{ width: 1280, height: 1000 }, { width: 390, height: 844 }]) {
+		test(`keeps failure help inside the scrolling editor at ${viewport.width}px`, async ({ page }) => {
+			await page.setViewportSize(viewport);
+			await seedEditor(page);
+			const { modal } = await openSpamAdvanced(page);
+			const help = modal.getByRole('button', { name: 'About classification failures' });
+			const body = modal.locator('div.sf\\:overflow-y-auto').first();
+			await help.focus();
+			for (const edge of ['top', 'middle', 'bottom'] as const) {
+				await body.evaluate((el, edge) => {
+					const trigger = el.querySelector('[aria-controls="spam-failure-tooltip"]')!;
+					const rect = trigger.getBoundingClientRect();
+					const bounds = el.getBoundingClientRect();
+					const target = edge === 'top' ? bounds.top + 8 : edge === 'bottom' ? bounds.bottom - rect.height - 8 : (bounds.top + bounds.bottom - rect.height) / 2;
+					el.scrollTop += rect.top - target;
+				}, edge);
+				await expect.poll(async () => {
+					const bounds = await body.boundingBox();
+					const tooltip = await modal.getByRole('tooltip').boundingBox();
+					return Boolean(bounds && tooltip && tooltip.y >= bounds.y && tooltip.y + tooltip.height <= bounds.y + bounds.height);
+				}).toBe(true);
+				await expect(help).toBeFocused();
+			}
+			await help.press('Escape');
+			await expect(modal.getByRole('tooltip')).toHaveCount(0);
+			await expect(help).toBeFocused();
+			await expect(modal).toBeVisible();
+		});
+	}
+
 	test('locks editing for permission, legacy, load, and busy states without changing applicability truth', async ({
 		page
 	}) => {

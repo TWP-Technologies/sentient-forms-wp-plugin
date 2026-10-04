@@ -7,7 +7,26 @@
 		onchange: (value: SpamFailureDeliveryPolicy) => void;
 	} = $props();
 	let helpOpen = $state(false);
+	let helpBelow = $state(false);
 	const locked = $derived(disabled || holds.state !== 'active');
+	function placeHelp(node: HTMLElement) {
+		const anchor = node.parentElement!;
+		let scrollBody = anchor.parentElement;
+		while (scrollBody && !/auto|scroll/.test(getComputedStyle(scrollBody).overflowY)) {
+			scrollBody = scrollBody.parentElement;
+		}
+		const update = () => {
+			const top = scrollBody?.getBoundingClientRect().top ?? 0;
+			helpBelow = anchor.getBoundingClientRect().top - node.offsetHeight - 8 < top;
+		};
+		update();
+		scrollBody?.addEventListener('scroll', update);
+		window.addEventListener('resize', update);
+		return { destroy() {
+			scrollBody?.removeEventListener('scroll', update);
+			window.removeEventListener('resize', update);
+		} };
+	}
 	function dismissHelp(event: KeyboardEvent) {
 		if (event.key === 'Escape' && helpOpen) {
 			event.preventDefault(); event.stopPropagation(); helpOpen = false;
@@ -27,7 +46,7 @@
 				<InfoIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 			</Button>
 			{#if helpOpen}
-				<div id="spam-failure-tooltip" role="tooltip" class="sf:absolute sf:right-0 sf:bottom-full sf:z-50 sf:mb-2 sf:w-56 sf:rounded-md sf:bg-slate-950 sf:p-3 sf:text-xs sf:leading-relaxed sf:text-white sf:shadow-lg">
+				<div use:placeHelp id="spam-failure-tooltip" role="tooltip" class={`sf:absolute sf:right-0 ${helpBelow ? 'sf:top-full sf:mt-2' : 'sf:bottom-full sf:mb-2'} sf:z-50 sf:w-56 sf:rounded-md sf:bg-slate-950 sf:p-3 sf:text-xs sf:leading-relaxed sf:text-white sf:shadow-lg`}>
 					A failed request or invalid spam result counts as a failure. A check still running does not.
 				</div>
 			{/if}
