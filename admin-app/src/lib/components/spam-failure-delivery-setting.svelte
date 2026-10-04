@@ -21,6 +21,7 @@
 		<div class="sf:relative">
 			<Button variant="inline" size="sm" iconOnly class="sf:text-slate-500 sf:rounded-full"
 				onkeydown={dismissHelp} aria-label="About classification failures" aria-expanded={helpOpen} aria-controls="spam-failure-tooltip"
+				aria-describedby={helpOpen ? 'spam-failure-tooltip' : undefined}
 				onfocus={() => { helpOpen = true; }} onblur={() => { helpOpen = false; }}
 				onclick={() => { helpOpen = true; }}>
 				<InfoIcon class="sf:h-4 sf:w-4" aria-hidden="true" />

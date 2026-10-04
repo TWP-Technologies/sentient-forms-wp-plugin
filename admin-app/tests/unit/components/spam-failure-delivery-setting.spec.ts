@@ -1,7 +1,25 @@
 import { afterEach, expect, it } from 'vitest';
 import { mount, unmount, tick } from 'svelte';
+import { fireEvent, within } from '@testing-library/svelte';
 import SpamFailureDeliverySetting from '$lib/components/spam-failure-delivery-setting.svelte';
 afterEach(() => { document.body.innerHTML = ''; });
+it('describes classification failures to keyboard users and dismisses help without moving focus', async () => {
+	const target = document.createElement('div'); document.body.append(target);
+	const component = mount(SpamFailureDeliverySetting, { target, props: {
+		policy: 'hold', holds: { state: 'active', channels: ['notifications'] }, onchange: () => {}
+	} });
+	await tick();
+	const help = within(target).getByRole('button', { name: 'About classification failures' });
+	help.focus(); await tick();
+	expect(within(target).getByRole('button', {
+		name: 'About classification failures',
+		description: 'A failed request or invalid spam result counts as a failure. A check still running does not.'
+	})).toBe(help);
+	await fireEvent.keyDown(help, { key: 'Escape' }); await tick();
+	expect(within(target).queryByRole('tooltip')).toBeNull();
+	expect(document.activeElement).toBe(help);
+	await unmount(component);
+});
 it('lets a WebMaster choose Allow beside its delivery risk without changing downstream settings', async () => {
 	const target = document.createElement('div'); document.body.append(target);
 	let choice: string | undefined;
