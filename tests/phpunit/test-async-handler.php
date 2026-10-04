@@ -443,8 +443,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
                     'form_source'                      => 'gravity_forms',
                     'form_id'                          => '901',
                     'entry_id'                         => '1901',
-                    'central_action_id'                => 'local_dependency_fixture',
+                    'central_action_id'                => 'spam_detection_v1',
                     'execution_request_id'             => $request_id,
+                    'spam_failure_delivery_policy'     => 'hold',
+                    'settings'                         => [ 'spam_failure_delivery_policy' => 'hold' ],
                     'dependency_mapping_ids'           => [ 'local_first_900' ],
                     'dependency_execution_request_ids' => [ 'local_first_900' => $dependency_id ],
                     'dependency_wait_started_at'       => time(),
@@ -463,6 +465,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( $request_id, $retry['args'][0]['execution_request_id'] ?? null );
         $this->assertArrayNotHasKey( 'form', $retry['args'][0] ?? [] );
         $this->assertArrayNotHasKey( 'entry', $retry['args'][0] ?? [] );
+        $this->assertSame( 'hold', $retry['args'][0]['context']['spam_failure_delivery_policy'] ?? null );
+        $this->assertSame( 'hold', $retry['args'][0]['context']['settings']['spam_failure_delivery_policy'] ?? null );
         $this->assertSame( 'queued', $store->get( $request_id )['status'] ?? null );
     }
 

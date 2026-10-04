@@ -15,6 +15,7 @@ import type {
 export interface FormActionsState {
 	loading: boolean;
 	error: string | null;
+	statusError: string | null;
 	items: FormActionLinkage[];
 	definitions: ActionDefinition[];
 	status: FormExecutionStatus | null;
@@ -39,6 +40,7 @@ function initialState(): FormActionsState {
 	return {
 		loading: false,
 		error: null,
+		statusError: null,
 		items: [],
 		definitions: [],
 		status: null,
@@ -249,6 +251,7 @@ async function load(
 		setState({
 			loading: false,
 			error: null,
+			statusError: null,
 			items: bootstrap.actions,
 			definitions,
 			status: bootstrap.execution_status,
@@ -376,7 +379,7 @@ async function updateAction(
 	linkage: FormActionLinkage,
 	payload: Partial<FormActionMutationPayload>,
 	successMessage = 'Action updated'
-) {
+): Promise<boolean> {
 	const previousItems = [...formActionsState.items];
 	// optimistic update
 	formActionsState.items = formActionsState.items.map((item) =>
@@ -397,10 +400,12 @@ async function updateAction(
 
 		notifications.success(successMessage);
 		await refresh(formSourceSlug, formId);
+		return true;
 	} catch (error) {
 		formActionsState.items = previousItems;
 		const message = friendlyMessageFromError(error, 'Failed to update action');
 		notifications.error(message);
+		return false;
 	}
 }
 
@@ -450,18 +455,18 @@ async function refresh(
 		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
 			return;
 		}
-		setState({ status, error: null, supportsStatus: true });
+		setState({ status, statusError: null, supportsStatus: true });
 	} catch (error) {
 		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
 			return;
 		}
 		if (error instanceof ApiClientError && error.status === 404) {
-			setState({ supportsStatus: false, error: null });
+			setState({ supportsStatus: false, statusError: null });
 			return;
 		}
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
-		setState({ error: message });
+		setState({ statusError: message });
 	} finally {
 		if (refreshInFlightKey === formKey && requestSequence === statusRefreshSequence) {
 			refreshInFlightKey = null;

@@ -3634,6 +3634,7 @@ test.describe('Actions admin flows', () => {
 				local_mapping_id: 'canonical-parent',
 				central_action_id: 'canonical-linked-action',
 				action_name_label: 'Canonical parent action',
+				action_type_indicator: 'local_first',
 				trigger_hooks: ['after_submission'],
 				settings: {
 					trigger_sources: {
@@ -3646,6 +3647,7 @@ test.describe('Actions admin flows', () => {
 				local_mapping_id: 'canonical-linkage',
 				central_action_id: 'canonical-linked-action',
 				action_name_label: 'Canonical linked action',
+				action_type_indicator: 'local_first',
 				trigger_hooks: ['after_submission', 'gform_after_submission'],
 				settings: {
 					trigger_sources: {
@@ -3723,6 +3725,7 @@ test.describe('Actions admin flows', () => {
 	test('repairs a stale mapping credential at the save boundary', async ({ page }) => {
 		const staleLinkage = {
 			...baseLinkages[0],
+			action_type_indicator: 'local_first',
 			settings: {
 				model_selection: {
 					primary: 'sf_default',
@@ -3750,6 +3753,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		const table = await openLinkedActionsTable(page);
 		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		await page.getByLabel('Mapping customization').fill('Keep this mapping update.');
 
 		const updateRequest = page.waitForRequest(
 			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
@@ -3767,6 +3771,7 @@ test.describe('Actions admin flows', () => {
 	test('preserves a saved mapping credential when credential loading fails', async ({ page }) => {
 		const savedLinkage = {
 			...baseLinkages[0],
+			action_type_indicator: 'local_first',
 			settings: {
 				model_selection: {
 					primary: 'sf_default',
@@ -3794,6 +3799,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		const table = await openLinkedActionsTable(page);
 		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		await page.getByLabel('Mapping customization').fill('Keep this mapping update.');
 		const updateRequest = page.waitForRequest(
 			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
 		);
@@ -3807,6 +3813,7 @@ test.describe('Actions admin flows', () => {
 	test('clears a saved mapping credential after an authoritative empty response', async ({ page }) => {
 		const savedLinkage = {
 			...baseLinkages[0],
+			action_type_indicator: 'local_first',
 			settings: {
 				model_selection: {
 					primary: 'sf_default',
@@ -3832,6 +3839,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		const table = await openLinkedActionsTable(page);
 		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+		await page.getByLabel('Mapping customization').fill('Keep this mapping update.');
 		const updateRequest = page.waitForRequest(
 			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url())
 		);
@@ -4046,7 +4054,10 @@ test.describe('Actions admin flows', () => {
 			if (!appRoot) throw new Error('Sentient Forms app root is unavailable');
 			appRoot.append(link);
 		});
-		await page.getByTestId('same-component-bootstrap-navigation').click();
+		await page.evaluate(() => {
+			(document.querySelector('[data-testid="same-component-bootstrap-navigation"]') as HTMLAnchorElement)
+				.click();
+		});
 		await expectAppUrl(page, '/actions/contact_form_7/77');
 
 		await expect(page.getByTestId('linked-actions-view-table')).toBeVisible();
@@ -4095,6 +4106,7 @@ test.describe('Actions admin flows', () => {
 	}) => {
 		const unsupportedMapping = {
 			...baseLinkages[0],
+			action_type_indicator: 'local_first',
 			form_id: wpformsFormId,
 			local_mapping_id: 'unsupported-realtime-mapping',
 			central_action_id: 'lifecycle-repair-action',
@@ -4141,14 +4153,14 @@ test.describe('Actions admin flows', () => {
 		await expect(modal.getByTestId('unsupported-lifecycle-repair-alert')).toContainText(
 			/unsupported.*remove.*repair/i
 		);
-		await modal.getByTestId('mapping-config-save').click();
-		await expect(page.locator('[data-sonner-sv-toast]')).toContainText(/unsupported lifecycle/i);
+		await expect(modal.getByTestId('mapping-config-save')).toBeDisabled();
 		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
 	});
 
 	test('prefers the current Form Source trigger alias regardless of persisted key order', async ({ page }) => {
 		const parent = {
 			...baseLinkages[0],
+			action_type_indicator: 'local_first',
 			form_id: cf7FormId,
 			local_mapping_id: 'cf7-alias-parent',
 			central_action_id: 'cf7-alias-action',
@@ -4161,6 +4173,7 @@ test.describe('Actions admin flows', () => {
 		const children = [
 			{
 				...baseLinkages[0],
+				action_type_indicator: 'local_first',
 				form_id: cf7FormId,
 				local_mapping_id: 'cf7-foreign-first',
 				central_action_id: 'cf7-alias-action',
@@ -4176,6 +4189,7 @@ test.describe('Actions admin flows', () => {
 			},
 			{
 				...baseLinkages[0],
+				action_type_indicator: 'local_first',
 				form_id: cf7FormId,
 				local_mapping_id: 'cf7-current-first',
 				central_action_id: 'cf7-alias-action',
@@ -4228,6 +4242,9 @@ test.describe('Actions admin flows', () => {
 		for (const child of children) {
 			const row = table.locator('tbody tr').filter({ hasText: child.action_name_label });
 			await row.getByRole('button', { name: 'Configure' }).click();
+			await page
+				.getByLabel('Mapping customization')
+				.fill(`Normalize ${child.local_mapping_id} before save.`);
 			const saveButton = page.getByTestId('mapping-config-save');
 			await saveButton.focus();
 			await saveButton.press('Enter');
@@ -5298,6 +5315,7 @@ test.describe('Actions admin flows', () => {
 		const linkages = [
 			{
 				...baseLinkages[0],
+				action_type_indicator: 'local_first',
 				settings: { updated_at: '2030-01-05T10:00:00Z' }
 			}
 		];
@@ -5359,6 +5377,7 @@ test.describe('Actions admin flows', () => {
 		const linkages = [
 			{
 				...baseLinkages[0],
+				action_type_indicator: 'local_first',
 				settings: {}
 			}
 		];
@@ -5435,7 +5454,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5444,7 +5463,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5492,7 +5511,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5501,7 +5520,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5609,7 +5628,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-summary-gated',
 				central_action_id: 'entry_summary_v1',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summary after spam gate',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -5754,7 +5773,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-spam',
 				central_action_id: 'spam_detection_v1',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam gate',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5763,7 +5782,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-summary',
 				central_action_id: 'content_validation_v1',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Content validation',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5821,7 +5840,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5830,7 +5849,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5877,7 +5896,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5886,7 +5905,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5932,7 +5951,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'entry-summary',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Entry Summary',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -5941,7 +5960,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'content-quality',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Content Quality Validation',
 				trigger_hooks: ['gform_after_submission', 'gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5950,7 +5969,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-3',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Validation Spam Block',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -5991,7 +6010,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-async',
 				central_action_id: 'entry-summary',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Entry Summary',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -6000,7 +6019,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-dual',
 				central_action_id: 'content-quality',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Content Quality Validation',
 				trigger_hooks: ['gform_validation', 'gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -6048,7 +6067,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-source',
 				central_action_id: 'content-quality',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Source Dual Hook',
 				trigger_hooks: ['gform_validation', 'gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -6057,7 +6076,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-target',
 				central_action_id: 'entry-summary',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Target Dual Hook',
 				trigger_hooks: ['gform_validation', 'gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -6097,7 +6116,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6106,7 +6125,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6115,7 +6134,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-3',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Entry Summary',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -6165,7 +6184,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6207,7 +6226,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6429,7 +6448,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6438,7 +6457,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6573,7 +6592,9 @@ test.describe('Actions admin flows', () => {
 		const table = await openLinkedActionsTable(page);
 		const row = table.locator('tbody tr').filter({ hasText: 'Summarize' });
 		await row.getByRole('button', { name: 'Configure' }).click();
-		await page.getByTestId('mapping-config-open-graph').click();
+		await expect(page.getByTestId('mapping-config-open-graph')).toBeDisabled();
+		await page.getByTestId('mapping-config-close-header').click();
+		await ensureDependencyGraphVisible(page);
 
 		const dependentCard = page.getByTestId('dependency-node-card-map-2');
 		await expect(dependentCard.getByText('Triggered by action: map-1')).toBeVisible();
@@ -6862,7 +6883,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6871,7 +6892,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6920,7 +6941,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -6960,7 +6981,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -7055,12 +7076,12 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam_detection_v1',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam detection',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {
-					execution_mode: 'after_submission',
+					execution_mode: 'validation',
 					spam_positive_examples: [
 						{
 							text: 'Known customer request',
@@ -7075,8 +7096,15 @@ test.describe('Actions admin flows', () => {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions,
+				formSourceDescriptors: { [formSource]: gravityFormSourceDescriptor },
 				status: statusUnknown,
 				formsActions: linkages,
+				actionDefaultsById: {
+					spam_detection_v1: {
+						suppress_notifications_on_spam: true,
+						suppress_webhooks_on_spam: true
+					}
+				},
 				formFields: baseFormFields,
 				creditBalance
 			},
@@ -7090,11 +7118,11 @@ test.describe('Actions admin flows', () => {
 		const modal = page.getByTestId('mapping-config-modal');
 		await expect(modal.getByTestId('mapping-section-toggle-core')).toHaveAttribute(
 			'aria-expanded',
-			'true'
+			'false'
 		);
 		await expect(modal.getByTestId('mapping-section-toggle-guidance')).toHaveAttribute(
 			'aria-expanded',
-			'true'
+			'false'
 		);
 		await expect(modal.getByTestId('mapping-section-toggle-spam_advanced')).toHaveAttribute(
 			'aria-expanded',
@@ -7121,11 +7149,11 @@ test.describe('Actions admin flows', () => {
 		);
 		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
 		await expect(modal.getByTestId('mapping-section-toggle-spam_advanced')).toContainText(
-			'suppress notifications'
+			'If classification fails: Hold configured delivery'
 		);
 		await expect(modal.getByLabel('Notification policy on spam')).toBeEnabled();
 		await expect(
-			modal.getByText('Current effective value: Suppress notifications (blocking default).')
+			modal.getByText('Current effective value: Suppress notifications (action).')
 		).toBeVisible();
 		await expect(modal.getByText('Background spam mappings do not hold notifications')).toHaveCount(
 			0
@@ -7139,7 +7167,7 @@ test.describe('Actions admin flows', () => {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
 				status: statusUnknown,
-				formsActions: baseLinkages,
+				formsActions: [{ ...baseLinkages[0], action_type_indicator: 'local_first' }],
 				formFields: baseFormFields,
 				creditBalance
 			},
@@ -7174,7 +7202,7 @@ test.describe('Actions admin flows', () => {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
 				status: statusUnknown,
-				formsActions: baseLinkages,
+				formsActions: [{ ...baseLinkages[0], action_type_indicator: 'local_first' }],
 				formFields: baseFormFields,
 				creditBalance
 			},
@@ -7201,10 +7229,54 @@ test.describe('Actions admin flows', () => {
 		expect(requests.filter((request) => request.startsWith('PUT '))).toEqual([]);
 	});
 
+	test('keeps the failure-delivery draft through ordinary Configure and discards it explicitly', async ({
+		page
+	}) => {
+		test.setTimeout(30_000);
+		await seedRuntimeConfig(page, { currentUser: { id: 1, canManage: true } });
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [{ ...baseDefinitions[0], id: 'spam_detection_v1' }],
+				status: statusUnknown,
+				formsActions: [
+					{
+						...baseLinkages[0],
+						action_type_indicator: 'local_first',
+						central_action_id: 'spam_detection_v1',
+						trigger_hooks: ['gform_after_submission'],
+						settings: { suppress_notifications_on_spam: true, suppress_webhooks_on_spam: false }
+					}
+				],
+				formSourceDescriptors: { [formSource]: gravityFormSourceDescriptor },
+				formFields: baseFormFields
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		const configure = table.locator('tbody tr').first().getByRole('button', { name: 'Configure' });
+		await configure.click();
+		let modal = page.getByTestId('mapping-config-modal');
+		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
+		await expect(modal.getByLabel('Allow delivery without classification')).toBeVisible();
+		await modal.getByLabel('Allow delivery without classification').check();
+		await modal.getByTestId('mapping-config-close-header').click();
+		await configure.click();
+		modal = page.getByTestId('mapping-config-modal');
+		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
+		await expect(modal.getByLabel('Allow delivery without classification')).toBeChecked();
+		await modal.getByTestId('mapping-config-discard-draft').click();
+		await configure.click();
+		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
+		await expect(modal.getByLabel('Hold configured delivery')).toBeChecked();
+	});
+
 	test('preserves local draft on close and clears it on discard', async ({ page }) => {
 		const linkages = [
 			{
 				...baseLinkages[0],
+				action_type_indicator: 'local_first',
 				settings: {}
 			}
 		];
@@ -7433,7 +7505,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -7442,7 +7514,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
@@ -7501,7 +7573,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
-				action_type_indicator: 'master',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Spam check',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,
@@ -7510,7 +7582,7 @@ test.describe('Actions admin flows', () => {
 			{
 				local_mapping_id: 'map-2',
 				central_action_id: 'summarize',
-				action_type_indicator: 'custom',
+				action_type_indicator: 'local_first',
 				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_after_submission'],
 				is_action_enabled_for_form: true,

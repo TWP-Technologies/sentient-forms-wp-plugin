@@ -2527,7 +2527,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         if ( method_exists( $adapter, 'get_form_settings' ) )
         {
-            $summary['settings'] = $adapter->get_form_settings( $form_id );
+            $summary['settings'] = (object) $adapter->get_form_settings( $form_id );
         }
 
         return $summary;
@@ -7430,6 +7430,18 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
+        if ( array_key_exists( 'spam_failure_delivery_policy', $settings ) )
+        {
+            $policy = $settings['spam_failure_delivery_policy'];
+            if ( ! is_string( $policy ) || ! in_array( $policy, [ 'hold', 'allow_delivery' ], true ) )
+            {
+                return $this->invalid_settings_write_error(
+                    'spam_failure_delivery_policy',
+                    __( 'Spam failure delivery policy must be hold or allow_delivery.', 'sentient-forms' )
+                );
+            }
+        }
+
         if ( array_key_exists( 'spam_confidence_threshold', $settings ) )
         {
             $value = $settings['spam_confidence_threshold'];
@@ -7885,6 +7897,12 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             if ( in_array( $key, [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ], true ) )
             {
                 $sanitized[ $key ] = rest_sanitize_boolean( $value );
+                continue;
+            }
+
+            if ( 'spam_failure_delivery_policy' === $key )
+            {
+                $sanitized[ $key ] = sanitize_key( (string) $value );
                 continue;
             }
 

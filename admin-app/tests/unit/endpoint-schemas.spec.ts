@@ -26,6 +26,23 @@ const completeSettingsResponse = {
 };
 
 describe('admin endpoint schema registry', () => {
+	it('round-trips a mapping-owned failure choice and rejects malformed explicit preferences', () => {
+		for (const policy of ['hold', 'allow_delivery'] as const) {
+			const settings = { spam_failure_delivery_policy: policy, suppress_notifications_on_spam: false };
+			expect(endpointRegistry['forms.actions.update'].request.parse({ settings }).settings).toEqual(settings);
+			expect(endpointRegistry['forms.actions.update'].response.parse({
+				local_mapping_id: 'local_first_91', central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'local_first', trigger_hooks: ['validation'], settings
+			}).settings).toEqual(settings);
+		}
+		for (const invalid of ['allow', '', null, true, {}, 1]) {
+			expect(endpointRegistry['forms.actions.update'].request.safeParse({
+				settings: { spam_failure_delivery_policy: invalid }
+			}).success).toBe(false);
+		}
+		expect(endpointRegistry['forms.actions.update'].request.parse({ settings: {} }).settings).toEqual({});
+	});
+
 	it('preserves sanitized credential deletion blockers for actionable conflict UI', () => {
 		const parsed = endpointRegistry['providers.credentials.delete'].error.parse({
 			code: 'sentient_forms_credential_in_use',

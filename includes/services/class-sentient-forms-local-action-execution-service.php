@@ -1078,8 +1078,23 @@ class Sentient_Forms_Local_Action_Execution_Service
     {
         $mapping_settings = is_array( $mapping['settings_json'] ?? null ) ? $mapping['settings_json'] : [];
         $context_settings = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+        $has_captured_failure_policy = array_key_exists( 'spam_failure_delivery_policy', $context );
+        if ( $has_captured_failure_policy )
+        {
+            $context_settings['spam_failure_delivery_policy'] = 'allow_delivery' === $context['spam_failure_delivery_policy']
+                ? 'allow_delivery'
+                : 'hold';
+        }
+        elseif ( 'local_mapping' === (string) ( $context['job_type'] ?? '' ) )
+        {
+            unset( $mapping_settings['spam_failure_delivery_policy'] );
+        }
         if ( [] === $mapping_settings )
         {
+            if ( $has_captured_failure_policy )
+            {
+                $context['settings'] = $context_settings;
+            }
             return $context;
         }
 

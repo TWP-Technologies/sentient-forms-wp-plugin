@@ -226,6 +226,11 @@ describe('formActionsStore', () => {
 		expect(state.bootstrap).toBe(previousState.bootstrap);
 		expect(state.effectiveDisabled).toBe(previousState.effectiveDisabled);
 		expect(notifyErrorSpy).toHaveBeenCalledWith('Bootstrap temporarily unavailable');
+
+		await formActionsStore.refresh('gravity_forms', 1);
+		expect(snapshotState().error).toBe('Bootstrap temporarily unavailable');
+		expect(snapshotState().statusError).toBeNull();
+		expect(snapshotState().items).toEqual([linkage]);
 	});
 
 	it('keeps actions usable without a legacy credit balance request', async () => {
@@ -782,6 +787,21 @@ describe('formActionsStore', () => {
 		expect(stubClient.getFormExecutionStatus).toHaveBeenCalledTimes(2);
 		const state = snapshotState();
 		expect(state.items[0]?.trigger_hooks).toEqual(['gform_after_submission']);
+	});
+
+	it('reports rejected mapping Save to its caller while retaining the persisted settings', async () => {
+		const linkage = { local_mapping_id: 'local_first_91', central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'local_first' as const, trigger_hooks: ['validation'],
+			settings: { spam_failure_delivery_policy: 'hold' as const } };
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		await formActionsStore.load('gravity_forms', 1);
+		stubClient.updateFormAction.mockRejectedValue(new ApiClientError('Save rejected', 500, {}));
+		expect(await formActionsStore.updateAction('gravity_forms', 1, linkage, {
+			settings: { spam_failure_delivery_policy: 'allow_delivery' }
+		})).toBe(false);
+		expect(snapshotState().items[0].settings).toEqual({ spam_failure_delivery_policy: 'hold' });
 	});
 
 	it('rolls back optimistic toggle when update fails', async () => {
