@@ -96,6 +96,7 @@ async function seedEditor(
 	options: {
 		canManage?: boolean;
 		linkage?: ReturnType<typeof mapping>;
+		linkages?: ReturnType<typeof mapping>[];
 		descriptor?: typeof descriptor | typeof blockingDescriptor | null;
 		definitions?: (typeof definition)[];
 		status?: Record<string, unknown>;
@@ -113,7 +114,7 @@ async function seedEditor(
 		actions: {
 			forms: { [formSource]: [form] },
 			definitions: options.definitions ?? [definition],
-			formsActions: [
+			formsActions: options.linkages ?? [
 				options.linkage ??
 					mapping({ suppress_notifications_on_spam: true, suppress_webhooks_on_spam: true })
 			],
@@ -206,6 +207,88 @@ test.describe('spam failure delivery mapping editor', () => {
 		await expect(reopened.getByLabel('Allow delivery without classification')).toBeChecked();
 	});
 
+	for (const graphStep of ['edit', 'Save', 'restore']) {
+		test(`preserves a failure policy draft and graph bindings after graph ${graphStep}`, async ({
+			page
+		}) => {
+			const upstreamId = 'mapping-upstream-spam';
+			await seedEditor(page, {
+				linkages: [
+					mapping({
+						suppress_notifications_on_spam: true,
+						suppress_webhooks_on_spam: true,
+						dependency_ids: [upstreamId],
+						trigger_sources: {
+							gform_after_submission: { type: 'mapping', mapping_id: upstreamId }
+						}
+					}),
+					{ ...mapping(), local_mapping_id: upstreamId, action_name_label: 'Upstream spam check' }
+				]
+			});
+			const { modal } = await openSpamAdvanced(page);
+			await modal.getByLabel('Allow delivery without classification').check();
+			await modal.getByTestId('mapping-config-open-graph').click();
+			await page.getByTestId('dependency-graph-clear').click();
+			if (graphStep === 'Save') {
+				const graphSaved = page.waitForResponse(
+					(response) =>
+						response.url().endsWith(`/forms/${formId}/actions/${mappingId}`) &&
+						response.request().method() === 'PUT'
+				);
+				await page.getByTestId('dependency-graph-save').click();
+				const graphResponse = await graphSaved;
+				expect(graphResponse.status()).toBe(200);
+				expect(
+					graphResponse.request().postDataJSON().settings.spam_failure_delivery_policy
+				).toBeUndefined();
+				await expect(page.getByTestId('dependency-graph-save')).toBeEnabled();
+			}
+			if (graphStep === 'restore') {
+				const { modal: intermediate } = await openSpamAdvanced(page);
+				await intermediate.getByTestId('mapping-config-open-graph').click();
+				await page.getByRole('button', { name: 'Fit View', exact: true }).click();
+				const source = page.locator(
+					`[data-nodeid="${upstreamId}"][data-handleid="dependency-source"]`
+				);
+				const target = page.locator(
+					`[data-nodeid="${mappingId}"][data-handleid="hook-root-target:after_submission"]`
+				);
+				await source.click();
+				await target.click();
+				await expect(
+					page.getByRole('group', { name: `Edge from ${upstreamId} to ${mappingId}` })
+				).toBeVisible();
+			}
+
+			const { modal: reopened } = await openSpamAdvanced(page);
+			await expect(reopened.getByLabel('Allow delivery without classification')).toBeChecked();
+			const save = reopened.getByTestId('mapping-config-save');
+			await expect(save).toBeEnabled();
+			const mappingSaved = page.waitForResponse(
+				(response) =>
+					response.url().endsWith(`/forms/${formId}/actions/${mappingId}`) &&
+					response.request().method() === 'PUT'
+			);
+			await save.click();
+			const mappingResponse = await mappingSaved;
+			const settings = mappingResponse.request().postDataJSON().settings;
+			expect(settings.spam_failure_delivery_policy).toBe('allow_delivery');
+			if (graphStep === 'restore') {
+				expect(settings.dependency_ids).toEqual([upstreamId]);
+				expect(settings.trigger_sources).toEqual({
+					after_submission: { type: 'mapping', mapping_id: upstreamId }
+				});
+			} else {
+				expect(settings.dependency_ids).toBeUndefined();
+				expect(settings.trigger_sources).toEqual({ after_submission: { type: 'hook_root' } });
+			}
+			await expect(reopened).toBeHidden();
+			await page.reload({ waitUntil: 'networkidle' });
+			const { modal: readback } = await openSpamAdvanced(page);
+			await expect(readback.getByLabel('Allow delivery without classification')).toBeChecked();
+		});
+	}
+
 	test('restores stable title focus after Retry clears a global GET error inside the editor', async ({
 		page
 	}) => {
@@ -269,8 +352,11 @@ test.describe('spam failure delivery mapping editor', () => {
 		await graph.focus();
 		await graph.press('Shift+Tab');
 		await expect(save).toBeFocused();
+		await page.getByLabel('About classification failures').focus();
+		await expect(modal.getByRole('tooltip')).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(modal.getByRole('tooltip')).toHaveCount(0);
+		await expect(modal).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(modal).toBeHidden();
 		await expect(configure).toBeFocused();

@@ -3649,7 +3649,22 @@
 		}
 
 		graphDraftByMappingId = nextDraftMap;
-		if (options.syncModal && showMappingConfigModal && editingLinkageId === mappingId) {
+		const retained = mappingDrafts[mappingId];
+		if (retained) {
+			mappingDrafts = {
+				...mappingDrafts,
+				[mappingId]: {
+					...retained,
+					hooks: nextHooks,
+					settings: {
+						...retained.settings,
+						dependency_ids: nextDependencies,
+						trigger_sources: normalizedSources
+					}
+				}
+			};
+		}
+		if (options.syncModal && editingLinkageId === mappingId) {
 			draftHooks = new Set(nextHooks);
 			draftSettings = {
 				...draftSettings,
@@ -3710,48 +3725,11 @@
 		}
 	}
 
-	async function startEditingAction(linkage: FormActionLinkage, openModal = true) {
-		if (mappingConfigSaving) return;
-		const loadSequence = ++mappingLoadSequence;
-		mappingFocusOrigin =
-			document.activeElement instanceof HTMLElement ? document.activeElement : null;
-		rememberMappingDraft();
-		const retained = mappingDrafts[linkage.local_mapping_id];
-		if (retained) {
-			mappingConfigLoading = false;
-			editingLinkageId = linkage.local_mapping_id;
-			draftHooks = new Set(retained.hooks);
-			draftSettings = cloneDraftValue(retained.settings);
-			editBaselineSignature = retained.baseline;
-			resetMappingSectionExpansion(linkage);
-			mappingConfigSaveError = null;
-			showMappingConfigModal = openModal;
-			return;
-		}
-		const routeKey = formRouteKey(data.formSourceSlug, data.formId);
-		const draftSnapshot = readEffectiveDraftForMapping(linkage.local_mapping_id);
-		const initialHooks =
-			draftSnapshot.triggerHooks.length > 0
-				? draftSnapshot.triggerHooks
-				: [hookEntries[0]?.[0] ?? 'gform_validation'];
-		draftHooks = new Set(initialHooks);
+	function createMappingDraftSettings(
+		linkage: FormActionLinkage,
+		draftSnapshot: ReturnType<typeof readEffectiveDraftForMapping>
+	) {
 		const baseSettings = cloneDraftValue(linkage.settings ?? {});
-		editingLinkageId = linkage.local_mapping_id;
-		draftSettings = baseSettings;
-		editBaselineSignature = createDraftSignature(initialHooks, baseSettings);
-		resetMappingSectionExpansion(linkage);
-		mappingConfigLoading = true;
-		showMappingConfigModal = openModal;
-		await Promise.allSettled([
-			loadActionDefaultsForAction(linkage.central_action_id, { force: false }),
-			loadFormLevelConfig(linkage.central_action_id, { openModal: false, force: false })
-		]);
-		if (
-			activeRouteKey !== routeKey ||
-			loadSequence !== mappingLoadSequence ||
-			editingLinkageId !== linkage.local_mapping_id
-		)
-			return;
 		const inheritedFormConfig =
 			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const inheritedActionConfig =
@@ -3760,10 +3738,10 @@
 			? baseSettings.batch_settings
 			: {};
 		const executionMode = deriveExecutionModeForHooks(
-			initialHooks,
+			draftSnapshot.triggerHooks,
 			baseSettings.execution_mode ?? linkage.execution_mode
 		);
-		const nextDraftSettings = {
+		return {
 			...baseSettings,
 			...(isSpamMappingLinkage(linkage)
 				? { spam_failure_delivery_policy: baseSettings.spam_failure_delivery_policy ?? 'hold' }
@@ -3800,6 +3778,63 @@
 			trigger_sources: cloneDraftValue(draftSnapshot.triggerSources),
 			conditions: cloneDraftValue(baseSettings.conditions ?? createDefaultConditionConfig())
 		};
+	}
+
+	async function startEditingAction(linkage: FormActionLinkage, openModal = true) {
+		if (mappingConfigSaving) return;
+		const loadSequence = ++mappingLoadSequence;
+		mappingFocusOrigin =
+			document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		rememberMappingDraft();
+		const retained = mappingDrafts[linkage.local_mapping_id];
+		if (retained) {
+			mappingConfigLoading = false;
+			editingLinkageId = linkage.local_mapping_id;
+			const graphDraft = graphDraftByMappingId[linkage.local_mapping_id];
+			draftHooks = new Set(graphDraft?.triggerHooks ?? retained.hooks);
+			draftSettings = cloneDraftValue({
+				...retained.settings,
+				...(graphDraft
+					? {
+							dependency_ids: graphDraft.dependencyIds,
+							trigger_sources: graphDraft.triggerSources
+						}
+					: {})
+			});
+			editBaselineSignature = retained.baseline;
+			resetMappingSectionExpansion(linkage);
+			mappingConfigSaveError = null;
+			showMappingConfigModal = openModal;
+			return;
+		}
+		const routeKey = formRouteKey(data.formSourceSlug, data.formId);
+		const draftSnapshot = readEffectiveDraftForMapping(linkage.local_mapping_id);
+		const initialHooks =
+			draftSnapshot.triggerHooks.length > 0
+				? draftSnapshot.triggerHooks
+				: [hookEntries[0]?.[0] ?? 'gform_validation'];
+		draftHooks = new Set(initialHooks);
+		const baseSettings = cloneDraftValue(linkage.settings ?? {});
+		editingLinkageId = linkage.local_mapping_id;
+		draftSettings = baseSettings;
+		editBaselineSignature = createDraftSignature(initialHooks, baseSettings);
+		resetMappingSectionExpansion(linkage);
+		mappingConfigLoading = true;
+		showMappingConfigModal = openModal;
+		await Promise.allSettled([
+			loadActionDefaultsForAction(linkage.central_action_id, { force: false }),
+			loadFormLevelConfig(linkage.central_action_id, { openModal: false, force: false })
+		]);
+		if (
+			activeRouteKey !== routeKey ||
+			loadSequence !== mappingLoadSequence ||
+			editingLinkageId !== linkage.local_mapping_id
+		)
+			return;
+		const nextDraftSettings = createMappingDraftSettings(linkage, {
+			...draftSnapshot,
+			triggerHooks: initialHooks
+		});
 		draftSettings = nextDraftSettings;
 		mappingConfigLoading = false;
 		mappingConfigSaveError = null;
@@ -4224,22 +4259,36 @@
 			await formActionsStore.load(data.formSourceSlug, data.formId);
 			graphDraftByMappingId = {};
 			selectedCreateDependencyIds = new Set();
-			if (editingLinkageId) {
-				const refreshed = getLinkageById(editingLinkageId);
-				if (refreshed) {
-					const refreshedHooks = normalizeHookIds(refreshed.trigger_hooks ?? []);
-					const refreshedDraft = readEffectiveDraftForMapping(editingLinkageId);
+			for (const [mappingId] of draftEntries) {
+				const refreshed = getLinkageById(mappingId);
+				const retained = mappingDrafts[mappingId];
+				if (!refreshed || !retained) continue;
+				const refreshedHooks = normalizeHookIds(getMappingTriggerHooks(refreshed));
+				const refreshedSources = serializeTriggerSources(
+					normalizedMappingTriggerSources(refreshed)
+				);
+				const refreshedDraft = {
+					triggerHooks: refreshedHooks,
+					triggerSources: refreshedSources,
+					dependencyIds: deriveDependencyIdsForDraft(refreshedSources)
+				};
+				const settings = {
+					...retained.settings,
+					dependency_ids: refreshedDraft.dependencyIds,
+					trigger_sources: refreshedSources
+				};
+				const baseline = createDraftSignature(
+					refreshedHooks,
+					createMappingDraftSettings(refreshed, refreshedDraft)
+				);
+				mappingDrafts = {
+					...mappingDrafts,
+					[mappingId]: { hooks: refreshedHooks, settings, baseline }
+				};
+				if (editingLinkageId === mappingId) {
 					draftHooks = new Set(refreshedHooks);
-					draftSettings = {
-						...draftSettings,
-						dependency_ids: refreshedDraft.dependencyIds,
-						trigger_sources: refreshedDraft.triggerSources
-					};
-					editBaselineSignature = createDraftSignature(refreshedHooks, {
-						...draftSettings,
-						dependency_ids: refreshedDraft.dependencyIds,
-						trigger_sources: refreshedDraft.triggerSources
-					});
+					draftSettings = cloneDraftValue(settings);
+					editBaselineSignature = baseline;
 				}
 			}
 			if (savedCount > 0) {
