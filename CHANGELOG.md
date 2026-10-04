@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.12.0...v0.13.0) (2026-10-04)
+
+
+### Features
+
+* **actions:** add mapping-owned spam failure delivery ([751e0fa](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/751e0fa6d0544e03e50fe521d5f79b569109b6c8))
+* **actions:** support mapping-owned spam failure delivery ([cae6eca](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cae6eca9d77def6c47f819dc17d4d95dc7fafb24))
+
+
+### Bug Fixes
+
+* **actions:** preserve captured spam delivery holds ([105f7c7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/105f7c75de07cc75eb56dbfa167ff127f9fa9a01))
+* **actions:** preserve mapping drafts through graph edits ([2095888](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2095888f047b0dfb2b35455d51bcd5003a7419d7))
+* **admin:** describe spam failure help for assistive technology ([2ce1f0f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2ce1f0fb41d7ba4e5f51b9efa6e98fa7f04bc8e1))
+* **admin:** keep spam failure help inside the editor ([b4fe34d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b4fe34de29c784909576b6d325ddccf48fb198f3))
+
 ## [0.12.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.11.0...v0.12.0) (2026-08-20)
 
 
