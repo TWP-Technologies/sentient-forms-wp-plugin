@@ -226,6 +226,11 @@ describe('formActionsStore', () => {
 		expect(state.bootstrap).toBe(previousState.bootstrap);
 		expect(state.effectiveDisabled).toBe(previousState.effectiveDisabled);
 		expect(notifyErrorSpy).toHaveBeenCalledWith('Bootstrap temporarily unavailable');
+
+		await formActionsStore.refresh('gravity_forms', 1);
+		expect(snapshotState().error).toBe('Bootstrap temporarily unavailable');
+		expect(snapshotState().statusError).toBeNull();
+		expect(snapshotState().items).toEqual([linkage]);
 	});
 
 	it('keeps actions usable without a legacy credit balance request', async () => {

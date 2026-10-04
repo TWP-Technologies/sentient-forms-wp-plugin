@@ -1801,7 +1801,14 @@
 		resolveSpamDeliveryHolds({
 			notificationCapability: formSourceDescriptor?.native_enrichment?.notification_controls,
 			webhookCapability: formSourceDescriptor?.native_enrichment?.webhook_controls,
-			applies: !isRealtimeDraft,
+			applies: isRealtimeDraft
+				? false
+				: normalizeHookIds(draftHooks).includes('validation')
+					? true
+					: draftSettings.async ??
+						(draftSettings.execution_mode
+							? draftSettings.execution_mode === 'after_submission'
+							: undefined),
 			mapping: draftSettings,
 			form: editingActionId ? formLevelConfigByActionId[editingActionId] : undefined,
 			action: editingActionId ? actionDefaultsByActionId[editingActionId] : undefined
@@ -2886,7 +2893,7 @@
 	}
 
 	function rememberMappingDraft() {
-		if (!editingLinkageId || !editBaselineSignature) return;
+		if (!editingLinkageId || !editBaselineSignature || mappingConfigLoading) return;
 		mappingDrafts = {
 			...mappingDrafts,
 			[editingLinkageId]: {
@@ -2932,7 +2939,7 @@
 	}
 
 	async function retryMappingConfig() {
-		await formActionsStore.refresh(data.formSourceSlug, data.formId);
+		await formActionsStore.refresh(data.formSourceSlug, data.formId, { forceRefresh: true });
 		await tick();
 		mappingDialog?.querySelector<HTMLElement>('#mapping-config-title')?.focus();
 	}
@@ -3817,7 +3824,7 @@
 		const baseSettings = cloneDraftValue(linkage.settings ?? {});
 		editingLinkageId = linkage.local_mapping_id;
 		draftSettings = baseSettings;
-		editBaselineSignature = createDraftSignature(initialHooks, baseSettings);
+		editBaselineSignature = null;
 		resetMappingSectionExpansion(linkage);
 		mappingConfigLoading = true;
 		showMappingConfigModal = openModal;
@@ -5676,7 +5683,7 @@
 				class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
 				open={actionsState.status?.status === 'error' ||
 					Boolean(actionsState.status?.last_error_code) ||
-					Boolean(checkedEntryStatus)}
+					Boolean(checkedEntryStatus) || Boolean(actionsState.statusError)}
 			>
 				<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-800">
 					Execution status and Sentient Forms log lookup
@@ -5691,6 +5698,9 @@
 								>
 							{/if}
 						</div>
+						{#if actionsState.statusError}
+							<Alert variant="warning"><p role="alert">{actionsState.statusError}</p></Alert>
+						{/if}
 						{#if actionsState.supportsStatus === false}
 							<Alert variant="warning">
 								Execution status is unavailable in this plugin build

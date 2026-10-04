@@ -109,6 +109,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private array $accepted_submission_outcomes = [];
 
     /**
+     * Current Gravity Forms request spam-delivery suppressions by entry and channel.
+     *
+     * @var array<int, array<string, bool>>
+     */
+    private array $current_request_spam_delivery_suppressions = [];
+
+    /**
      * Constructor
      *
      * @param Sentient_Forms_Plugin $plugin Plugin instance.
@@ -1530,14 +1537,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'spam_classification',
             $has_qualifying_spam ? 'spam' : $fallback_classification
         );
-        $this->update_entry_meta(
+        $this->record_spam_delivery_preference(
             $entry_id,
             self::SPAM_NOTIFICATION_PREFERENCE_META_KEY,
             $has_qualifying_spam && $suppress_notifications
                 ? self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
                 : self::SPAM_NOTIFICATION_PREFERENCE_ALLOW
         );
-        $this->update_entry_meta(
+        $this->record_spam_delivery_preference(
             $entry_id,
             self::SPAM_WEBHOOK_PREFERENCE_META_KEY,
             $has_qualifying_spam && $suppress_webhooks
@@ -1584,20 +1591,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             if ( ( $confidence ?? 1.0 ) < $threshold )
             {
                 $this->update_entry_meta( $entry_id, 'spam_classification', 'reviewed' );
-                $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
-                $this->update_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+                $this->record_spam_delivery_preference( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+                $this->record_spam_delivery_preference( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
 
                 return;
             }
 
-            $this->update_entry_meta(
+            $this->record_spam_delivery_preference(
                 $entry_id,
                 self::SPAM_NOTIFICATION_PREFERENCE_META_KEY,
                 $this->should_suppress_notifications_on_spam( $action_settings )
                     ? self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
                     : self::SPAM_NOTIFICATION_PREFERENCE_ALLOW
             );
-            $this->update_entry_meta(
+            $this->record_spam_delivery_preference(
                 $entry_id,
                 self::SPAM_WEBHOOK_PREFERENCE_META_KEY,
                 $this->should_suppress_webhooks_on_spam( $action_settings )
@@ -1616,8 +1623,34 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         if ( in_array( $classification, [ 'ham', 'legitimate' ], true ) )
         {
             $this->update_entry_meta( $entry_id, 'spam_classification', 'ham' );
-            $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
-            $this->update_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+            $this->record_spam_delivery_preference( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+            $this->record_spam_delivery_preference( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+        }
+    }
+
+    /**
+     * Record one entry delivery preference without allowing a current-request
+     * sibling result to release suppression for that same channel.
+     *
+     * @param int    $entry_id   Gravity Forms entry id.
+     * @param string $meta_key   Native delivery preference meta key.
+     * @param string $preference The next preference.
+     */
+    private function record_spam_delivery_preference( int $entry_id, string $meta_key, string $preference ): void
+    {
+        if (
+            self::SPAM_NOTIFICATION_PREFERENCE_ALLOW === $preference
+            && ! empty( $this->current_request_spam_delivery_suppressions[ $entry_id ][ $meta_key ] )
+        )
+        {
+            return;
+        }
+
+        $this->update_entry_meta( $entry_id, $meta_key, $preference );
+
+        if ( self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS === $preference )
+        {
+            $this->current_request_spam_delivery_suppressions[ $entry_id ][ $meta_key ] = true;
         }
     }
 
@@ -1661,12 +1694,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         if ( $this->should_suppress_notifications_on_spam( $mapping ) )
         {
-            $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS );
+            $this->record_spam_delivery_preference(
+                $entry_id,
+                self::SPAM_NOTIFICATION_PREFERENCE_META_KEY,
+                self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
+            );
         }
 
         if ( $this->should_suppress_webhooks_on_spam( $mapping ) )
         {
-            $this->update_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS );
+            $this->record_spam_delivery_preference(
+                $entry_id,
+                self::SPAM_WEBHOOK_PREFERENCE_META_KEY,
+                self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
+            );
         }
     }
 
@@ -7470,18 +7511,39 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        $captured_hold_failure = $this->outcome_has_captured_hold_failure(
+            $outcome,
+            $this->get_deferred_notification_mapping_ids( $entry_id )
+        );
         $queued_mapping_ids = $this->queued_native_effect_mapping_ids( $outcome, 'notifications' );
         $queued_mapping_ids = array_values(
             array_intersect( $this->get_deferred_notification_mapping_ids( $entry_id ), $queued_mapping_ids )
         );
         if ( [] === $queued_mapping_ids )
         {
+            if ( $captured_hold_failure )
+            {
+                $this->update_entry_meta(
+                    $entry_id,
+                    self::DEFERRED_NOTIFICATION_DECISION_META_KEY,
+                    self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS,
+                );
+                $this->clear_deferred_notification_state( $entry_id );
+                return;
+            }
+
             $this->replay_deferred_notifications( $entry_id, absint( $form['id'] ?? 0 ) );
             return;
         }
 
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, $queued_mapping_ids );
-        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+        $this->update_entry_meta(
+            $entry_id,
+            self::DEFERRED_NOTIFICATION_DECISION_META_KEY,
+            $captured_hold_failure
+                ? self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS
+                : self::DEFERRED_NOTIFICATION_DECISION_PENDING,
+        );
     }
 
     private function reconcile_deferred_webhooks_after_submission(
@@ -7496,18 +7558,71 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        $captured_hold_failure = $this->outcome_has_captured_hold_failure(
+            $outcome,
+            $this->get_deferred_webhook_mapping_ids( $entry_id )
+        );
         $queued_mapping_ids = $this->queued_native_effect_mapping_ids( $outcome, 'webhooks' );
         $queued_mapping_ids = array_values(
             array_intersect( $this->get_deferred_webhook_mapping_ids( $entry_id ), $queued_mapping_ids )
         );
         if ( [] === $queued_mapping_ids )
         {
+            if ( $captured_hold_failure )
+            {
+                $this->update_entry_meta(
+                    $entry_id,
+                    self::DEFERRED_WEBHOOK_DECISION_META_KEY,
+                    self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS,
+                );
+                $this->clear_deferred_webhook_state( $entry_id );
+                return;
+            }
+
             $this->replay_deferred_webhooks( $entry_id, absint( $form['id'] ?? 0 ) );
             return;
         }
 
         $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY, $queued_mapping_ids );
-        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+        $this->update_entry_meta(
+            $entry_id,
+            self::DEFERRED_WEBHOOK_DECISION_META_KEY,
+            $captured_hold_failure
+                ? self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS
+                : self::DEFERRED_NOTIFICATION_DECISION_PENDING,
+        );
+    }
+
+    /**
+     * Determine whether a failed newly admitted mapping captured Hold for one deferred channel.
+     *
+     * @param array<int, string> $deferred_mapping_ids
+     */
+    private function outcome_has_captured_hold_failure(
+        Sentient_Forms_Accepted_Submission_Run_Result $outcome,
+        array $deferred_mapping_ids
+    ): bool
+    {
+        foreach ( $outcome->get_mapping_outcomes() as $mapping_id => $mapping_outcome )
+        {
+            if ( 'failed' !== $mapping_outcome || ! in_array( (string) $mapping_id, $deferred_mapping_ids, true ) )
+            {
+                continue;
+            }
+
+            $mapping  = $outcome->get_resolved_mapping( (string) $mapping_id );
+            $settings = is_array( $mapping['settings'] ?? null ) ? $mapping['settings'] : [];
+            if (
+                'local_first' === sanitize_key( (string) ( $mapping['action_type_indicator'] ?? '' ) )
+                && array_key_exists( 'spam_failure_delivery_policy', $settings )
+                && 'allow_delivery' !== sanitize_key( (string) $settings['spam_failure_delivery_policy'] )
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

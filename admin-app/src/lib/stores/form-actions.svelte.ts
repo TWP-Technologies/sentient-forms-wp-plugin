@@ -15,6 +15,7 @@ import type {
 export interface FormActionsState {
 	loading: boolean;
 	error: string | null;
+	statusError: string | null;
 	items: FormActionLinkage[];
 	definitions: ActionDefinition[];
 	status: FormExecutionStatus | null;
@@ -39,6 +40,7 @@ function initialState(): FormActionsState {
 	return {
 		loading: false,
 		error: null,
+		statusError: null,
 		items: [],
 		definitions: [],
 		status: null,
@@ -249,6 +251,7 @@ async function load(
 		setState({
 			loading: false,
 			error: null,
+			statusError: null,
 			items: bootstrap.actions,
 			definitions,
 			status: bootstrap.execution_status,
@@ -452,18 +455,18 @@ async function refresh(
 		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
 			return;
 		}
-		setState({ status, error: null, supportsStatus: true });
+		setState({ status, statusError: null, supportsStatus: true });
 	} catch (error) {
 		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
 			return;
 		}
 		if (error instanceof ApiClientError && error.status === 404) {
-			setState({ supportsStatus: false, error: null });
+			setState({ supportsStatus: false, statusError: null });
 			return;
 		}
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
-		setState({ error: message });
+		setState({ statusError: message });
 	} finally {
 		if (refreshInFlightKey === formKey && requestSequence === statusRefreshSequence) {
 			refreshInFlightKey = null;

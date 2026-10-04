@@ -7099,6 +7099,12 @@ test.describe('Actions admin flows', () => {
 				formSourceDescriptors: { [formSource]: gravityFormSourceDescriptor },
 				status: statusUnknown,
 				formsActions: linkages,
+				actionDefaultsById: {
+					spam_detection_v1: {
+						suppress_notifications_on_spam: true,
+						suppress_webhooks_on_spam: true
+					}
+				},
 				formFields: baseFormFields,
 				creditBalance
 			},
@@ -7147,7 +7153,7 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(modal.getByLabel('Notification policy on spam')).toBeEnabled();
 		await expect(
-			modal.getByText('Current effective value: Suppress notifications (default).')
+			modal.getByText('Current effective value: Suppress notifications (action).')
 		).toBeVisible();
 		await expect(modal.getByText('Background spam mappings do not hold notifications')).toHaveCount(
 			0

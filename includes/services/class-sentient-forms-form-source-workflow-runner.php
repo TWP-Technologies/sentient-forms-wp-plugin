@@ -1372,6 +1372,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
                         : [];
                     $action_settings['settings']['spam_failure_delivery_policy'] = $failure_policy;
                     $dependency_context['spam_failure_delivery_policy'] = $failure_policy;
+                    $resolved_mappings[ (string) $mapping_id ] = $action_settings;
                 }
 
                 if ( ! $should_async )
@@ -3446,7 +3447,7 @@ final class Sentient_Forms_Form_Source_Workflow_Runner
      */
     private function captured_spam_failure_delivery_policy( array $action_settings ): ?string
     {
-        if ( 'spam_detection_v1' !== $this->central_action_id( $action_settings ) )
+        if ( ! in_array( $this->central_action_id( $action_settings ), [ 'spam_detection_v1', 'spam_analysis' ], true ) )
         {
             return null;
         }

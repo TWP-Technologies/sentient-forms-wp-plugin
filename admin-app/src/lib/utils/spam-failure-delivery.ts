@@ -31,7 +31,7 @@ export function resolveSpamDeliveryHolds(input: {
 		if (suppress === undefined && input.form !== undefined) {
 			suppress = input.form[key];
 			if (suppress === undefined && input.action !== undefined)
-				suppress = input.action[key] ?? true;
+				suppress = input.action[key];
 		}
 		if (suppress === false || capable === false || input.applies === false) continue;
 		if (suppress === undefined || capable === undefined || input.applies === undefined)

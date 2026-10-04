@@ -1151,6 +1151,231 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         ];
     }
 
+    public function test_validation_captured_hold_failure_keeps_its_channel_preference_across_sibling_results(): void
+    {
+        $cases = [
+            'notification hold then ham' => [ 'notifications', [ 'hold', 'ham' ] ],
+            'notification ham then hold' => [ 'notifications', [ 'ham', 'hold' ] ],
+            'webhook hold then ham'      => [ 'webhooks', [ 'hold', 'ham' ] ],
+            'webhook ham then hold'      => [ 'webhooks', [ 'ham', 'hold' ] ],
+            'notification hold then allow failure' => [ 'notifications', [ 'hold', 'allow_failure' ] ],
+            'notification allow failure then hold' => [ 'notifications', [ 'allow_failure', 'hold' ] ],
+            'webhook hold then allow failure'      => [ 'webhooks', [ 'hold', 'allow_failure' ] ],
+            'webhook allow failure then hold'      => [ 'webhooks', [ 'allow_failure', 'hold' ] ],
+        ];
+
+        foreach ( $cases as $offset => [ $channel, $order ] )
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+            $this->truncate_local_first_runtime_tables();
+
+            $form_id  = 7990 + array_search( $offset, array_keys( $cases ), true );
+            $entry_id = 17990 + array_search( $offset, array_keys( $cases ), true );
+            $settings = [
+                'async'                          => false,
+                'suppress_notifications_on_spam' => 'notifications' === $channel,
+                'suppress_webhooks_on_spam'      => 'webhooks' === $channel,
+            ];
+            $effects = [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'structured.classification',
+                    'confidence_path'     => 'structured.confidence',
+                ],
+            ];
+            $fixtures = [];
+            foreach ( $order as $kind )
+            {
+                $fixtures[ $kind ] = $this->create_local_mapping_fixture(
+                    $form_id,
+                    'spam_detection_v1',
+                    'gform_validation',
+                    'allow_failure' === $kind
+                        ? array_merge( $settings, [ 'spam_failure_delivery_policy' => 'allow_delivery' ] )
+                        : $settings,
+                    null,
+                    $effects
+                );
+            }
+
+            $local_execution                          = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+            $local_execution->record_execution_events = true;
+            foreach ( $fixtures as $kind => $fixture )
+            {
+                $local_execution->results[ $fixture['mapping_id'] ] = 'ham' === $kind
+                    ? [
+                        'structured_output_valid' => true,
+                        'structured'              => [
+                            'classification' => 'ham',
+                            'confidence'     => 0.99,
+                        ],
+                    ]
+                    : new WP_Error( 'synthetic_validation_failure', 'Synthetic validation provider failure.' );
+            }
+
+            $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+                Sentient_Forms_Plugin::instance(),
+                null,
+                null,
+                $local_execution
+            );
+            $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+            $adapter->webhook_controls_supported = true;
+            $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+            $form  = [ 'id' => $form_id, 'title' => 'Validation sticky spam delivery', 'fields' => [] ];
+            $adapter->entries[ $entry_id ] = $entry;
+            $adapter->forms[ $form_id ]    = $form;
+            GFAPI::$entries[ $entry_id ]   = $entry;
+
+            $adapter->handle_validation(
+                [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+                [ 'source' => 'form-submit' ]
+            );
+            $adapter->handle_validation_entry_post_save( $entry, $form );
+
+            $other_channel_preference = in_array( 'ham', $order, true ) ? 'allow' : null;
+
+            $this->assertSame(
+                'notifications' === $channel ? 'suppress' : $other_channel_preference,
+                gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ),
+                $offset
+            );
+            $this->assertSame(
+                'webhooks' === $channel ? 'suppress' : $other_channel_preference,
+                gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ),
+                $offset
+            );
+            $this->assertSame(
+                'notifications' === $channel ? false : [ 'id' => 'notif_admin' ],
+                $adapter->maybe_suppress_spam_notification( [ 'id' => 'notif_admin' ], $form, $entry ),
+                $offset
+            );
+            $this->assertSame(
+                'webhooks' === $channel ? [] : [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ],
+                $adapter->maybe_defer_async_spam_webhooks( [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ], $entry, $form ),
+                $offset
+            );
+        }
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_validation_captured_hold_survives_synchronous_accepted_ham_for_its_channel(): void
+    {
+        foreach ( [ 'notifications', 'webhooks' ] as $offset => $channel )
+        {
+            Sentient_Forms_Installer::maybe_upgrade();
+            $this->truncate_local_first_runtime_tables();
+
+            $form_id  = 8010 + $offset;
+            $entry_id = 18010 + $offset;
+            $settings = [
+                'async'                          => false,
+                'suppress_notifications_on_spam' => 'notifications' === $channel,
+                'suppress_webhooks_on_spam'      => 'webhooks' === $channel,
+            ];
+            $effects = [
+                'spam' => [
+                    'enabled'             => true,
+                    'classification_path' => 'structured.classification',
+                    'confidence_path'     => 'structured.confidence',
+                ],
+            ];
+            $validation = $this->create_local_mapping_fixture(
+                $form_id,
+                'spam_detection_v1',
+                'gform_validation',
+                $settings,
+                null,
+                $effects
+            );
+            $accepted = $this->create_local_mapping_fixture(
+                $form_id,
+                'spam_detection_v1',
+                'after_submission',
+                $settings,
+                null,
+                $effects
+            );
+            $local_execution                          = new Sentient_Forms_Test_Configurable_Local_Action_Execution_Service();
+            $local_execution->record_execution_events = true;
+            $local_execution->apply_result_effects     = true;
+            $local_execution->return_execution_wrapper = true;
+            $local_execution->results[ $validation['mapping_id'] ] = new WP_Error(
+                'synthetic_validation_failure',
+                'Synthetic validation provider failure.'
+            );
+            $local_execution->results[ $accepted['mapping_id'] ] = [
+                'structured_output_valid' => true,
+                'structured'              => [
+                    'classification' => 'ham',
+                    'confidence'     => 0.99,
+                ],
+            ];
+            $runner  = new Sentient_Forms_Form_Source_Workflow_Runner(
+                Sentient_Forms_Plugin::instance(),
+                null,
+                null,
+                $local_execution
+            );
+            $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance(), $runner );
+            $adapter->webhook_controls_supported = true;
+            $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+            $form  = [ 'id' => $form_id, 'title' => 'Validation then accepted spam delivery', 'fields' => [] ];
+            $adapter->entries[ $entry_id ] = $entry;
+            $adapter->forms[ $form_id ]    = $form;
+            GFAPI::$entries[ $entry_id ]   = $entry;
+
+            $adapter->handle_validation(
+                [ 'is_valid' => true, 'form' => [ 'id' => $form_id, 'failed_validation' => false, 'fields' => [] ] ],
+                [ 'source' => 'form-submit' ]
+            );
+            $adapter->handle_validation_entry_post_save( $entry, $form );
+            $adapter->handle_accepted_submission( $entry, $form );
+
+            $accepted_calls = array_values(
+                array_filter(
+                    $local_execution->calls,
+                    static fn ( array $call ): bool => $accepted['mapping_id'] === ( $call['mapping_id'] ?? null )
+                )
+            );
+            $this->assertCount( 1, $accepted_calls, $channel );
+            $accepted_context = $accepted_calls[0]['context'] ?? [];
+            $this->assertSame( 'gform_after_submission', $accepted_context['hook'] ?? null, $channel );
+            $this->assertSame( (string) $entry_id, $accepted_context['entry_id'] ?? null, $channel );
+            $this->assertSame( (string) $form_id, $accepted_context['form_id'] ?? null, $channel );
+            global $wpdb;
+            $accepted_event = ( new Sentient_Forms_Execution_Events_Repository( $wpdb ) )->get_by_request_id(
+                (string) ( $accepted_context['execution_request_id'] ?? '' )
+            );
+            $this->assertSame( 'succeeded', $accepted_event['status'] ?? null, $channel );
+            $this->assertSame( 'ham', $accepted_event['result_json']['structured']['classification'] ?? null, $channel );
+
+            if ( 'notifications' === $channel )
+            {
+                $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ), $channel );
+                $this->assertNotSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ), $channel );
+            }
+            else
+            {
+                $this->assertNotSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_notification_preference' ), $channel );
+                $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_spam_webhook_preference' ), $channel );
+            }
+            $this->assertSame(
+                'notifications' === $channel ? false : [ 'id' => 'notif_admin' ],
+                $adapter->maybe_suppress_spam_notification( [ 'id' => 'notif_admin' ], $form, $entry ),
+                $channel
+            );
+            $this->assertSame(
+                'webhooks' === $channel ? [] : [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ],
+                $adapter->maybe_defer_async_spam_webhooks( [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ], $entry, $form ),
+                $channel
+            );
+        }
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
     public function test_validation_spam_context_preserves_explicit_top_level_marking_policy(): void
     {
         $entry_id = 17904;
@@ -1512,6 +1737,134 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $payload = $scheduled_jobs[0]['args'][0] ?? [];
         $this->assertSame( 'allow_delivery', $payload['context']['spam_failure_delivery_policy'] ?? null );
         $this->assertSame( 'allow_delivery', $payload['context']['settings']['spam_failure_delivery_policy'] ?? null );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_gravity_forms_accepted_spam_analysis_mapping_captures_failure_delivery_policy(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $form_id = 784;
+        $this->create_local_mapping_fixture(
+            $form_id,
+            'spam_analysis',
+            'after_submission',
+            [ 'async' => true, 'spam_failure_delivery_policy' => 'allow_delivery' ]
+        );
+        $scheduled_jobs = [];
+        $capture = static function ( string $hook, array $args ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args' );
+        };
+        add_action( 'sentient_forms_async_job_scheduled', $capture, 10, 5 );
+
+        try
+        {
+            $this->adapter->handle_accepted_submission(
+                [ 'id' => 1706, 'form_id' => $form_id, '1' => 'A message with legacy spam analysis.' ],
+                [ 'id' => $form_id, 'title' => 'Spam analysis policy capture', 'fields' => [] ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_async_job_scheduled', $capture, 10 );
+        }
+
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( 'allow_delivery', $payload['context']['spam_failure_delivery_policy'] ?? null );
+        $this->assertSame( 'allow_delivery', $payload['context']['settings']['spam_failure_delivery_policy'] ?? null );
+
+        $this->truncate_local_first_runtime_tables();
+    }
+
+    public function test_failed_async_spam_admission_respects_captured_delivery_policy(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $cases = [
+            'default_hold' => [
+                'policy'            => null,
+                'notification_count' => 0,
+                'webhook_count'      => 0,
+            ],
+            'explicit_allow' => [
+                'policy'            => 'allow_delivery',
+                'notification_count' => 1,
+                'webhook_count'      => 1,
+            ],
+        ];
+
+        foreach ( $cases as $offset => $case )
+        {
+            $this->truncate_local_first_runtime_tables();
+            $form_id  = 'default_hold' === $offset ? 785 : 786;
+            $entry_id = 'default_hold' === $offset ? 1707 : 1708;
+            $settings = [
+                'async'                          => true,
+                'suppress_notifications_on_spam' => true,
+                'suppress_webhooks_on_spam'      => true,
+            ];
+            if ( is_string( $case['policy'] ) )
+            {
+                $settings['spam_failure_delivery_policy'] = $case['policy'];
+            }
+
+            $fixture = $this->create_local_mapping_fixture(
+                $form_id,
+                'spam_detection_v1',
+                'after_submission',
+                $settings,
+                null,
+                [
+                    'spam' => [
+                        'enabled'             => true,
+                        'classification_path' => 'result_data.classification',
+                    ],
+                ]
+            );
+            $handler                     = new Sentient_Forms_Test_Selective_Failure_Async_Handler( Sentient_Forms_Plugin::instance() );
+            $handler->failed_mapping_ids = [ $fixture['runtime_key'] ];
+            $this->set_async_handler( $handler );
+
+            $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+            $adapter->webhook_controls_supported = true;
+            $entry = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
+            $form  = [ 'id' => $form_id, 'title' => 'Failed async spam admission', 'fields' => [] ];
+            $adapter->entries[ $entry_id ] = $entry;
+            $adapter->forms[ $form_id ]    = $form;
+
+            $this->assertTrue(
+                $adapter->maybe_defer_async_spam_notification(
+                    false,
+                    [ 'id' => 'notif_admin', 'event' => 'form_submission' ],
+                    $form,
+                    $entry,
+                    []
+                )
+            );
+            $this->assertSame(
+                [],
+                $adapter->maybe_defer_async_spam_webhooks(
+                    [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ],
+                    $entry,
+                    $form
+                )
+            );
+
+            $adapter->handle_accepted_submission( $entry, $form );
+
+            $this->assertCount( $case['notification_count'], $adapter->dispatched_notifications, $offset );
+            $this->assertCount( $case['webhook_count'], $adapter->dispatched_webhooks, $offset );
+        }
 
         $this->truncate_local_first_runtime_tables();
     }
@@ -3630,6 +3983,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $settings = [
             'async'                          => true,
             'suppress_notifications_on_spam' => true,
+            'suppress_webhooks_on_spam'      => true,
         ];
         $effects = [
             'spam' => [
@@ -3641,7 +3995,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $form_id,
             'spam_detection_v1',
             'after_submission',
-            $settings,
+            array_merge( $settings, [ 'spam_failure_delivery_policy' => 'allow_delivery' ] ),
             null,
             $effects
         );
@@ -3659,6 +4013,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->set_async_handler( $handler );
 
         $adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $adapter->webhook_controls_supported = true;
         $entry   = [ 'id' => $entry_id, 'form_id' => $form_id, 'status' => 'active' ];
         $form    = [ 'id' => $form_id, 'title' => 'Partial deferred delivery', 'fields' => [] ];
         $adapter->entries[ $entry_id ] = $entry;
@@ -3673,11 +4028,32 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 []
             )
         );
+        $this->assertSame(
+            [],
+            $adapter->maybe_defer_async_spam_webhooks(
+                [ [ 'id' => 'feed_crm', 'name' => 'CRM' ] ],
+                $entry,
+                $form
+            )
+        );
         $adapter->handle_accepted_submission( $entry, $form );
 
         $this->assertSame( [], $adapter->dispatched_notifications );
         $this->assertSame( [ $queued['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
         $this->assertSame( [ 'notif_admin' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [ $queued['runtime_key'] ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_mapping_ids' ) );
+        $this->assertSame( [ 'feed_crm' ], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
+        $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_decision' ) );
+        $this->assertSame( 'suppress', gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_decision' ) );
+
+        $queued_context                                  = $this->local_spam_delivery_context( $form_id, $entry_id, $queued['runtime_key'] );
+        $queued_context['spam_failure_delivery_policy'] = 'allow_delivery';
+        $adapter->finalize_async_success( $queued_context, $this->make_spam_classification_result( 'ham' ) );
+
+        $this->assertSame( [], $adapter->dispatched_notifications );
+        $this->assertSame( [], $adapter->dispatched_webhooks );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_webhook_feed_ids' ) );
 
         $this->truncate_local_first_runtime_tables();
     }

@@ -289,50 +289,68 @@ test.describe('spam failure delivery mapping editor', () => {
 		});
 	}
 
-	test('restores stable title focus after Retry clears a global GET error inside the editor', async ({
-		page
-	}) => {
-		let statusRequests = 0;
+	test('initializes saved settings after Close during inherited loading', async ({ page }) => {
+		const inherited = deferred();
+		await seedEditor(page, {
+			linkage: mapping({ suppress_notifications_on_spam: true, suppress_webhooks_on_spam: true }),
+			waitUntil: 'domcontentloaded',
+			beforeNavigation: async () => {
+				await page.route('**/action-config/spam_detection_v1', async route => {
+					await inherited.promise;
+					await route.fallback();
+				});
+			}
+		});
+		const { modal } = await openSpamMapping(page);
+		await expect(modal.getByText('Loading saved settings…')).toBeVisible();
+		await modal.getByRole('button', { name: 'Close', exact: true }).first().click();
+		await expect(modal).toBeHidden();
+		const loaded = page.waitForResponse(response => response.url().endsWith('/action-config/spam_detection_v1'));
+		inherited.resolve();
+		await loaded;
+		const { modal: reopened } = await openSpamAdvanced(page);
+		await expect(reopened.getByText('Loading saved settings…')).toHaveCount(0);
+		await expect(reopened.getByLabel(/Confidence Threshold/)).toHaveValue('0.8');
+		await expect(reopened.getByLabel('Hold configured delivery')).toBeChecked();
+	});
+
+	test('keeps loaded mapping editable when execution status refresh fails', async ({ page }) => {
 		await seedEditor(page, {
 			beforeNavigation: async () => {
-				await page.route(
-					`**/wp-json/sentient-forms/v1/${formSource}/forms/${formId}/actions/status`,
-					async (route) => {
-						statusRequests += 1;
-						if (statusRequests === 1) {
-							return route.fulfill({
-								status: 500,
-								contentType: 'application/json',
-								body: JSON.stringify({ success: false, message: 'Controlled status failure.' })
-							});
-						}
-						return route.fulfill({
-							status: 200,
-							contentType: 'application/json',
-							body: JSON.stringify({
-								success: true,
-								data: {
-									status: 'unknown',
-									message: null,
-									entry_id: null,
-									last_error_code: null,
-									last_result: null,
-									updated_at: null
-								}
-							})
-						});
-					}
-				);
+				await page.route(`**/wp-json/sentient-forms/v1/${formSource}/forms/${formId}/actions/status`, route => route.fulfill({
+					status: 500, contentType: 'application/json', body: JSON.stringify({ success: false, message: 'Controlled status failure.' })
+				}));
 			}
 		});
 		const { modal } = await openSpamAdvanced(page);
+		const failed = page.waitForResponse(response => response.url().endsWith('/actions/status'));
 		await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-		const retry = modal.getByRole('button', { name: 'Retry' });
+		await failed;
+		await expect(modal.getByLabel('Allow delivery without classification')).toBeEnabled();
+		await expect(modal.getByTestId('mapping-config-open-graph')).toBeEnabled();
+		await modal.getByLabel('Allow delivery without classification').check();
+		await expect(modal.getByTestId('mapping-config-save')).toBeEnabled();
+	});
+
+	test('restores stable title focus after Retry clears a mapping GET error', async ({ page }) => {
+		let loads = 0;
+		await seedEditor(page, {
+			bootstrapError: () => ++loads === 2 ? { status: 500, body: { success: false, message: 'Controlled mapping load failure.' } } : null
+		});
+		const { modal } = await openSpamAdvanced(page);
+		await modal.getByLabel('Allow delivery without classification').check();
+		await modal.getByRole('button', { name: 'Close', exact: true }).first().click();
+		await page.getByRole('button', { name: 'Refresh', exact: true }).first().click();
+		const { modal: reopened } = await openSpamAdvanced(page);
+		const retry = reopened.getByRole('button', { name: 'Retry' });
 		await expect(retry).toBeVisible();
+		await expect(reopened.getByLabel('Allow delivery without classification')).toBeDisabled();
 		await retry.click();
 		await expect(retry).toHaveCount(0);
-		await expect.poll(() => statusRequests).toBe(2);
-		await expect(modal.locator('#mapping-config-title')).toBeFocused();
+		await expect.poll(() => loads).toBe(3);
+		await expect(reopened.locator('#mapping-config-title')).toBeFocused();
+		await expect(reopened.getByLabel('Allow delivery without classification')).toBeChecked();
+		await expect(reopened.getByLabel('Allow delivery without classification')).toBeEnabled();
 	});
 
 	test('keeps native radio, tooltip, dialog, and background focus behavior reachable', async ({
@@ -375,13 +393,29 @@ test.describe('spam failure delivery mapping editor', () => {
 
 		await seedEditor(page, {
 			descriptor: blockingDescriptor,
-			linkage: { ...mapping(), trigger_hooks: ['gform_validation'] }
+			linkage: {
+				...mapping({ suppress_notifications_on_spam: true, suppress_webhooks_on_spam: true }),
+				trigger_hooks: ['gform_validation']
+			}
 		});
 		modal = (await openSpamAdvanced(page)).modal;
 		await expect(modal.getByTestId('spam-failure-applicability')).toHaveText(
 			'Applies to: notifications and Webhooks.'
 		);
 		await expect(modal.getByLabel('Hold configured delivery')).toBeEnabled();
+
+		await seedEditor(page, {
+			linkage: mapping({
+				async: false,
+				suppress_notifications_on_spam: true,
+				suppress_webhooks_on_spam: true
+			})
+		});
+		modal = (await openSpamAdvanced(page)).modal;
+		await expect(modal.getByTestId('spam-failure-applicability')).toHaveText(
+			'This mapping has no configured delivery holds.'
+		);
+		await expect(modal.getByLabel('Hold configured delivery')).toBeDisabled();
 
 		await seedEditor(page, {
 			linkage: {

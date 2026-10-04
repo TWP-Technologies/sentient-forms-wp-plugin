@@ -8,7 +8,7 @@ describe('configured spam delivery holds', () => {
 		applies: true,
 		mapping: {},
 		form: {},
-		action: {}
+		action: { suppress_notifications_on_spam: true, suppress_webhooks_on_spam: true }
 	};
 	it('uses inherited holds, while explicit channel Allow defeats unknown facts', () => {
 		expect(
@@ -22,7 +22,10 @@ describe('configured spam delivery holds', () => {
 			})
 		).toEqual({ state: 'inactive', channels: [] });
 		expect(
-			resolveSpamDeliveryHolds({ ...base, action: { suppress_webhooks_on_spam: false } })
+			resolveSpamDeliveryHolds({
+				...base,
+				action: { ...base.action, suppress_webhooks_on_spam: false }
+			})
 		).toEqual({ state: 'active', channels: ['notifications'] });
 	});
 	it('keeps a known supported channel active beside a known unavailable channel', () => {
@@ -64,5 +67,17 @@ describe('configured spam delivery holds', () => {
 			}).state
 		).toBe('active');
 		expect(mapping.spam_failure_delivery_policy).toBe('allow_delivery');
+	});
+	it('does not invent channel holds when loaded configs omit every suppression setting', () => {
+		expect(resolveSpamDeliveryHolds({ ...base, action: {} })).toEqual({
+			state: 'unavailable',
+			channels: []
+		});
+		expect(
+			resolveSpamDeliveryHolds({
+				...base,
+				mapping: { suppress_notifications_on_spam: true, suppress_webhooks_on_spam: true }
+			})
+		).toEqual({ state: 'active', channels: ['notifications', 'Webhooks'] });
 	});
 });
